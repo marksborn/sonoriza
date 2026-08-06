@@ -45,7 +45,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Spotify({
       clientId: process.env.AUTH_SPOTIFY_ID,
       clientSecret: process.env.AUTH_SPOTIFY_SECRET,
+      // The Spotify provider currently exposes its default authorization
+      // endpoint as a string. Replacing it with params only drops the endpoint
+      // and makes Auth.js call new URL(undefined). Keep the endpoint explicit.
       authorization: {
+        url: "https://accounts.spotify.com/authorize",
         params: { scope: SPOTIFY_SCOPES },
       },
       allowDangerousEmailAccountLinking: true,
