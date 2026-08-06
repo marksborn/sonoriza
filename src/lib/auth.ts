@@ -38,9 +38,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           prompt: "consent",
         },
       },
-      // Personal-use MVP: link Google + Spotify onto the same account by email.
-      // Revisit before opening the app to multiple untrusted users.
-      allowDangerousEmailAccountLinking: true,
     }),
     Spotify({
       clientId: process.env.AUTH_SPOTIFY_ID,
@@ -52,10 +49,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         url: "https://accounts.spotify.com/authorize",
         params: { scope: SPOTIFY_SCOPES },
       },
-      allowDangerousEmailAccountLinking: true,
     }),
   ],
+  // Account linking is deliberately explicit. Auth.js safely links a new OAuth
+  // account when the callback carries an existing authenticated session. It
+  // must never merge users silently just because two providers return the same
+  // email address.
   pages: {
     signIn: "/",
+    error: "/auth/error",
   },
 });
