@@ -7,7 +7,7 @@ module.exports = {
       name: "sonoriza",
       // Runs the Next.js production server on the port CloudPanel proxies to.
       script: "node_modules/next/dist/bin/next",
-      args: "start -p 3000",
+      args: "start",
       cwd: __dirname,
       instances: 1,
       exec_mode: "fork",
@@ -15,7 +15,7 @@ module.exports = {
       max_memory_restart: "512M",
       env: {
         NODE_ENV: "production",
-        PORT: "3000",
+        PORT: process.env.PORT || "3000",
       },
     },
   ],

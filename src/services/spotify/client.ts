@@ -41,12 +41,12 @@ export class SpotifyClient {
   async getPlaylistTracks(playlistId: string): Promise<Candidate[]> {
     const candidates: Candidate[] = [];
     let url: string | null =
-      `/playlists/${playlistId}/tracks?limit=100&fields=next,items(track(uri,name,duration_ms,is_local,type,artists(name)))`;
+      `/playlists/${playlistId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
 
     while (url) {
       const page: SpotifyPage<PlaylistItem> = await this.request(url);
       for (const item of page.items) {
-        const track = item.track;
+        const track = item.item;
         if (!track || track.is_local || track.type !== "track") continue;
         candidates.push({
           uri: track.uri,
@@ -92,9 +92,8 @@ export class SpotifyClient {
 
   /** Creates a private playlist and returns its id. */
   async createPlaylist(name: string, description?: string): Promise<string> {
-    const spotifyUserId = await this.getCurrentUserId();
     const playlist = await this.request<{ id: string }>(
-      `/users/${spotifyUserId}/playlists`,
+      `/me/playlists`,
       {
         method: "POST",
         body: JSON.stringify({ name, description, public: false }),
@@ -111,12 +110,12 @@ export class SpotifyClient {
   async replacePlaylistItems(playlistId: string, uris: string[]): Promise<void> {
     const chunks = chunk(uris, 100);
     // First chunk (or an empty array) replaces everything.
-    await this.request(`/playlists/${playlistId}/tracks`, {
+    await this.request(`/playlists/${playlistId}/items`, {
       method: "PUT",
       body: JSON.stringify({ uris: chunks[0] ?? [] }),
     });
     for (const extra of chunks.slice(1)) {
-      await this.request(`/playlists/${playlistId}/tracks`, {
+      await this.request(`/playlists/${playlistId}/items`, {
         method: "POST",
         body: JSON.stringify({ uris: extra }),
       });
@@ -132,7 +131,7 @@ interface SpotifyPage<T> {
 }
 
 interface PlaylistItem {
-  track: {
+  item: {
     uri: string;
     name: string;
     duration_ms: number;
