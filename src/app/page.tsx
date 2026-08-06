@@ -5,12 +5,12 @@ import { auth, signIn } from "@/lib/auth";
 export default async function HomePage() {
   const session = await auth();
 
-  async function connectSpotify() {
+  async function signInWithSpotify() {
     "use server";
     await signIn("spotify", { redirectTo: "/dashboard" });
   }
 
-  async function connectGoogle() {
+  async function signInWithGoogle() {
     "use server";
     await signIn("google", { redirectTo: "/dashboard" });
   }
@@ -32,7 +32,7 @@ export default async function HomePage() {
       </header>
 
       {session?.user ? (
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <span className="text-neutral-600 dark:text-neutral-400">
             Conectado como {session.user.email ?? session.user.name}.
           </span>
@@ -44,24 +44,31 @@ export default async function HomePage() {
           </Link>
         </div>
       ) : (
-        <div className="flex flex-wrap gap-4">
-          <form action={connectGoogle}>
-            <button
-              type="submit"
-              className="rounded-full border border-neutral-300 px-5 py-2 font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              Conectar Google
-            </button>
-          </form>
-          <form action={connectSpotify}>
-            <button
-              type="submit"
-              className="rounded-full bg-brand px-5 py-2 font-medium text-white hover:bg-brand-dark"
-            >
-              Conectar Spotify
-            </button>
-          </form>
-        </div>
+        <section className="space-y-4">
+          <div className="flex flex-wrap gap-4">
+            <form action={signInWithGoogle}>
+              <button
+                type="submit"
+                className="rounded-full border border-neutral-300 px-5 py-2 font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+              >
+                Entrar com Google
+              </button>
+            </form>
+            <form action={signInWithSpotify}>
+              <button
+                type="submit"
+                className="rounded-full bg-brand px-5 py-2 font-medium text-white hover:bg-brand-dark"
+              >
+                Entrar com Spotify
+              </button>
+            </form>
+          </div>
+          <p className="max-w-xl text-sm text-neutral-500">
+            No primeiro acesso, escolha um provedor. Depois de entrar, conecte o
+            outro no painel para poder usar qualquer um deles nos próximos
+            acessos.
+          </p>
+        </section>
       )}
 
       <footer className="text-sm text-neutral-500">
