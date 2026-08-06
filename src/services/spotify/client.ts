@@ -41,7 +41,7 @@ export class SpotifyClient {
   async getPlaylistTracks(playlistId: string): Promise<Candidate[]> {
     const candidates: Candidate[] = [];
     let url: string | null =
-      `/playlists/${playlistId}/items?limit=100&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
+      `/playlists/${playlistId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
 
     while (url) {
       const page: SpotifyPage<PlaylistItem> = await this.request(url);
