@@ -81,27 +81,33 @@ export async function POST(request: Request) {
     simulate,
   });
 
-  if (simulate) {
-    const run = await prisma.generationRun.findFirst({
-      where: { id: result.runId, userId: session.user.id, simulation: true },
-      select: { summary: true },
-    });
+  const run = await prisma.generationRun.findFirst({
+    where: {
+      id: result.runId,
+      userId: session.user.id,
+      simulation: simulate,
+    },
+    select: { summary: true },
+  });
 
-    const existingSummary =
-      run?.summary && typeof run.summary === "object" && !Array.isArray(run.summary)
-        ? (run.summary as Record<string, unknown>)
-        : {};
+  const existingSummary =
+    run?.summary && typeof run.summary === "object" && !Array.isArray(run.summary)
+      ? (run.summary as Record<string, unknown>)
+      : {};
 
-    await prisma.generationRun.updateMany({
-      where: { id: result.runId, userId: session.user.id, simulation: true },
-      data: {
-        summary: {
-          ...existingSummary,
-          configurationFingerprint: assessment.fingerprint,
-        } as Prisma.InputJsonValue,
-      },
-    });
-  }
+  await prisma.generationRun.updateMany({
+    where: {
+      id: result.runId,
+      userId: session.user.id,
+      simulation: simulate,
+    },
+    data: {
+      summary: {
+        ...existingSummary,
+        configurationFingerprint: assessment.fingerprint,
+      } as Prisma.InputJsonValue,
+    },
+  });
 
   return NextResponse.json(result);
 }
