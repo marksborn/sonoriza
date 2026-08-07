@@ -6,6 +6,7 @@ type ContentType = "MUSIC" | "PODCAST";
 type DurationMode = "FIXED" | "CALENDAR";
 type EmptyCalendarBehavior = "CLEAR" | "KEEP" | "SKIP";
 type CalendarEventFilterMode = "ALL" | "MARKER";
+type PodcastEpisodeMaxDurationMode = "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";
 
 export type SpotifyDestinationOption = {
   id: string;
@@ -22,6 +23,8 @@ export type TargetPlaylistFormInitial = {
   calendarEventFilterMode: CalendarEventFilterMode;
   calendarEventMarker: string;
   podcastPercent: number;
+  podcastEpisodeMaxDurationMode: PodcastEpisodeMaxDurationMode;
+  podcastEpisodeMaxDurationMinutes: number;
   sequencePattern: ContentType[];
   maxEpisodesPerProgram: number;
   destinationValue: string;
@@ -63,6 +66,8 @@ export function TargetPlaylistForm({
   const [calendarEventFilterMode, setCalendarEventFilterMode] =
     useState<CalendarEventFilterMode>(initial.calendarEventFilterMode);
   const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);
+  const [podcastEpisodeMaxDurationMode, setPodcastEpisodeMaxDurationMode] =
+    useState<PodcastEpisodeMaxDurationMode>(initial.podcastEpisodeMaxDurationMode);
   const [sequence, setSequence] = useState<ContentType[]>(
     initial.sequencePattern.length > 0 ? initial.sequencePattern : DEFAULT_SEQUENCE,
   );
@@ -176,7 +181,12 @@ export function TargetPlaylistForm({
               name="durationMode"
               value="FIXED"
               checked={durationMode === "FIXED"}
-              onChange={() => setDurationMode("FIXED")}
+              onChange={() => {
+                setDurationMode("FIXED");
+                if (podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT") {
+                  setPodcastEpisodeMaxDurationMode("NONE");
+                }
+              }}
               className="sr-only"
             />
             <span className="block font-black text-white">Duração fixa</span>
@@ -379,6 +389,107 @@ export function TargetPlaylistForm({
           <span>Só podcast</span>
         </div>
       </div>
+
+      <fieldset className="rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4 sm:p-5">
+        <legend className="px-1 text-sm font-black text-white">
+          Duração máxima por episódio de podcast
+        </legend>
+        <p className="mt-1 text-xs leading-5 text-violet-200/60">
+          O limite compara o tempo efetivo que ainda será ouvido. Um episódio longo parcialmente ouvido pode entrar se o tempo restante couber no limite.
+        </p>
+
+        <div className={`mt-4 grid gap-3 ${durationMode === "CALENDAR" ? "lg:grid-cols-3" : "md:grid-cols-2"}`}>
+          <label
+            className={`cursor-pointer rounded-xl border p-3 transition ${
+              podcastEpisodeMaxDurationMode === "NONE"
+                ? "border-orange-400/40 bg-orange-400/10"
+                : "border-violet-400/20 bg-black/10 hover:border-violet-300/35"
+            }`}
+          >
+            <input
+              type="radio"
+              name="podcastEpisodeMaxDurationMode"
+              value="NONE"
+              checked={podcastEpisodeMaxDurationMode === "NONE"}
+              onChange={() => setPodcastEpisodeMaxDurationMode("NONE")}
+              className="mr-2 accent-orange-500"
+            />
+            <span className="font-black text-white">Sem limite</span>
+            <span className="mt-1 block text-xs leading-5 text-violet-200/60">
+              Preserva o comportamento atual: qualquer duração continua elegível.
+            </span>
+          </label>
+
+          <label
+            className={`cursor-pointer rounded-xl border p-3 transition ${
+              podcastEpisodeMaxDurationMode === "FIXED"
+                ? "border-orange-400/40 bg-orange-400/10"
+                : "border-violet-400/20 bg-black/10 hover:border-violet-300/35"
+            }`}
+          >
+            <input
+              type="radio"
+              name="podcastEpisodeMaxDurationMode"
+              value="FIXED"
+              checked={podcastEpisodeMaxDurationMode === "FIXED"}
+              onChange={() => setPodcastEpisodeMaxDurationMode("FIXED")}
+              className="mr-2 accent-orange-500"
+            />
+            <span className="font-black text-white">Limite fixo</span>
+            <span className="mt-1 block text-xs leading-5 text-violet-200/60">
+              Define o máximo permitido em minutos para cada episódio.
+            </span>
+          </label>
+
+          {durationMode === "CALENDAR" && (
+            <label
+              className={`cursor-pointer rounded-xl border p-3 transition ${
+                podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT"
+                  ? "border-orange-400/40 bg-orange-400/10"
+                  : "border-violet-400/20 bg-black/10 hover:border-violet-300/35"
+              }`}
+            >
+              <input
+                type="radio"
+                name="podcastEpisodeMaxDurationMode"
+                value="CALENDAR_MAX_EVENT"
+                checked={podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT"}
+                onChange={() => setPodcastEpisodeMaxDurationMode("CALENDAR_MAX_EVENT")}
+                className="mr-2 accent-orange-500"
+              />
+              <span className="font-black text-white">Maior evento do calendário</span>
+              <span className="mt-1 block text-xs leading-5 text-violet-200/60">
+                Usa a maior duração individual entre os mesmos eventos elegíveis do cálculo; não usa a soma do dia.
+              </span>
+            </label>
+          )}
+        </div>
+
+        {podcastEpisodeMaxDurationMode === "FIXED" && (
+          <label className="mt-4 block max-w-sm text-sm font-bold text-violet-100">
+            Máximo por episódio, em minutos
+            <input
+              className={inputClass}
+              type="number"
+              name="podcastEpisodeMaxDurationMinutes"
+              min={1}
+              max={1440}
+              step={1}
+              required
+              defaultValue={initial.podcastEpisodeMaxDurationMinutes}
+            />
+            <span className="mt-1.5 block text-xs font-normal leading-5 text-violet-300/55">
+              Entre 1 minuto e 24 horas, comparado ao tempo efetivo/restante do episódio.
+            </span>
+          </label>
+        )}
+
+        {podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT" && (
+          <p className="mt-4 rounded-xl border border-violet-300/15 bg-black/10 p-3 text-xs font-semibold leading-5 text-violet-200/70">
+            Se não houver evento elegível, o Sonoriza segue a regra configurada para calendário vazio e não inventa um limite de episódio.
+          </p>
+        )}
+      </fieldset>
 
       <div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
