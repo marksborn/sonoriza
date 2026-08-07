@@ -4,10 +4,15 @@ import { prisma } from "@/lib/prisma";
 
 type SequenceEntry = "MUSIC" | "PODCAST";
 
+type ConfigurationHref =
+  | "/dashboard/configuracao/calendarios"
+  | "/dashboard/configuracao/fontes"
+  | "/dashboard/configuracao/destinos";
+
 export type ConfigurationIssue = {
   code: string;
   message: string;
-  href: "/dashboard/configuracao/calendarios" | "/dashboard/configuracao/fontes" | "/dashboard/configuracao/destinos";
+  href: ConfigurationHref;
 };
 
 export type ConfigurationAssessment = {
@@ -50,7 +55,9 @@ export type FirstRunGate = {
 
 function parseSequence(value: unknown): SequenceEntry[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is SequenceEntry => entry === "MUSIC" || entry === "PODCAST");
+  return value.filter(
+    (entry): entry is SequenceEntry => entry === "MUSIC" || entry === "PODCAST",
+  );
 }
 
 function hasOnlyValidSequenceEntries(value: unknown): boolean {
@@ -65,7 +72,9 @@ function fingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-export async function assessConfiguration(userId: string): Promise<ConfigurationAssessment> {
+export async function assessConfiguration(
+  userId: string,
+): Promise<ConfigurationAssessment> {
   const [accounts, calendarsRaw, sourcesRaw, targetsRaw] = await Promise.all([
     prisma.account.findMany({
       where: { userId, provider: { in: ["google", "spotify"] } },
@@ -112,11 +121,13 @@ export async function assessConfiguration(userId: string): Promise<Configuration
   const providers = new Set(accounts.map((account) => account.provider));
   const hasGoogle = providers.has("google");
   const hasSpotify = providers.has("spotify");
+
   const calendars = calendarsRaw.map((calendar) => ({
     id: calendar.googleCalendarId,
     summary: calendar.summary,
     usedForTrips: calendar.usedForTrips,
   }));
+
   const sources = sourcesRaw.map((source) => ({ ...source }));
   const targets = targetsRaw.map((target) => ({
     id: target.id,
@@ -160,7 +171,9 @@ export async function assessConfiguration(userId: string): Promise<Configuration
     });
   }
 
-  const calendarTargets = targets.filter((target) => target.durationMode === "CALENDAR");
+  const calendarTargets = targets.filter(
+    (target) => target.durationMode === "CALENDAR",
+  );
   const tripCalendars = calendars.filter((calendar) => calendar.usedForTrips);
 
   if (calendarTargets.length > 0 && !hasGoogle) {
@@ -207,7 +220,10 @@ export async function assessConfiguration(userId: string): Promise<Configuration
   for (const rawTarget of targetsRaw) {
     const label = `Destino \"${rawTarget.name}\"`;
 
-    if (rawTarget.durationMode === "FIXED" && (rawTarget.fixedDurationSeconds ?? 0) <= 0) {
+    if (
+      rawTarget.durationMode === "FIXED" &&
+      (rawTarget.fixedDurationSeconds ?? 0) <= 0
+    ) {
       pushIssue({
         code: `INVALID_FIXED_DURATION:${rawTarget.id}`,
         message: `${label}: informe uma duração fixa maior que zero.`,
@@ -248,10 +264,16 @@ export async function assessConfiguration(userId: string): Promise<Configuration
   }
 
   const playlistSourceIds = new Set(
-    sources.filter((source) => source.spotifyType === "PLAYLIST").map((source) => source.spotifyId),
+    sources
+      .filter((source) => source.spotifyType === "PLAYLIST")
+      .map((source) => source.spotifyId),
   );
+
   for (const target of targets) {
-    if (target.spotifyPlaylistId && playlistSourceIds.has(target.spotifyPlaylistId)) {
+    if (
+      target.spotifyPlaylistId &&
+      playlistSourceIds.has(target.spotifyPlaylistId)
+    ) {
       pushIssue({
         code: `SOURCE_TARGET_CONFLICT:${target.spotifyPlaylistId}`,
         message: `A playlist de destino \"${target.name}\" também está cadastrada como fonte. Escolha outra playlist para evitar sobrescrever a própria fonte.`,
@@ -261,7 +283,9 @@ export async function assessConfiguration(userId: string): Promise<Configuration
   }
 
   const fingerprintPayload = {
-    providers: [...providers].filter((provider) => provider === "google" || provider === "spotify").sort(),
+    providers: [...providers]
+      .filter((provider) => provider === "google" || provider === "spotify")
+      .sort(),
     tripCalendars: tripCalendars.map((calendar) => calendar.id).sort(),
     sources: sources
       .map((source) => ({
@@ -269,7 +293,11 @@ export async function assessConfiguration(userId: string): Promise<Configuration
         spotifyType: source.spotifyType,
         spotifyId: source.spotifyId,
       }))
-      .sort((a, b) => `${a.kind}:${a.spotifyType}:${a.spotifyId}`.localeCompare(`${b.kind}:${b.spotifyType}:${b.spotifyId}`)),
+      .sort((a, b) =>
+        `${a.kind}:${a.spotifyType}:${a.spotifyId}`.localeCompare(
+          `${b.kind}:${b.spotifyType}:${b.spotifyId}`,
+        ),
+      ),
     targets: targets.map((target) => ({
       name: target.name,
       spotifyPlaylistId: target.spotifyPlaylistId,
@@ -315,12 +343,24 @@ export async function getFirstRunGate(
     };
   }
 
-  const successfulRealRun = await prisma.generationRun.findFirst({
-    where: { userId, simulation: false, status: "SUCCESS" },
-    select: { id: true },
+  // Historical real runs created before CONFIG-04 have no fingerprint and do
+  // not count as completion of the controlled first-run flow.
+  const successfulManualRuns = await prisma.generationRun.findMany({
+    where: {
+      userId,
+      trigger: "MANUAL",
+      simulation: false,
+      status: "SUCCESS",
+    },
+    orderBy: { startedAt: "desc" },
+    select: { summary: true },
   });
 
-  if (successfulRealRun) {
+  const hasControlledRealRun = successfulManualRuns.some(
+    (run) => readConfigurationFingerprint(run.summary) !== null,
+  );
+
+  if (hasControlledRealRun) {
     return {
       realRunAllowed: true,
       requiresSimulation: false,
