@@ -47,6 +47,8 @@ export type ConfigurationAssessment = {
     calendarEventFilterMode: "ALL" | "MARKER";
     calendarEventMarker: string | null;
     podcastPercent: number;
+    podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";
+    podcastEpisodeMaxDurationSeconds: number | null;
     sequence: SequenceEntry[];
     maxEpisodesPerProgram: number;
   }>;
@@ -127,6 +129,8 @@ export async function assessConfiguration(
         calendarEventFilterMode: true,
         calendarEventMarker: true,
         podcastPercent: true,
+        podcastEpisodeMaxDurationMode: true,
+        podcastEpisodeMaxDurationSeconds: true,
         sequencePattern: true,
         maxEpisodesPerProgram: true,
       },
@@ -164,6 +168,8 @@ export async function assessConfiguration(
     calendarEventFilterMode: target.calendarEventFilterMode,
     calendarEventMarker: target.calendarEventMarker,
     podcastPercent: target.podcastPercent,
+    podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,
+    podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,
     sequence: parseSequence(target.sequencePattern),
     maxEpisodesPerProgram: target.maxEpisodesPerProgram,
   }));
@@ -291,6 +297,28 @@ export async function assessConfiguration(
       });
     }
 
+    if (
+      rawTarget.podcastEpisodeMaxDurationMode === "FIXED" &&
+      (rawTarget.podcastEpisodeMaxDurationSeconds ?? 0) <= 0
+    ) {
+      pushIssue({
+        code: `PODCAST_MAX_DURATION_REQUIRED:${rawTarget.id}`,
+        message: `${label}: informe uma duração máxima de episódio maior que zero.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+    }
+
+    if (
+      rawTarget.podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT" &&
+      rawTarget.durationMode !== "CALENDAR"
+    ) {
+      pushIssue({
+        code: `PODCAST_MAX_DURATION_CALENDAR_REQUIRED:${rawTarget.id}`,
+        message: `${label}: o limite pelo maior evento só pode ser usado com duração baseada no calendário.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+    }
+
     if (!hasOnlyValidSequenceEntries(rawTarget.sequencePattern)) {
       pushIssue({
         code: `INVALID_SEQUENCE:${rawTarget.id}`,
@@ -369,6 +397,8 @@ export async function assessConfiguration(
       calendarEventFilterMode: target.calendarEventFilterMode,
       calendarEventMarker: target.calendarEventMarker,
       podcastPercent: target.podcastPercent,
+      podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,
+      podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,
       sequence: target.sequence,
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,
     })),
