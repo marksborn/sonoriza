@@ -22,7 +22,17 @@ export interface Candidate {
    * the Spotify show id; for music it is undefined.
    */
   programId?: string;
+  /**
+   * Effective listening time consumed by the planner. For a partially played
+   * podcast this is the remaining time, not necessarily the catalog duration.
+   */
   durationMs: number;
+  /** Catalog duration, retained for diagnostics when `durationMs` is remaining time. */
+  originalDurationMs?: number;
+  /** Most recent Spotify playback position for podcasts. */
+  resumePositionMs?: number;
+  /** Whether Spotify supplied playback-state information for this episode. */
+  playbackPositionKnown?: boolean;
 }
 
 export interface PlaylistRules {
@@ -50,6 +60,18 @@ export interface PlanResult {
     podcastDurationMs: number;
     musicCount: number;
     podcastCount: number;
+    /** Percentage of planned listening time occupied by podcasts. */
+    actualPodcastPercent: number;
+    /** Requested podcast percentage after clamping to 0–100. */
+    requestedPodcastPercent: number;
+    /** Positive duration missing from the requested podcast budget. */
+    podcastShortfallMs: number;
+    /** Positive duration missing from the requested music budget. */
+    musicShortfallMs: number;
+    /** Absolute difference, in percentage points, between requested and actual podcast share. */
+    mixDeviationPoints: number;
+    /** First-run quality gate: deviations over 10 percentage points are material. */
+    mixQualityPassed: boolean;
     /** Slots the pattern asked for but that could not be filled. */
     unfilledSlots: number;
     /** True when the plan stopped because a pool ran dry rather than hitting the target. */
