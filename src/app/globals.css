@@ -3,15 +3,66 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+}
+
+* {
+  border-color: #e8e3ef;
+}
+
+html {
+  min-height: 100%;
+  background: #f8f7fb;
+  scroll-behavior: smooth;
 }
 
 body {
-  @apply bg-neutral-50 text-neutral-900 antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(146, 45, 242, 0.11), transparent 32rem),
+    radial-gradient(circle at 92% 10%, rgba(255, 114, 0, 0.09), transparent 28rem),
+    #f8f7fb;
+  color: #271746;
+  font-feature-settings: "ss01" on, "cv02" on, "cv03" on;
+  text-rendering: optimizeLegibility;
+  @apply antialiased;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    @apply bg-neutral-950 text-neutral-100;
+::selection {
+  background: rgba(103, 36, 217, 0.2);
+  color: #27106f;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid rgba(255, 114, 0, 0.38);
+  outline-offset: 3px;
+}
+
+@layer components {
+  .glass-panel {
+    @apply border border-white/80 bg-white/80 shadow-card backdrop-blur-xl;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-full border border-brand/10 bg-white/80 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.16em] text-brand-dark shadow-sm;
+  }
+
+  .section-card {
+    @apply rounded-3xl border border-line bg-white p-5 shadow-card sm:p-6;
+  }
+
+  .primary-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 font-bold text-white shadow-action transition duration-200 hover:-translate-y-0.5 hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0;
+  }
+
+  .secondary-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-brand/20 bg-white px-5 py-3 font-bold text-brand-dark shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:bg-brand-soft disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0;
   }
 }
