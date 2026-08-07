@@ -97,6 +97,24 @@ test("keeps URI deduplication when the same episode arrives more than once", () 
   ]);
 });
 
+test("keeps a valid duplicate when another source copy is missing programId", () => {
+  const result = planPlaylist({
+    rules: rules(60_000, 1),
+    pools: {
+      music: [],
+      podcasts: [
+        podcast("spotify:episode:same", undefined),
+        podcast("spotify:episode:same", "show-a"),
+      ],
+    },
+  });
+
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.uri, "spotify:episode:same");
+  assert.equal(result.items[0]?.programId, "show-a");
+  assert.equal(result.stats.podcastIdentityMissingCount, 1);
+});
+
 test("rejects blank program identities and normalizes surrounding whitespace", () => {
   const result = planPlaylist({
     rules: rules(60_000, 1),
