@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { BrandLogo } from "@/components/BrandLogo";
+
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   OAuthAccountNotLinked:
     "Esta conta já está vinculada a outro usuário ou ainda não foi conectada ao seu usuário atual. Entre primeiro com um provedor já vinculado e conecte o outro pelo painel.",
@@ -17,9 +19,7 @@ type AuthErrorPageProps = {
   }>;
 };
 
-export default async function AuthErrorPage({
-  searchParams,
-}: AuthErrorPageProps) {
+export default async function AuthErrorPage({ searchParams }: AuthErrorPageProps) {
   const params = await searchParams;
   const errorCode = Array.isArray(params.error) ? params.error[0] : params.error;
   const message =
@@ -27,23 +27,36 @@ export default async function AuthErrorPage({
     "Não foi possível concluir a autenticação. Volte ao início e tente novamente.";
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-6 px-6 py-16">
-      <div className="space-y-3">
-        <p className="text-sm font-semibold uppercase tracking-widest text-brand">
-          Sonoriza
-        </p>
-        <h1 className="text-3xl font-bold">Não foi possível entrar</h1>
-        <p className="text-neutral-600 dark:text-neutral-400">{message}</p>
-      </div>
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden px-5 py-12">
+      <div className="pointer-events-none absolute -left-20 top-20 h-72 w-72 rounded-full bg-brand-light/10 blur-3xl" />
+      <div className="pointer-events-none absolute -right-20 bottom-10 h-72 w-72 rounded-full bg-accent/10 blur-3xl" />
 
-      <div>
-        <Link
-          href="/"
-          className="inline-flex rounded-full bg-brand px-5 py-2 font-medium text-white hover:bg-brand-dark"
-        >
+      <section className="glass-panel relative w-full max-w-xl rounded-[2rem] p-6 sm:p-9">
+        <BrandLogo compact />
+
+        <div className="mt-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-2xl font-black text-accent">
+          !
+        </div>
+
+        <p className="mt-6 text-xs font-bold uppercase tracking-[0.16em] text-brand">
+          Autenticação
+        </p>
+        <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-brand-dark sm:text-4xl">
+          Não foi possível entrar
+        </h1>
+        <p className="mt-4 leading-7 text-muted">{message}</p>
+
+        {errorCode && (
+          <p className="mt-3 text-xs text-muted/75">
+            Código: <code className="rounded bg-canvas px-1.5 py-0.5">{errorCode}</code>
+          </p>
+        )}
+
+        <Link href="/" className="primary-button mt-8">
           Voltar ao início
+          <span aria-hidden="true">→</span>
         </Link>
-      </div>
+      </section>
     </main>
   );
 }
