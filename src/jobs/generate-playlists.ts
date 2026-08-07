@@ -36,6 +36,7 @@ type LogLine = { level: "INFO" | "WARN" | "ERROR"; message: string; data?: unkno
 type ResolvedTargetDuration = {
   durationMs: number;
   calendar: CalendarDurationResult | null;
+  podcastEpisodeMaxDurationMs: number | null;
 };
 
 /**
@@ -43,7 +44,7 @@ type ResolvedTargetDuration = {
  *   1. build candidate pools from the user's Spotify sources;
  *   2. resolve each target's duration (fixed or from the calendar);
  *   3. plan every target in priority order (cross-playlist exclusivity);
- *   4. validate plan quality before any real Spotify write;
+ *   4. validate plan quality and podcast-duration limits before any real Spotify write;
  *   5. apply the plans to Spotify (unless simulating);
  *   6. persist the run, its items, logs and a structured summary.
  *
@@ -120,7 +121,7 @@ export async function generatePlaylists(
             level: "INFO",
             message: `Target "${target.name}" has no eligible calendar events → will be cleared`,
           });
-          runTargets.push(toRunTarget(target, 0));
+          runTargets.push(toRunTarget(target, 0, null));
         } else {
           log({
             level: "INFO",
@@ -131,7 +132,13 @@ export async function generatePlaylists(
         continue;
       }
 
-      runTargets.push(toRunTarget(target, durationMs));
+      runTargets.push(
+        toRunTarget(
+          target,
+          durationMs,
+          resolved.podcastEpisodeMaxDurationMs,
+        ),
+      );
     }
 
     // --- 3. Plan (priority order, shared reservation) ----------------------
@@ -169,6 +176,39 @@ export async function generatePlaylists(
       return { runId: run.id, status };
     }
 
+    // Revalidate every selected podcast against the freshly resolved limit for
+    // this real run before any Spotify create/replace operation can happen.
+    const durationLimitViolations = plan.targets.flatMap((planned) => {
+      const maxDurationMs =
+        resolvedDurationByTargetId.get(planned.targetPlaylistId)
+          ?.podcastEpisodeMaxDurationMs ?? null;
+      if (maxDurationMs === null) return [];
+
+      return planned.result.items
+        .filter(
+          (item) =>
+            item.type === "PODCAST" &&
+            Math.max(0, item.durationMs) > maxDurationMs,
+        )
+        .map((item) => ({
+          targetPlaylistId: planned.targetPlaylistId,
+          targetName: planned.name,
+          uri: item.uri,
+          durationMs: item.durationMs,
+          maxDurationMs,
+        }));
+    });
+
+    if (!simulate && durationLimitViolations.length > 0) {
+      status = "FAILED";
+      summary.podcastDurationLimitViolations = durationLimitViolations;
+      const error =
+        "A geração foi bloqueada antes de alterar o Spotify porque um podcast excedeu a duração máxima efetiva do destino.";
+      log({ level: "ERROR", message: error, data: durationLimitViolations });
+      await finalizeRun(run.id, status, logs, summary, error);
+      return { runId: run.id, status };
+    }
+
     // --- 4 & 5. Apply + persist per target ---------------------------------
     const targetById = new Map(targets.map((t) => [t.id, t]));
     let anyFailed = false;
@@ -178,6 +218,8 @@ export async function generatePlaylists(
       const { items, stats } = planned.result;
       const resolvedDuration = resolvedDurationByTargetId.get(target.id);
       const calendar = resolvedDuration?.calendar ?? null;
+      const podcastEpisodeMaxDurationMs =
+        resolvedDuration?.podcastEpisodeMaxDurationMs ?? null;
 
       const targetSummary: Record<string, unknown> = {
         name: target.name,
@@ -185,6 +227,12 @@ export async function generatePlaylists(
         ...stats,
         totalMinutes: Math.round(stats.totalDurationMs / 60000),
         qualityReason: stats.mixQualityPassed ? null : qualityReason(stats),
+        podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,
+        podcastEpisodeMaxDurationMs,
+        podcastEpisodeMaxDurationMinutes:
+          podcastEpisodeMaxDurationMs === null
+            ? null
+            : Math.round(podcastEpisodeMaxDurationMs / 60000),
         ...(calendar
           ? {
               calendarEventCount: calendar.matchedEvents,
@@ -192,6 +240,9 @@ export async function generatePlaylists(
               calendarEventFilterMode: calendar.filterMode,
               calendarEventMarker: calendar.marker,
               calendarDurationMinutes: Math.round(calendar.durationMs / 60000),
+              calendarMaxEventDurationMinutes: Math.round(
+                calendar.maxEventDurationMs / 60000,
+              ),
             }
           : {}),
       };
@@ -338,9 +389,15 @@ async function resolveTargetDuration(
   log: (line: LogLine) => void,
 ): Promise<ResolvedTargetDuration> {
   if (target.durationMode === "FIXED") {
+    const podcastEpisodeMaxDurationMs = resolvePodcastEpisodeMaxDurationMs(
+      target,
+      null,
+    );
+    logPodcastEpisodeMaxDuration(target, podcastEpisodeMaxDurationMs, log);
     return {
       durationMs: (target.fixedDurationSeconds ?? 0) * 1000,
       calendar: null,
+      podcastEpisodeMaxDurationMs,
     };
   }
 
@@ -355,20 +412,86 @@ async function resolveTargetDuration(
 
   log({
     level: "INFO",
-    message: `Calendar duration for "${target.name}": ${calendar.matchedEvents}/${calendar.timedEvents} events (${filterDescription}), ${Math.round(calendar.durationMs / 60000)} min`,
+    message: `Calendar duration for "${target.name}": ${calendar.matchedEvents}/${calendar.timedEvents} events (${filterDescription}), ${Math.round(calendar.durationMs / 60000)} min total, largest ${Math.round(calendar.maxEventDurationMs / 60000)} min`,
     data: {
       matchedEvents: calendar.matchedEvents,
       timedEvents: calendar.timedEvents,
       filterMode: calendar.filterMode,
       marker: calendar.marker,
       durationMs: calendar.durationMs,
+      maxEventDurationMs: calendar.maxEventDurationMs,
     },
   });
 
-  return { durationMs: calendar.durationMs, calendar };
+  const podcastEpisodeMaxDurationMs = resolvePodcastEpisodeMaxDurationMs(
+    target,
+    calendar,
+  );
+  logPodcastEpisodeMaxDuration(target, podcastEpisodeMaxDurationMs, log);
+
+  return {
+    durationMs: calendar.durationMs,
+    calendar,
+    podcastEpisodeMaxDurationMs,
+  };
 }
 
-function toRunTarget(target: TargetPlaylist, durationMs: number): RunTarget {
+function resolvePodcastEpisodeMaxDurationMs(
+  target: TargetPlaylist,
+  calendar: CalendarDurationResult | null,
+): number | null {
+  if (target.podcastEpisodeMaxDurationMode === "NONE") return null;
+
+  if (target.podcastEpisodeMaxDurationMode === "FIXED") {
+    const seconds = target.podcastEpisodeMaxDurationSeconds ?? 0;
+    if (seconds <= 0) {
+      throw new Error(
+        `Target "${target.name}" has invalid fixed podcast episode duration`,
+      );
+    }
+    return seconds * 1000;
+  }
+
+  if (target.durationMode !== "CALENDAR") {
+    throw new Error(
+      `Target "${target.name}" uses CALENDAR_MAX_EVENT outside CALENDAR duration mode`,
+    );
+  }
+
+  if (!calendar || calendar.matchedEvents <= 0 || calendar.maxEventDurationMs <= 0) {
+    return null;
+  }
+
+  return calendar.maxEventDurationMs;
+}
+
+function logPodcastEpisodeMaxDuration(
+  target: TargetPlaylist,
+  effectiveMaxDurationMs: number | null,
+  log: (line: LogLine) => void,
+) {
+  const configured = target.podcastEpisodeMaxDurationMode;
+  const effective =
+    effectiveMaxDurationMs === null
+      ? "no effective limit"
+      : `${Math.round(effectiveMaxDurationMs / 60000)} min`;
+
+  log({
+    level: "INFO",
+    message: `Podcast episode duration for "${target.name}": ${configured} → ${effective}`,
+    data: {
+      mode: configured,
+      configuredSeconds: target.podcastEpisodeMaxDurationSeconds,
+      effectiveMaxDurationMs,
+    },
+  });
+}
+
+function toRunTarget(
+  target: TargetPlaylist,
+  durationMs: number,
+  maxPodcastDurationMs: number | null,
+): RunTarget {
   return {
     targetPlaylistId: target.id,
     name: target.name,
@@ -378,6 +501,7 @@ function toRunTarget(target: TargetPlaylist, durationMs: number): RunTarget {
       podcastPercent: target.podcastPercent,
       sequencePattern: parseSequencePattern(target.sequencePattern),
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,
+      maxPodcastDurationMs,
     },
   };
 }
@@ -438,7 +562,7 @@ function qualityReason(stats: {
     return "as fontes elegíveis terminaram antes de preencher a duração planejada";
   }
   if (stats.podcastShortfallMs > 0) {
-    return `a meta de ${stats.requestedPodcastPercent}% de podcast ficou em ${stats.actualPodcastPercent}% após aplicar fontes e limites por programa`;
+    return `a meta de ${stats.requestedPodcastPercent}% de podcast ficou em ${stats.actualPodcastPercent}% após aplicar fontes, duração máxima e limites por programa`;
   }
   if (stats.musicShortfallMs > 0) {
     return `a parcela de música ficou abaixo da regra; o plano terminou com ${stats.actualPodcastPercent}% de podcast`;
