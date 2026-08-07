@@ -1,0 +1,348 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+
+import { ReviewSimulationButton } from "@/components/ReviewSimulationButton";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import {
+  assessConfiguration,
+  getFirstRunGate,
+} from "@/services/configuration-readiness";
+
+type PageProps = {
+  searchParams: Promise<{ run?: string }>;
+};
+
+type SimulationTargetSummary = {
+  name: string;
+  planned: number | null;
+  totalMinutes: number | null;
+  musicCount: number | null;
+  podcastCount: number | null;
+  unfilledSlots: number | null;
+  poolExhausted: boolean | null;
+  error: string | null;
+};
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function booleanValue(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return [];
+  const targets = (summary as Record<string, unknown>).targets;
+  if (!Array.isArray(targets)) return [];
+
+  return targets.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const value = entry as Record<string, unknown>;
+    if (typeof value.name !== "string") return [];
+
+    return [
+      {
+        name: value.name,
+        planned: numberValue(value.planned),
+        totalMinutes: numberValue(value.totalMinutes),
+        musicCount: numberValue(value.musicCount),
+        podcastCount: numberValue(value.podcastCount),
+        unfilledSlots: numberValue(value.unfilledSlots),
+        poolExhausted: booleanValue(value.poolExhausted),
+        error: typeof value.error === "string" ? value.error : null,
+      },
+    ];
+  });
+}
+
+function readSkipped(summary: unknown): string[] {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return [];
+  const skipped = (summary as Record<string, unknown>).skipped;
+  return Array.isArray(skipped) ? skipped.filter((value): value is string => typeof value === "string") : [];
+}
+
+function durationLabel(seconds: number | null) {
+  if (!seconds) return "Duração fixa inválida";
+  if (seconds % 3600 === 0) {
+    const hours = seconds / 3600;
+    return `${hours} ${hours === 1 ? "hora" : "horas"}`;
+  }
+  return `${Math.round(seconds / 60)} minutos`;
+}
+
+function emptyBehaviorLabel(value: "CLEAR" | "KEEP" | "SKIP") {
+  if (value === "CLEAR") return "esvaziar playlist";
+  if (value === "KEEP") return "manter playlist";
+  return "não tocar na playlist";
+}
+
+export default async function ConfigurationReviewPage({ searchParams }: PageProps) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+
+  const params = await searchParams;
+  const assessment = await assessConfiguration(session.user.id);
+  const gate = await getFirstRunGate(session.user.id, assessment);
+
+  const simulation = params.run
+    ? await prisma.generationRun.findFirst({
+        where: {
+          id: params.run,
+          userId: session.user.id,
+          simulation: true,
+        },
+        select: {
+          id: true,
+          status: true,
+          startedAt: true,
+          finishedAt: true,
+          error: true,
+          summary: true,
+          logs: {
+            orderBy: { createdAt: "asc" },
+            select: { level: true, message: true },
+          },
+        },
+      })
+    : null;
+
+  const simulatedTargets = readSimulationTargets(simulation?.summary);
+  const skippedTargets = readSkipped(simulation?.summary);
+  const ready = assessment.issues.length === 0;
+
+  return (
+    <main className="relative min-h-screen overflow-hidden bg-[#0b021f] px-5 py-8 text-white sm:px-8 lg:px-10">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_5%,rgba(126,34,206,0.3),transparent_31rem),radial-gradient(circle_at_90%_10%,rgba(255,107,0,0.12),transparent_25rem),linear-gradient(180deg,#12032f_0%,#0b021f_55%,#090119_100%)]" />
+
+      <div className="relative mx-auto max-w-5xl space-y-6">
+        <Link
+          href="/dashboard/configuracao"
+          className="inline-flex items-center gap-2 text-sm font-bold text-violet-300 transition hover:text-white"
+        >
+          <span aria-hidden="true">←</span>
+          Central de configuração
+        </Link>
+
+        <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+          <div className="max-w-3xl">
+            <p className="text-xs font-black uppercase tracking-[0.17em] text-orange-400">CONFIG-04</p>
+            <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] sm:text-4xl">Revisar e testar</h1>
+            <p className="mt-3 text-sm leading-6 text-violet-200/75 sm:text-base">
+              Confira tudo o que o Sonoriza vai usar. A simulação monta o plano e registra o resultado, mas não altera nenhuma playlist no Spotify.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-violet-400/20 bg-violet-950/45 px-4 py-3 text-sm">
+            <p className="font-black text-white">Conta atual</p>
+            <p className="mt-1 text-violet-200/75">{session.user.email}</p>
+          </div>
+        </header>
+
+        <section
+          className={`rounded-[1.75rem] border p-5 sm:p-6 ${
+            ready
+              ? "border-emerald-400/25 bg-emerald-950/20"
+              : "border-orange-400/25 bg-orange-950/15"
+          }`}
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className={`text-xs font-black uppercase tracking-[0.15em] ${ready ? "text-emerald-300" : "text-orange-300"}`}>
+                Estado geral
+              </p>
+              <h2 className="mt-1 text-xl font-black">{ready ? "Pronto para simular" : "Existem pendências antes da simulação"}</h2>
+              <p className="mt-2 text-sm text-violet-100/70">
+                {ready
+                  ? gate.realRunAllowed && gate.requiresSimulation
+                    ? "A simulação atual corresponde à configuração. A primeira geração real está liberada."
+                    : gate.requiresSimulation
+                      ? gate.reason
+                      : "Esta conta já possui uma geração real bem-sucedida."
+                  : "Corrija os itens abaixo; a simulação e a primeira execução real permanecem bloqueadas até lá."}
+              </p>
+            </div>
+            <ReviewSimulationButton disabled={!ready} />
+          </div>
+        </section>
+
+        {assessment.issues.length > 0 && (
+          <section className="rounded-[1.75rem] border border-orange-400/25 bg-[linear-gradient(145deg,rgba(70,26,14,0.5),rgba(32,8,55,0.9))] p-5 sm:p-6">
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-orange-300">Pendências</p>
+            <h2 className="mt-1 text-xl font-black">Antes de testar, ajuste estes pontos</h2>
+            <div className="mt-4 space-y-3">
+              {assessment.issues.map((issue) => (
+                <div key={issue.code} className="flex flex-col gap-3 rounded-2xl border border-orange-300/15 bg-black/15 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm font-semibold leading-6 text-orange-50/90">{issue.message}</p>
+                  <Link href={issue.href} className="shrink-0 text-sm font-black text-orange-300 hover:text-orange-200">
+                    Corrigir →
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <div className="grid gap-5 md:grid-cols-2">
+          <section className="rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-5 sm:p-6">
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">Conexões</p>
+            <h2 className="mt-1 text-xl font-black">Contas conectadas</h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-violet-400/20 bg-violet-950/35 p-4">
+                <p className="font-black">Google Agenda</p>
+                <p className={`mt-1 text-sm font-semibold ${assessment.hasGoogle ? "text-emerald-300" : "text-orange-300"}`}>
+                  {assessment.hasGoogle ? "Conectado ✓" : "Pendente"}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-violet-400/20 bg-violet-950/35 p-4">
+                <p className="font-black">Spotify</p>
+                <p className={`mt-1 text-sm font-semibold ${assessment.hasSpotify ? "text-emerald-300" : "text-orange-300"}`}>
+                  {assessment.hasSpotify ? "Conectado ✓" : "Pendente"}
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-5 sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">Calendários</p>
+                <h2 className="mt-1 text-xl font-black">Tempo e viagens</h2>
+              </div>
+              <Link href="/dashboard/configuracao/calendarios" className="text-sm font-black text-orange-300 hover:text-orange-200">Editar</Link>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {assessment.calendars.length > 0 ? (
+                assessment.calendars.map((calendar) => (
+                  <span key={calendar.id} className="rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1.5 text-xs font-bold text-violet-100">
+                    {calendar.summary ?? "Calendário"}{calendar.usedForTrips ? " · viagens" : ""}
+                  </span>
+                ))
+              ) : (
+                <p className="text-sm text-violet-200/65">Nenhum calendário selecionado.</p>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <section className="rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-5 sm:p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.15em] text-orange-400">Fontes</p>
+              <h2 className="mt-1 text-xl font-black">Conteúdo que alimenta o Sonoriza</h2>
+            </div>
+            <Link href="/dashboard/configuracao/fontes" className="text-sm font-black text-orange-300 hover:text-orange-200">Editar</Link>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {(["MUSIC", "PODCAST"] as const).map((kind) => {
+              const entries = assessment.sources.filter((source) => source.kind === kind);
+              return (
+                <div key={kind} className="rounded-2xl border border-violet-400/20 bg-violet-950/35 p-4">
+                  <p className="font-black">{kind === "MUSIC" ? "Música" : "Podcasts"}</p>
+                  <div className="mt-3 space-y-2">
+                    {entries.length > 0 ? entries.map((source) => (
+                      <p key={source.id} className="text-sm text-violet-100/80">• {source.name ?? (source.spotifyType === "SHOW" ? "Programa do Spotify" : "Playlist do Spotify")}</p>
+                    )) : <p className="text-sm text-violet-200/55">Nenhuma fonte ativa.</p>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-5 sm:p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">Destinos</p>
+              <h2 className="mt-1 text-xl font-black">Ordem e regras de geração</h2>
+            </div>
+            <Link href="/dashboard/configuracao/destinos" className="text-sm font-black text-orange-300 hover:text-orange-200">Editar</Link>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {assessment.targets.length > 0 ? assessment.targets.map((target, index) => (
+              <article key={target.id} className="rounded-2xl border border-violet-400/20 bg-violet-950/35 p-4 sm:p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.12em] text-orange-300">{index + 1}ª na geração</p>
+                    <h3 className="mt-1 text-lg font-black">{target.name}</h3>
+                  </div>
+                  <span className="w-fit rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-black text-emerald-300">Ativa</span>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-violet-100/75">
+                  {target.durationMode === "CALENDAR" ? "Tempo calculado pelas viagens" : `Duração fixa: ${durationLabel(target.fixedDurationSeconds)}`}
+                  {target.durationMode === "CALENDAR" ? ` · sem viagem: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}` : ""}
+                  {` · ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-violet-200/75">
+                  <span>Sequência:</span>
+                  {target.sequence.map((entry, sequenceIndex) => (
+                    <span key={`${target.id}-${sequenceIndex}`} className="rounded-full border border-violet-300/20 bg-violet-500/10 px-2.5 py-1 font-bold">
+                      {entry === "MUSIC" ? "Música" : "Podcast"}
+                    </span>
+                  ))}
+                  <span>· máximo {target.maxEpisodesPerProgram} {target.maxEpisodesPerProgram === 1 ? "episódio" : "episódios"} do mesmo programa</span>
+                </div>
+              </article>
+            )) : <p className="text-sm text-violet-200/65">Nenhum destino ativo.</p>}
+          </div>
+        </section>
+
+        {simulation && (
+          <section className={`rounded-[1.75rem] border p-5 sm:p-6 ${simulation.status === "SUCCESS" ? "border-emerald-400/25 bg-emerald-950/20" : "border-orange-400/25 bg-orange-950/15"}`}>
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-orange-300">Resultado da simulação</p>
+            <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-xl font-black">{simulation.status === "SUCCESS" ? "Simulação concluída" : `Simulação: ${simulation.status}`}</h2>
+              <span className="rounded-full border border-violet-300/20 bg-violet-950/40 px-3 py-1.5 text-xs font-bold text-violet-200">
+                {new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(simulation.startedAt)}
+              </span>
+            </div>
+            <p className="mt-2 text-sm font-semibold text-emerald-200">Nada foi aplicado ao Spotify.</p>
+
+            {simulation.error && <p className="mt-3 rounded-2xl border border-red-400/25 bg-red-950/35 p-4 text-sm text-red-200">{simulation.error}</p>}
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {simulatedTargets.map((target) => (
+                <article key={target.name} className="rounded-2xl border border-violet-300/15 bg-black/15 p-4">
+                  <h3 className="font-black">{target.name}</h3>
+                  {target.error ? (
+                    <p className="mt-2 text-sm text-red-200">{target.error}</p>
+                  ) : (
+                    <p className="mt-2 text-sm leading-6 text-violet-100/75">
+                      {target.planned ?? 0} itens · {target.totalMinutes ?? 0} min
+                      {target.musicCount !== null ? ` · ${target.musicCount} músicas` : ""}
+                      {target.podcastCount !== null ? ` · ${target.podcastCount} podcasts` : ""}
+                    </p>
+                  )}
+                  {target.poolExhausted && <p className="mt-2 text-xs font-semibold text-orange-300">A fonte de conteúdo terminou antes de preencher todo o tempo planejado.</p>}
+                  {(target.unfilledSlots ?? 0) > 0 && <p className="mt-1 text-xs text-orange-200/80">{target.unfilledSlots} posições da sequência ficaram sem conteúdo.</p>}
+                </article>
+              ))}
+            </div>
+
+            {skippedTargets.length > 0 && (
+              <p className="mt-4 text-sm text-violet-100/70">Sem alteração nesta simulação: {skippedTargets.join(", ")}.</p>
+            )}
+
+            {simulation.logs.some((log) => log.level === "WARN" || log.level === "ERROR") && (
+              <details className="mt-4 rounded-2xl border border-violet-300/15 bg-black/15 p-4">
+                <summary className="cursor-pointer font-black text-violet-100">Avisos técnicos da simulação</summary>
+                <div className="mt-3 space-y-2 text-sm text-violet-200/75">
+                  {simulation.logs.filter((log) => log.level === "WARN" || log.level === "ERROR").map((log, index) => (
+                    <p key={`${log.level}-${index}`}>{log.level === "ERROR" ? "Erro" : "Aviso"}: {log.message}</p>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {simulation.status === "SUCCESS" && gate.realRunAllowed && (
+              <Link href="/dashboard" className="mt-5 inline-flex items-center gap-2 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm font-black text-emerald-200 hover:bg-emerald-400/15">
+                Primeira geração liberada · voltar ao painel →
+              </Link>
+            )}
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}
