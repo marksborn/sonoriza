@@ -1,75 +1,50 @@
+import Image from "next/image";
+
+const SONORIZA_MARK =
+  "data:image/webp;base64,UklGRgQQAABXRUJQVlA4WAoAAAAQAAAAdgAAfwAAQUxQSIsCAAABoIRtkyHZ+iOzjm0bK13bd+d7l7Zt2/bOtm3btm2zMyL+4+55bsb6RMQEoF1pBJBldrv89Y9Yw/LOY6evPwpAk9C1GcDyx7+irOoPd24xEMjSBSmh2fIpklQ1r4ObOskvz5oE5I41wKavkl6MdXVV8rcD+yJ3RjKm30SqssZeyLfXhkgHRLDVj1Rjrb2QxwtSWwn5YlJZczM+MBS5jZRwDYuz8i2+NBppkQS4hi3Wv/DdCUiLIHnYNWwxwsJXh0haWMb1bDHGwgelkQVlbGTFg2CLxyAvIKVRP9EYpReujDxfxpVUxml8t08SIGNVKiMt3BsNkPBgMG5f9hHJWJHGWJUHITe4hCUY848HC8b97h4MzdcU2YbKaAsvBa7zEo7xzaEjP6CFQ/47YxljwMb1N6GFdP0h1JCeeJEe0mv30UJ65xJqSG9fEdXli/232H+duTSq64J69xV6SC/cH5Ly2iNoATmfX5se0mXLtBjStsNfpYXj/G0dXM4SjvJByL60cApPTlj6V3o0XlZExqUswai/MDBlWZMeDbdAFhn5kmsoxq+HiCBjY8ZSuBsaQHL3u6iBGN9pRAAkzPhRPQxXrouE+TNOZyuMwvMlYYHSjL2FJQjla4OSLAgJ096mhaD8bgUkLDxj9jtmASi/nYGMRc1YqUWtnvLbmWiw6Bn7GM3rVvjtTDRoN2OjD0ivmDs/XgUN2m8w8M6/aVYpN/KyoUjoZAbW+Jo09fqYkj9uCgg6K4Lx271PUtUq4qZOfn/RSEDQcQHGbf3QfySp5lZDNZJ8ZbspQBJ0oWQAaxz30Ces518vnr7hAEAEXSxJAIxee8cLXnj27bfe/j+/9fZDz9yzy85rJwBNQtsAVlA4IFINAACwOwCdASp3AIAAPj0YikOiIaEXCb44IAPEtgRIxgAXXbiYkfivyA/Kr5cq3/ZvvB+5f+X61FFHXT+K/L7++fDv1b+YB+kn+M/rX7o+7N69vMB/Qf7D/1/8H7un+w9UX9q/yvsAf1v/AelL7GP7c+wB+zfpX/td8G37c/tz7Ov/pzUnuM/y3Lfe0OVC/UcTe8S/mP+H/J7OAvVb6X/iPuM9ILUsvT/93+W/rLeGHQA/l/9T/3vqH/5v+F/LT29fmv+C/8XuD/yj+e/6T+2/4P/v/4r////VV7Mf2w9kX9bBTcNk7C3+8tGhyrIraG/lXqS3MBZmvY1h4BH1yTR25r5+wWVzMf5uNNPtz9Z36QXdq1z5+HCk7OohmtmilYfrH8Ahxs9XzoVfVIefx0G9hle8uqcRkQU7pfx1dXkXZBXgWU01T1kVT1SxsMeHtC7Ax/HxV55VE9xolGxBI55GqI/mrHiWuvm60UBh41XqCjYJDBX78QfZ0ZKYz80fUJykF0ayu7puc8+rgJ8GfM7AcMV9SEQuO+1DXcT71ge2Dh89dIci7oxdAaHmnPJqVc+XjNfhjQUVzO6/NZUEM372a40tPRK1FjftxxabB7q9AeJ0gjiBMCK5+bNnpOKtIWCJh2z1WQvYrAQAAbfGc+aNvJV6xtp9vzHb0c0SI3T7yUPB6Yu/obse1rluRFFkV1lzlaD7y4q8S80y06peR2bu86F6uBq617ciBAMioQ1Qsyql3bWtpGLzXxAIawJBUSd/yNf9iK4uvE6TTqDWxX1WGB7PieaAR5zYP6alWmRh2T+JfciG1z6KqAk3yFKTQIIj1ffz0rY24Ifkz4MBTVfYCFNyaehNd3uofJdGlzPXUyzUJ0SBgH3snGUynS2pagpG83MlB/hFur3xbBD3jfRFFKuqr3+SFXieVNSpYQ/35+zvyxoCjgZadInEV4FCXfCVbRvxIIMGIQz7RiDwWVHsCGIKLaeAfcHRvrARD5b/8DPQl/tucgHTF/pBOh5U3fce/DUTuO3/qcOIgld/jHPWtcdA7umOLJ1oz3dNiLHLAlrMfHtRIzlvL6v8RCcUCvrHZv/o/uDYhrGb1DohP8/y07AI84TCUEB0LHKpGXNaRTmgUwqmnEbVJxRQ0tlgFoRHdOoOFUJTcRVl+YbeB13/gOtg3Wn5AdrE5wN5X67ad7hYw4rBRz+wclA2BBq9NQqhASY1HUAbXqUuG68BJ35BM7snNW+rB8JTmwcW/yRAfZJEshDapuP+Qz/4fsdVzmTi+jVaRnUdrhagEcr48SMbtW/PGnR766t0CPr2760tXDSgpQ45PyQAAJFQGT5C1P9qOoaKB05X34eBWr2QAz2lEeGIDX6An/fRXo4H/6kniglfYtFrcGEpvDajq13n+gCzFu+4giH5o5x1Bluy1iXLRPl7Q9uRPsm5yQ/tQEbdBvZis4r+SF/8mz3EqGyYtmTnF/jg6+WCFmzN7K2qufnBtdoYR/nw4rPJV0t1r26nnzuckvcm5XL50vS0AjaI+VG+H0LZGh3VydU6DZyTeVdvl4hF7tNXLfWNRrBLVWTHwyO36SCQn9nT8VzmGWm6mGd7/32Q0IEVeTdLz454ZgXh1pk02xgigSmJEjp3FCQJg/5v/0xvEiLiNOi3PbLONNSiO8ktDyauvPah0x7PxSMXwf2m/pCCM8Wnh9fCCxaS2AVtj+XZQqr/Sif57VTFgRrCVt5ZbFMYOqajusx1Tm4DHjiSG32WLBMd9Ajjatyy0Ut+tyV0PHOAI00UFI4uoVx5VV8kvgUKXNGCjepReoFq3hCVWU/9yUPZFWrXgirgdI41HZFDrtZ2AJju++1itQLcLuc+MEwlSlnk/IZuzAPPq/qh0yKgFf2ACpPclCMnXkhA+hJ1aCSEEdUzlC0L7NltNYftwVSPpQJ3r5xqekgtSyyuen+NSRuhKpre8r39nhT7egcTsgSxkkwf/keDcwSYXv40kzCiH20KjrJjrJ/pJble65dVK+z7GOX7en0ywOIknDZw7b5kPSLV7SGvP0hAYrOp6dKZRSQgT86jExXFEHZ4kpRV8Eh2yCZ3nzCYuDJMqD8x/+Eyx58hmYIVZMenfM66iYK7ymeba/q2PA8j3W+P474qKctmxa1aWK4dm8WxHJ1lmDnnhq/i7J/k/zUcDuoojlTMPL/qTsX5vzPzLOktaa1wdxoB90rFP/w6O2njnWTR7q5Os4its8i2APkisbGT/9Wkty4TeIgOx6wDApizIJ6B+8RBdwkaQnelKNrt+N7PK50U/Kes8HosdhDRyCi8ScAKCEtz8D65XAxleqdJp3cj4WKjB5zr70IkdUulwxR4Gtor+BeLEd9jMfaeoO208OLll1ZEfV3GN39vCihmBO0R347ht/dTmFQtHvUcRm+NQ/Kwu7jwp9wSLXH7p6dVMmEBNguvWFLd74p7PBevx15hEQnVGLiQBp3X9m5Vw5O+ZaQZ+2sUsY9uw1AiZSkN5Sz7zsu4ou3K0zW8yQgTei1DCzXV0xeiD7+yaVaK4mdwWcTwHmShTM28HqydvTj3TBCOM0V+Sig6FVLaFz63YZtKrYRD8UzP2SOvJJc8XvLLbXaJItl6WzyWiPEtXXwVN2ptQs/4UcZNOWKTrLxw9wuITil2+Xh/kudj6eFDj3/3KzJUFGTw6jKdedBgmino0NWLa4jpCjVrFYLQLtbqT+BqQxwc4KmpwVsirDRzv2/Kl9wKMmAezL3nz6plPxjbTqB4pxi8fGbdF0aNRirpjuOH9E5tbuYuXi3T6llkdOOI+mEaHp534d78LUAuA4jS+gtFCWQxWm0H7EDgK3S/dmgwGprfdiwq+31BMEQZEdj7WA31xjlyDCGXw569QXoOKhyj76hWfkPA7sJrZl18oo+X8zfqqfjC9qwfIvDPc0ANX/oveBYQlJLztZP8kkrLkXs7XmaKvMfgCHQmE/NoZj2XtCjzDAndnahbtWcQ0lzJ+23OniUCPJ/oe2IaN9dvd4ReqXw6JlZKGSXtvvP8qXuyKIXr3kq+jMIb3pMPQFjkHq/pGkHioskXMziScXYXupoy/nAddB3fTsmR4k/MyBfgL7UvmFT18r4U8XP5xuENec5ioTT695FQXa6n7nyXn+KYao6XITF5K2NXmmaGZVvNT0I9rYu9EgIhuabxIvOjOLfEGtJzhRr8FVQ7fCaLb50ry+vpwZTfw3x7AWxZKEP+Dso0JBStcJCOYyusCdHP/6XI3QBXWHk92AL8enJdd/dqfhbmR6oPHcZfSelrm7dUfQP4wzvG+ANdst/kDapc3ud7JQzivMCbeFnoc7UIe92WW5LD2QhBd5+1zfShM7sx30rcu9Ux9cyTh4w/FabchzQdEb9RlV0/5h3uIzkI95IRyCtrHpgaIHpeqKYbbJ11q33jM920iBIp2fuGPqJoO86qStE6YtbLrMWqGpNt4gB4aUq75nxAjTwMmqg6YzkwMHhqgOspTXKO8H7SjsSxdonUrgf9msfnh8fDPXZfLVwHDAvkfp69BwPAfW3Eaa6BmduiX4BcX0fPSs0EpXv0H4yXJndALFm6Km4ShXsjNBKPgLFy7hurWZIQWH7J1Uixg49AGh26qhNWScm3LzIsQd2kzO0ABflmRrOUdWSicwk6K0aCZLyKa6iEBiR2/Nth+/EMuRZjJmPRUmvMISpBi344mKakrzfUb6Hg23CqiOAd8HE//yilRvmmqBlAJL3f87p4/8QF35Q9iyB7v9kTT/wUFd3mlPJJCh8+B1zAllkA378CT/kz66AYaQxPPb5a1mDAW88LMq0uIdWGEBcLB8HEaEyd7EmR/fwPTXelKJxdDnwDWPyCogJkcWlzmeB8iCW++H2BU+gAus/USpTvYRCNbECdJ1Hz3RqDFn2V5/nmkYqmlbEX6rhFsmntzYPrVqHxWnhtb+EDrSdKJtBkI1NqNazRmoJruuy5kERMk8leBfeE2TzfhWJ8QCV759k2ZwLXRjXxnjV4+jYYNqzOPvs/j8YWfqAR1X+BZ0+taT7NYdxOGRRTNjb/qO/f5WZ2qaDHHlp3qFo5qbDE9O9neW1TnO0EBnZRlOPlsamPnVLJu7uIG8cffCHBIrWv8L+LXtC5layf5ShacZk5rVgHQ7Pawn/wpB+5F/hcN1bBWfQk08UeQoc3+tQsqGUzEOn7q6ENiMUta3cIAVe+jTYqEcfVg1ibTt7UKWlgf37H89jS/nJzaKU6CnYPtyL/rUnmK5Yan8RNPB4HQJT3/+rSHglj555P3duxs96AOW7/SEeSslOKi0UkgdD7RjWMoTN32gX+mQPIwcrC6p/xSxdH/ftjHF4a8kHLouNHQqKUobLwOKlEziYxMJJd5F1EKT4xauh1mnmsdch5Lv5j785S0YBZxWMAHrt/4//G8d9LUaIEaVL4GDti5ZJx93qW3TCEveDGiZVIQXd03QoWu9SnJapr+DNNhoFllxzTGfzBD7x+fe/mCcl5DdnHWx4kdMAWR3Uabpn4JVD8Ue3Sj6QZNb5GC9KuZvmgslLaCYAAAAA==";
+
 type BrandLogoProps = {
   compact?: boolean;
   className?: string;
+  variant?: "dark" | "light";
 };
 
 export function BrandMark({ className = "h-11 w-11" }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 64 64"
-      role="img"
-      aria-label="Símbolo do Sonoriza"
-      className={className}
-    >
-      <defs>
-        <linearGradient id="sonoriza-mark-gradient" x1="8" y1="8" x2="57" y2="58">
-          <stop offset="0" stopColor="#27106f" />
-          <stop offset="0.58" stopColor="#6724d9" />
-          <stop offset="1" stopColor="#922df2" />
-        </linearGradient>
-      </defs>
-
-      <rect x="2" y="2" width="60" height="60" rx="17" fill="url(#sonoriza-mark-gradient)" />
-      <rect
-        x="2.75"
-        y="2.75"
-        width="58.5"
-        height="58.5"
-        rx="16.25"
-        fill="none"
-        stroke="rgba(255,255,255,0.18)"
-        strokeWidth="1.5"
+    <span className={`relative inline-flex shrink-0 overflow-hidden ${className}`}>
+      <Image
+        src={SONORIZA_MARK}
+        alt="Símbolo do Sonoriza"
+        fill
+        unoptimized
+        sizes="48px"
+        className="object-contain"
       />
-
-      <path
-        d="M17 25.5c4.1-8.6 15.9-13 27.7-7.4 5.1 2.4 5.3 8.8.3 12.1L29.5 40.4"
-        fill="none"
-        stroke="#ffffff"
-        strokeWidth="7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M47 38.5c-4.1 8.6-15.9 13-27.7 7.4-5.1-2.4-5.3-8.8-.3-12.1l15.5-10.2"
-        fill="none"
-        stroke="#ff7200"
-        strokeWidth="7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-
-      <path d="M50.5 24.5v5" stroke="#ff982b" strokeWidth="2.8" strokeLinecap="round" />
-      <path d="M55 21.5v11" stroke="#ff982b" strokeWidth="2.8" strokeLinecap="round" />
-      <path d="M59.5 25.5v3" stroke="#ff982b" strokeWidth="2.8" strokeLinecap="round" />
-    </svg>
+    </span>
   );
 }
 
-export function BrandLogo({ compact = false, className = "" }: BrandLogoProps) {
+export function BrandLogo({
+  compact = false,
+  className = "",
+  variant = "dark",
+}: BrandLogoProps) {
+  const textColor = variant === "light" ? "text-white" : "text-brand-dark";
+
   return (
     <span className={`inline-flex items-center gap-3 ${className}`.trim()}>
-      <BrandMark className={compact ? "h-9 w-9" : "h-11 w-11"} />
+      <BrandMark className={compact ? "h-10 w-[2.35rem]" : "h-12 w-[2.82rem]"} />
       <span className="sr-only">Sonoriza</span>
       <span
         aria-hidden="true"
-        className={`font-extrabold leading-none tracking-[-0.045em] text-brand-dark ${
-          compact ? "text-xl" : "text-[1.75rem]"
+        className={`font-black leading-none tracking-[-0.05em] ${textColor} ${
+          compact ? "text-xl sm:text-2xl" : "text-[1.8rem]"
         }`}
       >
         Sonor
         <span className="relative inline-block">
           ı
-          <span className="absolute left-1/2 top-[0.05em] h-[0.22em] w-[0.22em] -translate-x-1/2 rounded-full bg-accent" />
+          <span className="absolute left-1/2 top-[-0.02em] h-[0.22em] w-[0.22em] -translate-x-1/2 rounded-full bg-accent" />
         </span>
         za
       </span>
