@@ -49,7 +49,7 @@ export function RunControls() {
           type="button"
           disabled={busy}
           onClick={() => run(false)}
-          className="primary-button w-full sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#ff6b00] to-[#ff8a00] px-5 py-3 font-black text-white shadow-[0_16px_36px_-18px_rgba(255,107,0,0.95)] transition hover:-translate-y-0.5 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 sm:w-auto"
         >
           <span
             aria-hidden="true"
@@ -66,7 +66,7 @@ export function RunControls() {
           type="button"
           disabled={busy}
           onClick={() => run(true)}
-          className="secondary-button w-full sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-400/50 bg-violet-950/40 px-5 py-3 font-bold text-violet-200 transition hover:-translate-y-0.5 hover:border-violet-300 hover:bg-violet-900/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 sm:w-auto"
         >
           <span aria-hidden="true">◇</span>
           Simular primeiro
@@ -78,8 +78,8 @@ export function RunControls() {
           role={state.status === "error" ? "alert" : "status"}
           className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${
             state.status === "error"
-              ? "border-red-200 bg-red-50 text-red-700"
-              : "border-brand/10 bg-brand-soft text-brand-dark"
+              ? "border-red-400/35 bg-red-950/45 text-red-200"
+              : "border-violet-400/25 bg-violet-950/50 text-violet-100"
           }`}
         >
           {state.message}
