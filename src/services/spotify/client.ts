@@ -7,6 +7,7 @@ const API = "https://api.spotify.com/v1";
 export interface SpotifyPlaylistSummary {
   id: string;
   name: string;
+  ownerId?: string;
   ownerName?: string;
   collaborative: boolean;
   public: boolean | null;
@@ -63,6 +64,7 @@ export class SpotifyClient {
         playlists.push({
           id: playlist.id,
           name: playlist.name,
+          ownerId: playlist.owner?.id,
           ownerName: playlist.owner?.display_name,
           collaborative: Boolean(playlist.collaborative),
           public: playlist.public ?? null,
@@ -195,6 +197,7 @@ interface PlaylistSummaryResponse {
   collaborative?: boolean;
   public?: boolean | null;
   owner?: {
+    id?: string;
     display_name?: string;
   };
 }
