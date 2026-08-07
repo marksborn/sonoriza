@@ -4,10 +4,24 @@ import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
 
+export interface SpotifyPlaylistSummary {
+  id: string;
+  name: string;
+  ownerName?: string;
+  collaborative: boolean;
+  public: boolean | null;
+}
+
+export interface SpotifyShowSummary {
+  id: string;
+  name: string;
+  publisher?: string;
+}
+
 /**
  * Thin Spotify Web API client scoped to a single user. It transparently
- * refreshes the access token and exposes just what the engine needs: read
- * source content and (re)write target playlists.
+ * refreshes the access token and exposes just what the engine and configuration
+ * UI need: discover source content and (re)write target playlists.
  *
  * NOTE: pagination is handled for the read endpoints. Episode availability and
  * market filtering are intentionally left simple for the MVP — see TODOs.
@@ -35,6 +49,51 @@ export class SpotifyClient {
     }
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
+  }
+
+  /** Playlists owned or followed by the current user. */
+  async listCurrentUserPlaylists(): Promise<SpotifyPlaylistSummary[]> {
+    const playlists: SpotifyPlaylistSummary[] = [];
+    let url: string | null = "/me/playlists?limit=50";
+
+    while (url) {
+      const page: SpotifyPage<PlaylistSummaryResponse> = await this.request(url);
+      for (const playlist of page.items) {
+        if (!playlist?.id || !playlist.name) continue;
+        playlists.push({
+          id: playlist.id,
+          name: playlist.name,
+          ownerName: playlist.owner?.display_name,
+          collaborative: Boolean(playlist.collaborative),
+          public: playlist.public ?? null,
+        });
+      }
+      url = page.next ? stripBase(page.next) : null;
+    }
+
+    return playlists;
+  }
+
+  /** Shows saved in the current user's library. Requires user-library-read. */
+  async listSavedShows(): Promise<SpotifyShowSummary[]> {
+    const shows: SpotifyShowSummary[] = [];
+    let url: string | null = "/me/shows?limit=50";
+
+    while (url) {
+      const page: SpotifyPage<SavedShowResponse> = await this.request(url);
+      for (const item of page.items) {
+        const show = item?.show;
+        if (!show?.id || !show.name) continue;
+        shows.push({
+          id: show.id,
+          name: show.name,
+          publisher: show.publisher,
+        });
+      }
+      url = page.next ? stripBase(page.next) : null;
+    }
+
+    return shows;
   }
 
   /** All non-local tracks of a playlist, mapped to music candidates. */
@@ -93,7 +152,7 @@ export class SpotifyClient {
   /** Creates a private playlist and returns its id. */
   async createPlaylist(name: string, description?: string): Promise<string> {
     const playlist = await this.request<{ id: string }>(
-      `/me/playlists`,
+      "/me/playlists",
       {
         method: "POST",
         body: JSON.stringify({ name, description, public: false }),
@@ -128,6 +187,24 @@ export class SpotifyClient {
 interface SpotifyPage<T> {
   items: T[];
   next: string | null;
+}
+
+interface PlaylistSummaryResponse {
+  id: string;
+  name: string;
+  collaborative?: boolean;
+  public?: boolean | null;
+  owner?: {
+    display_name?: string;
+  };
+}
+
+interface SavedShowResponse {
+  show: {
+    id: string;
+    name: string;
+    publisher?: string;
+  } | null;
 }
 
 interface PlaylistItem {

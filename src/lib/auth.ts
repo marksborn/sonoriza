@@ -6,7 +6,7 @@ import Spotify from "next-auth/providers/spotify";
 import { prisma } from "@/lib/prisma";
 
 // Scopes the engine needs. Google: read the calendar to compute trip durations.
-// Spotify: read source playlists/shows and create/modify the target playlists.
+// Spotify: discover source playlists/shows and create/modify target playlists.
 const GOOGLE_SCOPES = [
   "openid",
   "email",
@@ -16,6 +16,7 @@ const GOOGLE_SCOPES = [
 
 const SPOTIFY_SCOPES = [
   "user-read-email",
+  "user-library-read",
   "playlist-read-private",
   "playlist-read-collaborative",
   "playlist-modify-private",
@@ -42,9 +43,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Spotify({
       clientId: process.env.AUTH_SPOTIFY_ID,
       clientSecret: process.env.AUTH_SPOTIFY_SECRET,
-      // The Spotify provider currently exposes its default authorization
-      // endpoint as a string. Replacing it with params only drops the endpoint
-      // and makes Auth.js call new URL(undefined). Keep the endpoint explicit.
+      // The endpoint stays explicit because Auth.js loses it when authorization
+      // is replaced with params only. `user-library-read` lets CONFIG-02 list
+      // the user's saved podcast shows without exposing tokens to the browser.
       authorization: {
         url: "https://accounts.spotify.com/authorize",
         params: { scope: SPOTIFY_SCOPES },
