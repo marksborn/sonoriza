@@ -4,9 +4,14 @@ export {
   type CalendarEvent,
 } from "./client";
 export {
-  computeTripDurationMs,
+  computeCalendarDuration,
+  computeCalendarDurationMs,
+  matchesCalendarEventFilter,
   sumTimedDurationMs,
   dayBounds,
+  type CalendarEventFilter,
+  type CalendarEventFilterMode,
   type DayBounds,
+  type CalendarDurationResult,
 } from "./duration";
 export { getGoogleAccessToken } from "./token";

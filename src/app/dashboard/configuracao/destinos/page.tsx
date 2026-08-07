@@ -123,6 +123,12 @@ async function saveTarget(formData: FormData) {
   const emptyCalendarBehavior = String(
     formData.get("emptyCalendarBehavior") ?? "CLEAR",
   ).trim();
+  const calendarEventFilterMode = String(
+    formData.get("calendarEventFilterMode") ?? "ALL",
+  ).trim();
+  const calendarEventMarker = String(
+    formData.get("calendarEventMarker") ?? "",
+  ).trim();
   const podcastPercent = integerBetween(formData.get("podcastPercent"), 0, 100);
   const maxEpisodesPerProgram = integerBetween(
     formData.get("maxEpisodesPerProgram"),
@@ -154,15 +160,29 @@ async function saveTarget(formData: FormData) {
 
   if (durationMode === "CALENDAR" && !normalizedEmptyBehavior) fail("invalid");
 
+  const normalizedCalendarEventFilterMode =
+    calendarEventFilterMode === "ALL" || calendarEventFilterMode === "MARKER"
+      ? calendarEventFilterMode
+      : null;
+
+  if (durationMode === "CALENDAR" && !normalizedCalendarEventFilterMode) fail("invalid");
+  if (
+    durationMode === "CALENDAR" &&
+    normalizedCalendarEventFilterMode === "MARKER" &&
+    (!calendarEventMarker || calendarEventMarker.length > 80)
+  ) {
+    fail("marker");
+  }
+
   if (durationMode === "CALENDAR") {
-    const tripCalendarCount = await prisma.calendarSelection.count({
+    const durationCalendarCount = await prisma.calendarSelection.count({
       where: {
         userId,
         selected: true,
-        usedForTrips: true,
+        usedForDuration: true,
       },
     });
-    if (tripCalendarCount === 0) fail("calendar");
+    if (durationCalendarCount === 0) fail("calendar");
   }
 
   const existingTarget = id
@@ -225,6 +245,12 @@ async function saveTarget(formData: FormData) {
       durationMode === "FIXED" ? fixedDurationMinutes! * 60 : null,
     emptyCalendarBehavior:
       durationMode === "CALENDAR" ? normalizedEmptyBehavior! : "CLEAR",
+    calendarEventFilterMode:
+      durationMode === "CALENDAR" ? normalizedCalendarEventFilterMode! : "ALL",
+    calendarEventMarker:
+      durationMode === "CALENDAR" && normalizedCalendarEventFilterMode === "MARKER"
+        ? calendarEventMarker
+        : null,
     podcastPercent: podcastPercent!,
     sequencePattern,
     maxEpisodesPerProgram: maxEpisodesPerProgram!,
@@ -336,7 +362,7 @@ function durationLabel(target: {
   durationMode: string;
   fixedDurationSeconds: number | null;
 }) {
-  if (target.durationMode === "CALENDAR") return "Tempo das viagens";
+  if (target.durationMode === "CALENDAR") return "Baseada no calendário";
   const minutes = Math.max(1, Math.round((target.fixedDurationSeconds ?? 0) / 60));
   if (minutes >= 60 && minutes % 60 === 0) {
     const hours = minutes / 60;
@@ -358,7 +384,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
   const params = await searchParams;
   const userId = session.user.id;
 
-  const [spotifyAccount, targets, tripCalendars, playlistSources] = await Promise.all([
+  const [spotifyAccount, targets, durationCalendars, playlistSources] = await Promise.all([
     prisma.account.findFirst({
       where: { userId, provider: "spotify" },
       select: { id: true },
@@ -368,7 +394,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
       orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     }),
     prisma.calendarSelection.findMany({
-      where: { userId, selected: true, usedForTrips: true },
+      where: { userId, selected: true, usedForDuration: true },
       orderBy: { summary: "asc" },
       select: { googleCalendarId: true, summary: true },
     }),
@@ -400,8 +426,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
   const playlistNameById = new Map(
     ownedPlaylists.map((playlist) => [playlist.id, playlist.name]),
   );
-  const tripCalendarNames = tripCalendars.map(
-    (calendar) => calendar.summary?.trim() || "Calendário de viagens",
+  const durationCalendarNames = durationCalendars.map(
+    (calendar) => calendar.summary?.trim() || "Calendário",
   );
 
   function spotifyOptions(currentTargetSpotifyId?: string | null): SpotifyDestinationOption[] {
@@ -416,9 +442,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
 
   const errorMessage =
     params.error === "calendar"
-      ? "Para usar o tempo das viagens, marque ao menos um calendário como viagem no CONFIG-01."
-      : params.error === "duration"
-        ? "Informe uma duração fixa entre 1 minuto e 24 horas."
+      ? "Para usar duração baseada no calendário, habilite ao menos um calendário para duração no CONFIG-01."
+      : params.error === "marker"
+        ? "Informe um marcador de evento com até 80 caracteres."
+        : params.error === "duration"
+          ? "Informe uma duração fixa entre 1 minuto e 24 horas."
         : params.error === "source-conflict"
           ? "Essa playlist já é uma fonte de conteúdo. Escolha outro destino para evitar que a geração apague a própria fonte."
           : params.error === "target-conflict"
@@ -482,12 +510,12 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">
-                Tempo pelas viagens
+                Duração baseada no calendário
               </p>
-              <h2 className="mt-1 text-xl font-black">Calendários que entram no cálculo</h2>
-              {tripCalendarNames.length > 0 ? (
+              <h2 className="mt-1 text-xl font-black">Calendários que podem entrar no cálculo</h2>
+              {durationCalendarNames.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {tripCalendarNames.map((name) => (
+                  {durationCalendarNames.map((name) => (
                     <span
                       key={name}
                       className="rounded-full border border-violet-300/20 bg-violet-400/10 px-3 py-1.5 text-xs font-black text-violet-200"
@@ -498,7 +526,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 </div>
               ) : (
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-orange-200/80">
-                  Nenhum calendário está marcado para viagens. Destinos com duração pela agenda só poderão ser salvos depois dessa definição.
+                  Nenhum calendário está habilitado para duração. Destinos baseados no calendário só poderão ser salvos depois dessa definição.
                 </p>
               )}
             </div>
@@ -568,13 +596,15 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 saveAction={saveTarget}
                 submitLabel="Criar destino"
                 spotifyOptions={spotifyOptions()}
-                tripCalendarNames={tripCalendarNames}
+                durationCalendarNames={durationCalendarNames}
                 initial={{
                   name: "",
                   enabled: true,
                   durationMode: "FIXED",
                   fixedDurationMinutes: 45,
                   emptyCalendarBehavior: "KEEP",
+                  calendarEventFilterMode: "ALL",
+                  calendarEventMarker: "",
                   podcastPercent: 60,
                   sequencePattern: ["MUSIC", "PODCAST", "MUSIC", "MUSIC", "PODCAST"],
                   maxEpisodesPerProgram: 1,
@@ -650,7 +680,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                         <p className="mt-1 text-sm leading-6 text-violet-200/65">
                           {durationLabel(target)} · {target.podcastPercent}% podcast / {100 - target.podcastPercent}% música
                           {target.durationMode === "CALENDAR"
-                            ? ` · sem viagem: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}`
+                            ? ` · eventos: ${
+                                target.calendarEventFilterMode === "MARKER"
+                                  ? `marcador ${target.calendarEventMarker ?? "não informado"}`
+                                  : "todos"
+                              } · sem evento: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}`
                             : ""}
                         </p>
                         <p className="mt-1 text-xs text-violet-300/50">
@@ -707,7 +741,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           saveAction={saveTarget}
                           submitLabel="Salvar alterações"
                           spotifyOptions={spotifyOptions(target.spotifyPlaylistId)}
-                          tripCalendarNames={tripCalendarNames}
+                          durationCalendarNames={durationCalendarNames}
                           initial={{
                             id: target.id,
                             name: target.name,
@@ -718,6 +752,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               Math.round((target.fixedDurationSeconds ?? 45 * 60) / 60),
                             ),
                             emptyCalendarBehavior: target.emptyCalendarBehavior,
+                            calendarEventFilterMode: target.calendarEventFilterMode,
+                            calendarEventMarker: target.calendarEventMarker ?? "",
                             podcastPercent: target.podcastPercent,
                             sequencePattern,
                             maxEpisodesPerProgram: target.maxEpisodesPerProgram,

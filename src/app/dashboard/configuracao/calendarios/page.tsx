@@ -27,9 +27,9 @@ async function saveCalendarSelections(formData: FormData) {
       .getAll("selected")
       .filter((value): value is string => typeof value === "string"),
   );
-  const tripIds = new Set(
+  const durationIds = new Set(
     formData
-      .getAll("usedForTrips")
+      .getAll("usedForDuration")
       .filter((value): value is string => typeof value === "string"),
   );
 
@@ -57,12 +57,12 @@ async function saveCalendarSelections(formData: FormData) {
           googleCalendarId: calendar.id,
           summary: calendar.summary,
           selected,
-          usedForTrips: selected && tripIds.has(calendar.id),
+          usedForDuration: selected && durationIds.has(calendar.id),
         },
         update: {
           summary: calendar.summary,
           selected,
-          usedForTrips: selected && tripIds.has(calendar.id),
+          usedForDuration: selected && durationIds.has(calendar.id),
         },
       });
     }),
@@ -101,7 +101,7 @@ export default async function CalendarSettingsPage({
       select: {
         googleCalendarId: true,
         selected: true,
-        usedForTrips: true,
+        usedForDuration: true,
       },
     }),
   ]);
@@ -148,8 +148,7 @@ export default async function CalendarSettingsPage({
               Calendários do Google
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-violet-200/75 sm:text-base">
-              Escolha quais calendários o Sonoriza consulta e quais deles representam
-              viagens usadas para calcular a duração das playlists.
+              Escolha quais calendários o Sonoriza consulta e quais deles podem contribuir com eventos para calcular a duração das playlists.
             </p>
           </div>
 
@@ -208,16 +207,16 @@ export default async function CalendarSettingsPage({
               <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b border-violet-400/15 px-4 py-4 text-xs font-black uppercase tracking-[0.13em] text-violet-300 sm:px-6">
                 <span>Calendário</span>
                 <span className="text-center">Consultar</span>
-                <span className="text-center">Viagens</span>
+                <span className="text-center">Duração</span>
               </div>
 
               <div className="divide-y divide-violet-400/15">
                 {calendars.map((calendar, index) => {
                   const saved = selectionByCalendar.get(calendar.id);
                   const selected = saved?.selected ?? Boolean(calendar.primary);
-                  const usedForTrips = saved?.usedForTrips ?? false;
+                  const usedForDuration = saved?.usedForDuration ?? false;
                   const selectedInputId = `calendar-selected-${index}`;
-                  const tripsInputId = `calendar-trips-${index}`;
+                  const durationInputId = `calendar-trips-${index}`;
 
                   return (
                     <article
@@ -256,18 +255,18 @@ export default async function CalendarSettingsPage({
                       </label>
 
                       <label
-                        htmlFor={tripsInputId}
+                        htmlFor={durationInputId}
                         className="flex min-w-20 cursor-pointer flex-col items-center gap-2 text-xs font-bold text-violet-200/70"
                       >
                         <input
-                          id={tripsInputId}
-                          name="usedForTrips"
+                          id={durationInputId}
+                          name="usedForDuration"
                           value={calendar.id}
                           type="checkbox"
-                          defaultChecked={usedForTrips}
+                          defaultChecked={usedForDuration}
                           className="h-5 w-5 accent-orange-500"
                         />
-                        Viagem
+                        Duração
                       </label>
                     </article>
                   );
@@ -277,8 +276,7 @@ export default async function CalendarSettingsPage({
 
             <div className="flex flex-col gap-4 rounded-2xl border border-violet-400/20 bg-violet-950/45 p-5 sm:flex-row sm:items-center sm:justify-between">
               <p className="max-w-2xl text-sm leading-6 text-violet-200/65">
-                Um calendário marcado como viagem só será considerado quando também estiver
-                marcado para consulta. Essa regra é garantida novamente no servidor ao salvar.
+                Um calendário habilitado para duração só será considerado quando também estiver marcado para consulta. Essa regra é garantida novamente no servidor ao salvar.
               </p>
               <button
                 type="submit"

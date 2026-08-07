@@ -11,6 +11,7 @@ export interface CalendarSummary {
 export interface CalendarEvent {
   id: string;
   summary?: string;
+  description?: string;
   start: Date;
   end: Date;
   /** Whether this is an all-day event (no time component). */
@@ -81,6 +82,7 @@ interface RawEvent {
   id: string;
   status?: string;
   summary?: string;
+  description?: string;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
 }
@@ -90,6 +92,7 @@ function toEvent(raw: RawEvent): CalendarEvent | null {
     return {
       id: raw.id,
       summary: raw.summary,
+      description: raw.description,
       start: new Date(raw.start.dateTime),
       end: new Date(raw.end.dateTime),
       allDay: false,
@@ -99,6 +102,7 @@ function toEvent(raw: RawEvent): CalendarEvent | null {
     return {
       id: raw.id,
       summary: raw.summary,
+      description: raw.description,
       start: new Date(raw.start.date),
       end: new Date(raw.end.date),
       allDay: true,
