@@ -1,5 +1,6 @@
 export {
   SpotifyClient,
+  type PodcastCandidateBatch,
   type SpotifyPlaylistSummary,
   type SpotifyShowSummary,
 } from "./client";

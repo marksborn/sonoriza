@@ -98,8 +98,8 @@ model CalendarSelection {
 }
 
 // ---------------------------------------------------------------------------
-// Source content — Spotify playlists (music) and shows/playlists (podcasts)
-// that supply candidates to the planner.
+// Source content — Spotify playlists (music), shows and the user's native
+// "Your Episodes" library that supply candidates to the planner.
 // ---------------------------------------------------------------------------
 
 enum SourceKind {
@@ -110,18 +110,22 @@ enum SourceKind {
 enum SpotifySourceType {
   PLAYLIST
   SHOW
+  SAVED_EPISODES
 }
 
 model SourcePlaylist {
-  id          String            @id @default(cuid())
-  userId      String
-  kind        SourceKind
-  spotifyType SpotifySourceType
-  spotifyId   String
-  name        String?
-  enabled     Boolean           @default(true)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id            String            @id @default(cuid())
+  userId        String
+  kind          SourceKind
+  spotifyType   SpotifySourceType
+  spotifyId     String
+  name          String?
+  enabled       Boolean           @default(true)
+  // Podcast sources exclude fully played episodes by default. When enabled,
+  // fully played episodes can be selected again and use their full duration.
+  includePlayed Boolean           @default(false)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -253,6 +257,8 @@ model GenerationItem {
   subtitle         String?
   // Spotify show id for episodes — used to enforce max episodes per program.
   programId        String?
+  // Effective listening duration used by the planner. For a partially played
+  // podcast this is the remaining duration, not necessarily its catalog length.
   durationMs       Int         @default(0)
 
   run    GenerationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)

@@ -21,6 +21,8 @@ export interface PlanPlaylistInput {
   reserved?: Iterable<string>;
 }
 
+const MIX_QUALITY_TOLERANCE_POINTS = 10;
+
 const other = (t: ContentType): ContentType =>
   t === "PODCAST" ? "MUSIC" : "PODCAST";
 
@@ -30,7 +32,11 @@ const other = (t: ContentType): ContentType =>
  * Walks the (cyclic) sequence pattern and, for each slot, places the next
  * eligible candidate of the requested type. Proportion is honoured as a soft
  * per-type duration budget: once a type's budget is spent, its slots fall back
- * to the other type so the playlist still reaches the target duration.
+ * to the other type so the playlist can still reach the target duration.
+ *
+ * The result now makes any fallback visible through mix-quality metrics. This
+ * means the planner can still produce the best available plan, while CONFIG-04
+ * can refuse a first real run when that plan materially differs from the rule.
  *
  * Guarantees:
  *  - no URI is placed twice (nor any URI in `reserved`);
@@ -85,7 +91,13 @@ export function planPlaylist({
         ? [other(slotType), slotType]
         : [slotType, other(slotType)];
 
-    const pick = pickFirst(order, poolByType, used, programCounts, rules.maxEpisodesPerProgram);
+    const pick = pickFirst(
+      order,
+      poolByType,
+      used,
+      programCounts,
+      rules.maxEpisodesPerProgram,
+    );
 
     if (!pick) {
       unfilledSlots += 1;
@@ -101,7 +113,7 @@ export function planPlaylist({
     used.add(candidate.uri);
     newlyUsed.add(candidate.uri);
     if (candidate.type === "PODCAST") {
-      podcastDurationMs += candidate.durationMs;
+      podcastDurationMs += Math.max(0, candidate.durationMs);
       if (candidate.programId) {
         programCounts.set(
           candidate.programId,
@@ -109,12 +121,27 @@ export function planPlaylist({
         );
       }
     } else {
-      musicDurationMs += candidate.durationMs;
+      musicDurationMs += Math.max(0, candidate.durationMs);
     }
     stepsSincePlacement = 0;
   }
 
   const totalDurationMs = musicDurationMs + podcastDurationMs;
+  const poolExhausted = totalDurationMs < target;
+  const actualPodcastPercent =
+    totalDurationMs > 0
+      ? round1((podcastDurationMs / totalDurationMs) * 100)
+      : target === 0
+        ? podcastPercent
+        : 0;
+  const mixDeviationPoints = round1(
+    Math.abs(actualPodcastPercent - podcastPercent),
+  );
+  const podcastShortfallMs = Math.max(0, podcastBudget - podcastDurationMs);
+  const musicShortfallMs = Math.max(0, musicBudget - musicDurationMs);
+  const mixQualityPassed =
+    target === 0 ||
+    (!poolExhausted && mixDeviationPoints <= MIX_QUALITY_TOLERANCE_POINTS);
 
   return {
     items,
@@ -125,8 +152,14 @@ export function planPlaylist({
       podcastDurationMs,
       musicCount: items.filter((i) => i.type === "MUSIC").length,
       podcastCount: items.filter((i) => i.type === "PODCAST").length,
+      actualPodcastPercent,
+      requestedPodcastPercent: podcastPercent,
+      podcastShortfallMs,
+      musicShortfallMs,
+      mixDeviationPoints,
+      mixQualityPassed,
       unfilledSlots,
-      poolExhausted: totalDurationMs < target,
+      poolExhausted,
     },
   };
 }
@@ -158,6 +191,7 @@ function pickCandidate(
 ): Candidate | null {
   for (const candidate of pool) {
     if (used.has(candidate.uri)) continue;
+    if (candidate.durationMs <= 0) continue;
     if (candidate.type === "PODCAST" && candidate.programId) {
       const count = programCounts.get(candidate.programId) ?? 0;
       if (count >= maxEpisodesPerProgram) continue;
@@ -169,4 +203,8 @@ function pickCandidate(
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
 }
