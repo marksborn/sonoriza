@@ -26,7 +26,7 @@ export type ConfigurationAssessment = {
   calendars: Array<{
     id: string;
     summary: string | null;
-    usedForTrips: boolean;
+    usedForDuration: boolean;
   }>;
   sources: Array<{
     id: string;
@@ -44,6 +44,8 @@ export type ConfigurationAssessment = {
     durationMode: "FIXED" | "CALENDAR";
     fixedDurationSeconds: number | null;
     emptyCalendarBehavior: "CLEAR" | "KEEP" | "SKIP";
+    calendarEventFilterMode: "ALL" | "MARKER";
+    calendarEventMarker: string | null;
     podcastPercent: number;
     sequence: SequenceEntry[];
     maxEpisodesPerProgram: number;
@@ -92,11 +94,11 @@ export async function assessConfiguration(
     }),
     prisma.calendarSelection.findMany({
       where: { userId, selected: true },
-      orderBy: [{ usedForTrips: "desc" }, { summary: "asc" }],
+      orderBy: [{ usedForDuration: "desc" }, { summary: "asc" }],
       select: {
         googleCalendarId: true,
         summary: true,
-        usedForTrips: true,
+        usedForDuration: true,
       },
     }),
     prisma.sourcePlaylist.findMany({
@@ -122,6 +124,8 @@ export async function assessConfiguration(
         durationMode: true,
         fixedDurationSeconds: true,
         emptyCalendarBehavior: true,
+        calendarEventFilterMode: true,
+        calendarEventMarker: true,
         podcastPercent: true,
         sequencePattern: true,
         maxEpisodesPerProgram: true,
@@ -145,7 +149,7 @@ export async function assessConfiguration(
   const calendars = calendarsRaw.map((calendar) => ({
     id: calendar.googleCalendarId,
     summary: calendar.summary,
-    usedForTrips: calendar.usedForTrips,
+    usedForDuration: calendar.usedForDuration,
   }));
 
   const sources = sourcesRaw.map((source) => ({ ...source }));
@@ -157,6 +161,8 @@ export async function assessConfiguration(
     durationMode: target.durationMode,
     fixedDurationSeconds: target.fixedDurationSeconds,
     emptyCalendarBehavior: target.emptyCalendarBehavior,
+    calendarEventFilterMode: target.calendarEventFilterMode,
+    calendarEventMarker: target.calendarEventMarker,
     podcastPercent: target.podcastPercent,
     sequence: parseSequence(target.sequencePattern),
     maxEpisodesPerProgram: target.maxEpisodesPerProgram,
@@ -194,20 +200,20 @@ export async function assessConfiguration(
   const calendarTargets = targets.filter(
     (target) => target.durationMode === "CALENDAR",
   );
-  const tripCalendars = calendars.filter((calendar) => calendar.usedForTrips);
+  const durationCalendars = calendars.filter((calendar) => calendar.usedForDuration);
 
   if (calendarTargets.length > 0 && !hasGoogle) {
     pushIssue({
       code: "GOOGLE_REQUIRED",
-      message: "Conecte o Google para calcular o tempo das playlists que usam viagens.",
+      message: "Conecte o Google para calcular a duração das playlists baseadas no calendário.",
       href: "/dashboard/configuracao/calendarios",
     });
   }
 
-  if (calendarTargets.length > 0 && tripCalendars.length === 0) {
+  if (calendarTargets.length > 0 && durationCalendars.length === 0) {
     pushIssue({
-      code: "TRIP_CALENDAR_REQUIRED",
-      message: "Marque pelo menos um calendário para entrar no cálculo de viagens.",
+      code: "DURATION_CALENDAR_REQUIRED",
+      message: "Habilite pelo menos um calendário para entrar no cálculo de duração.",
       href: "/dashboard/configuracao/calendarios",
     });
   }
@@ -273,6 +279,18 @@ export async function assessConfiguration(
       });
     }
 
+    if (
+      rawTarget.durationMode === "CALENDAR" &&
+      rawTarget.calendarEventFilterMode === "MARKER" &&
+      !rawTarget.calendarEventMarker?.trim()
+    ) {
+      pushIssue({
+        code: `CALENDAR_MARKER_REQUIRED:${rawTarget.id}`,
+        message: `${label}: informe o marcador usado para selecionar eventos do calendário.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+    }
+
     if (!hasOnlyValidSequenceEntries(rawTarget.sequencePattern)) {
       pushIssue({
         code: `INVALID_SEQUENCE:${rawTarget.id}`,
@@ -328,7 +346,7 @@ export async function assessConfiguration(
     providers: [...providers]
       .filter((provider) => provider === "google" || provider === "spotify")
       .sort(),
-    tripCalendars: tripCalendars.map((calendar) => calendar.id).sort(),
+    durationCalendars: durationCalendars.map((calendar) => calendar.id).sort(),
     sources: sources
       .map((source) => ({
         kind: source.kind,
@@ -348,6 +366,8 @@ export async function assessConfiguration(
       durationMode: target.durationMode,
       fixedDurationSeconds: target.fixedDurationSeconds,
       emptyCalendarBehavior: target.emptyCalendarBehavior,
+      calendarEventFilterMode: target.calendarEventFilterMode,
+      calendarEventMarker: target.calendarEventMarker,
       podcastPercent: target.podcastPercent,
       sequence: target.sequence,
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,

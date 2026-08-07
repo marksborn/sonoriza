@@ -1,7 +1,10 @@
 import type { RunStatus, RunTrigger, TargetPlaylist } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { computeTripDurationMs } from "@/services/google-calendar";
+import {
+  computeCalendarDuration,
+  type CalendarDurationResult,
+} from "@/services/google-calendar";
 import {
   parseSequencePattern,
   planRun,
@@ -29,6 +32,11 @@ export interface GeneratePlaylistsResult {
 }
 
 type LogLine = { level: "INFO" | "WARN" | "ERROR"; message: string; data?: unknown };
+
+type ResolvedTargetDuration = {
+  durationMs: number;
+  calendar: CalendarDurationResult | null;
+};
 
 /**
  * End-to-end generation for one user:
@@ -84,36 +92,39 @@ export async function generatePlaylists(
       orderBy: { priority: "asc" },
     });
 
-    const tripCalendarIds = (
+    const durationCalendarIds = (
       await prisma.calendarSelection.findMany({
-        where: { userId, selected: true, usedForTrips: true },
+        where: { userId, selected: true, usedForDuration: true },
       })
     ).map((c) => c.googleCalendarId);
 
     const runTargets: RunTarget[] = [];
     const skipped: TargetPlaylist[] = [];
+    const resolvedDurationByTargetId = new Map<string, ResolvedTargetDuration>();
 
     for (const target of targets) {
-      const durationMs = await resolveTargetDurationMs(
+      const resolved = await resolveTargetDuration(
         userId,
         target,
-        tripCalendarIds,
+        durationCalendarIds,
         date,
         log,
       );
+      resolvedDurationByTargetId.set(target.id, resolved);
+      const durationMs = resolved.durationMs;
 
-      // Calendar target with no trips → apply the configured empty behaviour.
+      // Calendar target with no eligible events → apply the configured empty behaviour.
       if (target.durationMode === "CALENDAR" && durationMs <= 0) {
         if (target.emptyCalendarBehavior === "CLEAR") {
           log({
             level: "INFO",
-            message: `Target "${target.name}" has no trips → will be cleared`,
+            message: `Target "${target.name}" has no eligible calendar events → will be cleared`,
           });
           runTargets.push(toRunTarget(target, 0));
         } else {
           log({
             level: "INFO",
-            message: `Target "${target.name}" has no trips → ${target.emptyCalendarBehavior} (untouched)`,
+            message: `Target "${target.name}" has no eligible calendar events → ${target.emptyCalendarBehavior} (untouched)`,
           });
           skipped.push(target);
         }
@@ -165,6 +176,8 @@ export async function generatePlaylists(
     for (const planned of plan.targets) {
       const target = targetById.get(planned.targetPlaylistId)!;
       const { items, stats } = planned.result;
+      const resolvedDuration = resolvedDurationByTargetId.get(target.id);
+      const calendar = resolvedDuration?.calendar ?? null;
 
       const targetSummary: Record<string, unknown> = {
         name: target.name,
@@ -172,6 +185,15 @@ export async function generatePlaylists(
         ...stats,
         totalMinutes: Math.round(stats.totalDurationMs / 60000),
         qualityReason: stats.mixQualityPassed ? null : qualityReason(stats),
+        ...(calendar
+          ? {
+              calendarEventCount: calendar.matchedEvents,
+              calendarTimedEventCount: calendar.timedEvents,
+              calendarEventFilterMode: calendar.filterMode,
+              calendarEventMarker: calendar.marker,
+              calendarDurationMinutes: Math.round(calendar.durationMs / 60000),
+            }
+          : {}),
       };
 
       try {
@@ -304,22 +326,42 @@ function logPodcastBatch(
   }
 }
 
-async function resolveTargetDurationMs(
+async function resolveTargetDuration(
   userId: string,
   target: TargetPlaylist,
-  tripCalendarIds: string[],
+  durationCalendarIds: string[],
   date: Date,
   log: (line: LogLine) => void,
-): Promise<number> {
+): Promise<ResolvedTargetDuration> {
   if (target.durationMode === "FIXED") {
-    return (target.fixedDurationSeconds ?? 0) * 1000;
+    return {
+      durationMs: (target.fixedDurationSeconds ?? 0) * 1000,
+      calendar: null,
+    };
   }
-  const ms = await computeTripDurationMs(userId, tripCalendarIds, date);
+
+  const calendar = await computeCalendarDuration(userId, durationCalendarIds, date, {
+    mode: target.calendarEventFilterMode,
+    marker: target.calendarEventMarker,
+  });
+  const filterDescription =
+    calendar.filterMode === "MARKER"
+      ? `marker ${calendar.marker ?? "(missing)"}`
+      : "all timed events";
+
   log({
     level: "INFO",
-    message: `Calendar duration for "${target.name}": ${Math.round(ms / 60000)} min`,
+    message: `Calendar duration for "${target.name}": ${calendar.matchedEvents}/${calendar.timedEvents} events (${filterDescription}), ${Math.round(calendar.durationMs / 60000)} min`,
+    data: {
+      matchedEvents: calendar.matchedEvents,
+      timedEvents: calendar.timedEvents,
+      filterMode: calendar.filterMode,
+      marker: calendar.marker,
+      durationMs: calendar.durationMs,
+    },
   });
-  return ms;
+
+  return { durationMs: calendar.durationMs, calendar };
 }
 
 function toRunTarget(target: TargetPlaylist, durationMs: number): RunTarget {

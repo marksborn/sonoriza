@@ -5,6 +5,21 @@ export interface DayBounds {
   to: Date;
 }
 
+export type CalendarEventFilterMode = "ALL" | "MARKER";
+
+export interface CalendarEventFilter {
+  mode: CalendarEventFilterMode;
+  marker?: string | null;
+}
+
+export interface CalendarDurationResult {
+  durationMs: number;
+  matchedEvents: number;
+  timedEvents: number;
+  filterMode: CalendarEventFilterMode;
+  marker: string | null;
+}
+
 /** [start of day, start of next day) for the given date. */
 export function dayBounds(date: Date): DayBounds {
   const from = new Date(date);
@@ -14,32 +29,109 @@ export function dayBounds(date: Date): DayBounds {
   return { from, to };
 }
 
-/** Total milliseconds covered by timed events (all-day events are ignored). */
-export function sumTimedDurationMs(events: CalendarEvent[]): number {
+function normalizedMarker(marker: string | null | undefined): string | null {
+  const value = marker?.trim();
+  return value ? value.toLocaleLowerCase("pt-BR") : null;
+}
+
+/** Returns whether an event is eligible for a configured calendar filter. */
+export function matchesCalendarEventFilter(
+  event: CalendarEvent,
+  filter: CalendarEventFilter,
+): boolean {
+  if (event.allDay) return false;
+  if (filter.mode === "ALL") return true;
+
+  const marker = normalizedMarker(filter.marker);
+  if (!marker) return false;
+
+  const searchable = `${event.summary ?? ""}\n${event.description ?? ""}`.toLocaleLowerCase(
+    "pt-BR",
+  );
+  return searchable.includes(marker);
+}
+
+/** Total milliseconds covered by eligible timed events. */
+export function sumTimedDurationMs(
+  events: CalendarEvent[],
+  filter: CalendarEventFilter = { mode: "ALL" },
+): number {
   return events
-    .filter((e) => !e.allDay)
-    .reduce((acc, e) => acc + (e.end.getTime() - e.start.getTime()), 0);
+    .filter((event) => matchesCalendarEventFilter(event, filter))
+    .reduce(
+      (acc, event) =>
+        acc + Math.max(0, event.end.getTime() - event.start.getTime()),
+      0,
+    );
 }
 
 /**
- * Sums the duration of "trip" events for a day across the given calendars —
- * this is what drives the Car playlist duration. Returns 0 when there are no
- * trips, which the orchestration layer maps to the target's empty-calendar
- * behaviour (clear / keep / skip).
+ * Resolves calendar-driven duration for a day across calendars enabled for
+ * duration, while also returning audit metadata for CONFIG-04.
+ *
+ * MARKER mode is intentionally literal: Sonoriza only checks title and
+ * description for the configured text and sums the event duration. It does not
+ * infer the event meaning.
  */
-export async function computeTripDurationMs(
+export async function computeCalendarDuration(
   userId: string,
-  tripCalendarIds: string[],
+  durationCalendarIds: string[],
   date: Date,
-): Promise<number> {
-  if (tripCalendarIds.length === 0) return 0;
+  filter: CalendarEventFilter = { mode: "ALL" },
+): Promise<CalendarDurationResult> {
+  const marker = filter.mode === "MARKER" ? filter.marker?.trim() || null : null;
+  const normalizedFilter: CalendarEventFilter = {
+    mode: filter.mode,
+    marker,
+  };
+
+  if (durationCalendarIds.length === 0) {
+    return {
+      durationMs: 0,
+      matchedEvents: 0,
+      timedEvents: 0,
+      filterMode: filter.mode,
+      marker,
+    };
+  }
+
   const { from, to } = dayBounds(date);
   const client = await GoogleCalendarClient.forUser(userId);
 
-  let totalMs = 0;
-  for (const calendarId of tripCalendarIds) {
+  let durationMs = 0;
+  let matchedEvents = 0;
+  let timedEvents = 0;
+
+  for (const calendarId of durationCalendarIds) {
     const events = await client.listEvents(calendarId, from, to);
-    totalMs += sumTimedDurationMs(events);
+    const timed = events.filter((event) => !event.allDay);
+    const matched = timed.filter((event) =>
+      matchesCalendarEventFilter(event, normalizedFilter),
+    );
+
+    timedEvents += timed.length;
+    matchedEvents += matched.length;
+    durationMs += sumTimedDurationMs(matched);
   }
-  return totalMs;
+
+  return {
+    durationMs,
+    matchedEvents,
+    timedEvents,
+    filterMode: filter.mode,
+    marker,
+  };
+}
+
+/**
+ * Backward-compatible numeric helper. Existing callers that do not supply a
+ * filter preserve the previous ALL-events behavior.
+ */
+export async function computeCalendarDurationMs(
+  userId: string,
+  durationCalendarIds: string[],
+  date: Date,
+  filter: CalendarEventFilter = { mode: "ALL" },
+): Promise<number> {
+  return (await computeCalendarDuration(userId, durationCalendarIds, date, filter)).durationMs;
 }

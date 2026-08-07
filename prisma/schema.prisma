@@ -75,8 +75,8 @@ model VerificationToken {
 }
 
 // ---------------------------------------------------------------------------
-// Google Calendar — which calendars are consulted, and which ones describe
-// "trips" that drive the calendar-based duration for a target playlist.
+// Google Calendar — which calendars are consulted and which ones may
+// contribute event duration to calendar-based target playlists.
 // ---------------------------------------------------------------------------
 
 model CalendarSelection {
@@ -86,8 +86,8 @@ model CalendarSelection {
   summary          String?
   // Consulted at all when resolving calendar-based durations.
   selected         Boolean  @default(true)
-  // Events on this calendar count as "trips" (e.g. the Car playlist).
-  usedForTrips     Boolean  @default(false)
+  // Timed events on this calendar may contribute to calendar-based duration.
+  usedForDuration     Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -142,39 +142,46 @@ model SourcePlaylist {
 
 enum DurationMode {
   FIXED // fixedDurationSeconds
-  CALENDAR // sum of selected "trip" events for the day
+  CALENDAR // sum of eligible timed calendar events for the day
 }
 
 enum EmptyCalendarBehavior {
-  CLEAR // empty the playlist when there are no trips
+  CLEAR // empty the playlist when there are no eligible events
   KEEP // leave the previous contents untouched
   SKIP // do not touch the playlist at all this run
 }
 
-model TargetPlaylist {
-  id                    String                @id @default(cuid())
-  userId                String
-  name                  String
-  spotifyPlaylistId     String? // set once the playlist exists on Spotify
-  enabled               Boolean               @default(true)
-  // Lower value is generated first and reserves its content.
-  priority              Int                   @default(0)
+enum CalendarEventFilterMode {
+  ALL // every timed event on calendars enabled for duration
+  MARKER // only timed events whose title/description contains calendarEventMarker
+}
 
-  durationMode          DurationMode          @default(FIXED)
-  fixedDurationSeconds  Int? // required when durationMode = FIXED
-  emptyCalendarBehavior EmptyCalendarBehavior @default(CLEAR)
+model TargetPlaylist {
+  id                      String                  @id @default(cuid())
+  userId                  String
+  name                    String
+  spotifyPlaylistId       String? // set once the playlist exists on Spotify
+  enabled                 Boolean                 @default(true)
+  // Lower value is generated first and reserves its content.
+  priority                Int                     @default(0)
+
+  durationMode            DurationMode            @default(FIXED)
+  fixedDurationSeconds    Int? // required when durationMode = FIXED
+  emptyCalendarBehavior   EmptyCalendarBehavior   @default(CLEAR)
+  calendarEventFilterMode CalendarEventFilterMode @default(ALL)
+  calendarEventMarker     String?
 
   // Proportion between podcasts and music. musicPercent = 100 - podcastPercent.
-  podcastPercent        Int                   @default(60)
+  podcastPercent          Int                     @default(60)
 
   // Cyclic play sequence, e.g. ["MUSIC","PODCAST","MUSIC","MUSIC","PODCAST"].
-  sequencePattern       Json
+  sequencePattern         Json
 
   // Cap of episodes per program (Spotify show) inside this playlist.
-  maxEpisodesPerProgram Int                   @default(1)
+  maxEpisodesPerProgram   Int                     @default(1)
 
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
 
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   generationItems GenerationItem[]

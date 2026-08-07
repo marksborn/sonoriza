@@ -17,6 +17,11 @@ type SimulationTargetSummary = {
   name: string;
   planned: number | null;
   totalMinutes: number | null;
+  calendarEventCount: number | null;
+  calendarTimedEventCount: number | null;
+  calendarEventFilterMode: "ALL" | "MARKER" | null;
+  calendarEventMarker: string | null;
+  calendarDurationMinutes: number | null;
   musicCount: number | null;
   podcastCount: number | null;
   requestedPodcastPercent: number | null;
@@ -54,6 +59,15 @@ function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
         name: value.name,
         planned: numberValue(value.planned),
         totalMinutes: numberValue(value.totalMinutes),
+        calendarEventCount: numberValue(value.calendarEventCount),
+        calendarTimedEventCount: numberValue(value.calendarTimedEventCount),
+        calendarEventFilterMode:
+          value.calendarEventFilterMode === "ALL" || value.calendarEventFilterMode === "MARKER"
+            ? value.calendarEventFilterMode
+            : null,
+        calendarEventMarker:
+          typeof value.calendarEventMarker === "string" ? value.calendarEventMarker : null,
+        calendarDurationMinutes: numberValue(value.calendarDurationMinutes),
         musicCount: numberValue(value.musicCount),
         podcastCount: numberValue(value.podcastCount),
         requestedPodcastPercent: numberValue(value.requestedPodcastPercent),
@@ -254,7 +268,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">Calendários</p>
-                <h2 className="mt-1 text-xl font-black">Tempo e viagens</h2>
+                <h2 className="mt-1 text-xl font-black">Tempo e calendário</h2>
               </div>
               <Link href="/dashboard/configuracao/calendarios" className="text-sm font-black text-orange-300 hover:text-orange-200">Editar</Link>
             </div>
@@ -262,7 +276,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
               {assessment.calendars.length > 0 ? (
                 assessment.calendars.map((calendar) => (
                   <span key={calendar.id} className="rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1.5 text-xs font-bold text-violet-100">
-                    {calendar.summary ?? "Calendário"}{calendar.usedForTrips ? " · viagens" : ""}
+                    {calendar.summary ?? "Calendário"}{calendar.usedForDuration ? " · viagens" : ""}
                   </span>
                 ))
               ) : (
@@ -326,8 +340,10 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                   <span className="w-fit rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-black text-emerald-300">Ativa</span>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-violet-100/75">
-                  {target.durationMode === "CALENDAR" ? "Tempo calculado pelas viagens" : `Duração fixa: ${durationLabel(target.fixedDurationSeconds)}`}
-                  {target.durationMode === "CALENDAR" ? ` · sem viagem: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}` : ""}
+                  {target.durationMode === "CALENDAR"
+                    ? `Baseada no calendário · ${target.calendarEventFilterMode === "MARKER" ? `marcador ${target.calendarEventMarker ?? "não informado"}` : "todos os eventos"}`
+                    : `Duração fixa: ${durationLabel(target.fixedDurationSeconds)}`}
+                  {target.durationMode === "CALENDAR" ? ` · sem evento elegível: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}` : ""}
                   {` · ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-violet-200/75">
@@ -385,6 +401,18 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                         {target.musicCount !== null ? ` · ${target.musicCount} músicas` : ""}
                         {target.podcastCount !== null ? ` · ${target.podcastCount} podcasts` : ""}
                       </p>
+                      {target.calendarDurationMinutes !== null && (
+                        <p className="mt-2 text-xs font-semibold leading-5 text-violet-200/70">
+                          {target.calendarEventCount ?? 0} eventos considerados
+                          {target.calendarEventFilterMode === "MARKER" && target.calendarEventMarker
+                            ? ` com ${target.calendarEventMarker}`
+                            : ""}
+                          {target.calendarTimedEventCount !== null
+                            ? ` de ${target.calendarTimedEventCount} eventos com horário`
+                            : ""}
+                          {` · ${target.calendarDurationMinutes} min calculados pelo calendário`}
+                        </p>
+                      )}
                       {target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (
                         <div className="mt-3 rounded-xl border border-violet-300/15 bg-black/15 p-3 text-sm">
                           <p className="text-violet-100/80">

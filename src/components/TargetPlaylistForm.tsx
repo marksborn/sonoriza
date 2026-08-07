@@ -5,6 +5,7 @@ import { useState } from "react";
 type ContentType = "MUSIC" | "PODCAST";
 type DurationMode = "FIXED" | "CALENDAR";
 type EmptyCalendarBehavior = "CLEAR" | "KEEP" | "SKIP";
+type CalendarEventFilterMode = "ALL" | "MARKER";
 
 export type SpotifyDestinationOption = {
   id: string;
@@ -18,6 +19,8 @@ export type TargetPlaylistFormInitial = {
   durationMode: DurationMode;
   fixedDurationMinutes: number;
   emptyCalendarBehavior: EmptyCalendarBehavior;
+  calendarEventFilterMode: CalendarEventFilterMode;
+  calendarEventMarker: string;
   podcastPercent: number;
   sequencePattern: ContentType[];
   maxEpisodesPerProgram: number;
@@ -29,7 +32,7 @@ export type TargetPlaylistFormInitial = {
 type TargetPlaylistFormProps = {
   initial: TargetPlaylistFormInitial;
   spotifyOptions: SpotifyDestinationOption[];
-  tripCalendarNames: string[];
+  durationCalendarNames: string[];
   saveAction: (formData: FormData) => void | Promise<void>;
   submitLabel: string;
 };
@@ -52,11 +55,13 @@ function contentLabel(type: ContentType) {
 export function TargetPlaylistForm({
   initial,
   spotifyOptions,
-  tripCalendarNames,
+  durationCalendarNames,
   saveAction,
   submitLabel,
 }: TargetPlaylistFormProps) {
   const [durationMode, setDurationMode] = useState<DurationMode>(initial.durationMode);
+  const [calendarEventFilterMode, setCalendarEventFilterMode] =
+    useState<CalendarEventFilterMode>(initial.calendarEventFilterMode);
   const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);
   const [sequence, setSequence] = useState<ContentType[]>(
     initial.sequencePattern.length > 0 ? initial.sequencePattern : DEFAULT_SEQUENCE,
@@ -195,9 +200,9 @@ export function TargetPlaylistForm({
               onChange={() => setDurationMode("CALENDAR")}
               className="sr-only"
             />
-            <span className="block font-black text-white">Usar tempo das viagens</span>
+            <span className="block font-black text-white">Baseada no calendário</span>
             <span className="mt-1 block text-xs leading-5 text-violet-200/65">
-              Soma os eventos dos calendários marcados para viagens no CONFIG-01.
+              Soma a duração dos eventos elegíveis dos calendários habilitados no CONFIG-01.
             </span>
           </label>
         </div>
@@ -224,15 +229,15 @@ export function TargetPlaylistForm({
         <div className="space-y-4">
           <div
             className={`rounded-2xl border p-4 ${
-              tripCalendarNames.length > 0
+              durationCalendarNames.length > 0
                 ? "border-violet-400/20 bg-violet-950/35"
                 : "border-orange-400/30 bg-orange-400/10"
             }`}
           >
-            <p className="text-sm font-black text-white">Calendários usados para viagens</p>
-            {tripCalendarNames.length > 0 ? (
+            <p className="text-sm font-black text-white">Calendários usados na duração</p>
+            {durationCalendarNames.length > 0 ? (
               <div className="mt-2 flex flex-wrap gap-2">
-                {tripCalendarNames.map((name) => (
+                {durationCalendarNames.map((name) => (
                   <span
                     key={name}
                     className="rounded-full border border-violet-300/20 bg-violet-400/10 px-2.5 py-1 text-xs font-bold text-violet-200"
@@ -243,13 +248,77 @@ export function TargetPlaylistForm({
               </div>
             ) : (
               <p className="mt-2 text-xs font-semibold leading-5 text-orange-200">
-                Nenhum calendário está marcado para viagens. Configure isso no CONFIG-01 antes de salvar este modo.
+                Nenhum calendário está habilitado para duração. Configure isso no CONFIG-01 antes de salvar este modo.
               </p>
             )}
           </div>
 
+          <fieldset className="rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4">
+            <legend className="px-1 text-sm font-black text-white">Eventos usados no cálculo</legend>
+            <div className="mt-2 grid gap-3 md:grid-cols-2">
+              <label
+                className={`cursor-pointer rounded-xl border p-3 transition ${
+                  calendarEventFilterMode === "ALL"
+                    ? "border-orange-400/40 bg-orange-400/10"
+                    : "border-violet-400/20 bg-black/10 hover:border-violet-300/35"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="calendarEventFilterMode"
+                  value="ALL"
+                  checked={calendarEventFilterMode === "ALL"}
+                  onChange={() => setCalendarEventFilterMode("ALL")}
+                  className="mr-2 accent-orange-500"
+                />
+                <span className="font-black text-white">Todos os eventos</span>
+                <span className="mt-1 block text-xs leading-5 text-violet-200/60">
+                  Preserva o comportamento atual: todo evento com horário entra na soma.
+                </span>
+              </label>
+
+              <label
+                className={`cursor-pointer rounded-xl border p-3 transition ${
+                  calendarEventFilterMode === "MARKER"
+                    ? "border-orange-400/40 bg-orange-400/10"
+                    : "border-violet-400/20 bg-black/10 hover:border-violet-300/35"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="calendarEventFilterMode"
+                  value="MARKER"
+                  checked={calendarEventFilterMode === "MARKER"}
+                  onChange={() => setCalendarEventFilterMode("MARKER")}
+                  className="mr-2 accent-orange-500"
+                />
+                <span className="font-black text-white">Somente com marcador</span>
+                <span className="mt-1 block text-xs leading-5 text-violet-200/60">
+                  Use qualquer marcador que faça sentido para o calendário; por exemplo, #travel.
+                </span>
+              </label>
+            </div>
+
+            {calendarEventFilterMode === "MARKER" && (
+              <label className="mt-4 block max-w-sm text-sm font-bold text-violet-100">
+                Marcador do evento
+                <input
+                  className={inputClass}
+                  name="calendarEventMarker"
+                  required
+                  maxLength={80}
+                  defaultValue={initial.calendarEventMarker}
+                  placeholder="#travel"
+                />
+                <span className="mt-1.5 block text-xs font-normal leading-5 text-violet-300/55">
+                  O Sonoriza procura o marcador no título e na descrição, sem diferenciar maiúsculas de minúsculas. A duração do próprio evento entra no cálculo.
+                </span>
+              </label>
+            )}
+          </fieldset>
+
           <fieldset>
-            <legend className="text-sm font-black text-white">Se não houver viagem hoje</legend>
+            <legend className="text-sm font-black text-white">Se nenhum evento elegível for encontrado</legend>
             <div className="mt-3 grid gap-3 lg:grid-cols-3">
               {(
                 [
