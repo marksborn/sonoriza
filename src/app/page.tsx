@@ -164,7 +164,7 @@ export default async function HomePage() {
               <div className="mt-6 overflow-hidden rounded-3xl bg-brand-gradient p-5 text-white shadow-soft sm:p-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/65">
+                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/[0.65]">
                       Playlist inteligente
                     </p>
                     <p className="mt-2 text-2xl font-black tracking-tight">
@@ -174,13 +174,12 @@ export default async function HomePage() {
                       48 min · 80% música · 20% podcast
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    aria-label="Reproduzir prévia"
-                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-lg text-brand-dark shadow-lg transition hover:scale-105"
+                  <span
+                    aria-hidden="true"
+                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-lg text-brand-dark shadow-lg"
                   >
                     ▶
-                  </button>
+                  </span>
                 </div>
 
                 <div className="mt-7 flex h-12 items-end gap-1.5" aria-hidden="true">
