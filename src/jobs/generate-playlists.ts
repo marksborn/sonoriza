@@ -304,7 +304,11 @@ async function buildPools(
     }
   }
 
-  return { music: dedupeByUri(music), podcasts: dedupeByUri(podcasts) };
+  // Keep all podcast copies until planning. The planner first removes candidates
+  // without a trustworthy program identity and then deduplicates by URI while
+  // selecting. This prevents an invalid copy from one source from hiding a
+  // valid copy of the same episode from another source.
+  return { music: dedupeByUri(music), podcasts };
 }
 
 function logPodcastBatch(
