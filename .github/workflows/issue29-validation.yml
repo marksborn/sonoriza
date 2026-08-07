@@ -1,0 +1,41 @@
+name: ISSUE-29 validation
+
+on:
+  push:
+    branches:
+      - fix/29-podcast-program-cap
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: issue29-validation
+      AUTH_SPOTIFY_ID: issue29-validation
+      AUTH_SPOTIFY_SECRET: issue29-validation
+      AUTH_GOOGLE_ID: issue29-validation
+      AUTH_GOOGLE_SECRET: issue29-validation
+      CRON_SECRET: issue29-validation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Regression tests
+        run: npm run test:planner
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
