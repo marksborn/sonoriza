@@ -52,6 +52,36 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
+  callbacks: {
+    async signIn({ user, account }) {
+      if (
+        account &&
+        user.id &&
+        (account.provider === "google" || account.provider === "spotify")
+      ) {
+        // The adapter creates Account on the first link, but subsequent OAuth
+        // sign-ins do not reliably refresh the stored grant. Persist only the
+        // fields returned by the provider so omitted refresh tokens are kept.
+        await prisma.account.updateMany({
+          where: {
+            userId: user.id,
+            provider: account.provider,
+            providerAccountId: account.providerAccountId,
+          },
+          data: {
+            access_token: account.access_token ?? undefined,
+            refresh_token: account.refresh_token ?? undefined,
+            expires_at: account.expires_at ?? undefined,
+            token_type: account.token_type ?? undefined,
+            scope: account.scope ?? undefined,
+            id_token: account.id_token ?? undefined,
+          },
+        });
+      }
+
+      return true;
+    },
+  },
   // Account linking is deliberately explicit. Auth.js safely links a new OAuth
   // account when the callback carries an existing authenticated session. It
   // must never merge users silently just because two providers return the same
