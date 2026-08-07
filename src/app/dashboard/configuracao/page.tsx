@@ -41,8 +41,7 @@ export default async function ConfigurationHubPage() {
             Prepare o Sonoriza para o seu dia.
           </h1>
           <p className="mt-3 text-sm leading-6 text-violet-200/75 sm:text-base">
-            Escolha de onde o conteúdo vem, quais eventos entram no cálculo de tempo e,
-            na próxima etapa, como cada playlist de destino deve ser montada.
+            Escolha de onde o conteúdo vem, quais eventos entram no cálculo de tempo e como cada playlist de destino deve ser montada.
           </p>
         </div>
 
@@ -95,26 +94,29 @@ export default async function ConfigurationHubPage() {
             </span>
           </Link>
 
-          <section className="rounded-[1.75rem] border border-violet-400/15 bg-violet-950/30 p-6 opacity-80">
+          <Link
+            href="/dashboard/configuracao/destinos"
+            className="group rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] transition hover:-translate-y-0.5 hover:border-violet-300/40"
+          >
             <div className="flex items-start justify-between gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-300/15 bg-violet-500/10 text-xl text-violet-300">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-300/20 bg-violet-500/15 text-xl text-violet-100">
                 ▤
               </span>
-              <span className="rounded-full border border-violet-400/15 bg-violet-400/10 px-3 py-1.5 text-xs font-black text-violet-300">
+              <span className="rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1.5 text-xs font-black text-violet-200">
                 {targetCount} ativas
               </span>
             </div>
-            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-violet-500">
+            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-violet-400">
               CONFIG-03
             </p>
-            <h2 className="mt-1 text-xl font-black text-violet-100">Destinos e regras</h2>
-            <p className="mt-2 text-sm leading-6 text-violet-300/60">
-              Duração, prioridade, proporção e sequência entram na próxima etapa.
+            <h2 className="mt-1 text-xl font-black">Destinos e regras</h2>
+            <p className="mt-2 text-sm leading-6 text-violet-200/70">
+              Escolha as playlists gerenciadas, duração, mistura, sequência e ordem de geração.
             </p>
-            <span className="mt-5 inline-flex rounded-full border border-violet-400/15 px-3 py-1.5 text-xs font-bold text-violet-300/70">
-              Em seguida
+            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">
+              Configurar destinos <span aria-hidden="true">→</span>
             </span>
-          </section>
+          </Link>
         </div>
       </div>
     </main>
