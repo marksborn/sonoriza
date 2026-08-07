@@ -19,13 +19,17 @@ export interface SpotifyShowSummary {
   publisher?: string;
 }
 
+export interface PodcastCandidateBatch {
+  candidates: Candidate[];
+  playbackPositionMissingCount: number;
+  fullyPlayedSkippedCount: number;
+}
+
 /**
  * Thin Spotify Web API client scoped to a single user. It transparently
  * refreshes the access token and exposes just what the engine and configuration
- * UI need: discover source content and (re)write target playlists.
- *
- * NOTE: pagination is handled for the read endpoints. Episode availability and
- * market filtering are intentionally left simple for the MVP — see TODOs.
+ * UI need: discover source content, read podcast progress and (re)write target
+ * playlists.
  */
 export class SpotifyClient {
   private constructor(private readonly accessToken: string) {}
@@ -122,28 +126,65 @@ export class SpotifyClient {
     return candidates;
   }
 
-  /** All episodes of a show, mapped to podcast candidates carrying the show id. */
-  async getShowEpisodes(showId: string): Promise<Candidate[]> {
-    const candidates: Candidate[] = [];
-    let url: string | null = `/shows/${showId}/episodes?limit=50`;
+  /** Episodes contained in a regular Spotify playlist. */
+  async getPlaylistEpisodes(
+    playlistId: string,
+    includePlayed = false,
+  ): Promise<PodcastCandidateBatch> {
+    const collector = createPodcastCollector(includePlayed);
+    let url: string | null =
+      `/playlists/${playlistId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,show(id,name),resume_point(fully_played,resume_position_ms)))`;
 
     while (url) {
-      const page: SpotifyPage<Episode> = await this.request(url);
-      for (const ep of page.items) {
-        if (!ep) continue;
-        // TODO: filter already-played episodes and market availability.
-        candidates.push({
-          uri: ep.uri,
-          type: "PODCAST",
-          title: ep.name,
-          subtitle: ep.show?.name,
-          programId: showId,
-          durationMs: ep.duration_ms,
-        });
+      const page: SpotifyPage<PlaylistItem> = await this.request(url);
+      for (const item of page.items) {
+        const episode = item.item;
+        if (!episode || episode.is_local || episode.type !== "episode") continue;
+        collector.add(episode);
       }
       url = page.next ? stripBase(page.next) : null;
     }
-    return candidates;
+
+    return collector.result();
+  }
+
+  /** All episodes of one show, with playback state and remaining time. */
+  async getShowEpisodes(
+    showId: string,
+    includePlayed = false,
+  ): Promise<PodcastCandidateBatch> {
+    const collector = createPodcastCollector(includePlayed, showId);
+    let url: string | null = `/shows/${showId}/episodes?limit=50`;
+
+    while (url) {
+      const page: SpotifyPage<EpisodeResponse> = await this.request(url);
+      for (const episode of page.items) {
+        if (!episode) continue;
+        collector.add(episode);
+      }
+      url = page.next ? stripBase(page.next) : null;
+    }
+
+    return collector.result();
+  }
+
+  /** Native Spotify "Your Episodes" library (`GET /me/episodes`). */
+  async getSavedEpisodes(
+    includePlayed = false,
+  ): Promise<PodcastCandidateBatch> {
+    const collector = createPodcastCollector(includePlayed);
+    let url: string | null = "/me/episodes?limit=50";
+
+    while (url) {
+      const page: SpotifyPage<SavedEpisodeResponse> = await this.request(url);
+      for (const item of page.items) {
+        if (!item?.episode) continue;
+        collector.add(item.episode);
+      }
+      url = page.next ? stripBase(page.next) : null;
+    }
+
+    return collector.result();
   }
 
   async getCurrentUserId(): Promise<string> {
@@ -153,13 +194,10 @@ export class SpotifyClient {
 
   /** Creates a private playlist and returns its id. */
   async createPlaylist(name: string, description?: string): Promise<string> {
-    const playlist = await this.request<{ id: string }>(
-      "/me/playlists",
-      {
-        method: "POST",
-        body: JSON.stringify({ name, description, public: false }),
-      },
-    );
+    const playlist = await this.request<{ id: string }>("/me/playlists", {
+      method: "POST",
+      body: JSON.stringify({ name, description, public: false }),
+    });
     return playlist.id;
   }
 
@@ -211,21 +249,89 @@ interface SavedShowResponse {
 }
 
 interface PlaylistItem {
-  item: {
-    uri: string;
-    name: string;
-    duration_ms: number;
-    is_local: boolean;
-    type: string;
-    artists?: { name: string }[];
-  } | null;
+  item: PlaylistContentResponse | null;
 }
 
-interface Episode {
+interface PlaylistContentResponse extends EpisodeResponse {
+  is_local?: boolean;
+  artists?: { name: string }[];
+}
+
+interface SavedEpisodeResponse {
+  episode: EpisodeResponse | null;
+}
+
+interface EpisodeResponse {
   uri: string;
   name: string;
   duration_ms: number;
-  show?: { name: string };
+  type: string;
+  is_playable?: boolean;
+  show?: {
+    id?: string;
+    name?: string;
+  };
+  resume_point?: {
+    fully_played: boolean;
+    resume_position_ms: number;
+  } | null;
+}
+
+function createPodcastCollector(includePlayed: boolean, fallbackProgramId?: string) {
+  const candidates: Candidate[] = [];
+  let playbackPositionMissingCount = 0;
+  let fullyPlayedSkippedCount = 0;
+
+  return {
+    add(episode: EpisodeResponse) {
+      if (!episode.uri || !episode.name || episode.type !== "episode") return;
+      if (episode.is_playable === false) return;
+
+      const resumePoint = episode.resume_point ?? null;
+      if (!resumePoint) playbackPositionMissingCount += 1;
+
+      const fullyPlayed = resumePoint?.fully_played === true;
+      if (fullyPlayed && !includePlayed) {
+        fullyPlayedSkippedCount += 1;
+        return;
+      }
+
+      const originalDurationMs = Math.max(0, episode.duration_ms ?? 0);
+      const resumePositionMs = clamp(
+        resumePoint?.resume_position_ms ?? 0,
+        0,
+        originalDurationMs,
+      );
+
+      // A completed episode explicitly included by the user is a replay, so it
+      // consumes its full duration. Partially played episodes consume only the
+      // remaining listening time because Spotify resumes them from that point.
+      const durationMs = fullyPlayed
+        ? originalDurationMs
+        : Math.max(0, originalDurationMs - resumePositionMs);
+
+      if (durationMs <= 0) return;
+
+      candidates.push({
+        uri: episode.uri,
+        type: "PODCAST",
+        title: episode.name,
+        subtitle: episode.show?.name,
+        programId: episode.show?.id ?? fallbackProgramId,
+        durationMs,
+        originalDurationMs,
+        resumePositionMs,
+        playbackPositionKnown: Boolean(resumePoint),
+      });
+    },
+    result(): PodcastCandidateBatch {
+      return {
+        candidates,
+        playbackPositionMissingCount,
+        fullyPlayedSkippedCount,
+      };
+    },
+  };
 }
 
 function stripBase(url: string): string {
@@ -236,4 +342,8 @@ function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
