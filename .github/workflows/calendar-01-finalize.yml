@@ -1,0 +1,368 @@
+name: CALENDAR-01 finalize
+
+on:
+  push:
+    branches:
+      - agent/calendar-01-travel-marker
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.event.head_commit.message != 'feat(calendar): generalizar duração baseada no calendário'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_calendar01
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d sonoriza_calendar01"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_calendar01?schema=public
+      NEXTAUTH_SECRET: calendar01-validation-secret-calendar01-validation-secret
+      AUTH_SECRET: calendar01-validation-secret-calendar01-validation-secret
+      NEXTAUTH_URL: http://localhost:3000
+      GOOGLE_CLIENT_ID: validation-google-client
+      GOOGLE_CLIENT_SECRET: validation-google-secret
+      SPOTIFY_CLIENT_ID: validation-spotify-client
+      SPOTIFY_CLIENT_SECRET: validation-spotify-secret
+      CRON_SECRET: validation-cron-secret
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/calendar-01-travel-marker
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Apply generic calendar-duration contract
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8')
+
+          def replace(path, old, new, count=None):
+              text = read(path)
+              found = text.count(old)
+              if found == 0:
+                  raise SystemExit(f"replacement anchor not found in {path}: {old[:100]!r}")
+              if count is not None and found != count:
+                  raise SystemExit(f"unexpected replacement count in {path}: expected {count}, got {found}: {old[:100]!r}")
+              write(path, text.replace(old, new))
+
+          # Prisma: product concept is generic calendar duration. Preserve existing
+          # CalendarSelection values through a column rename in the new migration.
+          schema = 'prisma/schema.prisma'
+          text = read(schema)
+          text = text.replace('usedForTrips', 'usedForDuration')
+          text = text.replace(
+              '// Google Calendar — which calendars are consulted, and which ones describe\n// "trips" that drive the calendar-based duration for a target playlist.',
+              '// Google Calendar — which calendars are consulted and which ones may\n// contribute event duration to calendar-based target playlists.',
+          )
+          text = text.replace(
+              '// Events on this calendar count as "trips" (e.g. the Car playlist).',
+              '// Timed events on this calendar may contribute to calendar-based duration.',
+          )
+          text = text.replace(
+              'CALENDAR // sum of selected "trip" events for the day',
+              'CALENDAR // sum of eligible timed calendar events for the day',
+          )
+          text = text.replace('CLEAR // empty the playlist when there are no trips', 'CLEAR // empty the playlist when there are no eligible events')
+          text = text.replace('KEEP // leave the previous contents untouched', 'KEEP // leave the previous contents untouched')
+          text = text.replace('ALL // every timed event on selected trip calendars', 'ALL // every timed event on calendars enabled for duration')
+          write(schema, text)
+
+          write('prisma/migrations/20260807183300_calendar_event_filter/migration.sql', '''-- CALENDAR-01: generic calendar-based duration with optional event marker.\nALTER TABLE "CalendarSelection"\nRENAME COLUMN "usedForTrips" TO "usedForDuration";\n\nCREATE TYPE "CalendarEventFilterMode" AS ENUM ('ALL', 'MARKER');\n\nALTER TABLE "TargetPlaylist"\nADD COLUMN "calendarEventFilterMode" "CalendarEventFilterMode" NOT NULL DEFAULT 'ALL',\nADD COLUMN "calendarEventMarker" TEXT;\n''')
+
+          # CONFIG-01: generic calendar purpose instead of travel terminology.
+          cal = 'src/app/dashboard/configuracao/calendarios/page.tsx'
+          text = read(cal)
+          text = text.replace('tripIds', 'durationIds')
+          text = text.replace('usedForTrips', 'usedForDuration')
+          text = text.replace('tripsInputId', 'durationInputId')
+          text = text.replace(
+              'quais deles representam\n              viagens usadas para calcular a duração das playlists.',
+              'quais deles podem contribuir com eventos para calcular a duração das playlists.',
+          )
+          text = text.replace('<span className="text-center">Viagens</span>', '<span className="text-center">Duração</span>')
+          text = text.replace('                        Viagem\n', '                        Duração\n')
+          text = text.replace(
+              'Um calendário marcado como viagem só será considerado quando também estiver\n                marcado para consulta. Essa regra é garantida novamente no servidor ao salvar.',
+              'Um calendário habilitado para duração só será considerado quando também estiver marcado para consulta. Essa regra é garantida novamente no servidor ao salvar.',
+          )
+          write(cal, text)
+
+          # Google Calendar service: no travel semantics; filter is literal and generic.
+          duration = 'src/services/google-calendar/duration.ts'
+          text = read(duration)
+          text = text.replace('TripDurationResult', 'CalendarDurationResult')
+          text = text.replace('computeTripDurationMs', 'computeCalendarDurationMs')
+          text = text.replace('computeTripDuration', 'computeCalendarDuration')
+          text = text.replace('tripCalendarIds', 'durationCalendarIds')
+          text = text.replace(
+              'Resolves the calendar-driven duration for a day across the selected trip\n * calendars, while also returning audit metadata for CONFIG-04.',
+              'Resolves calendar-driven duration for a day across calendars enabled for\n * duration, while also returning audit metadata for CONFIG-04.',
+          )
+          text = text.replace(
+              ' * MARKER mode is intentionally literal: the event itself already represents\n * the travel block (including outbound/return when modeled that way in Google\n * Calendar). Sonoriza only filters and sums its duration.',
+              ' * MARKER mode is intentionally literal: Sonoriza only checks title and\n * description for the configured text and sums the event duration. It does not\n * infer the event meaning.',
+          )
+          write(duration, text)
+
+          index = 'src/services/google-calendar/index.ts'
+          text = read(index)
+          text = text.replace('computeTripDurationMs', 'computeCalendarDurationMs')
+          text = text.replace('computeTripDuration', 'computeCalendarDuration')
+          text = text.replace('TripDurationResult', 'CalendarDurationResult')
+          write(index, text)
+
+          # Orchestrator: generic calendar duration and audit metadata.
+          job = 'src/jobs/generate-playlists.ts'
+          text = read(job)
+          text = text.replace('computeTripDuration', 'computeCalendarDuration')
+          text = text.replace('TripDurationResult', 'CalendarDurationResult')
+          text = text.replace('tripCalendarIds', 'durationCalendarIds')
+          text = text.replace('usedForTrips', 'usedForDuration')
+          text = text.replace('Calendar target with no trips', 'Calendar target with no eligible events')
+          text = text.replace('has no trips → will be cleared', 'has no eligible calendar events → will be cleared')
+          text = text.replace('has no trips → ${target.emptyCalendarBehavior} (untouched)', 'has no eligible calendar events → ${target.emptyCalendarBehavior} (untouched)')
+          write(job, text)
+
+          # CONFIG-03 form terminology.
+          form = 'src/components/TargetPlaylistForm.tsx'
+          text = read(form)
+          text = text.replace('tripCalendarNames', 'durationCalendarNames')
+          text = text.replace('Usar tempo das viagens', 'Baseada no calendário')
+          text = text.replace(
+              'Soma os eventos elegíveis dos calendários marcados para viagens no CONFIG-01.',
+              'Soma a duração dos eventos elegíveis dos calendários habilitados no CONFIG-01.',
+          )
+          text = text.replace('Calendários usados para viagens', 'Calendários usados na duração')
+          text = text.replace(
+              'Nenhum calendário está marcado para viagens. Configure isso no CONFIG-01 antes de salvar este modo.',
+              'Nenhum calendário está habilitado para duração. Configure isso no CONFIG-01 antes de salvar este modo.',
+          )
+          text = text.replace('Ideal para eventos de deslocamento como #travel.', 'Use qualquer marcador que faça sentido para o calendário; por exemplo, #travel.')
+          text = text.replace('defaultValue={initial.calendarEventMarker || "#travel"}', 'defaultValue={initial.calendarEventMarker}')
+          text = text.replace(
+              'O Sonoriza procura o marcador no título e na descrição, sem diferenciar maiúsculas de minúsculas. A duração do próprio evento é usada como tempo de viagem.',
+              'O Sonoriza procura o marcador no título e na descrição, sem diferenciar maiúsculas de minúsculas. A duração do próprio evento entra no cálculo.',
+          )
+          text = text.replace('Se não houver viagem hoje', 'Se nenhum evento elegível for encontrado')
+          write(form, text)
+
+          # CONFIG-03 server action: persist and validate ALL/MARKER per target.
+          dest = 'src/app/dashboard/configuracao/destinos/page.tsx'
+          text = read(dest)
+          text = text.replace('tripCalendars', 'durationCalendars')
+          text = text.replace('tripCalendarNames', 'durationCalendarNames')
+          text = text.replace('tripCalendarCount', 'durationCalendarCount')
+          text = text.replace('usedForTrips', 'usedForDuration')
+
+          anchor = '''  const emptyCalendarBehavior = String(\n    formData.get("emptyCalendarBehavior") ?? "CLEAR",\n  ).trim();\n'''
+          insertion = anchor + '''  const calendarEventFilterMode = String(\n    formData.get("calendarEventFilterMode") ?? "ALL",\n  ).trim();\n  const calendarEventMarker = String(\n    formData.get("calendarEventMarker") ?? "",\n  ).trim();\n'''
+          if anchor not in text:
+              raise SystemExit('destinations: form filter anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          anchor = '''  if (durationMode === "CALENDAR" && !normalizedEmptyBehavior) fail("invalid");\n\n'''
+          insertion = anchor + '''  const normalizedCalendarEventFilterMode =\n    calendarEventFilterMode === "ALL" || calendarEventFilterMode === "MARKER"\n      ? calendarEventFilterMode\n      : null;\n\n  if (durationMode === "CALENDAR" && !normalizedCalendarEventFilterMode) fail("invalid");\n  if (\n    durationMode === "CALENDAR" &&\n    normalizedCalendarEventFilterMode === "MARKER" &&\n    (!calendarEventMarker || calendarEventMarker.length > 80)\n  ) {\n    fail("marker");\n  }\n\n'''
+          if anchor not in text:
+              raise SystemExit('destinations: normalized filter anchor missing')
+          text = text.replace(anchor, insertion, 1)
+          text = text.replace('if (durationCalendarCount === 0) fail("calendar");', 'if (durationCalendarCount === 0) fail("calendar");')
+
+          anchor = '''    emptyCalendarBehavior:\n      durationMode === "CALENDAR" ? normalizedEmptyBehavior! : "CLEAR",\n'''
+          insertion = anchor + '''    calendarEventFilterMode:\n      durationMode === "CALENDAR" ? normalizedCalendarEventFilterMode! : "ALL",\n    calendarEventMarker:\n      durationMode === "CALENDAR" && normalizedCalendarEventFilterMode === "MARKER"\n        ? calendarEventMarker\n        : null,\n'''
+          if anchor not in text:
+              raise SystemExit('destinations: data anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          text = text.replace('if (target.durationMode === "CALENDAR") return "Tempo das viagens";', 'if (target.durationMode === "CALENDAR") return "Baseada no calendário";')
+          text = text.replace('calendar.summary?.trim() || "Calendário de viagens"', 'calendar.summary?.trim() || "Calendário"')
+          text = text.replace(
+              '"Para usar o tempo das viagens, marque ao menos um calendário como viagem no CONFIG-01."',
+              '"Para usar duração baseada no calendário, habilite ao menos um calendário para duração no CONFIG-01."',
+          )
+          text = text.replace(
+              ': params.error === "duration"\n        ? "Informe uma duração fixa entre 1 minuto e 24 horas."',
+              ': params.error === "marker"\n        ? "Informe um marcador de evento com até 80 caracteres."\n        : params.error === "duration"\n          ? "Informe uma duração fixa entre 1 minuto e 24 horas."',
+          )
+          text = text.replace('Tempo pelas viagens', 'Duração baseada no calendário')
+          text = text.replace('Calendários que entram no cálculo', 'Calendários que podem entrar no cálculo')
+          text = text.replace('Nenhum calendário está marcado para viagens. Destinos com duração pela agenda só poderão ser salvos depois dessa definição.', 'Nenhum calendário está habilitado para duração. Destinos baseados no calendário só poderão ser salvos depois dessa definição.')
+
+          # New target defaults.
+          anchor = '''                  emptyCalendarBehavior: "KEEP",\n                  podcastPercent: 60,\n'''
+          insertion = '''                  emptyCalendarBehavior: "KEEP",\n                  calendarEventFilterMode: "ALL",\n                  calendarEventMarker: "",\n                  podcastPercent: 60,\n'''
+          if anchor not in text:
+              raise SystemExit('destinations: new target initial anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          # Existing target initial values.
+          anchor = '''                            emptyCalendarBehavior: target.emptyCalendarBehavior,\n                            podcastPercent: target.podcastPercent,\n'''
+          insertion = '''                            emptyCalendarBehavior: target.emptyCalendarBehavior,\n                            calendarEventFilterMode: target.calendarEventFilterMode,\n                            calendarEventMarker: target.calendarEventMarker ?? "",\n                            podcastPercent: target.podcastPercent,\n'''
+          if anchor not in text:
+              raise SystemExit('destinations: edit target initial anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          # Summary line: make the calendar filter visible without opening edit.
+          anchor = '''                          {target.durationMode === "CALENDAR"\n                            ? ` · sem viagem: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}`\n                            : ""}\n'''
+          replacement = '''                          {target.durationMode === "CALENDAR"\n                            ? ` · eventos: ${\n                                target.calendarEventFilterMode === "MARKER"\n                                  ? `marcador ${target.calendarEventMarker ?? "não informado"}`\n                                  : "todos"\n                              } · sem evento: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}`\n                            : ""}\n'''
+          if anchor not in text:
+              raise SystemExit('destinations: target summary anchor missing')
+          text = text.replace(anchor, replacement, 1)
+          write(dest, text)
+
+          # CONFIG-04 readiness + fingerprint.
+          ready = 'src/services/configuration-readiness.ts'
+          text = read(ready)
+          text = text.replace('usedForTrips', 'usedForDuration')
+          text = text.replace('tripCalendars', 'durationCalendars')
+          text = text.replace('TRIP_CALENDAR_REQUIRED', 'DURATION_CALENDAR_REQUIRED')
+          text = text.replace('Marque pelo menos um calendário para entrar no cálculo de viagens.', 'Habilite pelo menos um calendário para entrar no cálculo de duração.')
+          text = text.replace('calcular o tempo das playlists que usam viagens.', 'calcular a duração das playlists baseadas no calendário.')
+
+          anchor = '''    emptyCalendarBehavior: "CLEAR" | "KEEP" | "SKIP";\n    podcastPercent: number;\n'''
+          insertion = '''    emptyCalendarBehavior: "CLEAR" | "KEEP" | "SKIP";\n    calendarEventFilterMode: "ALL" | "MARKER";\n    calendarEventMarker: string | null;\n    podcastPercent: number;\n'''
+          if anchor not in text:
+              raise SystemExit('readiness: target type anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          anchor = '''        emptyCalendarBehavior: true,\n        podcastPercent: true,\n'''
+          insertion = '''        emptyCalendarBehavior: true,\n        calendarEventFilterMode: true,\n        calendarEventMarker: true,\n        podcastPercent: true,\n'''
+          if anchor not in text:
+              raise SystemExit('readiness: target select anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          anchor = '''    emptyCalendarBehavior: target.emptyCalendarBehavior,\n    podcastPercent: target.podcastPercent,\n'''
+          insertion = '''    emptyCalendarBehavior: target.emptyCalendarBehavior,\n    calendarEventFilterMode: target.calendarEventFilterMode,\n    calendarEventMarker: target.calendarEventMarker,\n    podcastPercent: target.podcastPercent,\n'''
+          if anchor not in text:
+              raise SystemExit('readiness: target mapping anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          anchor = '''    if (!hasOnlyValidSequenceEntries(rawTarget.sequencePattern)) {\n'''
+          validation = '''    if (\n      rawTarget.durationMode === "CALENDAR" &&\n      rawTarget.calendarEventFilterMode === "MARKER" &&\n      !rawTarget.calendarEventMarker?.trim()\n    ) {\n      pushIssue({\n        code: `CALENDAR_MARKER_REQUIRED:${rawTarget.id}`,\n        message: `${label}: informe o marcador usado para selecionar eventos do calendário.`,\n        href: "/dashboard/configuracao/destinos",\n      });\n    }\n\n'''
+          if anchor not in text:
+              raise SystemExit('readiness: validation anchor missing')
+          text = text.replace(anchor, validation + anchor, 1)
+
+          anchor = '''      emptyCalendarBehavior: target.emptyCalendarBehavior,\n      podcastPercent: target.podcastPercent,\n'''
+          insertion = '''      emptyCalendarBehavior: target.emptyCalendarBehavior,\n      calendarEventFilterMode: target.calendarEventFilterMode,\n      calendarEventMarker: target.calendarEventMarker,\n      podcastPercent: target.podcastPercent,\n'''
+          if anchor not in text:
+              raise SystemExit('readiness: fingerprint target anchor missing')
+          text = text.replace(anchor, insertion, 1)
+          write(ready, text)
+
+          # CONFIG-04: generic language + expose calendar evidence from the run summary.
+          review = 'src/app/dashboard/configuracao/revisao/page.tsx'
+          text = read(review)
+          text = text.replace('usedForTrips', 'usedForDuration')
+          text = text.replace('Tempo e viagens', 'Tempo e calendário')
+          text = text.replace('{calendar.usedForTrips ? " · viagens" : ""}', '{calendar.usedForDuration ? " · usado na duração" : ""}')
+          text = text.replace(
+              '{target.durationMode === "CALENDAR" ? "Tempo calculado pelas viagens" : `Duração fixa: ${durationLabel(target.fixedDurationSeconds)}`}',
+              '{target.durationMode === "CALENDAR"\n                    ? `Baseada no calendário · ${target.calendarEventFilterMode === "MARKER" ? `marcador ${target.calendarEventMarker ?? "não informado"}` : "todos os eventos"}`\n                    : `Duração fixa: ${durationLabel(target.fixedDurationSeconds)}`}',
+          )
+          text = text.replace(
+              '{target.durationMode === "CALENDAR" ? ` · sem viagem: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}` : ""}',
+              '{target.durationMode === "CALENDAR" ? ` · sem evento elegível: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}` : ""}',
+          )
+
+          anchor = '''  totalMinutes: number | null;\n  musicCount: number | null;\n'''
+          insertion = '''  totalMinutes: number | null;\n  calendarEventCount: number | null;\n  calendarTimedEventCount: number | null;\n  calendarEventFilterMode: "ALL" | "MARKER" | null;\n  calendarEventMarker: string | null;\n  calendarDurationMinutes: number | null;\n  musicCount: number | null;\n'''
+          if anchor not in text:
+              raise SystemExit('review: simulation type anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          anchor = '''        totalMinutes: numberValue(value.totalMinutes),\n        musicCount: numberValue(value.musicCount),\n'''
+          insertion = '''        totalMinutes: numberValue(value.totalMinutes),\n        calendarEventCount: numberValue(value.calendarEventCount),\n        calendarTimedEventCount: numberValue(value.calendarTimedEventCount),\n        calendarEventFilterMode:\n          value.calendarEventFilterMode === "ALL" || value.calendarEventFilterMode === "MARKER"\n            ? value.calendarEventFilterMode\n            : null,\n        calendarEventMarker:\n          typeof value.calendarEventMarker === "string" ? value.calendarEventMarker : null,\n        calendarDurationMinutes: numberValue(value.calendarDurationMinutes),\n        musicCount: numberValue(value.musicCount),\n'''
+          if anchor not in text:
+              raise SystemExit('review: simulation parser anchor missing')
+          text = text.replace(anchor, insertion, 1)
+
+          anchor = '''                      <p className="mt-2 text-sm leading-6 text-violet-100/75">\n                        {target.planned ?? 0} itens · {target.totalMinutes ?? 0} min\n                        {target.musicCount !== null ? ` · ${target.musicCount} músicas` : ""}\n                        {target.podcastCount !== null ? ` · ${target.podcastCount} podcasts` : ""}\n                      </p>\n'''
+          addition = anchor + '''                      {target.calendarDurationMinutes !== null && (\n                        <p className="mt-2 text-xs font-semibold leading-5 text-violet-200/70">\n                          {target.calendarEventCount ?? 0} eventos considerados\n                          {target.calendarEventFilterMode === "MARKER" && target.calendarEventMarker\n                            ? ` com ${target.calendarEventMarker}`\n                            : ""}\n                          {target.calendarTimedEventCount !== null\n                            ? ` de ${target.calendarTimedEventCount} eventos com horário`\n                            : ""}\n                          {` · ${target.calendarDurationMinutes} min calculados pelo calendário`}\n                        </p>\n                      )}\n'''
+          if anchor not in text:
+              raise SystemExit('review: result display anchor missing')
+          text = text.replace(anchor, addition, 1)
+          write(review, text)
+
+          # Ensure no product-code dependency on the old travel model remains.
+          offenders = []
+          for path in [
+              'prisma/schema.prisma',
+              'src/app/dashboard/configuracao/calendarios/page.tsx',
+              'src/app/dashboard/configuracao/destinos/page.tsx',
+              'src/components/TargetPlaylistForm.tsx',
+              'src/jobs/generate-playlists.ts',
+              'src/services/configuration-readiness.ts',
+              'src/services/google-calendar/duration.ts',
+              'src/services/google-calendar/index.ts',
+              'src/app/dashboard/configuracao/revisao/page.tsx',
+          ]:
+              body = read(path)
+              for term in ('usedForTrips', 'computeTripDuration', 'TripDurationResult'):
+                  if term in body:
+                      offenders.append(f'{path}: {term}')
+          if offenders:
+              raise SystemExit('legacy calendar semantics remain:\n' + '\n'.join(offenders))
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Apply migrations to clean PostgreSQL 16
+        run: npx prisma migrate deploy
+
+      - name: Assert CALENDAR-01 migration contract
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          test "$(psql -h 127.0.0.1 -U postgres -d sonoriza_calendar01 -Atc "SELECT count(*) FROM information_schema.columns WHERE table_name='CalendarSelection' AND column_name='usedForDuration';")" = "1"
+          test "$(psql -h 127.0.0.1 -U postgres -d sonoriza_calendar01 -Atc "SELECT count(*) FROM information_schema.columns WHERE table_name='CalendarSelection' AND column_name='usedForTrips';")" = "0"
+          test "$(psql -h 127.0.0.1 -U postgres -d sonoriza_calendar01 -Atc "SELECT count(*) FROM information_schema.columns WHERE table_name='TargetPlaylist' AND column_name IN ('calendarEventFilterMode','calendarEventMarker');")" = "2"
+          test "$(psql -h 127.0.0.1 -U postgres -d sonoriza_calendar01 -Atc "SELECT count(*) FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid WHERE t.typname='CalendarEventFilterMode' AND e.enumlabel IN ('ALL','MARKER');")" = "2"
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit validated implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add -A
+          git commit -m "feat(calendar): generalizar duração baseada no calendário"
+          git push origin HEAD:agent/calendar-01-travel-marker
