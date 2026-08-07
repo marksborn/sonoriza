@@ -25,6 +25,11 @@ const config: Config = {
         muted: "#71677f",
         line: "#e8e3ef",
       },
+      opacity: {
+        45: "0.45",
+        65: "0.65",
+        72: "0.72",
+      },
       boxShadow: {
         soft: "0 24px 70px -34px rgba(39, 16, 111, 0.38)",
         card: "0 18px 45px -28px rgba(39, 16, 111, 0.28)",
