@@ -41,6 +41,7 @@ const other = (t: ContentType): ContentType =>
  * Guarantees:
  *  - no URI is placed twice (nor any URI in `reserved`);
  *  - at most `maxEpisodesPerProgram` episodes of the same program;
+ *  - podcast candidates without a trustworthy program identity are excluded;
  *  - the last item may overshoot the target so total duration >= target when
  *    the pools allow it.
  */
@@ -57,9 +58,26 @@ export function planPlaylist({
   const podcastBudget = (target * podcastPercent) / 100;
   const musicBudget = target - podcastBudget;
 
+  const eligiblePodcasts: Candidate[] = [];
+  let podcastIdentityMissingCount = 0;
+
+  for (const candidate of pools.podcasts) {
+    const programId = candidate.programId?.trim();
+    if (!programId) {
+      podcastIdentityMissingCount += 1;
+      continue;
+    }
+
+    eligiblePodcasts.push(
+      programId === candidate.programId
+        ? candidate
+        : { ...candidate, programId },
+    );
+  }
+
   const poolByType: Record<ContentType, Candidate[]> = {
     MUSIC: pools.music,
-    PODCAST: pools.podcasts,
+    PODCAST: eligiblePodcasts,
   };
 
   const used = new Set<string>(reserved ?? []);
@@ -114,12 +132,11 @@ export function planPlaylist({
     newlyUsed.add(candidate.uri);
     if (candidate.type === "PODCAST") {
       podcastDurationMs += Math.max(0, candidate.durationMs);
-      if (candidate.programId) {
-        programCounts.set(
-          candidate.programId,
-          (programCounts.get(candidate.programId) ?? 0) + 1,
-        );
-      }
+      const programId = candidate.programId!;
+      programCounts.set(
+        programId,
+        (programCounts.get(programId) ?? 0) + 1,
+      );
     } else {
       musicDurationMs += Math.max(0, candidate.durationMs);
     }
@@ -160,6 +177,7 @@ export function planPlaylist({
       mixQualityPassed,
       unfilledSlots,
       poolExhausted,
+      podcastIdentityMissingCount,
     },
   };
 }
@@ -192,7 +210,8 @@ function pickCandidate(
   for (const candidate of pool) {
     if (used.has(candidate.uri)) continue;
     if (candidate.durationMs <= 0) continue;
-    if (candidate.type === "PODCAST" && candidate.programId) {
+    if (candidate.type === "PODCAST") {
+      if (!candidate.programId) continue;
       const count = programCounts.get(candidate.programId) ?? 0;
       if (count >= maxEpisodesPerProgram) continue;
     }

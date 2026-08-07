@@ -76,5 +76,7 @@ export interface PlanResult {
     unfilledSlots: number;
     /** True when the plan stopped because a pool ran dry rather than hitting the target. */
     poolExhausted: boolean;
+    /** Podcast candidates excluded because they had no trustworthy program/show identity. */
+    podcastIdentityMissingCount: number;
   };
 }
