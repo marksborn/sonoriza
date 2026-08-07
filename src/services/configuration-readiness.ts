@@ -9,6 +9,9 @@ type ConfigurationHref =
   | "/dashboard/configuracao/fontes"
   | "/dashboard/configuracao/destinos";
 
+const SPOTIFY_LIBRARY_SCOPE = "user-library-read";
+const SPOTIFY_PLAYBACK_SCOPE = "user-read-playback-position";
+
 export type ConfigurationIssue = {
   code: string;
   message: string;
@@ -18,6 +21,8 @@ export type ConfigurationIssue = {
 export type ConfigurationAssessment = {
   hasGoogle: boolean;
   hasSpotify: boolean;
+  hasSpotifyLibraryScope: boolean;
+  hasSpotifyPlaybackScope: boolean;
   calendars: Array<{
     id: string;
     summary: string | null;
@@ -26,9 +31,10 @@ export type ConfigurationAssessment = {
   sources: Array<{
     id: string;
     kind: "MUSIC" | "PODCAST";
-    spotifyType: "PLAYLIST" | "SHOW";
+    spotifyType: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";
     spotifyId: string;
     name: string | null;
+    includePlayed: boolean;
   }>;
   targets: Array<{
     id: string;
@@ -72,13 +78,17 @@ function fingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function scopeIncludes(scope: string | null | undefined, expected: string): boolean {
+  return new Set((scope ?? "").split(/\s+/).filter(Boolean)).has(expected);
+}
+
 export async function assessConfiguration(
   userId: string,
 ): Promise<ConfigurationAssessment> {
   const [accounts, calendarsRaw, sourcesRaw, targetsRaw] = await Promise.all([
     prisma.account.findMany({
       where: { userId, provider: { in: ["google", "spotify"] } },
-      select: { provider: true },
+      select: { provider: true, scope: true },
     }),
     prisma.calendarSelection.findMany({
       where: { userId, selected: true },
@@ -98,6 +108,7 @@ export async function assessConfiguration(
         spotifyType: true,
         spotifyId: true,
         name: true,
+        includePlayed: true,
       },
     }),
     prisma.targetPlaylist.findMany({
@@ -121,6 +132,15 @@ export async function assessConfiguration(
   const providers = new Set(accounts.map((account) => account.provider));
   const hasGoogle = providers.has("google");
   const hasSpotify = providers.has("spotify");
+  const spotifyAccount = accounts.find((account) => account.provider === "spotify");
+  const hasSpotifyLibraryScope = scopeIncludes(
+    spotifyAccount?.scope,
+    SPOTIFY_LIBRARY_SCOPE,
+  );
+  const hasSpotifyPlaybackScope = scopeIncludes(
+    spotifyAccount?.scope,
+    SPOTIFY_PLAYBACK_SCOPE,
+  );
 
   const calendars = calendarsRaw.map((calendar) => ({
     id: calendar.googleCalendarId,
@@ -217,6 +237,28 @@ export async function assessConfiguration(
     });
   }
 
+  const podcastSources = sources.filter((source) => source.kind === "PODCAST");
+  const podcastSourcesNeedLibrary = podcastSources.some(
+    (source) =>
+      source.spotifyType === "SHOW" || source.spotifyType === "SAVED_EPISODES",
+  );
+
+  if (podcastSourcesNeedLibrary && !hasSpotifyLibraryScope) {
+    pushIssue({
+      code: "SPOTIFY_LIBRARY_SCOPE_REQUIRED",
+      message: "Reconecte o Spotify para permitir a leitura dos seus programas e episódios salvos.",
+      href: "/dashboard/configuracao/fontes",
+    });
+  }
+
+  if (podcastSources.length > 0 && !hasSpotifyPlaybackScope) {
+    pushIssue({
+      code: "SPOTIFY_PLAYBACK_SCOPE_REQUIRED",
+      message: "Reconecte o Spotify para distinguir episódios ouvidos, não ouvidos e calcular apenas o tempo restante dos episódios em andamento.",
+      href: "/dashboard/configuracao/fontes",
+    });
+  }
+
   for (const rawTarget of targetsRaw) {
     const label = `Destino \"${rawTarget.name}\"`;
 
@@ -292,10 +334,11 @@ export async function assessConfiguration(
         kind: source.kind,
         spotifyType: source.spotifyType,
         spotifyId: source.spotifyId,
+        includePlayed: source.includePlayed,
       }))
       .sort((a, b) =>
-        `${a.kind}:${a.spotifyType}:${a.spotifyId}`.localeCompare(
-          `${b.kind}:${b.spotifyType}:${b.spotifyId}`,
+        `${a.kind}:${a.spotifyType}:${a.spotifyId}:${a.includePlayed}`.localeCompare(
+          `${b.kind}:${b.spotifyType}:${b.spotifyId}:${b.includePlayed}`,
         ),
       ),
     targets: targets.map((target) => ({
@@ -314,6 +357,8 @@ export async function assessConfiguration(
   return {
     hasGoogle,
     hasSpotify,
+    hasSpotifyLibraryScope,
+    hasSpotifyPlaybackScope,
     calendars,
     sources,
     targets,
@@ -326,6 +371,11 @@ export function readConfigurationFingerprint(summary: unknown): string | null {
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) return null;
   const value = (summary as Record<string, unknown>).configurationFingerprint;
   return typeof value === "string" ? value : null;
+}
+
+export function readSimulationQualityPassed(summary: unknown): boolean {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return false;
+  return (summary as Record<string, unknown>).qualityPassed === true;
 }
 
 export async function getFirstRunGate(
@@ -389,6 +439,15 @@ export async function getFirstRunGate(
       realRunAllowed: false,
       requiresSimulation: true,
       reason: "A configuração mudou desde a última simulação. Simule novamente antes da primeira geração real.",
+      latestSimulationAt: latestSimulation.startedAt,
+    };
+  }
+
+  if (!readSimulationQualityPassed(latestSimulation.summary)) {
+    return {
+      realRunAllowed: false,
+      requiresSimulation: true,
+      reason: "A última simulação não conseguiu atender às proporções configuradas. Ajuste as fontes ou limites e simule novamente.",
       latestSimulationAt: latestSimulation.startedAt,
     };
   }
