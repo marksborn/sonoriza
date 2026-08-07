@@ -9,7 +9,10 @@ import {
   type PlannerPools,
   type RunTarget,
 } from "@/services/playlist-planner";
-import { SpotifyClient } from "@/services/spotify";
+import {
+  SpotifyClient,
+  type PodcastCandidateBatch,
+} from "@/services/spotify";
 
 export interface GeneratePlaylistsOptions {
   userId: string;
@@ -32,11 +35,13 @@ type LogLine = { level: "INFO" | "WARN" | "ERROR"; message: string; data?: unkno
  *   1. build candidate pools from the user's Spotify sources;
  *   2. resolve each target's duration (fixed or from the calendar);
  *   3. plan every target in priority order (cross-playlist exclusivity);
- *   4. apply the plans to Spotify (unless simulating);
- *   5. persist the run, its items, logs and a structured summary.
+ *   4. validate plan quality before any real Spotify write;
+ *   5. apply the plans to Spotify (unless simulating);
+ *   6. persist the run, its items, logs and a structured summary.
  *
  * A failure while applying a single target degrades the run to PARTIAL rather
- * than aborting the others.
+ * than aborting the others. A material planning-quality failure aborts before
+ * any target is written, because applying a known-bad mix would be destructive.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -51,7 +56,11 @@ export async function generatePlaylists(
 
   const logs: LogLine[] = [];
   const log = (line: LogLine) => logs.push(line);
-  const summary: Record<string, unknown> = { simulate, targets: [] as unknown[] };
+  const summary: Record<string, unknown> = {
+    simulate,
+    targets: [] as unknown[],
+    qualityPassed: false,
+  };
 
   let status: RunStatus = "SUCCESS";
 
@@ -116,6 +125,38 @@ export async function generatePlaylists(
 
     // --- 3. Plan (priority order, shared reservation) ----------------------
     const plan = planRun({ pools, targets: runTargets });
+    const qualityFailures = plan.targets.filter(
+      (planned) => !planned.result.stats.mixQualityPassed,
+    );
+
+    summary.qualityPassed = qualityFailures.length === 0;
+    summary.qualityFailures = qualityFailures.map((planned) => ({
+      name: planned.name,
+      requestedPodcastPercent: planned.result.stats.requestedPodcastPercent,
+      actualPodcastPercent: planned.result.stats.actualPodcastPercent,
+      mixDeviationPoints: planned.result.stats.mixDeviationPoints,
+      podcastShortfallMs: planned.result.stats.podcastShortfallMs,
+      musicShortfallMs: planned.result.stats.musicShortfallMs,
+      poolExhausted: planned.result.stats.poolExhausted,
+      reason: qualityReason(planned.result.stats),
+    }));
+
+    for (const failure of qualityFailures) {
+      log({
+        level: "WARN",
+        message: `Target "${failure.name}" failed mix quality: ${qualityReason(failure.result.stats)}`,
+      });
+    }
+
+    // Never apply a plan we already know materially violates the configured
+    // duration mix. This protects real runs even if UI state became stale.
+    if (!simulate && qualityFailures.length > 0) {
+      status = "FAILED";
+      const error =
+        "A geração foi bloqueada antes de alterar o Spotify porque o plano não conseguiu atender às proporções configuradas.";
+      await finalizeRun(run.id, status, logs, summary, error);
+      return { runId: run.id, status };
+    }
 
     // --- 4 & 5. Apply + persist per target ---------------------------------
     const targetById = new Map(targets.map((t) => [t.id, t]));
@@ -130,6 +171,7 @@ export async function generatePlaylists(
         planned: items.length,
         ...stats,
         totalMinutes: Math.round(stats.totalDurationMs / 60000),
+        qualityReason: stats.mixQualityPassed ? null : qualityReason(stats),
       };
 
       try {
@@ -162,7 +204,7 @@ export async function generatePlaylists(
           level: "INFO",
           message: `Target "${target.name}": ${items.length} items, ${Math.round(
             stats.totalDurationMs / 60000,
-          )} min${simulate ? " (simulated)" : ""}`,
+          )} min, ${stats.actualPodcastPercent}% podcast${simulate ? " (simulated)" : ""}`,
         });
       } catch (err) {
         anyFailed = true;
@@ -192,7 +234,13 @@ export async function generatePlaylists(
 
 async function buildPools(
   spotify: SpotifyClient,
-  sources: { kind: string; spotifyType: string; spotifyId: string }[],
+  sources: {
+    kind: string;
+    spotifyType: string;
+    spotifyId: string;
+    name: string | null;
+    includePlayed: boolean;
+  }[],
   log: (line: LogLine) => void,
 ): Promise<PlannerPools> {
   const music: Candidate[] = [];
@@ -202,12 +250,29 @@ async function buildPools(
     try {
       if (source.kind === "MUSIC" && source.spotifyType === "PLAYLIST") {
         music.push(...(await spotify.getPlaylistTracks(source.spotifyId)));
-      } else if (source.kind === "PODCAST" && source.spotifyType === "SHOW") {
-        podcasts.push(...(await spotify.getShowEpisodes(source.spotifyId)));
-      } else if (source.kind === "PODCAST" && source.spotifyType === "PLAYLIST") {
-        // A playlist of episodes: treat its items as podcast candidates.
-        const tracks = await spotify.getPlaylistTracks(source.spotifyId);
-        podcasts.push(...tracks.map((t) => ({ ...t, type: "PODCAST" as const })));
+        continue;
+      }
+
+      if (source.kind !== "PODCAST") continue;
+
+      let batch: PodcastCandidateBatch | null = null;
+      if (source.spotifyType === "SHOW") {
+        batch = await spotify.getShowEpisodes(
+          source.spotifyId,
+          source.includePlayed,
+        );
+      } else if (source.spotifyType === "SAVED_EPISODES") {
+        batch = await spotify.getSavedEpisodes(source.includePlayed);
+      } else if (source.spotifyType === "PLAYLIST") {
+        batch = await spotify.getPlaylistEpisodes(
+          source.spotifyId,
+          source.includePlayed,
+        );
+      }
+
+      if (batch) {
+        podcasts.push(...batch.candidates);
+        logPodcastBatch(source.name ?? source.spotifyType, batch, log);
       }
     } catch (err) {
       log({
@@ -218,6 +283,25 @@ async function buildPools(
   }
 
   return { music: dedupeByUri(music), podcasts: dedupeByUri(podcasts) };
+}
+
+function logPodcastBatch(
+  label: string,
+  batch: PodcastCandidateBatch,
+  log: (line: LogLine) => void,
+) {
+  if (batch.fullyPlayedSkippedCount > 0) {
+    log({
+      level: "INFO",
+      message: `Podcast source "${label}": ${batch.fullyPlayedSkippedCount} fully played episodes excluded`,
+    });
+  }
+  if (batch.playbackPositionMissingCount > 0) {
+    log({
+      level: "WARN",
+      message: `Podcast source "${label}": Spotify omitted playback position for ${batch.playbackPositionMissingCount} episodes; full duration used for those items`,
+    });
+  }
 }
 
 async function resolveTargetDurationMs(
@@ -294,6 +378,26 @@ async function finalizeRun(
       },
     }),
   ]);
+}
+
+function qualityReason(stats: {
+  requestedPodcastPercent: number;
+  actualPodcastPercent: number;
+  podcastShortfallMs: number;
+  musicShortfallMs: number;
+  poolExhausted: boolean;
+  mixDeviationPoints: number;
+}): string {
+  if (stats.poolExhausted) {
+    return "as fontes elegíveis terminaram antes de preencher a duração planejada";
+  }
+  if (stats.podcastShortfallMs > 0) {
+    return `a meta de ${stats.requestedPodcastPercent}% de podcast ficou em ${stats.actualPodcastPercent}% após aplicar fontes e limites por programa`;
+  }
+  if (stats.musicShortfallMs > 0) {
+    return `a parcela de música ficou abaixo da regra; o plano terminou com ${stats.actualPodcastPercent}% de podcast`;
+  }
+  return `a composição desviou ${stats.mixDeviationPoints} pontos percentuais da regra`;
 }
 
 function dedupeByUri(candidates: Candidate[]): Candidate[] {
