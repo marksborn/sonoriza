@@ -19,6 +19,8 @@ export interface Candidate {
   type: ContentType;
   title: string;
   subtitle?: string;
+  /** Canonical Spotify track id for MUSIC candidates (linked_from id when present). */
+  spotifyTrackId?: string;
   programId?: string;
   durationMs: number;
   originalDurationMs?: number;

@@ -8,7 +8,7 @@ export default async function ConfigurationHubPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/");
 
-  const [calendarCount, sourceCount, targetCount] = await Promise.all([
+  const [calendarCount, sourceCount, targetCount, musicPolicy] = await Promise.all([
     prisma.calendarSelection.count({
       where: { userId: session.user.id, selected: true },
     }),
@@ -18,7 +18,21 @@ export default async function ConfigurationHubPage() {
     prisma.targetPlaylist.count({
       where: { userId: session.user.id, enabled: true },
     }),
+    prisma.musicPlaybackPolicy.findUnique({
+      where: { userId: session.user.id },
+      select: { enabled: true, windowValue: true, windowUnit: true },
+    }),
   ]);
+
+  const musicPolicyLabel = musicPolicy?.enabled
+    ? `${musicPolicy.windowValue ?? "?"} ${
+        musicPolicy.windowUnit === "DAYS"
+          ? "dias"
+          : musicPolicy.windowUnit === "MONTHS"
+            ? "meses"
+            : "anos"
+      }`
+    : "Desativada";
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#0b021f] px-5 py-8 text-white sm:px-8 lg:px-10">
@@ -95,6 +109,30 @@ export default async function ConfigurationHubPage() {
           </Link>
 
           <Link
+            href="/dashboard/configuracao/musica"
+            className="group rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] transition hover:-translate-y-0.5 hover:border-violet-300/40"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-300/20 bg-violet-500/15 text-xl text-violet-100">
+                ↺
+              </span>
+              <span className="rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1.5 text-xs font-black text-violet-200">
+                {musicPolicyLabel}
+              </span>
+            </div>
+            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-violet-400">
+              MUSIC-01
+            </p>
+            <h2 className="mt-1 text-xl font-black">Repetição de músicas</h2>
+            <p className="mt-2 text-sm leading-6 text-violet-200/70">
+              Evite faixas tocadas recentemente usando o histórico nativo do Spotify.
+            </p>
+            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">
+              Configurar repetição <span aria-hidden="true">→</span>
+            </span>
+          </Link>
+
+          <Link
             href="/dashboard/configuracao/destinos"
             className="group rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] transition hover:-translate-y-0.5 hover:border-violet-300/40"
           >
@@ -135,7 +173,7 @@ export default async function ConfigurationHubPage() {
             </p>
             <h2 className="mt-1 text-xl font-black">Revisar e testar</h2>
             <p className="mt-2 text-sm leading-6 text-violet-200/70">
-              Confira conexões e regras, corrija pendências e simule antes da primeira geração real.
+              Confira conexões e regras, corrija pendências e simule antes da geração real.
             </p>
             <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">
               Revisar configuração <span aria-hidden="true">→</span>
