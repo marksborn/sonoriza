@@ -243,7 +243,6 @@ jobs:
                   raise SystemExit(f"{label}: expected 1 match, found {count}")
               p.write_text(text.replace(old, new, 1))
 
-          # Incremental batch metadata.
           replace_once(
               "src/jobs/incremental-planning.ts",
               "  fullyPlayedSkippedCount?: number;\n  fromCache?: boolean;",
@@ -251,7 +250,6 @@ jobs:
               "incremental batch availability metadata",
           )
 
-          # Incremental Spotify reader imports/cache metadata.
           replace_once(
               "src/services/spotify/incremental-reader.ts",
               'import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";',
@@ -307,7 +305,6 @@ jobs:
               "incremental response restrictions",
           )
 
-          # Legacy SpotifyClient uses the same eligibility semantics.
           replace_once(
               "src/services/spotify/client.ts",
               'import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";',
@@ -363,7 +360,6 @@ jobs:
               "client response restrictions",
           )
 
-          # Generator summary + logs.
           replace_once(
               "src/jobs/generate-playlists-incremental.ts",
               "    const incremental = await collectIncrementally({\n      sources: sourceCursors,",
@@ -389,7 +385,6 @@ jobs:
               "generator availability log",
           )
 
-          # CONFIG-04 global availability message.
           replace_once(
               "src/app/dashboard/configuracao/revisao/page.tsx",
               "function readQualityPassed(summary: unknown): boolean | null {",
@@ -495,10 +490,7 @@ jobs:
           });
 
           test("music cache rejects pre-availability versions and malformed payloads", () => {
-            assert.equal(
-              decodeMusicSourceCache({ version: 1, candidates: [] }),
-              null,
-            );
+            assert.equal(decodeMusicSourceCache({ version: 1, candidates: [] }), null);
             assert.equal(
               decodeMusicSourceCache({
                 version: 2,
@@ -536,51 +528,10 @@ jobs:
               }
               return jsonResponse({
                 items: [
-                  {
-                    item: {
-                      uri: "spotify:track:playable",
-                      name: "Playable",
-                      duration_ms: 180_000,
-                      type: "track",
-                      is_local: false,
-                      is_playable: true,
-                      artists: [{ name: "Artist" }],
-                    },
-                  },
-                  {
-                    item: {
-                      uri: "spotify:track:blocked",
-                      name: "Blocked",
-                      duration_ms: 180_000,
-                      type: "track",
-                      is_local: false,
-                      is_playable: false,
-                      restrictions: { reason: "market" },
-                      artists: [{ name: "Artist" }],
-                    },
-                  },
-                  {
-                    item: {
-                      uri: "spotify:track:restricted",
-                      name: "Restricted",
-                      duration_ms: 180_000,
-                      type: "track",
-                      is_local: false,
-                      is_playable: true,
-                      restrictions: { reason: "product" },
-                      artists: [{ name: "Artist" }],
-                    },
-                  },
-                  {
-                    item: {
-                      uri: "spotify:track:local",
-                      name: "Local",
-                      duration_ms: 180_000,
-                      type: "track",
-                      is_local: true,
-                      artists: [{ name: "Artist" }],
-                    },
-                  },
+                  { item: { uri: "spotify:track:playable", name: "Playable", duration_ms: 180_000, type: "track", is_local: false, is_playable: true, artists: [{ name: "Artist" }] } },
+                  { item: { uri: "spotify:track:blocked", name: "Blocked", duration_ms: 180_000, type: "track", is_local: false, is_playable: false, restrictions: { reason: "market" }, artists: [{ name: "Artist" }] } },
+                  { item: { uri: "spotify:track:restricted", name: "Restricted", duration_ms: 180_000, type: "track", is_local: false, is_playable: true, restrictions: { reason: "product" }, artists: [{ name: "Artist" }] } },
+                  { item: { uri: "spotify:track:local", name: "Local", duration_ms: 180_000, type: "track", is_local: true, artists: [{ name: "Artist" }] } },
                 ],
                 next: null,
               });
@@ -589,17 +540,10 @@ jobs:
             try {
               const reader = createReader();
               const cursor = await reader.createSource(
-                source({
-                  kind: "MUSIC",
-                  spotifyType: "PLAYLIST",
-                  name: "Music source",
-                }),
+                source({ kind: "MUSIC", spotifyType: "PLAYLIST", name: "Music source" }),
               );
               const batch = await cursor.readNext();
-              assert.deepEqual(
-                batch.candidates.map((candidate) => candidate.uri),
-                ["spotify:track:playable"],
-              );
+              assert.deepEqual(batch.candidates.map((candidate) => candidate.uri), ["spotify:track:playable"]);
               assert.equal(batch.unavailableMusicSkippedCount, 2);
               assert.equal(urls.filter((url) => url.includes("/items?")).length, 1);
               const itemsUrl = urls.find((url) => url.includes("/items?")) ?? "";
@@ -620,30 +564,16 @@ jobs:
               kind: "MUSIC",
               batches: [
                 { candidates: [], done: false, unavailableMusicSkippedCount: 1 },
-                {
-                  candidates: [candidate("spotify:track:replacement", "MUSIC", 300_000)],
-                  done: true,
-                },
+                { candidates: [candidate("spotify:track:replacement", "MUSIC", 300_000)], done: true },
               ],
             });
             const podcast = fakeSource({
               id: "podcast-filtered",
               kind: "PODCAST",
-              batches: [
-                {
-                  candidates: [
-                    candidate("spotify:episode:replacement", "PODCAST", 300_000, "show-r"),
-                  ],
-                  done: true,
-                },
-              ],
+              batches: [{ candidates: [candidate("spotify:episode:replacement", "PODCAST", 300_000, "show-r")], done: true }],
             });
 
-            const result = await collectIncrementally({
-              sources: [music, podcast],
-              targets: [target()],
-            });
-
+            const result = await collectIncrementally({ sources: [music, podcast], targets: [target()] });
             assert.equal(result.qualityFailures.length, 0);
             assert.equal(music.calls, 2);
             assert.equal(result.pools.music.length, 1);
@@ -653,58 +583,30 @@ jobs:
             const music = fakeSource({
               id: "music-unavailable",
               kind: "MUSIC",
-              batches: [
-                { candidates: [], done: true, unavailableMusicSkippedCount: 2 },
-              ],
+              batches: [{ candidates: [], done: true, unavailableMusicSkippedCount: 2 }],
             });
             const podcast = fakeSource({
               id: "podcast-available",
               kind: "PODCAST",
-              batches: [
-                {
-                  candidates: [candidate("spotify:episode:only", "PODCAST", 300_000, "show-only")],
-                  done: true,
-                },
-              ],
+              batches: [{ candidates: [candidate("spotify:episode:only", "PODCAST", 300_000, "show-only")], done: true }],
             });
 
-            const result = await collectIncrementally({
-              sources: [music, podcast],
-              targets: [target()],
-            });
-
+            const result = await collectIncrementally({ sources: [music, podcast], targets: [target()] });
             assert.equal(result.qualityFailures.length, 1);
-            assert.ok(result.qualityFailures[0]?.result.stats.musicShortfallMs > 0);
+            assert.ok((result.qualityFailures[0]?.result.stats.musicShortfallMs ?? 0) > 0);
           });
 
           test("music deduplication by URI remains correct after eligibility filtering", async () => {
             const duplicate = candidate("spotify:track:same", "MUSIC", 300_000);
-            const musicA = fakeSource({
-              id: "music-a",
-              kind: "MUSIC",
-              batches: [{ candidates: [duplicate], done: true }],
-            });
-            const musicB = fakeSource({
-              id: "music-b",
-              kind: "MUSIC",
-              batches: [{ candidates: [duplicate], done: true }],
-            });
+            const musicA = fakeSource({ id: "music-a", kind: "MUSIC", batches: [{ candidates: [duplicate], done: true }] });
+            const musicB = fakeSource({ id: "music-b", kind: "MUSIC", batches: [{ candidates: [duplicate], done: true }] });
             const podcast = fakeSource({
               id: "podcast-dedupe",
               kind: "PODCAST",
-              batches: [
-                {
-                  candidates: [candidate("spotify:episode:dedupe", "PODCAST", 300_000, "show-d")],
-                  done: true,
-                },
-              ],
+              batches: [{ candidates: [candidate("spotify:episode:dedupe", "PODCAST", 300_000, "show-d")], done: true }],
             });
 
-            const result = await collectIncrementally({
-              sources: [musicA, musicB, podcast],
-              targets: [target()],
-            });
-
+            const result = await collectIncrementally({ sources: [musicA, musicB, podcast], targets: [target()] });
             assert.equal(result.pools.music.length, 1);
             assert.equal(result.pools.music[0]?.uri, "spotify:track:same");
           });
