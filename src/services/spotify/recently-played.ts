@@ -210,7 +210,10 @@ export async function syncRecentlyPlayed(
   const aggregates = new Map<string, PlaybackAggregate>();
 
   while (nextPath) {
-    const page = await spotifyGet<RecentlyPlayedPage>(accessToken, nextPath);
+    const page: RecentlyPlayedPage = await spotifyGet<RecentlyPlayedPage>(
+      accessToken,
+      nextPath,
+    );
     for (const item of page.items ?? []) {
       const playedAt = parsePlayedAt(item.played_at);
       const track = item.track;
