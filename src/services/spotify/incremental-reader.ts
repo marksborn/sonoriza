@@ -199,51 +199,18 @@ export class SpotifyIncrementalReader {
     return playlist.snapshot_id;
   }
 
-  private async createMusicPlaylistSource(
+  private createMusicPlaylistSource(
     source: IncrementalSpotifySourceConfig,
-  ): Promise<SpotifyIncrementalCandidateSource> {
+  ): SpotifyIncrementalCandidateSource {
     const sourceKey = `PLAYLIST:${source.spotifyId}`;
     const metrics = this.sourceMetrics(sourceKey);
-    const snapshotBefore = await this.getPlaylistSnapshotId(source.spotifyId);
-    const snapshotMatches = source.spotifySnapshotId === snapshotBefore;
-    const cached = snapshotMatches
-      ? decodeMusicSourceCache(source.cachedCandidates)
-      : null;
-
-    if (cached !== null) {
-      this.requestMetrics.cacheHits += 1;
-      metrics.cacheHits += 1;
-      metrics.snapshotUnchanged += 1;
-      let delivered = false;
-      return {
-        id: source.id,
-        label: source.name ?? "Playlist de músicas",
-        kind: "MUSIC",
-        spotifyType: source.spotifyType,
-        spotifyId: source.spotifyId,
-        get done() {
-          return delivered;
-        },
-        async readNext() {
-          if (delivered) return { candidates: [], done: true, fromCache: true };
-          delivered = true;
-          return { candidates: cached, done: true, fromCache: true };
-        },
-      };
-    }
-
-    this.requestMetrics.cacheMisses += 1;
-    metrics.cacheMisses += 1;
-    if (source.spotifySnapshotId) {
-      if (snapshotMatches) metrics.snapshotUnchanged += 1;
-      else metrics.snapshotChanged += 1;
-    }
-
-    let nextUrl: string | null =
-      `/playlists/${source.spotifyId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
+    let initialized = false;
+    let snapshotBefore: string | null = null;
+    let nextUrl: string | null = null;
     let done = false;
+    let cached: Candidate[] | null = null;
+    let cacheDelivered = false;
     const accumulated: Candidate[] = [];
-    const reader = this;
 
     return {
       id: source.id,
@@ -254,10 +221,46 @@ export class SpotifyIncrementalReader {
       get done() {
         return done;
       },
-      async readNext(): Promise<IncrementalSourceBatch> {
-        if (done || !nextUrl) return { candidates: [], done: true };
+      readNext: async (): Promise<IncrementalSourceBatch> => {
+        if (done) return { candidates: [], done: true, fromCache: cached !== null };
 
-        const page: SpotifyPage<PlaylistItem> = await reader.request(nextUrl);
+        if (!initialized) {
+          initialized = true;
+          snapshotBefore = await this.getPlaylistSnapshotId(source.spotifyId);
+          const snapshotMatches = source.spotifySnapshotId === snapshotBefore;
+          cached = snapshotMatches
+            ? decodeMusicSourceCache(source.cachedCandidates)
+            : null;
+
+          if (cached !== null) {
+            this.requestMetrics.cacheHits += 1;
+            metrics.cacheHits += 1;
+            metrics.snapshotUnchanged += 1;
+          } else {
+            this.requestMetrics.cacheMisses += 1;
+            metrics.cacheMisses += 1;
+            if (source.spotifySnapshotId) {
+              if (snapshotMatches) metrics.snapshotUnchanged += 1;
+              else metrics.snapshotChanged += 1;
+            }
+            nextUrl =
+              `/playlists/${source.spotifyId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
+          }
+        }
+
+        if (cached !== null) {
+          if (cacheDelivered) return { candidates: [], done: true, fromCache: true };
+          cacheDelivered = true;
+          done = true;
+          return { candidates: cached, done: true, fromCache: true };
+        }
+
+        if (!nextUrl || !snapshotBefore) {
+          done = true;
+          return { candidates: [], done: true };
+        }
+
+        const page: SpotifyPage<PlaylistItem> = await this.request(nextUrl);
         metrics.pagesRead += 1;
         const candidates: Candidate[] = [];
         for (const item of page.items) {
@@ -276,7 +279,7 @@ export class SpotifyIncrementalReader {
         done = nextUrl === null;
 
         if (done) {
-          const snapshotAfter = await reader.getPlaylistSnapshotId(source.spotifyId);
+          const snapshotAfter = await this.getPlaylistSnapshotId(source.spotifyId);
           if (snapshotAfter !== snapshotBefore) {
             throw new Error(
               `Spotify playlist ${source.spotifyId} changed while its items were being read; collection marked incomplete`,
@@ -313,7 +316,6 @@ export class SpotifyIncrementalReader {
     let nextUrl: string | null =
       `/playlists/${source.spotifyId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,show(id,name),resume_point(fully_played,resume_position_ms)))`;
     let done = false;
-    const reader = this;
 
     return {
       id: source.id,
@@ -324,9 +326,9 @@ export class SpotifyIncrementalReader {
       get done() {
         return done;
       },
-      async readNext(): Promise<IncrementalSourceBatch> {
+      readNext: async (): Promise<IncrementalSourceBatch> => {
         if (done || !nextUrl) return { candidates: [], done: true };
-        const page: SpotifyPage<PlaylistItem> = await reader.request(nextUrl);
+        const page: SpotifyPage<PlaylistItem> = await this.request(nextUrl);
         metrics.pagesRead += 1;
         nextUrl = page.next ? stripBase(page.next) : null;
         done = nextUrl === null;
@@ -349,7 +351,6 @@ export class SpotifyIncrementalReader {
     const metrics = this.sourceMetrics(sourceKey);
     let nextUrl: string | null = `/shows/${source.spotifyId}/episodes?limit=50`;
     let done = false;
-    const reader = this;
 
     return {
       id: source.id,
@@ -360,9 +361,9 @@ export class SpotifyIncrementalReader {
       get done() {
         return done;
       },
-      async readNext(): Promise<IncrementalSourceBatch> {
+      readNext: async (): Promise<IncrementalSourceBatch> => {
         if (done || !nextUrl) return { candidates: [], done: true };
-        const page: SpotifyPage<EpisodeResponse> = await reader.request(nextUrl);
+        const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
         metrics.pagesRead += 1;
         nextUrl = page.next ? stripBase(page.next) : null;
         done = nextUrl === null;
@@ -384,7 +385,6 @@ export class SpotifyIncrementalReader {
     const metrics = this.sourceMetrics(sourceKey);
     let nextUrl: string | null = "/me/episodes?limit=50";
     let done = false;
-    const reader = this;
 
     return {
       id: source.id,
@@ -395,9 +395,9 @@ export class SpotifyIncrementalReader {
       get done() {
         return done;
       },
-      async readNext(): Promise<IncrementalSourceBatch> {
+      readNext: async (): Promise<IncrementalSourceBatch> => {
         if (done || !nextUrl) return { candidates: [], done: true };
-        const page: SpotifyPage<SavedEpisodeResponse> = await reader.request(nextUrl);
+        const page: SpotifyPage<SavedEpisodeResponse> = await this.request(nextUrl);
         metrics.pagesRead += 1;
         nextUrl = page.next ? stripBase(page.next) : null;
         done = nextUrl === null;
