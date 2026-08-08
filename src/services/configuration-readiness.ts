@@ -398,6 +398,11 @@ export function readSimulationQualityPassed(summary: unknown): boolean {
   return (summary as Record<string, unknown>).qualityPassed === true;
 }
 
+export function readSimulationInconclusive(summary: unknown): boolean {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return false;
+  return (summary as Record<string, unknown>).inconclusive === true;
+}
+
 export async function getFirstRunGate(
   userId: string,
   assessment?: ConfigurationAssessment,
@@ -439,10 +444,13 @@ export async function getFirstRunGate(
     };
   }
 
+  // Use the actual latest simulation, not merely the latest SUCCESS. Otherwise
+  // an older successful simulation could silently override a newer inconclusive
+  // run caused by an external Spotify outage/quota event.
   const latestSimulation = await prisma.generationRun.findFirst({
-    where: { userId, simulation: true, status: "SUCCESS" },
+    where: { userId, simulation: true },
     orderBy: { startedAt: "desc" },
-    select: { startedAt: true, summary: true },
+    select: { startedAt: true, status: true, summary: true },
   });
 
   if (!latestSimulation) {
@@ -451,6 +459,17 @@ export async function getFirstRunGate(
       requiresSimulation: true,
       reason: "Faça uma simulação bem-sucedida antes da primeira geração real.",
       latestSimulationAt: null,
+    };
+  }
+
+  if (latestSimulation.status !== "SUCCESS") {
+    return {
+      realRunAllowed: false,
+      requiresSimulation: true,
+      reason: readSimulationInconclusive(latestSimulation.summary)
+        ? "A última simulação foi inconclusiva porque o Spotify não permitiu ler todas as fontes. Tente novamente mais tarde; nenhuma configuração foi considerada incorreta."
+        : "A última simulação não foi concluída com sucesso. Execute uma nova simulação antes da primeira geração real.",
+      latestSimulationAt: latestSimulation.startedAt,
     };
   }
 
