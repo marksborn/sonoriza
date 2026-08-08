@@ -56,8 +56,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          FEATURE_SHA="b40da8449a1853deceae79da8a640f9fcb4e788d"
-          BASE_SHA="940e5139506b8cd9b00024dd78a9b1aa7d77ca09"
           EXPECTED_MAIN_SHA="6a60b1b91d488e0b6f540a22e11fb6dfe255f6dc"
 
           git config user.name "github-actions[bot]"
@@ -76,47 +74,72 @@ jobs:
           if [ "$MERGE_RC" -ne 0 ]; then
             mapfile -t unresolved < <(git diff --name-only --diff-filter=U | sort)
             printf 'unresolved: %s\n' "${unresolved[*]}"
-            expected=(
-              "prisma/schema.prisma"
-              "src/app/dashboard/configuracao/revisao/page.tsx"
-              "src/jobs/generate-playlists.ts"
-              "src/services/configuration-readiness.ts"
-            )
-            mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
-            test "$(printf '%s\n' "${unresolved[@]}")" = "$(printf '%s\n' "${expected_sorted[@]}")"
+            for file in "${unresolved[@]}"; do
+              case "$file" in
+                "src/app/dashboard/configuracao/revisao/page.tsx"|"src/jobs/generate-playlists.ts") ;;
+                *) echo "Unexpected merge conflict: $file" >&2; exit 1 ;;
+              esac
+            done
           fi
 
-          conflict_files=(
-            "prisma/schema.prisma"
-            "src/app/dashboard/configuracao/revisao/page.tsx"
-            "src/jobs/generate-playlists.ts"
-            "src/services/configuration-readiness.ts"
-          )
-
-          for file in "${conflict_files[@]}"; do
-            git checkout MERGE_HEAD -- "$file"
-            git add "$file"
-          done
-
-          # Reapply the PODCAST-02 deltas onto the new main versions. The old
-          # generator implementation is intentionally excluded: #40 made the
-          # incremental generator authoritative.
-          for file in \
-            prisma/schema.prisma \
-            src/app/dashboard/configuracao/revisao/page.tsx \
-            src/services/configuration-readiness.ts
-          do
-            patch="/tmp/$(echo "$file" | tr '/' '_').patch"
-            git diff "$BASE_SHA" "$FEATURE_SHA" -- "$file" > "$patch"
-            git apply --3way --index "$patch"
-          done
-
-          # Keep the #40 thin re-export exactly as main.
+          # SPOTIFY-01 is authoritative for the runtime entrypoint.
           git checkout MERGE_HEAD -- src/jobs/generate-playlists.ts
           git add src/jobs/generate-playlists.ts
 
-          # Port the PODCAST-02 orchestration/safety semantics into the
-          # incremental generator introduced by #40.
+          # CONFIG-04 keeps the SPOTIFY-01 inconclusive-state UX from main and
+          # receives only the PODCAST-02 presentation additions.
+          git checkout MERGE_HEAD -- src/app/dashboard/configuracao/revisao/page.tsx
+
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path("src/app/dashboard/configuracao/revisao/page.tsx")
+          text = path.read_text()
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '''  calendarDurationMinutes: number | null;\n  musicCount: number | null;''',
+              '''  calendarDurationMinutes: number | null;\n  calendarMaxEventDurationMinutes: number | null;\n  podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT" | null;\n  podcastEpisodeMaxDurationMinutes: number | null;\n  podcastDurationExceededCount: number | null;\n  musicCount: number | null;''',
+              "simulation target type",
+          )
+
+          replace_once(
+              '''        calendarDurationMinutes: numberValue(value.calendarDurationMinutes),\n        musicCount: numberValue(value.musicCount),''',
+              '''        calendarDurationMinutes: numberValue(value.calendarDurationMinutes),\n        calendarMaxEventDurationMinutes: numberValue(value.calendarMaxEventDurationMinutes),\n        podcastEpisodeMaxDurationMode:\n          value.podcastEpisodeMaxDurationMode === "NONE" ||\n          value.podcastEpisodeMaxDurationMode === "FIXED" ||\n          value.podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT"\n            ? value.podcastEpisodeMaxDurationMode\n            : null,\n        podcastEpisodeMaxDurationMinutes: numberValue(\n          value.podcastEpisodeMaxDurationMinutes,\n        ),\n        podcastDurationExceededCount: numberValue(value.podcastDurationExceededCount),\n        musicCount: numberValue(value.musicCount),''',
+              "simulation target parser",
+          )
+
+          replace_once(
+              '''function minutesFromMs(ms: number | null) {''',
+              '''function configuredPodcastDurationLabel(target: {\n  podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";\n  podcastEpisodeMaxDurationSeconds: number | null;\n}) {\n  if (target.podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT") {\n    return "máximo por episódio = maior evento elegível";\n  }\n  if (target.podcastEpisodeMaxDurationMode === "FIXED") {\n    return `máximo por episódio = ${Math.round(\n      (target.podcastEpisodeMaxDurationSeconds ?? 0) / 60,\n    )} min`;\n  }\n  return "sem máximo de duração por episódio";\n}\n\nfunction minutesFromMs(ms: number | null) {''',
+              "configured duration label",
+          )
+
+          replace_once(
+              '''                  {` · ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}\n                </p>''',
+              '''                  {` · ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}\n                  {` · ${configuredPodcastDurationLabel(target)}`}\n                </p>''',
+              "destination duration label",
+          )
+
+          replace_once(
+              '''                              {` · ${target.calendarDurationMinutes} min calculados pelo calendário`}\n                            </p>\n                          )}\n                          {target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (''',
+              '''                              {` · ${target.calendarDurationMinutes} min calculados pelo calendário`}\n                              {target.calendarMaxEventDurationMinutes !== null\n                                ? ` · maior janela ${target.calendarMaxEventDurationMinutes} min`\n                                : ""}\n                            </p>\n                          )}\n                          {target.podcastEpisodeMaxDurationMode && (\n                            <p className="mt-2 text-xs font-semibold leading-5 text-violet-200/70">\n                              {target.podcastEpisodeMaxDurationMode === "NONE"\n                                ? "Podcasts: sem limite de duração por episódio"\n                                : target.podcastEpisodeMaxDurationMinutes !== null\n                                  ? `Podcasts: limite efetivo de ${target.podcastEpisodeMaxDurationMinutes} min por episódio`\n                                  : "Podcasts: limite efetivo não aplicável nesta execução"}\n                              {target.podcastDurationExceededCount !== null\n                                ? ` · ${target.podcastDurationExceededCount} ${target.podcastDurationExceededCount === 1 ? "episódio descartado" : "episódios descartados"} por duração`\n                                : ""}\n                            </p>\n                          )}\n                          {target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (''',
+              "simulation duration presentation",
+          )
+
+          path.write_text(text)
+          PY
+
+          git add src/app/dashboard/configuracao/revisao/page.tsx
+
+          # Port PODCAST-02 runtime/safety semantics into the incremental
+          # generator introduced by SPOTIFY-01.
           python <<'PY'
           from pathlib import Path
 
@@ -149,7 +172,7 @@ jobs:
           )
 
           writer_anchor = '    if (!simulate) writer = await SpotifyClient.forUser(userId);\n'
-          duration_gate = '''    // Defense in depth: revalidate the selected podcasts against the\n    // freshly resolved limit before a writer can even be created.\n    const durationLimitViolations = plan.targets.flatMap((planned) => {\n      const maxDurationMs =\n        resolvedDurationByTargetId.get(planned.targetPlaylistId)\n          ?.podcastEpisodeMaxDurationMs ?? null;\n      if (maxDurationMs === null) return [];\n\n      return planned.result.items\n        .filter(\n          (item) =>\n            item.type === "PODCAST" &&\n            Math.max(0, item.durationMs) > maxDurationMs,\n        )\n        .map((item) => ({\n          targetPlaylistId: planned.targetPlaylistId,\n          targetName: planned.name,\n          uri: item.uri,\n          durationMs: item.durationMs,\n          maxDurationMs,\n        }));\n    });\n\n    if (!simulate && durationLimitViolations.length > 0) {\n      summary.podcastDurationLimitViolations = durationLimitViolations;\n      const error =\n        "A geração foi bloqueada antes de alterar o Spotify porque um podcast excedeu a duração máxima efetiva do destino.";\n      log({ level: "ERROR", message: error, data: durationLimitViolations });\n      await finalizeRun(run.id, "FAILED", logs, summary, error);\n      return { runId: run.id, status: "FAILED" };\n    }\n\n    if (!simulate) writer = await SpotifyClient.forUser(userId);\n'''
+          duration_gate = '''    // Defense in depth: revalidate selected podcasts against the\n    // freshly resolved limit before a writer can even be created.\n    const durationLimitViolations = plan.targets.flatMap((planned) => {\n      const maxDurationMs =\n        resolvedDurationByTargetId.get(planned.targetPlaylistId)\n          ?.podcastEpisodeMaxDurationMs ?? null;\n      if (maxDurationMs === null) return [];\n\n      return planned.result.items\n        .filter(\n          (item) =>\n            item.type === "PODCAST" &&\n            Math.max(0, item.durationMs) > maxDurationMs,\n        )\n        .map((item) => ({\n          targetPlaylistId: planned.targetPlaylistId,\n          targetName: planned.name,\n          uri: item.uri,\n          durationMs: item.durationMs,\n          maxDurationMs,\n        }));\n    });\n\n    if (!simulate && durationLimitViolations.length > 0) {\n      summary.podcastDurationLimitViolations = durationLimitViolations;\n      const error =\n        "A geração foi bloqueada antes de alterar o Spotify porque um podcast excedeu a duração máxima efetiva do destino.";\n      log({ level: "ERROR", message: error, data: durationLimitViolations });\n      await finalizeRun(run.id, "FAILED", logs, summary, error);\n      return { runId: run.id, status: "FAILED" };\n    }\n\n    if (!simulate) writer = await SpotifyClient.forUser(userId);\n'''
           replace_once(writer_anchor, duration_gate, "pre-writer duration gate")
 
           replace_once(
@@ -204,6 +227,11 @@ jobs:
           PY
 
           git add src/jobs/generate-playlists-incremental.ts
+
+          # Auto-merged PODCAST-02 schema/readiness content must still exist.
+          grep -q 'podcastEpisodeMaxDurationMode' prisma/schema.prisma
+          grep -q 'podcastEpisodeMaxDurationMode' src/services/configuration-readiness.ts
+          grep -q 'readSimulationInconclusive' src/services/configuration-readiness.ts
 
           # No conflict markers or unresolved paths may remain.
           test -z "$(git diff --name-only --diff-filter=U)"
