@@ -1,6 +1,7 @@
 import type { Candidate } from "@/services/playlist-planner";
 
 export type SpotifyMusicTrackLike = {
+  id?: string | null;
   uri?: string | null;
   name?: string | null;
   duration_ms?: number | null;
@@ -8,6 +9,7 @@ export type SpotifyMusicTrackLike = {
   is_local?: boolean;
   is_playable?: boolean;
   restrictions?: { reason?: string | null } | null;
+  linked_from?: { id?: string | null } | null;
   artists?: Array<{ name?: string | null }> | null;
 };
 
@@ -16,6 +18,20 @@ export type PlayableMusicCandidateResult = {
   unavailable: boolean;
   restrictionReason: string | null;
 };
+
+/**
+ * Spotify can relink a catalog track to a market-specific replacement. When
+ * that happens, `linked_from.id` is the stable identity of the originally
+ * requested recording and must win over the replacement id for cooldown/history.
+ */
+export function canonicalSpotifyTrackId(
+  track: Pick<SpotifyMusicTrackLike, "id" | "linked_from"> | null | undefined,
+): string | null {
+  const linked = track?.linked_from?.id;
+  if (typeof linked === "string" && linked.trim()) return linked.trim();
+  const id = track?.id;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
+}
 
 export function readPlayableMusicCandidate(
   track: SpotifyMusicTrackLike | null | undefined,
@@ -43,12 +59,14 @@ export function readPlayableMusicCandidate(
       typeof artist.name === "string" && artist.name.trim() ? [artist.name.trim()] : [],
     )
     .join(", ");
+  const spotifyTrackId = canonicalSpotifyTrackId(track);
   return {
     candidate: {
       uri: track.uri,
       type: "MUSIC",
       title: track.name,
       ...(artistNames ? { subtitle: artistNames } : {}),
+      ...(spotifyTrackId ? { spotifyTrackId } : {}),
       durationMs: track.duration_ms,
     },
     unavailable: false,
