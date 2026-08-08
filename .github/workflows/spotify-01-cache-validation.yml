@@ -1,0 +1,46 @@
+name: SPOTIFY-01 cache validation
+
+on:
+  push:
+    branches:
+      - agent/spotify-01-rate-limit-quota
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sonoriza
+          POSTGRES_PASSWORD: sonoriza
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonoriza -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sonoriza:sonoriza@localhost:5432/sonoriza?schema=public
+      AUTH_SECRET: spotify-01-cache-validation-only
+      AUTH_SPOTIFY_ID: validation-client
+      AUTH_SPOTIFY_SECRET: validation-secret
+      AUTH_GOOGLE_ID: validation-client
+      AUTH_GOOGLE_SECRET: validation-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npm run db:deploy
+      - run: npm run db:generate
+      - run: npm run test:planner
+      - run: npm run test:spotify
+      - run: npm run typecheck
+      - run: npm run build
