@@ -65,6 +65,12 @@ export type FirstRunGate = {
   latestSimulationAt: Date | null;
 };
 
+export type LatestSimulationForGate = {
+  startedAt: Date;
+  status: string;
+  summary: unknown;
+} | null;
+
 function parseSequence(value: unknown): SequenceEntry[] {
   if (!Array.isArray(value)) return [];
   return value.filter(
@@ -459,12 +465,10 @@ export function readSimulationInconclusive(summary: unknown): boolean {
   return (summary as Record<string, unknown>).inconclusive === true;
 }
 
-export async function getFirstRunGate(
-  userId: string,
-  assessment?: ConfigurationAssessment,
-): Promise<FirstRunGate> {
-  const current = assessment ?? (await assessConfiguration(userId));
-
+export function evaluateCurrentSimulationGate(
+  current: ConfigurationAssessment,
+  latestSimulation: LatestSimulationForGate,
+): FirstRunGate {
   if (current.issues.length > 0) {
     return {
       realRunAllowed: false,
@@ -474,46 +478,11 @@ export async function getFirstRunGate(
     };
   }
 
-  // Historical real runs created before CONFIG-04 have no fingerprint and do
-  // not count as completion of the controlled first-run flow.
-  const successfulManualRuns = await prisma.generationRun.findMany({
-    where: {
-      userId,
-      trigger: "MANUAL",
-      simulation: false,
-      status: "SUCCESS",
-    },
-    orderBy: { startedAt: "desc" },
-    select: { summary: true },
-  });
-
-  const hasControlledRealRun = successfulManualRuns.some(
-    (run) => readConfigurationFingerprint(run.summary) !== null,
-  );
-
-  if (hasControlledRealRun) {
-    return {
-      realRunAllowed: true,
-      requiresSimulation: false,
-      reason: null,
-      latestSimulationAt: null,
-    };
-  }
-
-  // Use the actual latest simulation, not merely the latest SUCCESS. Otherwise
-  // an older successful simulation could silently override a newer inconclusive
-  // run caused by an external Spotify outage/quota event.
-  const latestSimulation = await prisma.generationRun.findFirst({
-    where: { userId, simulation: true },
-    orderBy: { startedAt: "desc" },
-    select: { startedAt: true, status: true, summary: true },
-  });
-
   if (!latestSimulation) {
     return {
       realRunAllowed: false,
       requiresSimulation: true,
-      reason: "Faça uma simulação bem-sucedida antes da primeira geração real.",
+      reason: "Faça uma simulação bem-sucedida da configuração atual antes da geração real.",
       latestSimulationAt: null,
     };
   }
@@ -524,7 +493,7 @@ export async function getFirstRunGate(
       requiresSimulation: true,
       reason: readSimulationInconclusive(latestSimulation.summary)
         ? "A última simulação foi inconclusiva porque o Spotify não permitiu ler todas as fontes. Tente novamente mais tarde; nenhuma configuração foi considerada incorreta."
-        : "A última simulação não foi concluída com sucesso. Execute uma nova simulação antes da primeira geração real.",
+        : "A última simulação não foi concluída com sucesso. Execute uma nova simulação antes da geração real.",
       latestSimulationAt: latestSimulation.startedAt,
     };
   }
@@ -533,7 +502,7 @@ export async function getFirstRunGate(
     return {
       realRunAllowed: false,
       requiresSimulation: true,
-      reason: "A configuração mudou desde a última simulação. Simule novamente antes da primeira geração real.",
+      reason: "A configuração mudou desde a última simulação. Simule novamente antes da geração real.",
       latestSimulationAt: latestSimulation.startedAt,
     };
   }
@@ -542,7 +511,7 @@ export async function getFirstRunGate(
     return {
       realRunAllowed: false,
       requiresSimulation: true,
-      reason: "A última simulação não conseguiu atender às proporções configuradas. Ajuste as fontes ou limites e simule novamente.",
+      reason: "A última simulação não conseguiu atender às regras de composição configuradas. Ajuste as fontes ou limites e simule novamente.",
       latestSimulationAt: latestSimulation.startedAt,
     };
   }
@@ -553,4 +522,22 @@ export async function getFirstRunGate(
     reason: null,
     latestSimulationAt: latestSimulation.startedAt,
   };
+}
+
+export async function getFirstRunGate(
+  userId: string,
+  assessment?: ConfigurationAssessment,
+): Promise<FirstRunGate> {
+  const current = assessment ?? (await assessConfiguration(userId));
+
+  // Always evaluate the actual latest simulation for the current configuration.
+  // A previous real run is historical evidence only; it never bypasses a newer
+  // failed/inconclusive simulation or a changed configuration fingerprint.
+  const latestSimulation = await prisma.generationRun.findFirst({
+    where: { userId, simulation: true },
+    orderBy: { startedAt: "desc" },
+    select: { startedAt: true, status: true, summary: true },
+  });
+
+  return evaluateCurrentSimulationGate(current, latestSimulation);
 }
