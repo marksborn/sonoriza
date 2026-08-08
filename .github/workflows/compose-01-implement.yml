@@ -1,0 +1,1367 @@
+name: COMPOSE-01 implementation gate
+
+on:
+  push:
+    branches:
+      - agent/compose-01-composition-mode
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d sonoriza_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_test?schema=public
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: compose-01-validation-only-secret
+      AUTH_SPOTIFY_ID: validation-only
+      AUTH_SPOTIFY_SECRET: validation-only
+      AUTH_GOOGLE_ID: validation-only
+      AUTH_GOOGLE_SECRET: validation-only
+      CRON_SECRET: validation-only
+
+    steps:
+      - name: Checkout issue branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/compose-01-composition-mode
+          fetch-depth: 0
+
+      - name: Setup Node 24.19.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Implement COMPOSE-01
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_MAIN="9aa1fa06504670f2d2e5d737abe12d56fc7f5a57"
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$EXPECTED_MAIN"
+          test "$(git merge-base HEAD origin/main)" = "$EXPECTED_MAIN"
+
+          mkdir -p prisma/migrations/20260808124500_composition_mode
+          cat > prisma/migrations/20260808124500_composition_mode/migration.sql <<'EOF'
+          CREATE TYPE "CompositionMode" AS ENUM ('PROPORTION', 'SEQUENCE');
+
+          ALTER TABLE "TargetPlaylist"
+          ADD COLUMN "compositionMode" "CompositionMode" NOT NULL DEFAULT 'PROPORTION';
+          EOF
+
+          cat > src/services/playlist-planner/types.ts <<'EOF'
+          /**
+           * Domain types for the playlist planner.
+           *
+           * The planner is deliberately decoupled from Next.js, Prisma, Spotify and
+           * Google. It receives plain candidate pools and rules, and returns an ordered
+           * plan. Everything else lives in the orchestration layer.
+           */
+
+          export type ContentType = "MUSIC" | "PODCAST";
+          export type CompositionMode = "PROPORTION" | "SEQUENCE";
+          export type SequenceStopReason =
+            | "TARGET_REACHED"
+            | "NO_CANDIDATE_FOR_SLOT"
+            | "NO_FITTING_CANDIDATE"
+            | "INVALID_PATTERN";
+
+          export interface Candidate {
+            uri: string;
+            type: ContentType;
+            title: string;
+            subtitle?: string;
+            programId?: string;
+            durationMs: number;
+            originalDurationMs?: number;
+            resumePositionMs?: number;
+            playbackPositionKnown?: boolean;
+          }
+
+          export interface PlaylistRules {
+            targetDurationMs: number;
+            /** Explicit composition semantics. Existing destinations migrate to PROPORTION. */
+            compositionMode: CompositionMode;
+            /** Active as a rule only in PROPORTION mode. */
+            podcastPercent: number;
+            /** Active as a rule only in SEQUENCE mode. */
+            sequencePattern: ContentType[];
+            maxEpisodesPerProgram: number;
+            maxPodcastDurationMs?: number | null;
+          }
+
+          export interface PlannedItem extends Candidate {
+            position: number;
+          }
+
+          export interface PlanResult {
+            items: PlannedItem[];
+            usedUris: Set<string>;
+            stats: {
+              compositionMode: CompositionMode;
+              totalDurationMs: number;
+              musicDurationMs: number;
+              podcastDurationMs: number;
+              musicCount: number;
+              podcastCount: number;
+              actualPodcastPercent: number;
+              /** Retained for compatibility; active as a rule only in PROPORTION mode. */
+              requestedPodcastPercent: number;
+              podcastShortfallMs: number;
+              musicShortfallMs: number;
+              /** Retained for compatibility; zero and non-gating in SEQUENCE mode. */
+              mixDeviationPoints: number;
+              /** Retained alias. In SEQUENCE it mirrors sequenceQualityPassed, not a percentage gate. */
+              mixQualityPassed: boolean;
+              /** Canonical mode-aware composition gate. */
+              compositionQualityPassed: boolean;
+              unfilledSlots: number;
+              poolExhausted: boolean;
+              podcastIdentityMissingCount: number;
+              podcastDurationExceededCount: number;
+              sequenceSlotsRequested: number;
+              sequenceSlotsFilled: number;
+              sequenceUnfilledSlots: number;
+              completedCycles: number;
+              finalPartialCycleSlots: number;
+              stoppedAtPatternIndex: number | null;
+              sequenceQualityPassed: boolean | null;
+              sequenceStopReason: SequenceStopReason | null;
+            };
+          }
+          EOF
+
+          cat > src/services/playlist-planner/planner.ts <<'EOF'
+          import type {
+            Candidate,
+            ContentType,
+            PlannedItem,
+            PlanResult,
+            PlaylistRules,
+          } from "./types";
+
+          export interface PlannerPools {
+            music: Candidate[];
+            podcasts: Candidate[];
+          }
+
+          export interface PlanPlaylistInput {
+            rules: PlaylistRules;
+            pools: PlannerPools;
+            reserved?: Iterable<string>;
+          }
+
+          const MIX_QUALITY_TOLERANCE_POINTS = 10;
+
+          export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): PlanResult {
+            const target = Math.max(0, rules.targetDurationMs);
+            const podcastPercent = clamp(rules.podcastPercent, 0, 100);
+            const maxPodcastDurationMs =
+              rules.maxPodcastDurationMs == null
+                ? null
+                : Math.max(0, rules.maxPodcastDurationMs);
+
+            const eligiblePodcasts: Candidate[] = [];
+            let podcastIdentityMissingCount = 0;
+            let podcastDurationExceededCount = 0;
+
+            for (const candidate of pools.podcasts) {
+              const programId = candidate.programId?.trim();
+              if (!programId) {
+                podcastIdentityMissingCount += 1;
+                continue;
+              }
+              if (
+                maxPodcastDurationMs !== null &&
+                Math.max(0, candidate.durationMs) > maxPodcastDurationMs
+              ) {
+                podcastDurationExceededCount += 1;
+                continue;
+              }
+              eligiblePodcasts.push(
+                programId === candidate.programId
+                  ? candidate
+                  : { ...candidate, programId },
+              );
+            }
+
+            const poolByType: Record<ContentType, Candidate[]> = {
+              MUSIC: pools.music,
+              PODCAST: eligiblePodcasts,
+            };
+            const used = new Set<string>(reserved ?? []);
+            const newlyUsed = new Set<string>();
+            const programCounts = new Map<string, number>();
+            const items: PlannedItem[] = [];
+            let musicDurationMs = 0;
+            let podcastDurationMs = 0;
+
+            const totalDuration = () => musicDurationMs + podcastDurationMs;
+            const place = (candidate: Candidate) => {
+              items.push({ ...candidate, position: items.length });
+              used.add(candidate.uri);
+              newlyUsed.add(candidate.uri);
+              if (candidate.type === "PODCAST") {
+                podcastDurationMs += Math.max(0, candidate.durationMs);
+                const programId = candidate.programId!;
+                programCounts.set(programId, (programCounts.get(programId) ?? 0) + 1);
+              } else {
+                musicDurationMs += Math.max(0, candidate.durationMs);
+              }
+            };
+
+            let sequenceSlotsRequested = 0;
+            let sequenceSlotsFilled = 0;
+            let sequenceUnfilledSlots = 0;
+            let completedCycles = 0;
+            let stoppedAtPatternIndex: number | null = null;
+            let sequenceQualityPassed: boolean | null = null;
+            let sequenceStopReason: PlanResult["stats"]["sequenceStopReason"] = null;
+
+            if (rules.compositionMode === "SEQUENCE") {
+              const pattern = rules.sequencePattern;
+              if (pattern.length === 0) {
+                sequenceQualityPassed = false;
+                sequenceStopReason = "INVALID_PATTERN";
+              } else {
+                sequenceQualityPassed = true;
+                let patternIndex = 0;
+
+                while (totalDuration() < target) {
+                  const remainingMs = target - totalDuration();
+                  const slotType = pattern[patternIndex]!;
+                  sequenceSlotsRequested += 1;
+
+                  const candidate = pickCandidate(
+                    poolByType[slotType],
+                    used,
+                    programCounts,
+                    rules.maxEpisodesPerProgram,
+                    remainingMs,
+                  );
+
+                  if (!candidate) {
+                    const sameTypeCandidateExists = Boolean(
+                      pickCandidate(
+                        poolByType[slotType],
+                        used,
+                        programCounts,
+                        rules.maxEpisodesPerProgram,
+                        Number.POSITIVE_INFINITY,
+                      ),
+                    );
+                    sequenceUnfilledSlots = 1;
+                    stoppedAtPatternIndex = patternIndex;
+                    sequenceStopReason = sameTypeCandidateExists
+                      ? "NO_FITTING_CANDIDATE"
+                      : "NO_CANDIDATE_FOR_SLOT";
+                    break;
+                  }
+
+                  place(candidate);
+                  sequenceSlotsFilled += 1;
+                  patternIndex = (patternIndex + 1) % pattern.length;
+                  if (patternIndex === 0) completedCycles += 1;
+                }
+
+                if (totalDuration() >= target) sequenceStopReason = "TARGET_REACHED";
+              }
+            } else {
+              while (totalDuration() < target) {
+                const music = pickCandidate(
+                  poolByType.MUSIC,
+                  used,
+                  programCounts,
+                  rules.maxEpisodesPerProgram,
+                  Number.POSITIVE_INFINITY,
+                );
+                const podcast = pickCandidate(
+                  poolByType.PODCAST,
+                  used,
+                  programCounts,
+                  rules.maxEpisodesPerProgram,
+                  Number.POSITIVE_INFINITY,
+                );
+                if (!music && !podcast) break;
+
+                place(
+                  chooseProportionCandidate({
+                    music,
+                    podcast,
+                    podcastPercent,
+                    musicDurationMs,
+                    podcastDurationMs,
+                  }),
+                );
+              }
+            }
+
+            const totalDurationMs = totalDuration();
+            const actualPodcastPercent =
+              totalDurationMs > 0
+                ? round1((podcastDurationMs / totalDurationMs) * 100)
+                : target === 0
+                  ? podcastPercent
+                  : 0;
+            const poolExhausted = totalDurationMs < target;
+            const podcastBudget = (target * podcastPercent) / 100;
+            const musicBudget = target - podcastBudget;
+
+            const proportionMode = rules.compositionMode === "PROPORTION";
+            const podcastShortfallMs = proportionMode
+              ? Math.max(0, podcastBudget - podcastDurationMs)
+              : 0;
+            const musicShortfallMs = proportionMode
+              ? Math.max(0, musicBudget - musicDurationMs)
+              : 0;
+            const mixDeviationPoints = proportionMode
+              ? round1(Math.abs(actualPodcastPercent - podcastPercent))
+              : 0;
+            const proportionQualityPassed =
+              target === 0 ||
+              (!poolExhausted && mixDeviationPoints <= MIX_QUALITY_TOLERANCE_POINTS);
+            const compositionQualityPassed = proportionMode
+              ? proportionQualityPassed
+              : sequenceQualityPassed === true;
+
+            return {
+              items,
+              usedUris: newlyUsed,
+              stats: {
+                compositionMode: rules.compositionMode,
+                totalDurationMs,
+                musicDurationMs,
+                podcastDurationMs,
+                musicCount: items.filter((item) => item.type === "MUSIC").length,
+                podcastCount: items.filter((item) => item.type === "PODCAST").length,
+                actualPodcastPercent,
+                requestedPodcastPercent: podcastPercent,
+                podcastShortfallMs,
+                musicShortfallMs,
+                mixDeviationPoints,
+                mixQualityPassed: compositionQualityPassed,
+                compositionQualityPassed,
+                unfilledSlots: sequenceUnfilledSlots,
+                poolExhausted,
+                podcastIdentityMissingCount,
+                podcastDurationExceededCount,
+                sequenceSlotsRequested,
+                sequenceSlotsFilled,
+                sequenceUnfilledSlots,
+                completedCycles,
+                finalPartialCycleSlots:
+                  rules.compositionMode === "SEQUENCE" && rules.sequencePattern.length > 0
+                    ? sequenceSlotsFilled % rules.sequencePattern.length
+                    : 0,
+                stoppedAtPatternIndex,
+                sequenceQualityPassed,
+                sequenceStopReason,
+              },
+            };
+          }
+
+          function chooseProportionCandidate(input: {
+            music: Candidate | null;
+            podcast: Candidate | null;
+            podcastPercent: number;
+            musicDurationMs: number;
+            podcastDurationMs: number;
+          }): Candidate {
+            if (!input.music) return input.podcast!;
+            if (!input.podcast) return input.music;
+            if (input.podcastPercent <= 0) return input.music;
+            if (input.podcastPercent >= 100) return input.podcast;
+
+            const score = (candidate: Candidate) => {
+              const podcastDuration =
+                input.podcastDurationMs +
+                (candidate.type === "PODCAST" ? Math.max(0, candidate.durationMs) : 0);
+              const musicDuration =
+                input.musicDurationMs +
+                (candidate.type === "MUSIC" ? Math.max(0, candidate.durationMs) : 0);
+              const total = podcastDuration + musicDuration;
+              const actual = total > 0 ? (podcastDuration / total) * 100 : 0;
+              return Math.abs(actual - input.podcastPercent);
+            };
+
+            const musicScore = score(input.music);
+            const podcastScore = score(input.podcast);
+            if (podcastScore < musicScore) return input.podcast;
+            if (musicScore < podcastScore) return input.music;
+
+            const targetRatio = input.podcastPercent / 100;
+            const currentTotal = input.musicDurationMs + input.podcastDurationMs;
+            const currentPodcastTarget = currentTotal * targetRatio;
+            return input.podcastDurationMs < currentPodcastTarget
+              ? input.podcast
+              : input.music;
+          }
+
+          function pickCandidate(
+            pool: Candidate[],
+            used: Set<string>,
+            programCounts: Map<string, number>,
+            maxEpisodesPerProgram: number,
+            maxDurationMs: number,
+          ): Candidate | null {
+            for (const candidate of pool) {
+              if (used.has(candidate.uri)) continue;
+              if (candidate.durationMs <= 0 || candidate.durationMs > maxDurationMs) continue;
+              if (candidate.type === "PODCAST") {
+                if (!candidate.programId) continue;
+                const count = programCounts.get(candidate.programId) ?? 0;
+                if (count >= maxEpisodesPerProgram) continue;
+              }
+              return candidate;
+            }
+            return null;
+          }
+
+          function clamp(value: number, min: number, max: number): number {
+            return Math.min(max, Math.max(min, value));
+          }
+
+          function round1(value: number): number {
+            return Math.round(value * 10) / 10;
+          }
+          EOF
+
+          cat > src/jobs/incremental-planning.ts <<'EOF'
+          import {
+            planRun,
+            type Candidate,
+            type PlanRunResult,
+            type PlannerPools,
+            type RunTarget,
+          } from "@/services/playlist-planner";
+
+          export type IncrementalSourceKind = "MUSIC" | "PODCAST";
+
+          export type IncrementalSourceBatch = {
+            candidates: Candidate[];
+            done: boolean;
+            playbackPositionMissingCount?: number;
+            fullyPlayedSkippedCount?: number;
+            unavailableMusicSkippedCount?: number;
+            fromCache?: boolean;
+          };
+
+          export type IncrementalCandidateSource = {
+            id: string;
+            label: string;
+            kind: IncrementalSourceKind;
+            readonly done: boolean;
+            readNext(): Promise<IncrementalSourceBatch>;
+          };
+
+          export type IncrementalSourceFailure<
+            TSource extends IncrementalCandidateSource = IncrementalCandidateSource,
+          > = {
+            source: TSource;
+            error: unknown;
+          };
+
+          export type IncrementalPlanningRound = {
+            round: number;
+            requestedKinds: IncrementalSourceKind[];
+            musicCandidates: number;
+            podcastCandidates: number;
+            qualityPassed: boolean;
+          };
+
+          export type IncrementalPlanningResult<
+            TSource extends IncrementalCandidateSource = IncrementalCandidateSource,
+          > = {
+            pools: PlannerPools;
+            plan: PlanRunResult;
+            qualityFailures: PlanRunResult["targets"];
+            readSourceIds: Set<string>;
+            rounds: number;
+            stoppedEarly: boolean;
+            failure: IncrementalSourceFailure<TSource> | null;
+          };
+
+          type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
+            sources: TSource[];
+            targets: RunTarget[];
+            onBatch?: (source: TSource, batch: IncrementalSourceBatch) => void;
+            onRound?: (round: IncrementalPlanningRound) => void;
+          };
+
+          export async function collectIncrementally<
+            TSource extends IncrementalCandidateSource,
+          >({ sources, targets, onBatch, onRound }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
+            const pools: PlannerPools = { music: [], podcasts: [] };
+            const readSourceIds = new Set<string>();
+            const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
+            const relevantKinds = sourceKindsUsedByTargets(targets);
+
+            let requestedKinds = new Set<IncrementalSourceKind>(relevantKinds);
+            let rounds = 0;
+            let plan = planRun({ pools, targets });
+            let qualityFailures = failedTargets(plan);
+            let planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
+
+            if (planningNeeds.length === 0 && qualityFailures.length === 0) {
+              return {
+                pools,
+                plan,
+                qualityFailures,
+                readSourceIds,
+                rounds,
+                stoppedEarly: sources.some((source) => !source.done),
+                failure: null,
+              };
+            }
+
+            while (requestedKinds.size > 0) {
+              const readable = sources.filter(
+                (source) => !source.done && requestedKinds.has(source.kind),
+              );
+              if (readable.length === 0) break;
+
+              rounds += 1;
+              for (const source of readable) {
+                let batch: IncrementalSourceBatch;
+                try {
+                  batch = await source.readNext();
+                } catch (error) {
+                  return {
+                    pools,
+                    plan,
+                    qualityFailures,
+                    readSourceIds,
+                    rounds,
+                    stoppedEarly: false,
+                    failure: { source, error },
+                  };
+                }
+
+                readSourceIds.add(source.id);
+                if (source.kind === "MUSIC") {
+                  pools.music = dedupeByUri([...pools.music, ...batch.candidates]);
+                } else {
+                  pools.podcasts.push(...batch.candidates);
+                }
+                onBatch?.(source, batch);
+              }
+
+              plan = planRun({ pools, targets });
+              qualityFailures = failedTargets(plan);
+              planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
+              onRound?.({
+                round: rounds,
+                requestedKinds: [...requestedKinds],
+                musicCandidates: pools.music.length,
+                podcastCandidates: pools.podcasts.length,
+                qualityPassed: qualityFailures.length === 0 && planningNeeds.length === 0,
+              });
+
+              if (qualityFailures.length === 0 && planningNeeds.length === 0) {
+                return {
+                  pools,
+                  plan,
+                  qualityFailures,
+                  readSourceIds,
+                  rounds,
+                  stoppedEarly: sources.some((source) => !source.done),
+                  failure: null,
+                };
+              }
+
+              requestedKinds = inferNeededKinds(planningNeeds, targetById);
+              if (requestedKinds.size === 0) {
+                requestedKinds = new Set(
+                  relevantKinds.filter((kind) =>
+                    sources.some((source) => source.kind === kind && !source.done),
+                  ),
+                );
+              }
+            }
+
+            return {
+              pools,
+              plan,
+              qualityFailures,
+              readSourceIds,
+              rounds,
+              stoppedEarly: false,
+              failure: null,
+            };
+          }
+
+          function failedTargets(plan: PlanRunResult): PlanRunResult["targets"] {
+            return plan.targets.filter(
+              (planned) => !planned.result.stats.compositionQualityPassed,
+            );
+          }
+
+          function targetsNeedingMoreCandidates(
+            plan: PlanRunResult,
+            targetById: Map<string, RunTarget>,
+          ): PlanRunResult["targets"] {
+            return plan.targets.filter((planned) => {
+              const target = targetById.get(planned.targetPlaylistId);
+              if (!target) return false;
+              const stats = planned.result.stats;
+              if (!stats.compositionQualityPassed) return true;
+              return (
+                target.rules.compositionMode === "SEQUENCE" &&
+                stats.totalDurationMs < target.rules.targetDurationMs &&
+                stats.stoppedAtPatternIndex !== null
+              );
+            });
+          }
+
+          function sourceKindsUsedByTargets(targets: RunTarget[]): IncrementalSourceKind[] {
+            let music = false;
+            let podcast = false;
+
+            for (const target of targets) {
+              if (target.rules.targetDurationMs <= 0) continue;
+              if (target.rules.compositionMode === "SEQUENCE") {
+                music ||= target.rules.sequencePattern.includes("MUSIC");
+                podcast ||= target.rules.sequencePattern.includes("PODCAST");
+              } else {
+                music ||= target.rules.podcastPercent < 100;
+                podcast ||= target.rules.podcastPercent > 0;
+              }
+            }
+
+            return [
+              ...(music ? (["MUSIC"] as const) : []),
+              ...(podcast ? (["PODCAST"] as const) : []),
+            ];
+          }
+
+          function inferNeededKinds(
+            needs: PlanRunResult["targets"],
+            targetById: Map<string, RunTarget>,
+          ): Set<IncrementalSourceKind> {
+            const needed = new Set<IncrementalSourceKind>();
+
+            for (const planned of needs) {
+              const stats = planned.result.stats;
+              const target = targetById.get(planned.targetPlaylistId);
+              if (!target) continue;
+
+              if (target.rules.compositionMode === "SEQUENCE") {
+                const index = stats.stoppedAtPatternIndex;
+                if (index !== null) {
+                  const kind = target.rules.sequencePattern[index];
+                  if (kind) needed.add(kind);
+                }
+                continue;
+              }
+
+              const sizeBefore = needed.size;
+              if (
+                stats.podcastShortfallMs > 0 ||
+                stats.actualPodcastPercent < stats.requestedPodcastPercent
+              ) {
+                needed.add("PODCAST");
+              }
+              if (
+                stats.musicShortfallMs > 0 ||
+                stats.actualPodcastPercent > stats.requestedPodcastPercent
+              ) {
+                needed.add("MUSIC");
+              }
+
+              if (stats.poolExhausted && needed.size === sizeBefore) {
+                if (target.rules.podcastPercent > 0) needed.add("PODCAST");
+                if (target.rules.podcastPercent < 100) needed.add("MUSIC");
+              }
+            }
+
+            return needed;
+          }
+
+          function dedupeByUri(candidates: Candidate[]): Candidate[] {
+            const seen = new Set<string>();
+            const out: Candidate[] = [];
+            for (const candidate of candidates) {
+              if (seen.has(candidate.uri)) continue;
+              seen.add(candidate.uri);
+              out.push(candidate);
+            }
+            return out;
+          }
+          EOF
+
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 match, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          # Prisma model + safe default migration semantics.
+          replace_once(
+              "prisma/schema.prisma",
+              "enum PodcastEpisodeMaxDurationMode {\n  NONE\n  FIXED\n  CALENDAR_MAX_EVENT\n}\n\nmodel TargetPlaylist {",
+              "enum PodcastEpisodeMaxDurationMode {\n  NONE\n  FIXED\n  CALENDAR_MAX_EVENT\n}\n\nenum CompositionMode {\n  PROPORTION\n  SEQUENCE\n}\n\nmodel TargetPlaylist {",
+              "schema composition enum",
+          )
+          replace_once(
+              "prisma/schema.prisma",
+              "  // Lower value is generated first and reserves its content.\n  priority                        Int                           @default(0)\n\n  durationMode",
+              "  // Lower value is generated first and reserves its content.\n  priority                        Int                           @default(0)\n  // Existing destinations migrate safely to proportion semantics.\n  compositionMode                 CompositionMode               @default(PROPORTION)\n\n  durationMode",
+              "schema composition field",
+          )
+
+          # CONFIG-03 form: explicit mode, inactive rule hidden from the user.
+          replace_once(
+              "src/components/TargetPlaylistForm.tsx",
+              'type ContentType = "MUSIC" | "PODCAST";\ntype DurationMode',
+              'type ContentType = "MUSIC" | "PODCAST";\ntype CompositionMode = "PROPORTION" | "SEQUENCE";\ntype DurationMode',
+              "form composition type",
+          )
+          replace_once(
+              "src/components/TargetPlaylistForm.tsx",
+              "  calendarEventMarker: string;\n  podcastPercent: number;",
+              "  calendarEventMarker: string;\n  compositionMode: CompositionMode;\n  podcastPercent: number;",
+              "form initial composition",
+          )
+          replace_once(
+              "src/components/TargetPlaylistForm.tsx",
+              "  const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);",
+              "  const [compositionMode, setCompositionMode] = useState<CompositionMode>(\n    initial.compositionMode,\n  );\n  const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);",
+              "form composition state",
+          )
+          replace_once(
+              "src/components/TargetPlaylistForm.tsx",
+              '      <input type="hidden" name="sequencePattern" value={JSON.stringify(sequence)} />',
+              '      <input type="hidden" name="sequencePattern" value={JSON.stringify(sequence)} />\n      <input type="hidden" name="podcastPercent" value={podcastPercent} />',
+              "form hidden percent",
+          )
+
+          form_path = Path("src/components/TargetPlaylistForm.tsx")
+          text = form_path.read_text()
+          mix_start = '      <div className="rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4 sm:p-5">\n        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">\n          <div>\n            <p className="text-sm font-black text-white">Mistura de conteúdo</p>'
+          mix_end = '      <fieldset className="rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4 sm:p-5">\n        <legend className="px-1 text-sm font-black text-white">\n          Duração máxima por episódio de podcast'
+          i = text.find(mix_start)
+          j = text.find(mix_end)
+          if i < 0 or j < 0 or j <= i:
+              raise SystemExit("form mix block markers not found")
+          old_mix = text[i:j].replace('          name="podcastPercent"\n', '')
+          wrapped_mix = "\n".join("  " + line if line else line for line in old_mix.rstrip().splitlines())
+          chooser = '''      <fieldset>
+        <legend className="text-sm font-black text-white">Como você quer montar esta playlist?</legend>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <label className={`cursor-pointer rounded-2xl border p-4 transition ${compositionMode === "PROPORTION" ? "border-orange-400/45 bg-orange-400/10" : "border-violet-400/20 bg-violet-950/30 hover:border-violet-300/35"}`}>
+            <input type="radio" name="compositionMode" value="PROPORTION" checked={compositionMode === "PROPORTION"} onChange={() => setCompositionMode("PROPORTION")} className="sr-only" />
+            <span className="block font-black text-white">Por proporção de tempo</span>
+            <span className="mt-1 block text-xs leading-5 text-violet-200/65">Defina quanto do tempo deve ser podcast e música. O Sonoriza decide a intercalação para se aproximar dessa meta.</span>
+          </label>
+          <label className={`cursor-pointer rounded-2xl border p-4 transition ${compositionMode === "SEQUENCE" ? "border-orange-400/45 bg-orange-400/10" : "border-violet-400/20 bg-violet-950/30 hover:border-violet-300/35"}`}>
+            <input type="radio" name="compositionMode" value="SEQUENCE" checked={compositionMode === "SEQUENCE"} onChange={() => setCompositionMode("SEQUENCE")} className="sr-only" />
+            <span className="block font-black text-white">Por sequência</span>
+            <span className="mt-1 block text-xs leading-5 text-violet-200/65">Repita uma ordem fixa. O percentual final será consequência da duração real dos itens, não uma segunda regra.</span>
+          </label>
+        </div>
+      </fieldset>
+
+      {compositionMode === "PROPORTION" && (
+''' + wrapped_mix + '''
+      )}
+
+'''
+          text = text[:i] + chooser + text[j:]
+          form_path.write_text(text)
+
+          text = form_path.read_text()
+          seq_start = '      <div>\n        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">\n          <div>\n            <p className="text-sm font-black text-white">Ordem Música / Podcast</p>'
+          seq_end = '      <label className="block max-w-sm text-sm font-bold text-violet-100">\n        Máximo de episódios do mesmo programa'
+          i = text.find(seq_start)
+          j = text.find(seq_end)
+          if i < 0 or j < 0 or j <= i:
+              raise SystemExit("form sequence block markers not found")
+          old_seq = text[i:j]
+          wrapped_seq = "\n".join("  " + line if line else line for line in old_seq.rstrip().splitlines())
+          replacement = '      {compositionMode === "SEQUENCE" && (\n' + wrapped_seq + '\n      )}\n\n'
+          text = text[:i] + replacement + text[j:]
+          form_path.write_text(text)
+
+          # Server-side CONFIG-03 semantics + initial values.
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '  const durationMode = String(formData.get("durationMode") ?? "").trim();',
+              '  const durationMode = String(formData.get("durationMode") ?? "").trim();\n  const compositionMode = String(formData.get("compositionMode") ?? "").trim();',
+              "destinations read composition",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '  if (durationMode !== "FIXED" && durationMode !== "CALENDAR") fail("invalid");\n  if (!sequencePattern || podcastPercent === null || maxEpisodesPerProgram === null) {',
+              '  if (durationMode !== "FIXED" && durationMode !== "CALENDAR") fail("invalid");\n  const normalizedCompositionMode =\n    compositionMode === "PROPORTION" || compositionMode === "SEQUENCE"\n      ? compositionMode\n      : null;\n  if (!normalizedCompositionMode) fail("invalid");\n  if (!sequencePattern || podcastPercent === null || maxEpisodesPerProgram === null) {',
+              "destinations validate composition",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              "    enabled,\n    durationMode,",
+              "    enabled,\n    compositionMode: normalizedCompositionMode,\n    durationMode,",
+              "destinations persist composition",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '                  calendarEventMarker: "",\n                  podcastPercent: 60,',
+              '                  calendarEventMarker: "",\n                  compositionMode: "PROPORTION",\n                  podcastPercent: 60,',
+              "new target composition",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              "                            calendarEventMarker: target.calendarEventMarker ?? \"\",\n                            podcastPercent: target.podcastPercent,",
+              "                            calendarEventMarker: target.calendarEventMarker ?? \"\",\n                            compositionMode: target.compositionMode,\n                            podcastPercent: target.podcastPercent,",
+              "existing target composition",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              "                          {durationLabel(target)} · {target.podcastPercent}% podcast / {100 - target.podcastPercent}% música",
+              "                          {durationLabel(target)} · {target.compositionMode === \"SEQUENCE\"\n                            ? `por sequência: ${sequencePattern.map((entry) => entry === \"MUSIC\" ? \"M\" : \"P\").join(\" → \")}`\n                            : `${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}",
+              "target card composition label",
+          )
+
+          # Readiness + fingerprint: inactive composition fields do not compete.
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              '    calendarEventMarker: string | null;\n    podcastPercent: number;',
+              '    calendarEventMarker: string | null;\n    compositionMode: "PROPORTION" | "SEQUENCE";\n    podcastPercent: number;',
+              "readiness target type",
+          )
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              "        calendarEventMarker: true,\n        podcastPercent: true,",
+              "        calendarEventMarker: true,\n        compositionMode: true,\n        podcastPercent: true,",
+              "readiness select composition",
+          )
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              "    calendarEventMarker: target.calendarEventMarker,\n    podcastPercent: target.podcastPercent,",
+              "    calendarEventMarker: target.calendarEventMarker,\n    compositionMode: target.compositionMode,\n    podcastPercent: target.podcastPercent,",
+              "readiness map composition",
+          )
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              '  const needsMusic = targets.some(\n    (target) => target.podcastPercent < 100 || target.sequence.includes("MUSIC"),\n  );\n  const needsPodcast = targets.some(\n    (target) => target.podcastPercent > 0 || target.sequence.includes("PODCAST"),\n  );',
+              '  const needsMusic = targets.some((target) =>\n    target.compositionMode === "SEQUENCE"\n      ? target.sequence.includes("MUSIC")\n      : target.podcastPercent < 100,\n  );\n  const needsPodcast = targets.some((target) =>\n    target.compositionMode === "SEQUENCE"\n      ? target.sequence.includes("PODCAST")\n      : target.podcastPercent > 0,\n  );',
+              "readiness source needs",
+          )
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              '    if (!hasOnlyValidSequenceEntries(rawTarget.sequencePattern)) {\n      pushIssue({\n        code: `INVALID_SEQUENCE:${rawTarget.id}`,\n        message: `${label}: configure uma sequência válida de música e podcast.`,\n        href: "/dashboard/configuracao/destinos",\n      });\n    }',
+              '    if (\n      rawTarget.compositionMode === "SEQUENCE" &&\n      !hasOnlyValidSequenceEntries(rawTarget.sequencePattern)\n    ) {\n      pushIssue({\n        code: `INVALID_SEQUENCE:${rawTarget.id}`,\n        message: `${label}: configure uma sequência válida de música e podcast.`,\n        href: "/dashboard/configuracao/destinos",\n      });\n    }\n\n    if (\n      rawTarget.compositionMode === "PROPORTION" &&\n      (rawTarget.podcastPercent < 0 || rawTarget.podcastPercent > 100)\n    ) {\n      pushIssue({\n        code: `INVALID_PROPORTION:${rawTarget.id}`,\n        message: `${label}: informe uma proporção de podcast entre 0% e 100%.`,\n        href: "/dashboard/configuracao/destinos",\n      });\n    }',
+              "readiness mode validation",
+          )
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              "      calendarEventMarker: target.calendarEventMarker,\n      podcastPercent: target.podcastPercent,\n      podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,\n      podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,\n      sequence: target.sequence,",
+              "      calendarEventMarker: target.calendarEventMarker,\n      compositionMode: target.compositionMode,\n      podcastPercent:\n        target.compositionMode === \"PROPORTION\" ? target.podcastPercent : null,\n      podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,\n      podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,\n      sequence: target.compositionMode === \"SEQUENCE\" ? target.sequence : null,",
+              "fingerprint composition",
+          )
+
+          # Runtime gets explicit composition mode and mode-aware safety gate.
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              "      targetDurationMs: durationMs,\n      podcastPercent: target.podcastPercent,",
+              "      targetDurationMs: durationMs,\n      compositionMode: target.compositionMode,\n      podcastPercent: target.podcastPercent,",
+              "runtime composition rule",
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              "    const plan = incremental.plan;\n    const qualityFailures = incremental.qualityFailures;",
+              "    const plan = incremental.plan;\n    const qualityFailures = incremental.qualityFailures;",
+              "runtime plan anchor",
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              '        "A geração foi bloqueada antes de alterar o Spotify porque, mesmo após buscar os lotes necessários, o plano não conseguiu atender às proporções configuradas.";',
+              '        "A geração foi bloqueada antes de alterar o Spotify porque, mesmo após buscar os lotes necessários, o plano não conseguiu atender às regras de composição configuradas.";',
+              "runtime generic block message",
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              '        message: `Target "${failure.name}" failed mix quality after incremental collection: ${qualityReason(failure.result.stats)}`,',
+              '        message: `Target "${failure.name}" failed composition quality after incremental collection: ${qualityReason(failure.result.stats)}`,',
+              "runtime quality log",
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              "        name: target.name,\n        planned: items.length,\n        ...stats,",
+              "        name: target.name,\n        planned: items.length,\n        compositionMode: target.compositionMode,\n        sequencePattern: parseSequencePattern(target.sequencePattern),\n        ...stats,",
+              "runtime target summary mode",
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              "        qualityReason: stats.mixQualityPassed ? null : qualityReason(stats),",
+              "        qualityReason: stats.compositionQualityPassed ? null : qualityReason(stats),",
+              "runtime target quality reason",
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              "function qualityReason(stats: {\n  requestedPodcastPercent: number;",
+              "function qualityReason(stats: {\n  compositionMode: \"PROPORTION\" | \"SEQUENCE\";\n  compositionQualityPassed: boolean;\n  sequenceQualityPassed: boolean | null;\n  sequenceUnfilledSlots: number;\n  sequenceStopReason: string | null;\n  requestedPodcastPercent: number;",
+              "runtime quality signature",
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              "}): string {\n  if (stats.poolExhausted) {",
+              "}): string {\n  if (stats.compositionMode === \"SEQUENCE\") {\n    if (stats.sequenceQualityPassed === false) {\n      return \"a sequência configurada é inválida e não pode ser aplicada com segurança\";\n    }\n    if (stats.sequenceUnfilledSlots > 0) {\n      return `a sequência foi preservada, mas o próximo slot não pôde ser preenchido (${stats.sequenceStopReason ?? \"sem candidato\"})`;\n    }\n    return \"a sequência configurada foi preservada\";\n  }\n  if (stats.poolExhausted) {",
+              "runtime sequence quality reason",
+          )
+
+          # Defense in depth: never write a sequence whose item types diverge from the configured cycle.
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              "    // Defense in depth: revalidate selected podcasts against the\n    // freshly resolved limit before a writer can even be created.",
+              '''    const targetByPlanId = new Map(targets.map((target) => [target.id, target]));
+    const sequenceViolations = plan.targets.flatMap((planned) => {
+      const target = targetByPlanId.get(planned.targetPlaylistId);
+      if (!target || target.compositionMode !== "SEQUENCE") return [];
+      const pattern = parseSequencePattern(target.sequencePattern);
+      if (pattern.length === 0) {
+        return [{ targetPlaylistId: target.id, targetName: target.name, reason: "INVALID_PATTERN" }];
+      }
+      const mismatch = planned.result.items.find(
+        (item, index) => item.type !== pattern[index % pattern.length],
+      );
+      return mismatch
+        ? [{ targetPlaylistId: target.id, targetName: target.name, reason: "TYPE_MISMATCH", position: mismatch.position }]
+        : [];
+    });
+
+    if (!simulate && sequenceViolations.length > 0) {
+      summary.sequenceViolations = sequenceViolations;
+      const error =
+        "A geração foi bloqueada antes de alterar o Spotify porque o plano divergiu da sequência configurada.";
+      log({ level: "ERROR", message: error, data: sequenceViolations });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
+
+    // Defense in depth: revalidate selected podcasts against the
+    // freshly resolved limit before a writer can even be created.''',
+              "runtime sequence write barrier",
+          )
+
+          # CONFIG-04 assessment + simulation becomes mode-aware.
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              "  podcastDurationExceededCount: number | null;\n  musicCount: number | null;",
+              "  podcastDurationExceededCount: number | null;\n  compositionMode: \"PROPORTION\" | \"SEQUENCE\" | null;\n  compositionQualityPassed: boolean | null;\n  sequencePattern: Array<\"MUSIC\" | \"PODCAST\">;\n  sequenceSlotsRequested: number | null;\n  sequenceSlotsFilled: number | null;\n  sequenceUnfilledSlots: number | null;\n  completedCycles: number | null;\n  finalPartialCycleSlots: number | null;\n  stoppedAtPatternIndex: number | null;\n  sequenceQualityPassed: boolean | null;\n  sequenceStopReason: string | null;\n  musicCount: number | null;",
+              "review simulation mode type",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              "        podcastDurationExceededCount: numberValue(value.podcastDurationExceededCount),\n        musicCount: numberValue(value.musicCount),",
+              '''        podcastDurationExceededCount: numberValue(value.podcastDurationExceededCount),
+        compositionMode:
+          value.compositionMode === "PROPORTION" || value.compositionMode === "SEQUENCE"
+            ? value.compositionMode
+            : null,
+        compositionQualityPassed: booleanValue(value.compositionQualityPassed),
+        sequencePattern: Array.isArray(value.sequencePattern)
+          ? value.sequencePattern.filter(
+              (entry): entry is "MUSIC" | "PODCAST" =>
+                entry === "MUSIC" || entry === "PODCAST",
+            )
+          : [],
+        sequenceSlotsRequested: numberValue(value.sequenceSlotsRequested),
+        sequenceSlotsFilled: numberValue(value.sequenceSlotsFilled),
+        sequenceUnfilledSlots: numberValue(value.sequenceUnfilledSlots),
+        completedCycles: numberValue(value.completedCycles),
+        finalPartialCycleSlots: numberValue(value.finalPartialCycleSlots),
+        stoppedAtPatternIndex: numberValue(value.stoppedAtPatternIndex),
+        sequenceQualityPassed: booleanValue(value.sequenceQualityPassed),
+        sequenceStopReason:
+          typeof value.sequenceStopReason === "string" ? value.sequenceStopReason : null,
+        musicCount: numberValue(value.musicCount),''',
+              "review parse sequence metrics",
+          )
+          replacements = {
+            "A simulação atual corresponde à configuração e atendeu às proporções. A primeira geração real está liberada.":
+              "A simulação atual corresponde à configuração e atendeu às regras de composição. A primeira geração real está liberada.",
+            "O planner não avaliou proporções, disponibilidade ou esgotamento usando um pool parcial.":
+              "O planner não avaliou composição, disponibilidade ou esgotamento usando um pool parcial.",
+            "O plano conseguiu ser montado, mas ficou materialmente diferente das proporções configuradas. Ajuste fontes ou limites e simule novamente.":
+              "O plano conseguiu ser montado, mas ficou materialmente diferente da regra de composição configurada. Ajuste fontes ou limites e simule novamente.",
+          }
+          p = Path("src/app/dashboard/configuracao/revisao/page.tsx")
+          text = p.read_text()
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"review copy not found: {old[:30]}")
+              text = text.replace(old, new, 1)
+          p.write_text(text)
+
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '{` · ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}',
+              '{target.compositionMode === "PROPORTION"\n                    ? ` · Por proporção: ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`\n                    : " · Por sequência"}',
+              "review configured composition",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-violet-200/75">\n                  <span>Sequência:</span>',
+              '                {target.compositionMode === "SEQUENCE" && (\n                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-violet-200/75">\n                  <span>Ciclo:</span>',
+              "review sequence configured open",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '                  <span>· máximo {target.maxEpisodesPerProgram} {target.maxEpisodesPerProgram === 1 ? "episódio" : "episódios"} do mesmo programa</span>\n                </div>\n              </article>',
+              '                  <span>· máximo {target.maxEpisodesPerProgram} {target.maxEpisodesPerProgram === 1 ? "episódio" : "episódios"} do mesmo programa</span>\n                </div>\n                )}\n              </article>',
+              "review sequence configured close",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '                    <article key={target.name} className={`rounded-2xl border p-4 ${target.mixQualityPassed === false ? "border-orange-300/25 bg-orange-950/20" : "border-violet-300/15 bg-black/15"}`}>',
+              '                    <article key={target.name} className={`rounded-2xl border p-4 ${target.compositionQualityPassed === false ? "border-orange-300/25 bg-orange-950/20" : "border-violet-300/15 bg-black/15"}`}>',
+              "review card gate",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '                          {target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (',
+              '                          {target.compositionMode !== "SEQUENCE" && target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (',
+              "review proportion-only metric",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '                          )}\n                        </>\n                      )}',
+              '''                          )}
+                          {target.compositionMode === "SEQUENCE" && (
+                            <div className="mt-3 rounded-xl border border-violet-300/15 bg-black/15 p-3 text-sm">
+                              <p className="font-black text-violet-100">Ciclo: {target.sequencePattern.map((entry) => entry === "MUSIC" ? "M" : "P").join(" → ") || "não informado"}</p>
+                              <p className="mt-1 text-xs leading-5 text-violet-200/75">
+                                {target.completedCycles ?? 0} ciclos completos
+                                {target.finalPartialCycleSlots ? ` · ciclo final com ${target.finalPartialCycleSlots} slots preenchidos` : ""}
+                                {target.sequenceUnfilledSlots ? ` · ${target.sequenceUnfilledSlots} slot não preenchido` : ""}
+                              </p>
+                              {target.actualPodcastPercent !== null && (
+                                <p className="mt-1 text-xs text-violet-200/65">Resultado por duração: {target.actualPodcastPercent}% podcast / {100 - target.actualPodcastPercent}% música. Esse percentual é apenas informativo.</p>
+                              )}
+                              {target.sequenceStopReason && target.sequenceStopReason !== "TARGET_REACHED" && (
+                                <p className="mt-1 text-xs font-semibold text-orange-200">Interrupção: {target.sequenceStopReason === "NO_FITTING_CANDIDATE" ? "o próximo tipo não tinha item que coubesse no tempo restante" : "não havia candidato elegível para o próximo tipo"}.</p>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}''',
+              "review sequence simulation block",
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '{target.qualityReason && target.mixQualityPassed === false && (',
+              '{target.qualityReason && target.compositionQualityPassed === false && (',
+              "review quality reason gate",
+          )
+
+          # Planner existing regressions default to PROPORTION; add COMPOSE-01 cases.
+          replace_once(
+              "src/services/playlist-planner/planner.test.ts",
+              "    targetDurationMs,\n    podcastPercent: 100,",
+              "    targetDurationMs,\n    compositionMode: \"PROPORTION\",\n    podcastPercent: 100,",
+              "planner test default mode",
+          )
+          with Path("src/services/playlist-planner/planner.test.ts").open("a") as f:
+              f.write(r'''
+
+          function music(uri: string, durationMs = 60_000): Candidate {
+            return { uri, type: "MUSIC", title: uri, durationMs };
+          }
+
+          test("#31 PROPORTION ignores the stored sequence as a physical rule", () => {
+            const minute = 60_000;
+            const result = planPlaylist({
+              rules: {
+                compositionMode: "PROPORTION",
+                targetDurationMs: 20 * minute,
+                podcastPercent: 50,
+                sequencePattern: ["MUSIC"],
+                maxEpisodesPerProgram: 10,
+              },
+              pools: {
+                music: [music("spotify:track:a", 5 * minute), music("spotify:track:b", 5 * minute)],
+                podcasts: [podcast("spotify:episode:a", "show-a", 10 * minute)],
+              },
+            });
+            assert.equal(result.items.some((item) => item.type === "PODCAST"), true);
+            assert.equal(result.stats.compositionMode, "PROPORTION");
+            assert.equal(result.stats.compositionQualityPassed, true);
+          });
+
+          test("#31 SEQUENCE repeats a simple cycle without substituting slot types", () => {
+            const minute = 60_000;
+            const result = planPlaylist({
+              rules: {
+                compositionMode: "SEQUENCE",
+                targetDurationMs: 38 * minute,
+                podcastPercent: 60,
+                sequencePattern: ["MUSIC", "MUSIC", "PODCAST"],
+                maxEpisodesPerProgram: 10,
+              },
+              pools: {
+                music: [music("m1", 4 * minute), music("m2", 4 * minute)],
+                podcasts: [podcast("p1", "s1", 30 * minute)],
+              },
+            });
+            assert.deepEqual(result.items.map((item) => item.type), ["MUSIC", "MUSIC", "PODCAST"]);
+            assert.equal(result.stats.completedCycles, 1);
+            assert.equal(result.stats.sequenceQualityPassed, true);
+            assert.equal(result.stats.actualPodcastPercent > 70, true);
+            assert.equal(result.stats.compositionQualityPassed, true);
+          });
+
+          test("#31 SEQUENCE repeats a complex cycle exactly", () => {
+            const pattern = ["MUSIC", "MUSIC", "PODCAST", "PODCAST", "MUSIC", "MUSIC", "PODCAST"] as const;
+            const result = planPlaylist({
+              rules: {
+                compositionMode: "SEQUENCE",
+                targetDurationMs: 14 * 60_000,
+                podcastPercent: 50,
+                sequencePattern: [...pattern],
+                maxEpisodesPerProgram: 20,
+              },
+              pools: {
+                music: Array.from({ length: 8 }, (_, i) => music(`m${i}`, 60_000)),
+                podcasts: Array.from({ length: 6 }, (_, i) => podcast(`p${i}`, `s${i}`, 60_000)),
+              },
+            });
+            assert.deepEqual(result.items.map((item) => item.type), [...pattern, ...pattern]);
+            assert.equal(result.stats.completedCycles, 2);
+          });
+
+          test("#31 SEQUENCE stops instead of replacing a missing MUSIC slot with PODCAST", () => {
+            const result = planPlaylist({
+              rules: {
+                compositionMode: "SEQUENCE",
+                targetDurationMs: 180_000,
+                podcastPercent: 50,
+                sequencePattern: ["MUSIC", "MUSIC", "PODCAST"],
+                maxEpisodesPerProgram: 10,
+              },
+              pools: {
+                music: [music("m1")],
+                podcasts: [podcast("p1", "s1"), podcast("p2", "s2")],
+              },
+            });
+            assert.deepEqual(result.items.map((item) => item.type), ["MUSIC"]);
+            assert.equal(result.stats.sequenceUnfilledSlots, 1);
+            assert.equal(result.stats.stoppedAtPatternIndex, 1);
+            assert.equal(result.stats.sequenceStopReason, "NO_CANDIDATE_FOR_SLOT");
+            assert.equal(result.stats.compositionQualityPassed, true);
+          });
+
+          test("#31 SEQUENCE ends early when the next same-type item cannot fit", () => {
+            const minute = 60_000;
+            const result = planPlaylist({
+              rules: {
+                compositionMode: "SEQUENCE",
+                targetDurationMs: 6 * minute,
+                podcastPercent: 100,
+                sequencePattern: ["PODCAST"],
+                maxEpisodesPerProgram: 10,
+              },
+              pools: { music: [], podcasts: [podcast("p-long", "s-long", 20 * minute)] },
+            });
+            assert.equal(result.items.length, 0);
+            assert.equal(result.stats.sequenceStopReason, "NO_FITTING_CANDIDATE");
+            assert.equal(result.stats.compositionQualityPassed, true);
+          });
+
+          test("#31 SEQUENCE preserves #27 duration eligibility and #29 program cap", () => {
+            const minute = 60_000;
+            const result = planPlaylist({
+              rules: {
+                compositionMode: "SEQUENCE",
+                targetDurationMs: 20 * minute,
+                podcastPercent: 100,
+                sequencePattern: ["PODCAST", "PODCAST"],
+                maxEpisodesPerProgram: 1,
+                maxPodcastDurationMs: 10 * minute,
+              },
+              pools: {
+                music: [],
+                podcasts: [
+                  podcast("too-long", "show-long", 15 * minute),
+                  podcast("a1", "show-a", 10 * minute),
+                  podcast("a2", "show-a", 10 * minute),
+                  podcast("b1", "show-b", 10 * minute),
+                ],
+              },
+            });
+            assert.deepEqual(result.items.map((item) => item.uri), ["a1", "b1"]);
+            assert.equal(result.stats.podcastDurationExceededCount, 1);
+            assert.equal(result.stats.completedCycles, 1);
+          });
+          ''')
+
+          replace_once(
+              "src/jobs/incremental-planning.test.ts",
+              "      targetDurationMs: durationMs,\n      podcastPercent: 50,",
+              "      targetDurationMs: durationMs,\n      compositionMode: \"PROPORTION\",\n      podcastPercent: 50,",
+              "incremental test default mode",
+          )
+          with Path("src/jobs/incremental-planning.test.ts").open("a") as f:
+              f.write(r'''
+
+          function sequenceTarget(durationMs = 600_000): RunTarget {
+            return {
+              targetPlaylistId: "target-sequence",
+              name: "Sequence target",
+              priority: 0,
+              rules: {
+                targetDurationMs: durationMs,
+                compositionMode: "SEQUENCE",
+                podcastPercent: 50,
+                sequencePattern: ["MUSIC", "PODCAST"],
+                maxEpisodesPerProgram: 10,
+              },
+            };
+          }
+
+          test("#31 incremental SEQUENCE keeps reading only the blocked slot kind", async () => {
+            const music = fakeSource({
+              id: "music-seq",
+              kind: "MUSIC",
+              batches: [
+                { candidates: [], done: false },
+                { candidates: [candidate("spotify:track:seq", "MUSIC", 300_000)], done: true },
+              ],
+            });
+            const podcast = fakeSource({
+              id: "podcast-seq",
+              kind: "PODCAST",
+              batches: [
+                { candidates: [candidate("spotify:episode:seq", "PODCAST", 300_000, "show-seq")], done: false },
+              ],
+            });
+
+            const result = await collectIncrementally({
+              sources: [music, podcast],
+              targets: [sequenceTarget()],
+            });
+
+            assert.equal(result.qualityFailures.length, 0);
+            assert.equal(music.calls, 2);
+            assert.equal(podcast.calls, 1);
+            assert.deepEqual(result.plan.targets[0]?.result.items.map((item) => item.type), ["MUSIC", "PODCAST"]);
+          });
+
+          test("#31 exhausted SEQUENCE may end early without becoming a percentage failure", async () => {
+            const podcast = fakeSource({
+              id: "podcast-too-long",
+              kind: "PODCAST",
+              batches: [
+                { candidates: [candidate("spotify:episode:long", "PODCAST", 700_000, "show-long")], done: true },
+              ],
+            });
+            const targetSeq = sequenceTarget(600_000);
+            targetSeq.rules.sequencePattern = ["PODCAST"];
+
+            const result = await collectIncrementally({ sources: [podcast], targets: [targetSeq] });
+            assert.equal(result.qualityFailures.length, 0);
+            assert.equal(result.plan.targets[0]?.result.stats.sequenceUnfilledSlots, 1);
+            assert.equal(result.plan.targets[0]?.result.stats.sequenceStopReason, "NO_FITTING_CANDIDATE");
+            assert.equal(result.plan.targets[0]?.result.stats.compositionQualityPassed, true);
+          });
+          ''')
+          PY
+
+          # Runtime server-side validation for sequence cannot rely only on UI/readiness.
+          python <<'PY'
+          from pathlib import Path
+          p = Path("src/jobs/generate-playlists-incremental.ts")
+          text = p.read_text()
+          old = '''function toRunTarget(
+  target: TargetPlaylist,
+  durationMs: number,
+  maxPodcastDurationMs: number | null,
+): RunTarget {
+  return {
+'''
+          new = '''function toRunTarget(
+  target: TargetPlaylist,
+  durationMs: number,
+  maxPodcastDurationMs: number | null,
+): RunTarget {
+  const sequencePattern = parseSequencePattern(target.sequencePattern);
+  if (target.compositionMode === "SEQUENCE" && sequencePattern.length === 0) {
+    throw new Error(`Target "${target.name}" has an invalid sequence composition`);
+  }
+  return {
+'''
+          if text.count(old) != 1:
+              raise SystemExit("toRunTarget anchor not found")
+          text = text.replace(old, new, 1)
+          old2 = '      sequencePattern: parseSequencePattern(target.sequencePattern),'
+          if text.count(old2) != 1:
+              raise SystemExit("toRunTarget sequence field not found")
+          text = text.replace(old2, '      sequencePattern,', 1)
+          p.write_text(text)
+          PY
+
+          git rm .github/workflows/compose-01-implement.yml
+          git diff --check
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma validate
+        run: npx prisma validate
+
+      - name: Apply migrations to disposable PostgreSQL
+        run: npm run db:deploy
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Planner regressions
+        run: npm run test:planner
+
+      - name: Spotify regressions
+        run: npm run test:spotify
+
+      - name: Incremental regressions
+        run: npm run test:incremental
+
+      - name: Simulation regressions
+        run: npm run test:simulation
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit and push implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git diff --check
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git add -A
+          git commit -m "feat: separar composição por proporção e sequência (#31)"
+          git push origin HEAD:agent/compose-01-composition-mode
+          echo "Final head: $(git rev-parse HEAD)"
