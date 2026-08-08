@@ -112,7 +112,7 @@ export async function collectIncrementally<
           qualityFailures,
           readSourceIds,
           rounds,
-          stoppedEarly: sources.some((candidateSource) => !candidateSource.done),
+          stoppedEarly: false,
           failure: { source, error },
         };
       }
@@ -132,22 +132,46 @@ export async function collectIncrementally<
       }
 
       readSourceIds.add(source.id);
+      if (source.kind === "MUSIC") {
+        pools.music = dedupeByUri([...pools.music, ...batch.candidates]);
+      } else {
+        pools.podcasts.push(...batch.candidates);
+      }
       onBatch?.(source, batch);
-      if (source.kind === "MUSIC") pools.music.push(...batch.candidates);
-      else pools.podcasts.push(...batch.candidates);
     }
 
     plan = planRun({ pools, targets });
     qualityFailures = failedTargets(plan);
     planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
-    requestedKinds = new Set(planningNeeds.flatMap((need) => need.kinds));
     onRound?.({
       round: rounds,
       requestedKinds: [...requestedKinds],
       musicCandidates: pools.music.length,
       podcastCandidates: pools.podcasts.length,
-      qualityPassed: qualityFailures.length === 0,
+      qualityPassed: qualityFailures.length === 0 && planningNeeds.length === 0,
     });
+
+    if (qualityFailures.length === 0 && planningNeeds.length === 0) {
+      await revalidateMusicRepeatBeforeRealWrite(plan);
+      return {
+        pools,
+        plan,
+        qualityFailures,
+        readSourceIds,
+        rounds,
+        stoppedEarly: sources.some((source) => !source.done),
+        failure: null,
+      };
+    }
+
+    requestedKinds = inferNeededKinds(planningNeeds, targetById);
+    if (requestedKinds.size === 0) {
+      requestedKinds = new Set(
+        relevantKinds.filter((kind) =>
+          sources.some((source) => source.kind === kind && !source.done),
+        ),
+      );
+    }
   }
 
   await revalidateMusicRepeatBeforeRealWrite(plan);
@@ -157,62 +181,105 @@ export async function collectIncrementally<
     qualityFailures,
     readSourceIds,
     rounds,
-    stoppedEarly: sources.some((source) => !source.done),
+    stoppedEarly: false,
     failure: null,
   };
 }
 
 function failedTargets(plan: PlanRunResult): PlanRunResult["targets"] {
-  return plan.targets.filter((target) => !target.result.stats.compositionQualityPassed);
+  return plan.targets.filter(
+    (planned) => !planned.result.stats.compositionQualityPassed,
+  );
 }
-
-type PlanningNeed = {
-  targetPlaylistId: string;
-  kinds: IncrementalSourceKind[];
-};
 
 function targetsNeedingMoreCandidates(
   plan: PlanRunResult,
   targetById: Map<string, RunTarget>,
-): PlanningNeed[] {
-  return plan.targets.flatMap((planned) => {
+): PlanRunResult["targets"] {
+  return plan.targets.filter((planned) => {
     const target = targetById.get(planned.targetPlaylistId);
-    if (!target) return [];
+    if (!target) return false;
     const stats = planned.result.stats;
-    if (stats.compositionQualityPassed) return [];
-
-    const kinds = new Set<IncrementalSourceKind>();
-    if (target.rules.compositionMode === "SEQUENCE") {
-      const pattern = target.rules.sequencePattern;
-      const index = stats.stoppedAtPatternIndex;
-      if (index !== null && pattern[index]) kinds.add(pattern[index]);
-      if (kinds.size === 0 && stats.poolExhausted) {
-        for (const kind of pattern) kinds.add(kind);
-      }
-    } else {
-      if (stats.musicShortfallMs > 0) kinds.add("MUSIC");
-      if (stats.podcastShortfallMs > 0) kinds.add("PODCAST");
-      if (kinds.size === 0 && stats.poolExhausted) {
-        if (target.rules.podcastPercent < 100) kinds.add("MUSIC");
-        if (target.rules.podcastPercent > 0) kinds.add("PODCAST");
-      }
-    }
-
-    return kinds.size > 0
-      ? [{ targetPlaylistId: planned.targetPlaylistId, kinds: [...kinds] }]
-      : [];
+    if (!stats.compositionQualityPassed) return true;
+    return (
+      target.rules.compositionMode === "SEQUENCE" &&
+      stats.totalDurationMs < target.rules.targetDurationMs &&
+      stats.stoppedAtPatternIndex !== null
+    );
   });
 }
 
 function sourceKindsUsedByTargets(targets: RunTarget[]): IncrementalSourceKind[] {
-  const kinds = new Set<IncrementalSourceKind>();
+  let music = false;
+  let podcast = false;
+
   for (const target of targets) {
+    if (target.rules.targetDurationMs <= 0) continue;
     if (target.rules.compositionMode === "SEQUENCE") {
-      for (const kind of target.rules.sequencePattern) kinds.add(kind);
+      music ||= target.rules.sequencePattern.includes("MUSIC");
+      podcast ||= target.rules.sequencePattern.includes("PODCAST");
     } else {
-      if (target.rules.podcastPercent < 100) kinds.add("MUSIC");
-      if (target.rules.podcastPercent > 0) kinds.add("PODCAST");
+      music ||= target.rules.podcastPercent < 100;
+      podcast ||= target.rules.podcastPercent > 0;
     }
   }
-  return [...kinds];
+
+  return [
+    ...(music ? (["MUSIC"] as const) : []),
+    ...(podcast ? (["PODCAST"] as const) : []),
+  ];
+}
+
+function inferNeededKinds(
+  needs: PlanRunResult["targets"],
+  targetById: Map<string, RunTarget>,
+): Set<IncrementalSourceKind> {
+  const needed = new Set<IncrementalSourceKind>();
+
+  for (const planned of needs) {
+    const stats = planned.result.stats;
+    const target = targetById.get(planned.targetPlaylistId);
+    if (!target) continue;
+
+    if (target.rules.compositionMode === "SEQUENCE") {
+      const index = stats.stoppedAtPatternIndex;
+      if (index !== null) {
+        const kind = target.rules.sequencePattern[index];
+        if (kind) needed.add(kind);
+      }
+      continue;
+    }
+
+    const sizeBefore = needed.size;
+    if (
+      stats.podcastShortfallMs > 0 ||
+      stats.actualPodcastPercent < stats.requestedPodcastPercent
+    ) {
+      needed.add("PODCAST");
+    }
+    if (
+      stats.musicShortfallMs > 0 ||
+      stats.actualPodcastPercent > stats.requestedPodcastPercent
+    ) {
+      needed.add("MUSIC");
+    }
+
+    if (stats.poolExhausted && needed.size === sizeBefore) {
+      if (target.rules.podcastPercent > 0) needed.add("PODCAST");
+      if (target.rules.podcastPercent < 100) needed.add("MUSIC");
+    }
+  }
+
+  return needed;
+}
+
+function dedupeByUri(candidates: Candidate[]): Candidate[] {
+  const seen = new Set<string>();
+  const out: Candidate[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.uri)) continue;
+    seen.add(candidate.uri);
+    out.push(candidate);
+  }
+  return out;
 }
