@@ -1,8 +1,17 @@
 import type { Candidate } from "@/services/playlist-planner";
 
+import {
+  inferSpotifyOperation,
+  SpotifyApiError,
+  spotifyApiErrorFromResponse,
+  type SpotifyRequestMetrics,
+} from "./errors";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
+const MAX_RATE_LIMIT_RETRIES = 1;
+const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
+const RETRY_JITTER_MAX_MS = 250;
 
 export interface SpotifyPlaylistSummary {
   id: string;
@@ -32,28 +41,97 @@ export interface PodcastCandidateBatch {
  * playlists.
  */
 export class SpotifyClient {
+  private quotaExceeded = false;
+  private readonly requestMetrics: SpotifyRequestMetrics = {
+    totalCalls: 0,
+    callsByOperation: {},
+    rateLimitedCount: 0,
+    quotaExceededCount: 0,
+    retries: 0,
+    retryWaitMs: 0,
+    circuitOpenSkips: 0,
+  };
+
   private constructor(private readonly accessToken: string) {}
 
   static async forUser(userId: string): Promise<SpotifyClient> {
     return new SpotifyClient(await getSpotifyAccessToken(userId));
   }
 
+  getRequestMetrics(): SpotifyRequestMetrics {
+    return {
+      ...this.requestMetrics,
+      callsByOperation: { ...this.requestMetrics.callsByOperation },
+    };
+  }
+
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${API}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
-    if (!res.ok) {
-      throw new Error(
-        `Spotify API ${init?.method ?? "GET"} ${path} failed (${res.status}): ${await res.text()}`,
-      );
+    const method = (init?.method ?? "GET").toUpperCase();
+    const operation = inferSpotifyOperation(path, method);
+
+    if (this.quotaExceeded && method === "GET") {
+      this.requestMetrics.circuitOpenSkips += 1;
+      throw new SpotifyApiError({
+        kind: "QUOTA_EXCEEDED",
+        status: 429,
+        method,
+        operation,
+        reason: "QUOTA_EXCEEDED",
+        retryable: false,
+        message: `Spotify API quota already exceeded earlier in this run; ${operation} was not requested again`,
+      });
     }
-    if (res.status === 204) return undefined as T;
-    return (await res.json()) as T;
+
+    let retries = 0;
+
+    while (true) {
+      this.requestMetrics.totalCalls += 1;
+      this.requestMetrics.callsByOperation[operation] =
+        (this.requestMetrics.callsByOperation[operation] ?? 0) + 1;
+
+      const res = await fetch(`${API}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": "application/json",
+          ...(init?.headers ?? {}),
+        },
+      });
+
+      if (res.ok) {
+        if (res.status === 204) return undefined as T;
+        return (await res.json()) as T;
+      }
+
+      const error = await spotifyApiErrorFromResponse(res, {
+        method,
+        operation,
+      });
+
+      if (error.kind === "QUOTA_EXCEEDED") {
+        this.requestMetrics.quotaExceededCount += 1;
+        this.quotaExceeded = true;
+        throw error;
+      }
+
+      if (error.kind === "RATE_LIMITED") {
+        this.requestMetrics.rateLimitedCount += 1;
+        if (retries < MAX_RATE_LIMIT_RETRIES) {
+          retries += 1;
+          const waitMs =
+            Math.max(
+              0,
+              error.retryAfterSeconds ?? DEFAULT_RATE_LIMIT_WAIT_SECONDS,
+            ) * 1000 + Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
+          this.requestMetrics.retries += 1;
+          this.requestMetrics.retryWaitMs += waitMs;
+          await sleep(waitMs);
+          continue;
+        }
+      }
+
+      throw error;
+    }
   }
 
   /** Playlists owned or followed by the current user. */
@@ -346,4 +424,8 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
