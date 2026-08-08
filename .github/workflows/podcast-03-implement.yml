@@ -1,0 +1,335 @@
+name: PODCAST-03 implementation gate
+
+on:
+  push:
+    branches:
+      - agent/podcast-03-show-order
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d sonoriza_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_test?schema=public
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: podcast-03-validation-only-secret
+      AUTH_SPOTIFY_ID: validation-only
+      AUTH_SPOTIFY_SECRET: validation-only
+      AUTH_GOOGLE_ID: validation-only
+      AUTH_GOOGLE_SECRET: validation-only
+      CRON_SECRET: validation-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/podcast-03-show-order
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Implement PODCAST-03
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f"{path}: expected exactly one occurrence, found {text.count(old)}")
+              p.write_text(text.replace(old, new, 1))
+
+          # Prisma model + migration.
+          replace_once(
+              'prisma/schema.prisma',
+              '''enum SpotifySourceType {\n  PLAYLIST\n  SHOW\n  SAVED_EPISODES\n}\n\nmodel SourcePlaylist {''',
+              '''enum SpotifySourceType {\n  PLAYLIST\n  SHOW\n  SAVED_EPISODES\n}\n\nenum PodcastEpisodeOrder {\n  SOURCE_DEFAULT\n  OLDEST_FIRST\n  NEWEST_FIRST\n}\n\nmodel SourcePlaylist {''',
+          )
+          replace_once(
+              'prisma/schema.prisma',
+              '''  includePlayed Boolean           @default(false)\n  // Playlist cache is currently used only for MUSIC sources.''',
+              '''  includePlayed Boolean           @default(false)\n  // SHOW-only ordering policy. Existing rows preserve provider/default order.\n  episodeOrder  PodcastEpisodeOrder @default(SOURCE_DEFAULT)\n  // Playlist cache is currently used only for MUSIC sources.''',
+          )
+          migration = Path('prisma/migrations/20260808133000_podcast_show_episode_order')
+          migration.mkdir(parents=True, exist_ok=True)
+          (migration / 'migration.sql').write_text('''CREATE TYPE "PodcastEpisodeOrder" AS ENUM ('SOURCE_DEFAULT', 'OLDEST_FIRST', 'NEWEST_FIRST');\n\nALTER TABLE "SourcePlaylist"\nADD COLUMN "episodeOrder" "PodcastEpisodeOrder" NOT NULL DEFAULT 'SOURCE_DEFAULT';\n''')
+
+          # Candidate metadata used only to preserve deterministic podcast order/provenance.
+          replace_once(
+              'src/services/playlist-planner/types.ts',
+              '''  playbackPositionKnown?: boolean;\n}''',
+              '''  playbackPositionKnown?: boolean;\n  releaseDate?: string;\n  releaseDatePrecision?: string;\n  sourceSpotifyType?: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";\n  sourceSpotifyId?: string;\n}''',
+          )
+
+          # Pure ordering policy helper.
+          policy = Path('src/services/spotify/podcast-show-policy.ts')
+          policy.write_text('''import type { Candidate } from "@/services/playlist-planner";\n\nexport type PodcastEpisodeOrderValue =\n  | "SOURCE_DEFAULT"\n  | "OLDEST_FIRST"\n  | "NEWEST_FIRST";\n\nexport function sortShowCandidates(\n  candidates: Candidate[],\n  order: PodcastEpisodeOrderValue,\n): Candidate[] {\n  if (order === "SOURCE_DEFAULT") return [...candidates];\n  const direction = order === "OLDEST_FIRST" ? 1 : -1;\n  return [...candidates].sort((left, right) => {\n    const leftKey = releaseKey(left.releaseDate, left.releaseDatePrecision);\n    const rightKey = releaseKey(right.releaseDate, right.releaseDatePrecision);\n    if (leftKey === null && rightKey !== null) return 1;\n    if (leftKey !== null && rightKey === null) return -1;\n    if (leftKey !== null && rightKey !== null && leftKey !== rightKey) {\n      return (leftKey < rightKey ? -1 : 1) * direction;\n    }\n    return left.uri.localeCompare(right.uri);\n  });\n}\n\nfunction releaseKey(date: string | undefined, precision: string | undefined): string | null {\n  if (!date) return null;\n  const parts = date.split("-");\n  const year = Number(parts[0]);\n  if (!Number.isInteger(year)) return null;\n  const month = precision === "year" ? 0 : Number(parts[1] ?? 0);\n  const day = precision === "day" ? Number(parts[2] ?? 0) : 0;\n  if (!Number.isFinite(month) || !Number.isFinite(day)) return null;\n  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;\n}\n''')
+
+          # Incremental batch observability.
+          replace_once(
+              'src/jobs/incremental-planning.ts',
+              '''  unavailableMusicSkippedCount?: number;\n  fromCache?: boolean;''',
+              '''  unavailableMusicSkippedCount?: number;\n  genericPodcastSuppressedCount?: number;\n  fromCache?: boolean;''',
+          )
+
+          # Incremental Spotify reader: authoritative SHOW precedence + deterministic order.
+          p = Path('src/services/spotify/incremental-reader.ts')
+          text = p.read_text()
+          text = text.replace(
+              '''import { readPlayableMusicCandidate } from "./music-availability";''',
+              '''import { readPlayableMusicCandidate } from "./music-availability";\nimport { sortShowCandidates } from "./podcast-show-policy";''',
+              1,
+          )
+          text = text.replace(
+              '''  | "includePlayed"\n  | "spotifySnapshotId"''',
+              '''  | "includePlayed"\n  | "episodeOrder"\n  | "spotifySnapshotId"''',
+              1,
+          )
+          text = text.replace(
+              '''  private constructor(private readonly accessToken: string) {}\n\n  static async forUser(userId: string): Promise<SpotifyIncrementalReader> {\n    return new SpotifyIncrementalReader(await getSpotifyAccessToken(userId));\n  }''',
+              '''  private constructor(\n    private readonly accessToken: string,\n    private readonly authoritativePodcastProgramIds: ReadonlySet<string> = new Set(),\n  ) {}\n\n  static async forUser(\n    userId: string,\n    options: { authoritativePodcastProgramIds?: ReadonlySet<string> } = {},\n  ): Promise<SpotifyIncrementalReader> {\n    return new SpotifyIncrementalReader(\n      await getSpotifyAccessToken(userId),\n      options.authoritativePodcastProgramIds ?? new Set(),\n    );\n  }''',
+              1,
+          )
+          text = text.replace(
+              '''        const collector = createPodcastCollector(source.includePlayed);''',
+              '''        const collector = createPodcastCollector(source.includePlayed, undefined, {\n          sourceSpotifyType: "PLAYLIST",\n          sourceSpotifyId: source.spotifyId,\n          suppressedProgramIds: this.authoritativePodcastProgramIds,\n        });''',
+              1,
+          )
+          old_show = '''  private createShowSource(\n    source: IncrementalSpotifySourceConfig,\n  ): SpotifyIncrementalCandidateSource {\n    const sourceKey = `SHOW:${source.spotifyId}`;\n    const metrics = this.sourceMetrics(sourceKey);\n    let nextUrl: string | null = `/shows/${source.spotifyId}/episodes?limit=50`;\n    let done = false;\n\n    return {\n      id: source.id,\n      label: source.name ?? "Programa de podcast",\n      kind: "PODCAST",\n      spotifyType: source.spotifyType,\n      spotifyId: source.spotifyId,\n      get done() {\n        return done;\n      },\n      readNext: async (): Promise<IncrementalSourceBatch> => {\n        if (done || !nextUrl) return { candidates: [], done: true };\n        const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);\n        metrics.pagesRead += 1;\n        nextUrl = page.next ? stripBase(page.next) : null;\n        done = nextUrl === null;\n\n        const collector = createPodcastCollector(\n          source.includePlayed,\n          source.spotifyId,\n        );\n        for (const episode of page.items) collector.add(episode);\n        return { ...collector.result(), done };\n      },\n    };\n  }'''
+          new_show = '''  private createShowSource(\n    source: IncrementalSpotifySourceConfig,\n  ): SpotifyIncrementalCandidateSource {\n    const sourceKey = `SHOW:${source.spotifyId}`;\n    const metrics = this.sourceMetrics(sourceKey);\n    let nextUrl: string | null = `/shows/${source.spotifyId}/episodes?limit=50`;\n    let done = false;\n\n    return {\n      id: source.id,\n      label: source.name ?? "Programa de podcast",\n      kind: "PODCAST",\n      spotifyType: source.spotifyType,\n      spotifyId: source.spotifyId,\n      get done() {\n        return done;\n      },\n      readNext: async (): Promise<IncrementalSourceBatch> => {\n        if (done || !nextUrl) return { candidates: [], done: true };\n\n        const collector = createPodcastCollector(source.includePlayed, source.spotifyId, {\n          sourceSpotifyType: "SHOW",\n          sourceSpotifyId: source.spotifyId,\n        });\n\n        if (source.episodeOrder === "SOURCE_DEFAULT") {\n          const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);\n          metrics.pagesRead += 1;\n          nextUrl = page.next ? stripBase(page.next) : null;\n          done = nextUrl === null;\n          for (const episode of page.items) collector.add(episode);\n          return { ...collector.result(), done };\n        }\n\n        // Explicit chronological order must be global, never pagination-incidental.\n        while (nextUrl) {\n          const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);\n          metrics.pagesRead += 1;\n          nextUrl = page.next ? stripBase(page.next) : null;\n          for (const episode of page.items) collector.add(episode);\n        }\n        done = true;\n        const result = collector.result();\n        return {\n          ...result,\n          candidates: sortShowCandidates(result.candidates, source.episodeOrder),\n          done: true,\n        };\n      },\n    };\n  }'''
+          if text.count(old_show) != 1:
+              raise SystemExit('incremental-reader show block not found')
+          text = text.replace(old_show, new_show, 1)
+          text = text.replace(
+              '''        const collector = createPodcastCollector(source.includePlayed);\n        for (const item of page.items) {''',
+              '''        const collector = createPodcastCollector(source.includePlayed, undefined, {\n          sourceSpotifyType: "SAVED_EPISODES",\n          sourceSpotifyId: source.spotifyId,\n          suppressedProgramIds: this.authoritativePodcastProgramIds,\n        });\n        for (const item of page.items) {''',
+              1,
+          )
+          text = text.replace(
+              '''  resume_point?: {\n    fully_played: boolean;\n    resume_position_ms: number;\n  } | null;\n}\n\nfunction createPodcastCollector(includePlayed: boolean, fallbackProgramId?: string) {\n  const candidates: Candidate[] = [];\n  let playbackPositionMissingCount = 0;\n  let fullyPlayedSkippedCount = 0;''',
+              '''  release_date?: string;\n  release_date_precision?: string;\n  resume_point?: {\n    fully_played: boolean;\n    resume_position_ms: number;\n  } | null;\n}\n\ntype PodcastCollectorOptions = {\n  sourceSpotifyType?: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";\n  sourceSpotifyId?: string;\n  suppressedProgramIds?: ReadonlySet<string>;\n};\n\nfunction createPodcastCollector(\n  includePlayed: boolean,\n  fallbackProgramId?: string,\n  options: PodcastCollectorOptions = {},\n) {\n  const candidates: Candidate[] = [];\n  let playbackPositionMissingCount = 0;\n  let fullyPlayedSkippedCount = 0;\n  let genericPodcastSuppressedCount = 0;''',
+              1,
+          )
+          text = text.replace(
+              '''      const resumePoint = episode.resume_point ?? null;''',
+              '''      const programId = episode.show?.id ?? fallbackProgramId;\n      if (\n        programId &&\n        options.sourceSpotifyType !== "SHOW" &&\n        options.suppressedProgramIds?.has(programId)\n      ) {\n        genericPodcastSuppressedCount += 1;\n        return;\n      }\n\n      const resumePoint = episode.resume_point ?? null;''',
+              1,
+          )
+          text = text.replace(
+              '''        programId: episode.show?.id ?? fallbackProgramId,\n        durationMs,''',
+              '''        programId,\n        durationMs,''',
+              1,
+          )
+          text = text.replace(
+              '''        playbackPositionKnown: Boolean(resumePoint),\n      });''',
+              '''        playbackPositionKnown: Boolean(resumePoint),\n        releaseDate: episode.release_date,\n        releaseDatePrecision: episode.release_date_precision,\n        sourceSpotifyType: options.sourceSpotifyType,\n        sourceSpotifyId: options.sourceSpotifyId,\n      });''',
+              1,
+          )
+          text = text.replace(
+              '''        fullyPlayedSkippedCount,\n      };''',
+              '''        fullyPlayedSkippedCount,\n        genericPodcastSuppressedCount,\n      };''',
+              1,
+          )
+          p.write_text(text)
+
+          # Generator: authoritative IDs, suppression metric and pre-write guard.
+          p = Path('src/jobs/generate-playlists-incremental.ts')
+          text = p.read_text()
+          text = text.replace(
+              '''    reader = await SpotifyIncrementalReader.forUser(userId);''',
+              '''    const authoritativePodcastProgramIds = new Set(\n      sources\n        .filter((source) => source.spotifyType === "SHOW")\n        .map((source) => source.spotifyId),\n    );\n\n    reader = await SpotifyIncrementalReader.forUser(userId, {\n      authoritativePodcastProgramIds,\n    });''',
+              1,
+          )
+          text = text.replace(
+              '''    let musicUnavailableSkippedCount = 0;\n    const incremental = await collectIncrementally({''',
+              '''    let musicUnavailableSkippedCount = 0;\n    let genericPodcastSuppressedCount = 0;\n    const incremental = await collectIncrementally({''',
+              1,
+          )
+          text = text.replace(
+              '''        musicUnavailableSkippedCount += batch.unavailableMusicSkippedCount ?? 0;\n        logIncrementalBatch(source, batch, log);''',
+              '''        musicUnavailableSkippedCount += batch.unavailableMusicSkippedCount ?? 0;\n        genericPodcastSuppressedCount += batch.genericPodcastSuppressedCount ?? 0;\n        logIncrementalBatch(source, batch, log);''',
+              1,
+          )
+          text = text.replace(
+              '''    summary.musicUnavailableSkippedCount = musicUnavailableSkippedCount;''',
+              '''    summary.musicUnavailableSkippedCount = musicUnavailableSkippedCount;\n    summary.genericPodcastSuppressedCount = genericPodcastSuppressedCount;''',
+              1,
+          )
+          marker = '''    // Defense in depth: revalidate selected podcasts against the\n    // freshly resolved limit before a writer can even be created.'''
+          guard = '''    const podcastAuthorityViolations = plan.targets.flatMap((planned) =>\n      planned.result.items\n        .filter(\n          (item) =>\n            item.type === "PODCAST" &&\n            Boolean(item.programId) &&\n            authoritativePodcastProgramIds.has(item.programId!) &&\n            item.sourceSpotifyType !== "SHOW",\n        )\n        .map((item) => ({\n          targetPlaylistId: planned.targetPlaylistId,\n          targetName: planned.name,\n          uri: item.uri,\n          programId: item.programId,\n          sourceSpotifyType: item.sourceSpotifyType ?? null,\n        })),\n    );\n\n    if (!simulate && podcastAuthorityViolations.length > 0) {\n      summary.podcastAuthorityViolations = podcastAuthorityViolations;\n      const error =\n        "A geração foi bloqueada antes de alterar o Spotify porque um programa com fonte SHOW autoritativa recebeu candidato de uma fonte genérica.";\n      log({ level: "ERROR", message: error, data: podcastAuthorityViolations });\n      await finalizeRun(run.id, "FAILED", logs, summary, error);\n      return { runId: run.id, status: "FAILED" };\n    }\n\n'''
+          if text.count(marker) != 1:
+              raise SystemExit('generator defense marker not found')
+          text = text.replace(marker, guard + marker, 1)
+          p.write_text(text)
+
+          # Readiness/fingerprint includes SHOW order.
+          p = Path('src/services/configuration-readiness.ts')
+          text = p.read_text()
+          text = text.replace(
+              '''    includePlayed: boolean;\n  }>;''',
+              '''    includePlayed: boolean;\n    episodeOrder: "SOURCE_DEFAULT" | "OLDEST_FIRST" | "NEWEST_FIRST";\n  }>;''',
+              1,
+          )
+          text = text.replace(
+              '''        includePlayed: true,\n      },''',
+              '''        includePlayed: true,\n        episodeOrder: true,\n      },''',
+              1,
+          )
+          text = text.replace(
+              '''        includePlayed: source.includePlayed,\n      }))''',
+              '''        includePlayed: source.includePlayed,\n        episodeOrder: source.spotifyType === "SHOW" ? source.episodeOrder : "SOURCE_DEFAULT",\n      }))''',
+              1,
+          )
+          text = text.replace(
+              '''`${a.kind}:${a.spotifyType}:${a.spotifyId}:${a.includePlayed}`.localeCompare(\n          `${b.kind}:${b.spotifyType}:${b.spotifyId}:${b.includePlayed}`,''',
+              '''`${a.kind}:${a.spotifyType}:${a.spotifyId}:${a.includePlayed}:${a.episodeOrder}`.localeCompare(\n          `${b.kind}:${b.spotifyType}:${b.spotifyId}:${b.includePlayed}:${b.episodeOrder}`,''',
+              1,
+          )
+          p.write_text(text)
+
+          # CONFIG-02: set/update SHOW episode order and explain authority.
+          p = Path('src/app/dashboard/configuracao/fontes/page.tsx')
+          text = p.read_text()
+          text = text.replace(
+              '''import { SourceKind, SpotifySourceType } from "@prisma/client";''',
+              '''import { PodcastEpisodeOrder, SourceKind, SpotifySourceType } from "@prisma/client";''',
+              1,
+          )
+          text = text.replace(
+              '''  const kindRaw = String(formData.get("kind") ?? "").trim();''',
+              '''  const kindRaw = String(formData.get("kind") ?? "").trim();\n  const episodeOrderRaw = String(formData.get("episodeOrder") ?? "").trim();''',
+              1,
+          )
+          text = text.replace(
+              '''  const requestedKind =\n    kindRaw === SourceKind.MUSIC''',
+              '''  const episodeOrder =\n    episodeOrderRaw === PodcastEpisodeOrder.OLDEST_FIRST\n      ? PodcastEpisodeOrder.OLDEST_FIRST\n      : episodeOrderRaw === PodcastEpisodeOrder.NEWEST_FIRST\n        ? PodcastEpisodeOrder.NEWEST_FIRST\n        : PodcastEpisodeOrder.SOURCE_DEFAULT;\n\n  const requestedKind =\n    kindRaw === SourceKind.MUSIC''',
+              1,
+          )
+          text = text.replace(
+              '''      includePlayed: false,\n    },\n    update: {\n      name: sourceName,\n      kind,\n      enabled: true,\n    },''',
+              '''      includePlayed: false,\n      episodeOrder:\n        spotifyType === SpotifySourceType.SHOW\n          ? episodeOrder\n          : PodcastEpisodeOrder.SOURCE_DEFAULT,\n    },\n    update: {\n      name: sourceName,\n      kind,\n      enabled: true,\n      ...(spotifyType === SpotifySourceType.SHOW ? { episodeOrder } : {}),\n    },''',
+              1,
+          )
+          insert_after = '''async function updatePlaybackPolicy(formData: FormData) {'''
+          idx = text.index(insert_after)
+          # Add action before existing playback action.
+          order_action = '''async function updateEpisodeOrder(formData: FormData) {\n  "use server";\n\n  const session = await auth();\n  if (!session?.user?.id) redirect("/");\n\n  const id = String(formData.get("id") ?? "").trim();\n  const raw = String(formData.get("episodeOrder") ?? "").trim();\n  const episodeOrder =\n    raw === PodcastEpisodeOrder.OLDEST_FIRST\n      ? PodcastEpisodeOrder.OLDEST_FIRST\n      : raw === PodcastEpisodeOrder.NEWEST_FIRST\n        ? PodcastEpisodeOrder.NEWEST_FIRST\n        : null;\n  if (!id || !episodeOrder) redirect("/dashboard/configuracao/fontes?error=invalid");\n\n  const result = await prisma.sourcePlaylist.updateMany({\n    where: {\n      id,\n      userId: session.user.id,\n      kind: SourceKind.PODCAST,\n      spotifyType: SpotifySourceType.SHOW,\n    },\n    data: { episodeOrder },\n  });\n  if (result.count !== 1) redirect("/dashboard/configuracao/fontes?error=invalid");\n\n  revalidateConfiguration();\n  redirect("/dashboard/configuracao/fontes?saved=order");\n}\n\n'''
+          text = text[:idx] + order_action + text[idx:]
+          text = text.replace(
+              '''            {params.saved === "policy" && "Política de episódios atualizada. Uma nova simulação será necessária."}''',
+              '''            {params.saved === "policy" && "Política de episódios atualizada. Uma nova simulação será necessária."}\n            {params.saved === "order" && "Ordem do programa atualizada. Uma nova simulação será necessária."}''',
+              1,
+          )
+          playback_card = '''                      {source.kind === SourceKind.PODCAST && (\n                        <div className="mt-4 rounded-xl border border-violet-300/15 bg-black/15 p-3">'''
+          if text.count(playback_card) != 1:
+              raise SystemExit('fontes playback card marker not found')
+          order_ui = '''                      {source.spotifyType === SpotifySourceType.SHOW && (\n                        <div className="mt-4 rounded-xl border border-orange-300/15 bg-orange-400/5 p-3">\n                          <p className="text-xs font-black text-orange-100">Ordem dos episódios</p>\n                          <p className="mt-1 text-xs leading-5 text-orange-100/65">\n                            Este programa tem prioridade sobre “Seus episódios” e playlists genéricas para o mesmo show.\n                          </p>\n                          <form action={updateEpisodeOrder} className="mt-3 flex gap-2">\n                            <input type="hidden" name="id" value={source.id} />\n                            <select\n                              name="episodeOrder"\n                              defaultValue={\n                                source.episodeOrder === PodcastEpisodeOrder.NEWEST_FIRST\n                                  ? PodcastEpisodeOrder.NEWEST_FIRST\n                                  : PodcastEpisodeOrder.OLDEST_FIRST\n                              }\n                              className="min-w-0 flex-1 rounded-xl border border-orange-300/20 bg-[#160638] px-3 py-2 text-xs font-bold text-orange-50"\n                            >\n                              <option value={PodcastEpisodeOrder.OLDEST_FIRST}>Mais antigos primeiro</option>\n                              <option value={PodcastEpisodeOrder.NEWEST_FIRST}>Mais novos primeiro</option>\n                            </select>\n                            <button type="submit" className="rounded-xl border border-orange-300/25 bg-orange-400/10 px-3 py-2 text-xs font-black text-orange-100 transition hover:bg-orange-400/20">Salvar</button>\n                          </form>\n                        </div>\n                      )}\n\n'''
+          text = text.replace(playback_card, order_ui + playback_card, 1)
+          add_show_marker = '''                              <input type="hidden" name="kind" value={SourceKind.PODCAST} />\n                              <div className="flex items-center justify-between gap-3">'''
+          add_show_new = '''                              <input type="hidden" name="kind" value={SourceKind.PODCAST} />\n                              <div className="flex items-center justify-between gap-3">'''
+          # Replace only the SHOW form occurrence by locating availableShows block.
+          show_anchor = text.index('{availableShows.map((show) => (')
+          before, after = text[:show_anchor], text[show_anchor:]
+          if after.count(add_show_marker) < 1:
+              raise SystemExit('show add form marker not found')
+          after = after.replace(
+              add_show_marker,
+              '''                              <input type="hidden" name="kind" value={SourceKind.PODCAST} />\n                              <div className="flex items-center justify-between gap-3">''',
+              1,
+          )
+          button_marker = '''                                <button type="submit" className="shrink-0 rounded-xl border border-violet-300/25 bg-violet-500/10 px-4 py-2 text-sm font-black text-violet-100 transition hover:bg-violet-500/20">Adicionar</button>\n                              </div>'''
+          button_new = '''                              </div>\n                              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">\n                                <select name="episodeOrder" defaultValue={PodcastEpisodeOrder.OLDEST_FIRST} className="min-w-0 flex-1 rounded-xl border border-violet-300/25 bg-[#160638] px-3 py-2 text-sm font-bold text-violet-100">\n                                  <option value={PodcastEpisodeOrder.OLDEST_FIRST}>Mais antigos primeiro</option>\n                                  <option value={PodcastEpisodeOrder.NEWEST_FIRST}>Mais novos primeiro</option>\n                                </select>\n                                <button type="submit" className="shrink-0 rounded-xl border border-violet-300/25 bg-violet-500/10 px-4 py-2 text-sm font-black text-violet-100 transition hover:bg-violet-500/20">Adicionar</button>\n                              </div>'''
+          if after.count(button_marker) < 1:
+              raise SystemExit('show add button marker not found')
+          after = after.replace(button_marker, button_new, 1)
+          text = before + after
+          p.write_text(text)
+
+          # CONFIG-04 source policy + suppression metric.
+          p = Path('src/app/dashboard/configuracao/revisao/page.tsx')
+          text = p.read_text()
+          text = text.replace(
+              '''function readMusicUnavailableSkippedCount(summary: unknown): number {''',
+              '''function readGenericPodcastSuppressedCount(summary: unknown): number {\n  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return 0;\n  const value = numberValue(\n    (summary as Record<string, unknown>).genericPodcastSuppressedCount,\n  );\n  return value === null ? 0 : Math.max(0, Math.trunc(value));\n}\n\nfunction readMusicUnavailableSkippedCount(summary: unknown): number {''',
+              1,
+          )
+          text = text.replace(
+              '''  const musicUnavailableSkippedCount = readMusicUnavailableSkippedCount(\n    simulation?.summary,\n  );''',
+              '''  const musicUnavailableSkippedCount = readMusicUnavailableSkippedCount(\n    simulation?.summary,\n  );\n  const genericPodcastSuppressedCount = readGenericPodcastSuppressedCount(\n    simulation?.summary,\n  );''',
+              1,
+          )
+          source_policy_marker = '''                            {source.includePlayed\n                              ? "inclui episódios já concluídos"\n                              : "somente não concluídos · episódios em andamento usam o tempo restante"}\n                          </p>'''
+          source_policy_new = '''                            {source.includePlayed\n                              ? "inclui episódios já concluídos"\n                              : "somente não concluídos · episódios em andamento usam o tempo restante"}\n                            {source.spotifyType === "SHOW"\n                              ? ` · ${source.episodeOrder === "NEWEST_FIRST" ? "mais novos primeiro" : source.episodeOrder === "OLDEST_FIRST" ? "mais antigos primeiro" : "ordem legada do Spotify"} · prioridade sobre fontes genéricas`\n                              : ""}\n                          </p>'''
+          if text.count(source_policy_marker) != 1:
+              raise SystemExit('revision source policy marker not found')
+          text = text.replace(source_policy_marker, source_policy_new, 1)
+          unavailable_marker = '''                {musicUnavailableSkippedCount > 0 && ('''
+          suppression_card = '''                {genericPodcastSuppressedCount > 0 && (\n                  <div className="mt-4 rounded-2xl border border-orange-300/20 bg-orange-400/10 p-4">\n                    <p className="font-black text-orange-50">\n                      {genericPodcastSuppressedCount} {genericPodcastSuppressedCount === 1 ? "episódio genérico suprimido" : "episódios genéricos suprimidos"} por regra de programa\n                    </p>\n                    <p className="mt-1 text-sm leading-6 text-orange-100/70">\n                      Quando um programa está configurado como fonte específica, a política desse SHOW prevalece sobre “Seus episódios” e playlists genéricas do mesmo programa.\n                    </p>\n                  </div>\n                )}\n\n'''
+          if text.count(unavailable_marker) != 1:
+              raise SystemExit('revision metric marker not found')
+          text = text.replace(unavailable_marker, suppression_card + unavailable_marker, 1)
+          p.write_text(text)
+
+          # Tests: source helper default + dedicated policy coverage.
+          p = Path('src/services/spotify/incremental-reader.test.ts')
+          text = p.read_text()
+          text = text.replace(
+              '''    includePlayed: false,\n    spotifySnapshotId: null,''',
+              '''    includePlayed: false,\n    episodeOrder: "SOURCE_DEFAULT",\n    spotifySnapshotId: null,''',
+              1,
+          )
+          p.write_text(text)
+
+          Path('src/services/spotify/podcast-show-policy.test.ts').write_text('''import assert from "node:assert/strict";\nimport test from "node:test";\n\nimport { SpotifyIncrementalReader, type IncrementalSpotifySourceConfig } from "./incremental-reader";\nimport { sortShowCandidates } from "./podcast-show-policy";\n\nfunction jsonResponse(body: unknown): Response {\n  return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });\n}\n\nfunction reader(authoritative: ReadonlySet<string> = new Set()): SpotifyIncrementalReader {\n  const Constructor = SpotifyIncrementalReader as unknown as new (\n    accessToken: string,\n    authoritativePodcastProgramIds?: ReadonlySet<string>,\n  ) => SpotifyIncrementalReader;\n  return new Constructor("test-token", authoritative);\n}\n\nfunction source(overrides: Partial<IncrementalSpotifySourceConfig> = {}): IncrementalSpotifySourceConfig {\n  return {\n    id: "source-a",\n    userId: "user-a",\n    kind: "PODCAST",\n    spotifyType: "SHOW",\n    spotifyId: "show-a",\n    name: "Show A",\n    includePlayed: false,\n    episodeOrder: "OLDEST_FIRST",\n    spotifySnapshotId: null,\n    cachedCandidates: null,\n    ...overrides,\n  };\n}\n\ntest("OLDEST_FIRST and NEWEST_FIRST sort by release metadata with stable URI tie-break", () => {\n  const candidates = [\n    { uri: "spotify:episode:b", type: "PODCAST" as const, title: "B", programId: "show-a", durationMs: 1, releaseDate: "2024", releaseDatePrecision: "year" },\n    { uri: "spotify:episode:c", type: "PODCAST" as const, title: "C", programId: "show-a", durationMs: 1, releaseDate: "2024-05", releaseDatePrecision: "month" },\n    { uri: "spotify:episode:a", type: "PODCAST" as const, title: "A", programId: "show-a", durationMs: 1, releaseDate: "2024-05", releaseDatePrecision: "month" },\n    { uri: "spotify:episode:d", type: "PODCAST" as const, title: "D", programId: "show-a", durationMs: 1, releaseDate: "2025-01-01", releaseDatePrecision: "day" },\n  ];\n  assert.deepEqual(sortShowCandidates(candidates, "OLDEST_FIRST").map((c) => c.uri), [\n    "spotify:episode:b", "spotify:episode:a", "spotify:episode:c", "spotify:episode:d",\n  ]);\n  assert.deepEqual(sortShowCandidates(candidates, "NEWEST_FIRST").map((c) => c.uri), [\n    "spotify:episode:d", "spotify:episode:a", "spotify:episode:c", "spotify:episode:b",\n  ]);\n});\n\ntest("explicit SHOW order reads all pages before releasing globally sorted candidates", async () => {\n  const originalFetch = globalThis.fetch;\n  let calls = 0;\n  globalThis.fetch = (async () => {\n    calls += 1;\n    if (calls === 1) return jsonResponse({ items: [\n      { uri: "spotify:episode:new", name: "New", duration_ms: 100, type: "episode", release_date: "2025-01-01", release_date_precision: "day", resume_point: { fully_played: false, resume_position_ms: 0 } },\n    ], next: "https://api.spotify.com/v1/shows/show-a/episodes?offset=50&limit=50" });\n    return jsonResponse({ items: [\n      { uri: "spotify:episode:old", name: "Old", duration_ms: 100, type: "episode", release_date: "2020", release_date_precision: "year", resume_point: { fully_played: false, resume_position_ms: 0 } },\n    ], next: null });\n  }) as typeof fetch;\n  try {\n    const cursor = await reader().createSource(source());\n    const batch = await cursor.readNext();\n    assert.equal(batch.done, true);\n    assert.equal(calls, 2);\n    assert.deepEqual(batch.candidates.map((c) => c.uri), ["spotify:episode:old", "spotify:episode:new"]);\n    assert.ok(batch.candidates.every((c) => c.programId === "show-a"));\n    assert.ok(batch.candidates.every((c) => c.sourceSpotifyType === "SHOW"));\n  } finally { globalThis.fetch = originalFetch; }\n});\n\ntest("authoritative SHOW suppresses same-program candidates from SAVED_EPISODES before playback policy can be bypassed", async () => {\n  const originalFetch = globalThis.fetch;\n  globalThis.fetch = (async () => jsonResponse({ items: [\n    { episode: { uri: "spotify:episode:e1", name: "E1", duration_ms: 100, type: "episode", show: { id: "show-a", name: "Show A" }, resume_point: { fully_played: true, resume_position_ms: 100 } } },\n    { episode: { uri: "spotify:episode:y1", name: "Y1", duration_ms: 100, type: "episode", show: { id: "show-y", name: "Show Y" }, resume_point: { fully_played: false, resume_position_ms: 0 } } },\n  ], next: null })) as typeof fetch;\n  try {\n    const cursor = await reader(new Set(["show-a"])).createSource(source({ spotifyType: "SAVED_EPISODES", spotifyId: "me", episodeOrder: "SOURCE_DEFAULT" }));\n    const batch = await cursor.readNext();\n    assert.deepEqual(batch.candidates.map((c) => c.uri), ["spotify:episode:y1"]);\n    assert.equal(batch.genericPodcastSuppressedCount, 1);\n  } finally { globalThis.fetch = originalFetch; }\n});\n\ntest("includePlayed=false keeps partially played episode first in OLDEST_FIRST while completed episode stays out", async () => {\n  const originalFetch = globalThis.fetch;\n  globalThis.fetch = (async () => jsonResponse({ items: [\n    { uri: "spotify:episode:e3", name: "E3", duration_ms: 100, type: "episode", release_date: "2023-01-01", release_date_precision: "day", resume_point: { fully_played: false, resume_position_ms: 0 } },\n    { uri: "spotify:episode:e1", name: "E1", duration_ms: 100, type: "episode", release_date: "2021-01-01", release_date_precision: "day", resume_point: { fully_played: true, resume_position_ms: 100 } },\n    { uri: "spotify:episode:e2", name: "E2", duration_ms: 100, type: "episode", release_date: "2022-01-01", release_date_precision: "day", resume_point: { fully_played: false, resume_position_ms: 40 } },\n  ], next: null })) as typeof fetch;\n  try {\n    const cursor = await reader().createSource(source());\n    const batch = await cursor.readNext();\n    assert.deepEqual(batch.candidates.map((c) => c.uri), ["spotify:episode:e2", "spotify:episode:e3"]);\n    assert.equal(batch.candidates[0]?.durationMs, 60);\n    assert.equal(batch.fullyPlayedSkippedCount, 1);\n  } finally { globalThis.fetch = originalFetch; }\n});\n''')
+
+          # Remove workflow from the functional tree before validation/commit.
+          Path('.github/workflows/podcast-03-implement.yml').unlink()
+          PY
+          git diff --check
+
+      - name: Install dependencies
+        run: npm ci
+      - name: Prisma validate
+        run: npx prisma validate
+      - name: Apply migrations
+        run: npm run db:deploy
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: Planner regressions
+        run: npm run test:planner
+      - name: Spotify regressions
+        run: npm run test:spotify
+      - name: Incremental regressions
+        run: npm run test:incremental
+      - name: Simulation regressions
+        run: npm run test:simulation
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Commit functional tree
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: ordenar episódios por show e aplicar precedência (#32)"
+          git push origin HEAD:agent/podcast-03-show-order
