@@ -120,6 +120,7 @@ async function saveTarget(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const destination = String(formData.get("destination") ?? "").trim();
   const durationMode = String(formData.get("durationMode") ?? "").trim();
+  const compositionMode = String(formData.get("compositionMode") ?? "").trim();
   const emptyCalendarBehavior = String(
     formData.get("emptyCalendarBehavior") ?? "CLEAR",
   ).trim();
@@ -143,6 +144,11 @@ async function saveTarget(formData: FormData) {
 
   if (!name || name.length > 100) fail("invalid");
   if (durationMode !== "FIXED" && durationMode !== "CALENDAR") fail("invalid");
+  const normalizedCompositionMode =
+    compositionMode === "PROPORTION" || compositionMode === "SEQUENCE"
+      ? compositionMode
+      : null;
+  if (!normalizedCompositionMode) fail("invalid");
   if (!sequencePattern || podcastPercent === null || maxEpisodesPerProgram === null) {
     fail("invalid");
   }
@@ -270,6 +276,7 @@ async function saveTarget(formData: FormData) {
     name,
     spotifyPlaylistId,
     enabled,
+    compositionMode: normalizedCompositionMode,
     durationMode,
     fixedDurationSeconds:
       durationMode === "FIXED" ? fixedDurationMinutes! * 60 : null,
@@ -658,6 +665,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   emptyCalendarBehavior: "KEEP",
                   calendarEventFilterMode: "ALL",
                   calendarEventMarker: "",
+                  compositionMode: "PROPORTION",
                   podcastPercent: 60,
                   podcastEpisodeMaxDurationMode: "NONE",
                   podcastEpisodeMaxDurationMinutes: 45,
@@ -733,7 +741,9 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                         </div>
                         <h3 className="mt-3 text-lg font-black text-white">{target.name}</h3>
                         <p className="mt-1 text-sm leading-6 text-violet-200/65">
-                          {durationLabel(target)} · {target.podcastPercent}% podcast / {100 - target.podcastPercent}% música
+                          {durationLabel(target)} · {target.compositionMode === "SEQUENCE"
+                            ? `por sequência: ${sequencePattern.map((entry) => entry === "MUSIC" ? "M" : "P").join(" → ")}`
+                            : `${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}
                           {target.durationMode === "CALENDAR"
                             ? ` · eventos: ${
                                 target.calendarEventFilterMode === "MARKER"
@@ -810,6 +820,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             emptyCalendarBehavior: target.emptyCalendarBehavior,
                             calendarEventFilterMode: target.calendarEventFilterMode,
                             calendarEventMarker: target.calendarEventMarker ?? "",
+                            compositionMode: target.compositionMode,
                             podcastPercent: target.podcastPercent,
                             podcastEpisodeMaxDurationMode:
                               target.podcastEpisodeMaxDurationMode,

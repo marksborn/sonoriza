@@ -167,6 +167,11 @@ enum PodcastEpisodeMaxDurationMode {
   CALENDAR_MAX_EVENT
 }
 
+enum CompositionMode {
+  PROPORTION
+  SEQUENCE
+}
+
 model TargetPlaylist {
   id                              String                        @id @default(cuid())
   userId                          String
@@ -175,6 +180,8 @@ model TargetPlaylist {
   enabled                         Boolean                       @default(true)
   // Lower value is generated first and reserves its content.
   priority                        Int                           @default(0)
+  // Existing destinations migrate safely to proportion semantics.
+  compositionMode                 CompositionMode               @default(PROPORTION)
 
   durationMode                    DurationMode                  @default(FIXED)
   fixedDurationSeconds            Int? // required when durationMode = FIXED

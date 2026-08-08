@@ -45,6 +45,7 @@ const targets: RunTarget[] = [
     name: "Carro",
     priority: 0, // generated first, reserves its content
     rules: {
+      compositionMode: "PROPORTION",
       targetDurationMs: 90 * 60_000, // ~90 min of trips
       podcastPercent: 60,
       sequencePattern: sequence,
@@ -56,6 +57,7 @@ const targets: RunTarget[] = [
     name: "Trabalho",
     priority: 1, // gets only what's left
     rules: {
+      compositionMode: "PROPORTION",
       targetDurationMs: 8 * 60 * 60_000, // 8 h
       podcastPercent: 60,
       sequencePattern: sequence,

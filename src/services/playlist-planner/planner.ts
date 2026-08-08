@@ -14,50 +14,14 @@ export interface PlannerPools {
 export interface PlanPlaylistInput {
   rules: PlaylistRules;
   pools: PlannerPools;
-  /**
-   * URIs already consumed by earlier playlists in the same run. The planner
-   * never places these, which is how cross-playlist exclusivity is enforced.
-   */
   reserved?: Iterable<string>;
 }
 
 const MIX_QUALITY_TOLERANCE_POINTS = 10;
 
-const other = (t: ContentType): ContentType =>
-  t === "PODCAST" ? "MUSIC" : "PODCAST";
-
-/**
- * Greedy planner.
- *
- * Walks the (cyclic) sequence pattern and, for each slot, places the next
- * eligible candidate of the requested type. Proportion is honoured as a soft
- * per-type duration budget: once a type's budget is spent, its slots fall back
- * to the other type so the playlist can still reach the target duration.
- *
- * The result now makes any fallback visible through mix-quality metrics. This
- * means the planner can still produce the best available plan, while CONFIG-04
- * can refuse a first real run when that plan materially differs from the rule.
- *
- * Guarantees:
- *  - no URI is placed twice (nor any URI in `reserved`);
- *  - at most `maxEpisodesPerProgram` episodes of the same program;
- *  - podcast candidates without a trustworthy program identity are excluded;
- *  - podcast candidates above `maxPodcastDurationMs` are excluded before selection;
- *  - the last item may overshoot the target so total duration >= target when
- *    the pools allow it.
- */
-export function planPlaylist({
-  rules,
-  pools,
-  reserved,
-}: PlanPlaylistInput): PlanResult {
-  const pattern: ContentType[] =
-    rules.sequencePattern.length > 0 ? rules.sequencePattern : ["MUSIC"];
-
+export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): PlanResult {
   const target = Math.max(0, rules.targetDurationMs);
   const podcastPercent = clamp(rules.podcastPercent, 0, 100);
-  const podcastBudget = (target * podcastPercent) / 100;
-  const musicBudget = target - podcastBudget;
   const maxPodcastDurationMs =
     rules.maxPodcastDurationMs == null
       ? null
@@ -80,7 +44,6 @@ export function planPlaylist({
       podcastDurationExceededCount += 1;
       continue;
     }
-
     eligiblePodcasts.push(
       programId === candidate.programId
         ? candidate
@@ -92,127 +55,212 @@ export function planPlaylist({
     MUSIC: pools.music,
     PODCAST: eligiblePodcasts,
   };
-
   const used = new Set<string>(reserved ?? []);
   const newlyUsed = new Set<string>();
   const programCounts = new Map<string, number>();
-
   const items: PlannedItem[] = [];
   let musicDurationMs = 0;
   let podcastDurationMs = 0;
-  let unfilledSlots = 0;
 
-  const durationOf = (t: ContentType) =>
-    t === "PODCAST" ? podcastDurationMs : musicDurationMs;
-  const budgetOf = (t: ContentType) =>
-    t === "PODCAST" ? podcastBudget : musicBudget;
-  const overBudget = (t: ContentType) => durationOf(t) >= budgetOf(t);
-
-  let patternIdx = 0;
-  let stepsSincePlacement = 0;
-
-  while (musicDurationMs + podcastDurationMs < target) {
-    const slotType = pattern[patternIdx]!;
-    patternIdx = (patternIdx + 1) % pattern.length;
-
-    // Prefer a type that still has budget; break ties toward the slot's type.
-    const order: ContentType[] = !overBudget(slotType)
-      ? [slotType, other(slotType)]
-      : !overBudget(other(slotType))
-        ? [other(slotType), slotType]
-        : [slotType, other(slotType)];
-
-    const pick = pickFirst(
-      order,
-      poolByType,
-      used,
-      programCounts,
-      rules.maxEpisodesPerProgram,
-    );
-
-    if (!pick) {
-      unfilledSlots += 1;
-      stepsSincePlacement += 1;
-      // A full cycle over the pattern with nothing placeable means both pools
-      // are exhausted (or fully capped) — stop instead of looping forever.
-      if (stepsSincePlacement >= pattern.length) break;
-      continue;
-    }
-
-    const { candidate } = pick;
+  const totalDuration = () => musicDurationMs + podcastDurationMs;
+  const place = (candidate: Candidate) => {
     items.push({ ...candidate, position: items.length });
     used.add(candidate.uri);
     newlyUsed.add(candidate.uri);
     if (candidate.type === "PODCAST") {
       podcastDurationMs += Math.max(0, candidate.durationMs);
       const programId = candidate.programId!;
-      programCounts.set(
-        programId,
-        (programCounts.get(programId) ?? 0) + 1,
-      );
+      programCounts.set(programId, (programCounts.get(programId) ?? 0) + 1);
     } else {
       musicDurationMs += Math.max(0, candidate.durationMs);
     }
-    stepsSincePlacement = 0;
+  };
+
+  let sequenceSlotsRequested = 0;
+  let sequenceSlotsFilled = 0;
+  let sequenceUnfilledSlots = 0;
+  let completedCycles = 0;
+  let stoppedAtPatternIndex: number | null = null;
+  let sequenceQualityPassed: boolean | null = null;
+  let sequenceStopReason: PlanResult["stats"]["sequenceStopReason"] = null;
+
+  if (rules.compositionMode === "SEQUENCE") {
+    const pattern = rules.sequencePattern;
+    if (pattern.length === 0) {
+      sequenceQualityPassed = false;
+      sequenceStopReason = "INVALID_PATTERN";
+    } else {
+      sequenceQualityPassed = true;
+      let patternIndex = 0;
+
+      while (totalDuration() < target) {
+        const remainingMs = target - totalDuration();
+        const slotType = pattern[patternIndex]!;
+        sequenceSlotsRequested += 1;
+
+        const candidate = pickCandidate(
+          poolByType[slotType],
+          used,
+          programCounts,
+          rules.maxEpisodesPerProgram,
+          remainingMs,
+        );
+
+        if (!candidate) {
+          const sameTypeCandidateExists = Boolean(
+            pickCandidate(
+              poolByType[slotType],
+              used,
+              programCounts,
+              rules.maxEpisodesPerProgram,
+              Number.POSITIVE_INFINITY,
+            ),
+          );
+          sequenceUnfilledSlots = 1;
+          stoppedAtPatternIndex = patternIndex;
+          sequenceStopReason = sameTypeCandidateExists
+            ? "NO_FITTING_CANDIDATE"
+            : "NO_CANDIDATE_FOR_SLOT";
+          break;
+        }
+
+        place(candidate);
+        sequenceSlotsFilled += 1;
+        patternIndex = (patternIndex + 1) % pattern.length;
+        if (patternIndex === 0) completedCycles += 1;
+      }
+
+      if (totalDuration() >= target) sequenceStopReason = "TARGET_REACHED";
+    }
+  } else {
+    while (totalDuration() < target) {
+      const music = pickCandidate(
+        poolByType.MUSIC,
+        used,
+        programCounts,
+        rules.maxEpisodesPerProgram,
+        Number.POSITIVE_INFINITY,
+      );
+      const podcast = pickCandidate(
+        poolByType.PODCAST,
+        used,
+        programCounts,
+        rules.maxEpisodesPerProgram,
+        Number.POSITIVE_INFINITY,
+      );
+      if (!music && !podcast) break;
+
+      place(
+        chooseProportionCandidate({
+          music,
+          podcast,
+          podcastPercent,
+          musicDurationMs,
+          podcastDurationMs,
+        }),
+      );
+    }
   }
 
-  const totalDurationMs = musicDurationMs + podcastDurationMs;
-  const poolExhausted = totalDurationMs < target;
+  const totalDurationMs = totalDuration();
   const actualPodcastPercent =
     totalDurationMs > 0
       ? round1((podcastDurationMs / totalDurationMs) * 100)
       : target === 0
         ? podcastPercent
         : 0;
-  const mixDeviationPoints = round1(
-    Math.abs(actualPodcastPercent - podcastPercent),
-  );
-  const podcastShortfallMs = Math.max(0, podcastBudget - podcastDurationMs);
-  const musicShortfallMs = Math.max(0, musicBudget - musicDurationMs);
-  const mixQualityPassed =
+  const poolExhausted = totalDurationMs < target;
+  const podcastBudget = (target * podcastPercent) / 100;
+  const musicBudget = target - podcastBudget;
+
+  const proportionMode = rules.compositionMode === "PROPORTION";
+  const podcastShortfallMs = proportionMode
+    ? Math.max(0, podcastBudget - podcastDurationMs)
+    : 0;
+  const musicShortfallMs = proportionMode
+    ? Math.max(0, musicBudget - musicDurationMs)
+    : 0;
+  const mixDeviationPoints = proportionMode
+    ? round1(Math.abs(actualPodcastPercent - podcastPercent))
+    : 0;
+  const proportionQualityPassed =
     target === 0 ||
     (!poolExhausted && mixDeviationPoints <= MIX_QUALITY_TOLERANCE_POINTS);
+  const compositionQualityPassed = proportionMode
+    ? proportionQualityPassed
+    : sequenceQualityPassed === true;
 
   return {
     items,
     usedUris: newlyUsed,
     stats: {
+      compositionMode: rules.compositionMode,
       totalDurationMs,
       musicDurationMs,
       podcastDurationMs,
-      musicCount: items.filter((i) => i.type === "MUSIC").length,
-      podcastCount: items.filter((i) => i.type === "PODCAST").length,
+      musicCount: items.filter((item) => item.type === "MUSIC").length,
+      podcastCount: items.filter((item) => item.type === "PODCAST").length,
       actualPodcastPercent,
       requestedPodcastPercent: podcastPercent,
       podcastShortfallMs,
       musicShortfallMs,
       mixDeviationPoints,
-      mixQualityPassed,
-      unfilledSlots,
+      mixQualityPassed: compositionQualityPassed,
+      compositionQualityPassed,
+      unfilledSlots: sequenceUnfilledSlots,
       poolExhausted,
       podcastIdentityMissingCount,
       podcastDurationExceededCount,
+      sequenceSlotsRequested,
+      sequenceSlotsFilled,
+      sequenceUnfilledSlots,
+      completedCycles,
+      finalPartialCycleSlots:
+        rules.compositionMode === "SEQUENCE" && rules.sequencePattern.length > 0
+          ? sequenceSlotsFilled % rules.sequencePattern.length
+          : 0,
+      stoppedAtPatternIndex,
+      sequenceQualityPassed,
+      sequenceStopReason,
     },
   };
 }
 
-function pickFirst(
-  order: ContentType[],
-  poolByType: Record<ContentType, Candidate[]>,
-  used: Set<string>,
-  programCounts: Map<string, number>,
-  maxEpisodesPerProgram: number,
-): { candidate: Candidate } | null {
-  for (const type of order) {
-    const candidate = pickCandidate(
-      poolByType[type],
-      used,
-      programCounts,
-      maxEpisodesPerProgram,
-    );
-    if (candidate) return { candidate };
-  }
-  return null;
+function chooseProportionCandidate(input: {
+  music: Candidate | null;
+  podcast: Candidate | null;
+  podcastPercent: number;
+  musicDurationMs: number;
+  podcastDurationMs: number;
+}): Candidate {
+  if (!input.music) return input.podcast!;
+  if (!input.podcast) return input.music;
+  if (input.podcastPercent <= 0) return input.music;
+  if (input.podcastPercent >= 100) return input.podcast;
+
+  const score = (candidate: Candidate) => {
+    const podcastDuration =
+      input.podcastDurationMs +
+      (candidate.type === "PODCAST" ? Math.max(0, candidate.durationMs) : 0);
+    const musicDuration =
+      input.musicDurationMs +
+      (candidate.type === "MUSIC" ? Math.max(0, candidate.durationMs) : 0);
+    const total = podcastDuration + musicDuration;
+    const actual = total > 0 ? (podcastDuration / total) * 100 : 0;
+    return Math.abs(actual - input.podcastPercent);
+  };
+
+  const musicScore = score(input.music);
+  const podcastScore = score(input.podcast);
+  if (podcastScore < musicScore) return input.podcast;
+  if (musicScore < podcastScore) return input.music;
+
+  const targetRatio = input.podcastPercent / 100;
+  const currentTotal = input.musicDurationMs + input.podcastDurationMs;
+  const currentPodcastTarget = currentTotal * targetRatio;
+  return input.podcastDurationMs < currentPodcastTarget
+    ? input.podcast
+    : input.music;
 }
 
 function pickCandidate(
@@ -220,10 +268,11 @@ function pickCandidate(
   used: Set<string>,
   programCounts: Map<string, number>,
   maxEpisodesPerProgram: number,
+  maxDurationMs: number,
 ): Candidate | null {
   for (const candidate of pool) {
     if (used.has(candidate.uri)) continue;
-    if (candidate.durationMs <= 0) continue;
+    if (candidate.durationMs <= 0 || candidate.durationMs > maxDurationMs) continue;
     if (candidate.type === "PODCAST") {
       if (!candidate.programId) continue;
       const count = programCounts.get(candidate.programId) ?? 0;

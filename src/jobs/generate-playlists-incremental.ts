@@ -263,7 +263,7 @@ export async function generatePlaylists(
     for (const failure of qualityFailures) {
       log({
         level: "WARN",
-        message: `Target "${failure.name}" failed mix quality after incremental collection: ${qualityReason(failure.result.stats)}`,
+        message: `Target "${failure.name}" failed composition quality after incremental collection: ${qualityReason(failure.result.stats)}`,
       });
     }
 
@@ -272,7 +272,32 @@ export async function generatePlaylists(
     // Spotify write; simulation may persist the best plan for diagnosis.
     if (!simulate && qualityFailures.length > 0) {
       const error =
-        "A geração foi bloqueada antes de alterar o Spotify porque, mesmo após buscar os lotes necessários, o plano não conseguiu atender às proporções configuradas.";
+        "A geração foi bloqueada antes de alterar o Spotify porque, mesmo após buscar os lotes necessários, o plano não conseguiu atender às regras de composição configuradas.";
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
+
+    const targetByPlanId = new Map(targets.map((target) => [target.id, target]));
+    const sequenceViolations = plan.targets.flatMap((planned) => {
+      const target = targetByPlanId.get(planned.targetPlaylistId);
+      if (!target || target.compositionMode !== "SEQUENCE") return [];
+      const pattern = parseSequencePattern(target.sequencePattern);
+      if (pattern.length === 0) {
+        return [{ targetPlaylistId: target.id, targetName: target.name, reason: "INVALID_PATTERN" }];
+      }
+      const mismatch = planned.result.items.find(
+        (item, index) => item.type !== pattern[index % pattern.length],
+      );
+      return mismatch
+        ? [{ targetPlaylistId: target.id, targetName: target.name, reason: "TYPE_MISMATCH", position: mismatch.position }]
+        : [];
+    });
+
+    if (!simulate && sequenceViolations.length > 0) {
+      summary.sequenceViolations = sequenceViolations;
+      const error =
+        "A geração foi bloqueada antes de alterar o Spotify porque o plano divergiu da sequência configurada.";
+      log({ level: "ERROR", message: error, data: sequenceViolations });
       await finalizeRun(run.id, "FAILED", logs, summary, error);
       return { runId: run.id, status: "FAILED" };
     }
@@ -325,9 +350,10 @@ export async function generatePlaylists(
       const targetSummary: Record<string, unknown> = {
         name: target.name,
         planned: items.length,
+        sequencePattern: parseSequencePattern(target.sequencePattern),
         ...stats,
         totalMinutes: Math.round(stats.totalDurationMs / 60_000),
-        qualityReason: stats.mixQualityPassed ? null : qualityReason(stats),
+        qualityReason: stats.compositionQualityPassed ? null : qualityReason(stats),
         podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,
         podcastEpisodeMaxDurationMs,
         podcastEpisodeMaxDurationMinutes:
@@ -600,14 +626,19 @@ function toRunTarget(
   durationMs: number,
   maxPodcastDurationMs: number | null,
 ): RunTarget {
+  const sequencePattern = parseSequencePattern(target.sequencePattern);
+  if (target.compositionMode === "SEQUENCE" && sequencePattern.length === 0) {
+    throw new Error(`Target "${target.name}" has an invalid sequence composition`);
+  }
   return {
     targetPlaylistId: target.id,
     name: target.name,
     priority: target.priority,
     rules: {
       targetDurationMs: durationMs,
+      compositionMode: target.compositionMode,
       podcastPercent: target.podcastPercent,
-      sequencePattern: parseSequencePattern(target.sequencePattern),
+      sequencePattern,
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,
       maxPodcastDurationMs,
     },
@@ -689,6 +720,11 @@ function collectionFailureMessage(
 }
 
 function qualityReason(stats: {
+  compositionMode: "PROPORTION" | "SEQUENCE";
+  compositionQualityPassed: boolean;
+  sequenceQualityPassed: boolean | null;
+  sequenceUnfilledSlots: number;
+  sequenceStopReason: string | null;
   requestedPodcastPercent: number;
   actualPodcastPercent: number;
   podcastShortfallMs: number;
@@ -696,6 +732,15 @@ function qualityReason(stats: {
   poolExhausted: boolean;
   mixDeviationPoints: number;
 }): string {
+  if (stats.compositionMode === "SEQUENCE") {
+    if (stats.sequenceQualityPassed === false) {
+      return "a sequência configurada é inválida e não pode ser aplicada com segurança";
+    }
+    if (stats.sequenceUnfilledSlots > 0) {
+      return `a sequência foi preservada, mas o próximo slot não pôde ser preenchido (${stats.sequenceStopReason ?? "sem candidato"})`;
+    }
+    return "a sequência configurada foi preservada";
+  }
   if (stats.poolExhausted) {
     return "as fontes elegíveis terminaram antes de preencher a duração planejada";
   }

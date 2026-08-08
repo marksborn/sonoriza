@@ -46,6 +46,7 @@ export type ConfigurationAssessment = {
     emptyCalendarBehavior: "CLEAR" | "KEEP" | "SKIP";
     calendarEventFilterMode: "ALL" | "MARKER";
     calendarEventMarker: string | null;
+    compositionMode: "PROPORTION" | "SEQUENCE";
     podcastPercent: number;
     podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";
     podcastEpisodeMaxDurationSeconds: number | null;
@@ -128,6 +129,7 @@ export async function assessConfiguration(
         emptyCalendarBehavior: true,
         calendarEventFilterMode: true,
         calendarEventMarker: true,
+        compositionMode: true,
         podcastPercent: true,
         podcastEpisodeMaxDurationMode: true,
         podcastEpisodeMaxDurationSeconds: true,
@@ -167,6 +169,7 @@ export async function assessConfiguration(
     emptyCalendarBehavior: target.emptyCalendarBehavior,
     calendarEventFilterMode: target.calendarEventFilterMode,
     calendarEventMarker: target.calendarEventMarker,
+    compositionMode: target.compositionMode,
     podcastPercent: target.podcastPercent,
     podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,
     podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,
@@ -224,11 +227,15 @@ export async function assessConfiguration(
     });
   }
 
-  const needsMusic = targets.some(
-    (target) => target.podcastPercent < 100 || target.sequence.includes("MUSIC"),
+  const needsMusic = targets.some((target) =>
+    target.compositionMode === "SEQUENCE"
+      ? target.sequence.includes("MUSIC")
+      : target.podcastPercent < 100,
   );
-  const needsPodcast = targets.some(
-    (target) => target.podcastPercent > 0 || target.sequence.includes("PODCAST"),
+  const needsPodcast = targets.some((target) =>
+    target.compositionMode === "SEQUENCE"
+      ? target.sequence.includes("PODCAST")
+      : target.podcastPercent > 0,
   );
   const hasMusicSource = sources.some((source) => source.kind === "MUSIC");
   const hasPodcastSource = sources.some((source) => source.kind === "PODCAST");
@@ -319,10 +326,24 @@ export async function assessConfiguration(
       });
     }
 
-    if (!hasOnlyValidSequenceEntries(rawTarget.sequencePattern)) {
+    if (
+      rawTarget.compositionMode === "SEQUENCE" &&
+      !hasOnlyValidSequenceEntries(rawTarget.sequencePattern)
+    ) {
       pushIssue({
         code: `INVALID_SEQUENCE:${rawTarget.id}`,
         message: `${label}: configure uma sequência válida de música e podcast.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+    }
+
+    if (
+      rawTarget.compositionMode === "PROPORTION" &&
+      (rawTarget.podcastPercent < 0 || rawTarget.podcastPercent > 100)
+    ) {
+      pushIssue({
+        code: `INVALID_PROPORTION:${rawTarget.id}`,
+        message: `${label}: informe uma proporção de podcast entre 0% e 100%.`,
         href: "/dashboard/configuracao/destinos",
       });
     }
@@ -396,10 +417,12 @@ export async function assessConfiguration(
       emptyCalendarBehavior: target.emptyCalendarBehavior,
       calendarEventFilterMode: target.calendarEventFilterMode,
       calendarEventMarker: target.calendarEventMarker,
-      podcastPercent: target.podcastPercent,
+      compositionMode: target.compositionMode,
+      podcastPercent:
+        target.compositionMode === "PROPORTION" ? target.podcastPercent : null,
       podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,
       podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,
-      sequence: target.sequence,
+      sequence: target.compositionMode === "SEQUENCE" ? target.sequence : null,
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,
     })),
   };

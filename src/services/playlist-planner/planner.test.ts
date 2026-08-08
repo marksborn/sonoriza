@@ -25,6 +25,7 @@ function rules(
 ): PlaylistRules {
   return {
     targetDurationMs,
+    compositionMode: "PROPORTION",
     podcastPercent: 100,
     sequencePattern: ["PODCAST"],
     maxEpisodesPerProgram,
@@ -214,4 +215,134 @@ test("#27 preserves current behavior when no podcast duration limit is configure
 
   assert.equal(result.items.length, 1);
   assert.equal(result.stats.podcastDurationExceededCount, 0);
+});
+
+
+function music(uri: string, durationMs = 60_000): Candidate {
+  return { uri, type: "MUSIC", title: uri, durationMs };
+}
+
+test("#31 PROPORTION ignores the stored sequence as a physical rule", () => {
+  const minute = 60_000;
+  const result = planPlaylist({
+    rules: {
+      compositionMode: "PROPORTION",
+      targetDurationMs: 20 * minute,
+      podcastPercent: 50,
+      sequencePattern: ["MUSIC"],
+      maxEpisodesPerProgram: 10,
+    },
+    pools: {
+      music: [music("spotify:track:a", 5 * minute), music("spotify:track:b", 5 * minute)],
+      podcasts: [podcast("spotify:episode:a", "show-a", 10 * minute)],
+    },
+  });
+  assert.equal(result.items.some((item) => item.type === "PODCAST"), true);
+  assert.equal(result.stats.compositionMode, "PROPORTION");
+  assert.equal(result.stats.compositionQualityPassed, true);
+});
+
+test("#31 SEQUENCE repeats a simple cycle without substituting slot types", () => {
+  const minute = 60_000;
+  const result = planPlaylist({
+    rules: {
+      compositionMode: "SEQUENCE",
+      targetDurationMs: 38 * minute,
+      podcastPercent: 60,
+      sequencePattern: ["MUSIC", "MUSIC", "PODCAST"],
+      maxEpisodesPerProgram: 10,
+    },
+    pools: {
+      music: [music("m1", 4 * minute), music("m2", 4 * minute)],
+      podcasts: [podcast("p1", "s1", 30 * minute)],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.type), ["MUSIC", "MUSIC", "PODCAST"]);
+  assert.equal(result.stats.completedCycles, 1);
+  assert.equal(result.stats.sequenceQualityPassed, true);
+  assert.equal(result.stats.actualPodcastPercent > 70, true);
+  assert.equal(result.stats.compositionQualityPassed, true);
+});
+
+test("#31 SEQUENCE repeats a complex cycle exactly", () => {
+  const pattern = ["MUSIC", "MUSIC", "PODCAST", "PODCAST", "MUSIC", "MUSIC", "PODCAST"] as const;
+  const result = planPlaylist({
+    rules: {
+      compositionMode: "SEQUENCE",
+      targetDurationMs: 14 * 60_000,
+      podcastPercent: 50,
+      sequencePattern: [...pattern],
+      maxEpisodesPerProgram: 20,
+    },
+    pools: {
+      music: Array.from({ length: 8 }, (_, i) => music(`m${i}`, 60_000)),
+      podcasts: Array.from({ length: 6 }, (_, i) => podcast(`p${i}`, `s${i}`, 60_000)),
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.type), [...pattern, ...pattern]);
+  assert.equal(result.stats.completedCycles, 2);
+});
+
+test("#31 SEQUENCE stops instead of replacing a missing MUSIC slot with PODCAST", () => {
+  const result = planPlaylist({
+    rules: {
+      compositionMode: "SEQUENCE",
+      targetDurationMs: 180_000,
+      podcastPercent: 50,
+      sequencePattern: ["MUSIC", "MUSIC", "PODCAST"],
+      maxEpisodesPerProgram: 10,
+    },
+    pools: {
+      music: [music("m1")],
+      podcasts: [podcast("p1", "s1"), podcast("p2", "s2")],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.type), ["MUSIC"]);
+  assert.equal(result.stats.sequenceUnfilledSlots, 1);
+  assert.equal(result.stats.stoppedAtPatternIndex, 1);
+  assert.equal(result.stats.sequenceStopReason, "NO_CANDIDATE_FOR_SLOT");
+  assert.equal(result.stats.compositionQualityPassed, true);
+});
+
+test("#31 SEQUENCE ends early when the next same-type item cannot fit", () => {
+  const minute = 60_000;
+  const result = planPlaylist({
+    rules: {
+      compositionMode: "SEQUENCE",
+      targetDurationMs: 6 * minute,
+      podcastPercent: 100,
+      sequencePattern: ["PODCAST"],
+      maxEpisodesPerProgram: 10,
+    },
+    pools: { music: [], podcasts: [podcast("p-long", "s-long", 20 * minute)] },
+  });
+  assert.equal(result.items.length, 0);
+  assert.equal(result.stats.sequenceStopReason, "NO_FITTING_CANDIDATE");
+  assert.equal(result.stats.compositionQualityPassed, true);
+});
+
+test("#31 SEQUENCE preserves #27 duration eligibility and #29 program cap", () => {
+  const minute = 60_000;
+  const result = planPlaylist({
+    rules: {
+      compositionMode: "SEQUENCE",
+      targetDurationMs: 20 * minute,
+      podcastPercent: 100,
+      sequencePattern: ["PODCAST", "PODCAST"],
+      maxEpisodesPerProgram: 1,
+      maxPodcastDurationMs: 10 * minute,
+    },
+    pools: {
+      music: [],
+      podcasts: [
+        podcast("too-long", "show-long", 15 * minute),
+        podcast("a1", "show-a", 10 * minute),
+        podcast("a2", "show-a", 10 * minute),
+        podcast("b1", "show-b", 10 * minute),
+      ],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.uri), ["a1", "b1"]);
+  assert.equal(result.stats.podcastDurationExceededCount, 1);
+  assert.equal(result.stats.completedCycles, 1);
 });
