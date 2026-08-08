@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { prisma } from "@/lib/prisma";
 
-import { syncRecentlyPlayed } from "./recently-played";
+import {
+  loadMusicRepeatContext,
+  MusicRepeatScopeRequiredError,
+  syncRecentlyPlayed,
+} from "./recently-played";
 
 const integrationTest = process.env.DATABASE_URL ? test : test.skip;
 
@@ -117,5 +121,95 @@ integrationTest(
     } finally {
       globalThis.fetch = originalFetch;
     }
+  },
+);
+
+integrationTest(
+  "30-day boundary blocks the cutoff instant, 31-day history and never-observed tracks stay eligible",
+  async (t) => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const user = await prisma.user.create({
+      data: { email: `music-boundary-${suffix}@example.test` },
+    });
+    await prisma.musicPlaybackPolicy.create({
+      data: {
+        userId: user.id,
+        enabled: true,
+        windowValue: 30,
+        windowUnit: "DAYS",
+      },
+    });
+    await prisma.trackListeningState.createMany({
+      data: [
+        {
+          userId: user.id,
+          spotifyTrackId: "exact-cutoff",
+          spotifyUri: "spotify:track:exact-cutoff",
+          lastPlayedAt: new Date("2026-07-09T12:00:00.000Z"),
+        },
+        {
+          userId: user.id,
+          spotifyTrackId: "older-than-cutoff",
+          spotifyUri: "spotify:track:older-than-cutoff",
+          lastPlayedAt: new Date("2026-07-08T11:59:59.999Z"),
+        },
+      ],
+    });
+
+    t.after(async () => {
+      await prisma.user.delete({ where: { id: user.id } });
+    });
+
+    const context = await loadMusicRepeatContext(
+      user.id,
+      new Date("2026-08-08T12:00:00.000Z"),
+    );
+
+    assert.equal(context.cutoff?.toISOString(), "2026-07-09T12:00:00.000Z");
+    assert.equal(context.blockedTrackIds.has("exact-cutoff"), true);
+    assert.equal(context.blockedTrackIds.has("older-than-cutoff"), false);
+    assert.equal(context.blockedTrackIds.has("never-observed"), false);
+  },
+);
+
+integrationTest(
+  "enabled MUSIC-01 fails explicitly when an existing Spotify grant lacks recently-played scope",
+  async (t) => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const user = await prisma.user.create({
+      data: { email: `music-scope-${suffix}@example.test` },
+    });
+    await prisma.account.create({
+      data: {
+        userId: user.id,
+        type: "oauth",
+        provider: "spotify",
+        providerAccountId: `spotify-scope-${suffix}`,
+        access_token: "valid-token",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        scope: "user-read-email user-library-read",
+      },
+    });
+    await prisma.musicPlaybackPolicy.create({
+      data: {
+        userId: user.id,
+        enabled: true,
+        windowValue: 30,
+        windowUnit: "DAYS",
+      },
+    });
+
+    t.after(async () => {
+      await prisma.user.delete({ where: { id: user.id } });
+    });
+
+    await assert.rejects(
+      () => syncRecentlyPlayed(user.id),
+      (error: unknown) => {
+        assert.ok(error instanceof MusicRepeatScopeRequiredError);
+        assert.match(error.message, /reconnect spotify/i);
+        return true;
+      },
+    );
   },
 );
