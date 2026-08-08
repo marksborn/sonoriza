@@ -5,6 +5,7 @@ export type SpotifyApiErrorKind =
 
 export type SpotifyOperation =
   | "playlist-items"
+  | "playlist-metadata"
   | "show-episodes"
   | "saved-episodes"
   | "user-playlists"
@@ -12,6 +13,17 @@ export type SpotifyOperation =
   | "current-user"
   | "playlist-write"
   | "spotify-api";
+
+export interface SpotifySourceReadMetrics {
+  pagesRead: number;
+  cacheHits: number;
+  cacheMisses: number;
+  snapshotUnchanged: number;
+  snapshotChanged: number;
+  memoizedHits: number;
+  cacheWrites: number;
+  cacheWriteFailures: number;
+}
 
 export interface SpotifyRequestMetrics {
   totalCalls: number;
@@ -21,6 +33,10 @@ export interface SpotifyRequestMetrics {
   retries: number;
   retryWaitMs: number;
   circuitOpenSkips: number;
+  cacheHits: number;
+  cacheMisses: number;
+  memoizedReadHits: number;
+  sourceReads: Record<string, SpotifySourceReadMetrics>;
 }
 
 export class SpotifyApiError extends Error {
@@ -106,6 +122,7 @@ export function inferSpotifyOperation(
   if (/^\/playlists\/[^/]+\/items(?:\?|$)/.test(path)) {
     return normalizedMethod === "GET" ? "playlist-items" : "playlist-write";
   }
+  if (/^\/playlists\/[^/?]+(?:\?|$)/.test(path)) return "playlist-metadata";
   if (/^\/shows\/[^/]+\/episodes(?:\?|$)/.test(path)) return "show-episodes";
   if (/^\/me\/episodes(?:\?|$)/.test(path)) return "saved-episodes";
   if (/^\/me\/shows(?:\?|$)/.test(path)) return "saved-shows";
