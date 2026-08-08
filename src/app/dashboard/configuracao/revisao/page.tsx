@@ -27,6 +27,17 @@ type SimulationTargetSummary = {
   podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT" | null;
   podcastEpisodeMaxDurationMinutes: number | null;
   podcastDurationExceededCount: number | null;
+  compositionMode: "PROPORTION" | "SEQUENCE" | null;
+  compositionQualityPassed: boolean | null;
+  sequencePattern: Array<"MUSIC" | "PODCAST">;
+  sequenceSlotsRequested: number | null;
+  sequenceSlotsFilled: number | null;
+  sequenceUnfilledSlots: number | null;
+  completedCycles: number | null;
+  finalPartialCycleSlots: number | null;
+  stoppedAtPatternIndex: number | null;
+  sequenceQualityPassed: boolean | null;
+  sequenceStopReason: string | null;
   musicCount: number | null;
   podcastCount: number | null;
   requestedPodcastPercent: number | null;
@@ -84,6 +95,26 @@ function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
           value.podcastEpisodeMaxDurationMinutes,
         ),
         podcastDurationExceededCount: numberValue(value.podcastDurationExceededCount),
+        compositionMode:
+value.compositionMode === "PROPORTION" || value.compositionMode === "SEQUENCE"
+  ? value.compositionMode
+  : null,
+        compositionQualityPassed: booleanValue(value.compositionQualityPassed),
+        sequencePattern: Array.isArray(value.sequencePattern)
+? value.sequencePattern.filter(
+    (entry): entry is "MUSIC" | "PODCAST" =>
+      entry === "MUSIC" || entry === "PODCAST",
+  )
+: [],
+        sequenceSlotsRequested: numberValue(value.sequenceSlotsRequested),
+        sequenceSlotsFilled: numberValue(value.sequenceSlotsFilled),
+        sequenceUnfilledSlots: numberValue(value.sequenceUnfilledSlots),
+        completedCycles: numberValue(value.completedCycles),
+        finalPartialCycleSlots: numberValue(value.finalPartialCycleSlots),
+        stoppedAtPatternIndex: numberValue(value.stoppedAtPatternIndex),
+        sequenceQualityPassed: booleanValue(value.sequenceQualityPassed),
+        sequenceStopReason:
+typeof value.sequenceStopReason === "string" ? value.sequenceStopReason : null,
         musicCount: numberValue(value.musicCount),
         podcastCount: numberValue(value.podcastCount),
         requestedPodcastPercent: numberValue(value.requestedPodcastPercent),
@@ -257,7 +288,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
               <p className="mt-2 text-sm text-violet-100/70">
                 {ready
                   ? gate.realRunAllowed && gate.requiresSimulation
-                    ? "A simulação atual corresponde à configuração e atendeu às proporções. A primeira geração real está liberada."
+                    ? "A simulação atual corresponde à configuração e atendeu às regras de composição. A primeira geração real está liberada."
                     : gate.requiresSimulation
                       ? gate.reason
                       : "Esta conta já possui uma geração real controlada bem-sucedida."
@@ -392,11 +423,14 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                     ? `Baseada no calendário · ${target.calendarEventFilterMode === "MARKER" ? `marcador ${target.calendarEventMarker ?? "não informado"}` : "todos os eventos"}`
                     : `Duração fixa: ${durationLabel(target.fixedDurationSeconds)}`}
                   {target.durationMode === "CALENDAR" ? ` · sem evento elegível: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}` : ""}
-                  {` · ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}
+                  {target.compositionMode === "PROPORTION"
+                    ? ` · Por proporção: ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`
+                    : " · Por sequência"}
                   {` · ${configuredPodcastDurationLabel(target)}`}
                 </p>
+                {target.compositionMode === "SEQUENCE" && (
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-violet-200/75">
-                  <span>Sequência:</span>
+                  <span>Ciclo:</span>
                   {target.sequence.map((entry, sequenceIndex) => (
                     <span key={`${target.id}-${sequenceIndex}`} className="rounded-full border border-violet-300/20 bg-violet-500/10 px-2.5 py-1 font-bold">
                       {entry === "MUSIC" ? "Música" : "Podcast"}
@@ -404,6 +438,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                   ))}
                   <span>· máximo {target.maxEpisodesPerProgram} {target.maxEpisodesPerProgram === 1 ? "episódio" : "episódios"} do mesmo programa</span>
                 </div>
+                )}
               </article>
             )) : <p className="text-sm text-violet-200/65">Nenhum destino ativo.</p>}
           </div>
@@ -468,7 +503,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                 <div className="rounded-xl border border-violet-200/15 bg-black/15 p-3">
                   <p className="text-sm font-black text-violet-50">A configuração não foi reprovada.</p>
                   <p className="mt-1 text-sm leading-6 text-violet-100/70">
-                    O planner não avaliou proporções, disponibilidade ou esgotamento usando um pool parcial. A primeira geração real continua bloqueada até uma simulação conclusiva.
+                    O planner não avaliou composição, disponibilidade ou esgotamento usando um pool parcial. A primeira geração real continua bloqueada até uma simulação conclusiva.
                   </p>
                 </div>
 
@@ -491,7 +526,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                   <div className="mt-4 rounded-2xl border border-orange-300/25 bg-orange-400/10 p-4">
                     <p className="font-black text-orange-100">Primeira geração real bloqueada</p>
                     <p className="mt-1 text-sm leading-6 text-orange-100/75">
-                      O plano conseguiu ser montado, mas ficou materialmente diferente das proporções configuradas. Ajuste fontes ou limites e simule novamente.
+                      O plano conseguiu ser montado, mas ficou materialmente diferente da regra de composição configurada. Ajuste fontes ou limites e simule novamente.
                     </p>
                   </div>
                 )}
@@ -509,7 +544,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
 
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   {simulatedTargets.map((target) => (
-                    <article key={target.name} className={`rounded-2xl border p-4 ${target.mixQualityPassed === false ? "border-orange-300/25 bg-orange-950/20" : "border-violet-300/15 bg-black/15"}`}>
+                    <article key={target.name} className={`rounded-2xl border p-4 ${target.compositionQualityPassed === false ? "border-orange-300/25 bg-orange-950/20" : "border-violet-300/15 bg-black/15"}`}>
                       <h3 className="font-black">{target.name}</h3>
                       {target.error ? (
                         <p className="mt-2 text-sm text-red-200">{target.error}</p>
@@ -547,7 +582,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                                 : ""}
                             </p>
                           )}
-                          {target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (
+                          {target.compositionMode !== "SEQUENCE" && target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (
                             <div className="mt-3 rounded-xl border border-violet-300/15 bg-black/15 p-3 text-sm">
                               <p className="text-violet-100/80">
                                 Meta: <strong>{target.requestedPodcastPercent}% podcast</strong> · Planejado: <strong>{target.actualPodcastPercent}% podcast</strong>
@@ -561,9 +596,25 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                               ) : null}
                             </div>
                           )}
-                        </>
-                      )}
-                      {target.qualityReason && target.mixQualityPassed === false && (
+                {target.compositionMode === "SEQUENCE" && (
+                  <div className="mt-3 rounded-xl border border-violet-300/15 bg-black/15 p-3 text-sm">
+                    <p className="font-black text-violet-100">Ciclo: {target.sequencePattern.map((entry) => entry === "MUSIC" ? "M" : "P").join(" → ") || "não informado"}</p>
+                    <p className="mt-1 text-xs leading-5 text-violet-200/75">
+                      {target.completedCycles ?? 0} ciclos completos
+                      {target.finalPartialCycleSlots ? ` · ciclo final com ${target.finalPartialCycleSlots} slots preenchidos` : ""}
+                      {target.sequenceUnfilledSlots ? ` · ${target.sequenceUnfilledSlots} slot não preenchido` : ""}
+                    </p>
+                    {target.actualPodcastPercent !== null && (
+                      <p className="mt-1 text-xs text-violet-200/65">Resultado por duração: {target.actualPodcastPercent}% podcast / {100 - target.actualPodcastPercent}% música. Esse percentual é apenas informativo.</p>
+                    )}
+                    {target.sequenceStopReason && target.sequenceStopReason !== "TARGET_REACHED" && (
+                      <p className="mt-1 text-xs font-semibold text-orange-200">Interrupção: {target.sequenceStopReason === "NO_FITTING_CANDIDATE" ? "o próximo tipo não tinha item que coubesse no tempo restante" : "não havia candidato elegível para o próximo tipo"}.</p>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+                      {target.qualityReason && target.compositionQualityPassed === false && (
                         <p className="mt-2 text-xs font-semibold leading-5 text-orange-200">{target.qualityReason}.</p>
                       )}
                       {minutesFromMs(target.podcastShortfallMs) > 0 && (

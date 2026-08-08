@@ -32,6 +32,7 @@ function target(durationMs = 600_000): RunTarget {
     priority: 0,
     rules: {
       targetDurationMs: durationMs,
+      compositionMode: "PROPORTION",
       podcastPercent: 50,
       sequencePattern: ["MUSIC", "PODCAST"],
       maxEpisodesPerProgram: 10,
@@ -243,4 +244,66 @@ test("music deduplication by URI remains correct after eligibility filtering", a
   const podcast = fakeSource({ id: "podcast-dedupe", kind: "PODCAST", batches: [{ candidates: [candidate("spotify:episode:dedupe", "PODCAST", 300_000, "show-d")], done: true }] });
   const result = await collectIncrementally({ sources: [musicA, musicB, podcast], targets: [target()] });
   assert.equal(result.pools.music.length, 1); assert.equal(result.pools.music[0]?.uri, "spotify:track:same");
+});
+
+
+function sequenceTarget(durationMs = 600_000): RunTarget {
+  return {
+    targetPlaylistId: "target-sequence",
+    name: "Sequence target",
+    priority: 0,
+    rules: {
+      targetDurationMs: durationMs,
+      compositionMode: "SEQUENCE",
+      podcastPercent: 50,
+      sequencePattern: ["MUSIC", "PODCAST"],
+      maxEpisodesPerProgram: 10,
+    },
+  };
+}
+
+test("#31 incremental SEQUENCE keeps reading only the blocked slot kind", async () => {
+  const music = fakeSource({
+    id: "music-seq",
+    kind: "MUSIC",
+    batches: [
+      { candidates: [], done: false },
+      { candidates: [candidate("spotify:track:seq", "MUSIC", 300_000)], done: true },
+    ],
+  });
+  const podcast = fakeSource({
+    id: "podcast-seq",
+    kind: "PODCAST",
+    batches: [
+      { candidates: [candidate("spotify:episode:seq", "PODCAST", 300_000, "show-seq")], done: false },
+    ],
+  });
+
+  const result = await collectIncrementally({
+    sources: [music, podcast],
+    targets: [sequenceTarget()],
+  });
+
+  assert.equal(result.qualityFailures.length, 0);
+  assert.equal(music.calls, 2);
+  assert.equal(podcast.calls, 1);
+  assert.deepEqual(result.plan.targets[0]?.result.items.map((item) => item.type), ["MUSIC", "PODCAST"]);
+});
+
+test("#31 exhausted SEQUENCE may end early without becoming a percentage failure", async () => {
+  const podcast = fakeSource({
+    id: "podcast-too-long",
+    kind: "PODCAST",
+    batches: [
+      { candidates: [candidate("spotify:episode:long", "PODCAST", 700_000, "show-long")], done: true },
+    ],
+  });
+  const targetSeq = sequenceTarget(600_000);
+  targetSeq.rules.sequencePattern = ["PODCAST"];
+
+  const result = await collectIncrementally({ sources: [podcast], targets: [targetSeq] });
+  assert.equal(result.qualityFailures.length, 0);
+  assert.equal(result.plan.targets[0]?.result.stats.sequenceUnfilledSlots, 1);
+  assert.equal(result.plan.targets[0]?.result.stats.sequenceStopReason, "NO_FITTING_CANDIDATE");
+  assert.equal(result.plan.targets[0]?.result.stats.compositionQualityPassed, true);
 });

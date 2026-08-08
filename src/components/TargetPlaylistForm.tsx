@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 type ContentType = "MUSIC" | "PODCAST";
+type CompositionMode = "PROPORTION" | "SEQUENCE";
 type DurationMode = "FIXED" | "CALENDAR";
 type EmptyCalendarBehavior = "CLEAR" | "KEEP" | "SKIP";
 type CalendarEventFilterMode = "ALL" | "MARKER";
@@ -22,6 +23,7 @@ export type TargetPlaylistFormInitial = {
   emptyCalendarBehavior: EmptyCalendarBehavior;
   calendarEventFilterMode: CalendarEventFilterMode;
   calendarEventMarker: string;
+  compositionMode: CompositionMode;
   podcastPercent: number;
   podcastEpisodeMaxDurationMode: PodcastEpisodeMaxDurationMode;
   podcastEpisodeMaxDurationMinutes: number;
@@ -65,6 +67,9 @@ export function TargetPlaylistForm({
   const [durationMode, setDurationMode] = useState<DurationMode>(initial.durationMode);
   const [calendarEventFilterMode, setCalendarEventFilterMode] =
     useState<CalendarEventFilterMode>(initial.calendarEventFilterMode);
+  const [compositionMode, setCompositionMode] = useState<CompositionMode>(
+    initial.compositionMode,
+  );
   const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);
   const [podcastEpisodeMaxDurationMode, setPodcastEpisodeMaxDurationMode] =
     useState<PodcastEpisodeMaxDurationMode>(initial.podcastEpisodeMaxDurationMode);
@@ -102,6 +107,7 @@ export function TargetPlaylistForm({
     <form action={saveAction} className="space-y-6">
       {initial.id && <input type="hidden" name="id" value={initial.id} />}
       <input type="hidden" name="sequencePattern" value={JSON.stringify(sequence)} />
+      <input type="hidden" name="podcastPercent" value={podcastPercent} />
 
       <div className="grid gap-5 md:grid-cols-2">
         <label className="text-sm font-bold text-violet-100">
@@ -359,36 +365,53 @@ export function TargetPlaylistForm({
         </div>
       )}
 
-      <div className="rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4 sm:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-black text-white">Mistura de conteúdo</p>
-            <p className="mt-1 text-xs leading-5 text-violet-200/60">
-              A proporção é um objetivo de duração. Se faltar conteúdo de um tipo, o motor pode completar com o outro.
-            </p>
-          </div>
-          <span className="w-fit rounded-full border border-orange-400/25 bg-orange-400/10 px-3 py-1.5 text-sm font-black text-orange-200">
-            {podcastPercent}% podcast / {musicPercent}% música
-          </span>
+      <fieldset>
+        <legend className="text-sm font-black text-white">Como você quer montar esta playlist?</legend>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+<label className={`cursor-pointer rounded-2xl border p-4 transition ${compositionMode === "PROPORTION" ? "border-orange-400/45 bg-orange-400/10" : "border-violet-400/20 bg-violet-950/30 hover:border-violet-300/35"}`}>
+  <input type="radio" name="compositionMode" value="PROPORTION" checked={compositionMode === "PROPORTION"} onChange={() => setCompositionMode("PROPORTION")} className="sr-only" />
+  <span className="block font-black text-white">Por proporção de tempo</span>
+  <span className="mt-1 block text-xs leading-5 text-violet-200/65">Defina quanto do tempo deve ser podcast e música. O Sonoriza decide a intercalação para se aproximar dessa meta.</span>
+</label>
+<label className={`cursor-pointer rounded-2xl border p-4 transition ${compositionMode === "SEQUENCE" ? "border-orange-400/45 bg-orange-400/10" : "border-violet-400/20 bg-violet-950/30 hover:border-violet-300/35"}`}>
+  <input type="radio" name="compositionMode" value="SEQUENCE" checked={compositionMode === "SEQUENCE"} onChange={() => setCompositionMode("SEQUENCE")} className="sr-only" />
+  <span className="block font-black text-white">Por sequência</span>
+  <span className="mt-1 block text-xs leading-5 text-violet-200/65">Repita uma ordem fixa. O percentual final será consequência da duração real dos itens, não uma segunda regra.</span>
+</label>
         </div>
+      </fieldset>
 
-        <input
-          id={`${idPrefix}-podcast-percent`}
-          className="mt-5 w-full accent-orange-500"
-          type="range"
-          name="podcastPercent"
-          min={0}
-          max={100}
-          step={5}
-          value={podcastPercent}
-          onChange={(event) => setPodcastPercent(Number(event.target.value))}
-        />
-        <div className="mt-1 flex justify-between text-xs font-bold text-violet-300/50">
-          <span>Só música</span>
-          <span>Equilibrado</span>
-          <span>Só podcast</span>
+      {compositionMode === "PROPORTION" && (
+        <div className="rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-sm font-black text-white">Mistura de conteúdo</p>
+              <p className="mt-1 text-xs leading-5 text-violet-200/60">
+                A proporção é um objetivo de duração. Se faltar conteúdo de um tipo, o motor pode completar com o outro.
+              </p>
+            </div>
+            <span className="w-fit rounded-full border border-orange-400/25 bg-orange-400/10 px-3 py-1.5 text-sm font-black text-orange-200">
+              {podcastPercent}% podcast / {musicPercent}% música
+            </span>
+          </div>
+
+          <input
+            id={`${idPrefix}-podcast-percent`}
+            className="mt-5 w-full accent-orange-500"
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={podcastPercent}
+            onChange={(event) => setPodcastPercent(Number(event.target.value))}
+          />
+          <div className="mt-1 flex justify-between text-xs font-bold text-violet-300/50">
+            <span>Só música</span>
+            <span>Equilibrado</span>
+            <span>Só podcast</span>
+          </div>
         </div>
-      </div>
+      )}
 
       <fieldset className="rounded-2xl border border-violet-400/20 bg-violet-950/30 p-4 sm:p-5">
         <legend className="px-1 text-sm font-black text-white">
@@ -491,78 +514,80 @@ export function TargetPlaylistForm({
         )}
       </fieldset>
 
-      <div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-black text-white">Ordem Música / Podcast</p>
-            <p className="mt-1 text-xs leading-5 text-violet-200/60">
-              O padrão abaixo se repete até atingir a duração desejada. Use as setas para reorganizar.
-            </p>
-          </div>
-          <span className="text-xs font-bold text-violet-300/55">{sequence.length}/20 passos</span>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          {sequence.map((type, index) => (
-            <div
-              key={`${type}-${index}`}
-              className={`flex items-center gap-1 rounded-xl border px-2 py-1.5 ${
-                type === "MUSIC"
-                  ? "border-violet-300/25 bg-violet-500/15 text-violet-100"
-                  : "border-orange-300/25 bg-orange-400/10 text-orange-100"
-              }`}
-            >
-              <span className="px-1 text-xs font-black">{contentLabel(type)}</span>
-              <button
-                type="button"
-                aria-label={`Mover ${contentLabel(type)} para a esquerda`}
-                disabled={index === 0}
-                onClick={() => moveSequence(index, -1)}
-                className="rounded px-1.5 py-0.5 text-xs font-black transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-25"
-              >
-                ←
-              </button>
-              <button
-                type="button"
-                aria-label={`Mover ${contentLabel(type)} para a direita`}
-                disabled={index === sequence.length - 1}
-                onClick={() => moveSequence(index, 1)}
-                className="rounded px-1.5 py-0.5 text-xs font-black transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-25"
-              >
-                →
-              </button>
-              <button
-                type="button"
-                aria-label={`Remover ${contentLabel(type)}`}
-                disabled={sequence.length === 1}
-                onClick={() => removeSequence(index)}
-                className="rounded px-1.5 py-0.5 text-xs font-black transition hover:bg-red-400/15 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-25"
-              >
-                ×
-              </button>
+      {compositionMode === "SEQUENCE" && (
+        <div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-sm font-black text-white">Ordem Música / Podcast</p>
+              <p className="mt-1 text-xs leading-5 text-violet-200/60">
+                O padrão abaixo se repete até atingir a duração desejada. Use as setas para reorganizar.
+              </p>
             </div>
-          ))}
-        </div>
+            <span className="text-xs font-bold text-violet-300/55">{sequence.length}/20 passos</span>
+          </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={sequence.length >= 20}
-            onClick={() => addSequence("MUSIC")}
-            className="rounded-xl border border-violet-400/25 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-100 transition hover:bg-violet-500/20 disabled:opacity-40"
-          >
-            + Música
-          </button>
-          <button
-            type="button"
-            disabled={sequence.length >= 20}
-            onClick={() => addSequence("PODCAST")}
-            className="rounded-xl border border-orange-400/25 bg-orange-400/10 px-3 py-2 text-xs font-black text-orange-100 transition hover:bg-orange-400/20 disabled:opacity-40"
-          >
-            + Podcast
-          </button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {sequence.map((type, index) => (
+              <div
+                key={`${type}-${index}`}
+                className={`flex items-center gap-1 rounded-xl border px-2 py-1.5 ${
+                  type === "MUSIC"
+                    ? "border-violet-300/25 bg-violet-500/15 text-violet-100"
+                    : "border-orange-300/25 bg-orange-400/10 text-orange-100"
+                }`}
+              >
+                <span className="px-1 text-xs font-black">{contentLabel(type)}</span>
+                <button
+                  type="button"
+                  aria-label={`Mover ${contentLabel(type)} para a esquerda`}
+                  disabled={index === 0}
+                  onClick={() => moveSequence(index, -1)}
+                  className="rounded px-1.5 py-0.5 text-xs font-black transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-25"
+                >
+                  ←
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Mover ${contentLabel(type)} para a direita`}
+                  disabled={index === sequence.length - 1}
+                  onClick={() => moveSequence(index, 1)}
+                  className="rounded px-1.5 py-0.5 text-xs font-black transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-25"
+                >
+                  →
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Remover ${contentLabel(type)}`}
+                  disabled={sequence.length === 1}
+                  onClick={() => removeSequence(index)}
+                  className="rounded px-1.5 py-0.5 text-xs font-black transition hover:bg-red-400/15 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-25"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={sequence.length >= 20}
+              onClick={() => addSequence("MUSIC")}
+              className="rounded-xl border border-violet-400/25 bg-violet-500/10 px-3 py-2 text-xs font-black text-violet-100 transition hover:bg-violet-500/20 disabled:opacity-40"
+            >
+              + Música
+            </button>
+            <button
+              type="button"
+              disabled={sequence.length >= 20}
+              onClick={() => addSequence("PODCAST")}
+              className="rounded-xl border border-orange-400/25 bg-orange-400/10 px-3 py-2 text-xs font-black text-orange-100 transition hover:bg-orange-400/20 disabled:opacity-40"
+            >
+              + Podcast
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <label className="block max-w-sm text-sm font-bold text-violet-100">
         Máximo de episódios do mesmo programa

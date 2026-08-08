@@ -3,51 +3,38 @@
  *
  * The planner is deliberately decoupled from Next.js, Prisma, Spotify and
  * Google. It receives plain candidate pools and rules, and returns an ordered
- * plan. Everything else (fetching candidates, resolving durations, writing to
- * Spotify, persisting runs) lives in the orchestration layer.
+ * plan. Everything else lives in the orchestration layer.
  */
 
 export type ContentType = "MUSIC" | "PODCAST";
+export type CompositionMode = "PROPORTION" | "SEQUENCE";
+export type SequenceStopReason =
+  | "TARGET_REACHED"
+  | "NO_CANDIDATE_FOR_SLOT"
+  | "NO_FITTING_CANDIDATE"
+  | "INVALID_PATTERN";
 
-/** A single piece of content that can be placed into a playlist. */
 export interface Candidate {
-  /** Spotify URI, e.g. "spotify:track:..." or "spotify:episode:...". */
   uri: string;
   type: ContentType;
   title: string;
-  /** Artist(s) for music, show/program name for podcasts. */
   subtitle?: string;
-  /**
-   * Program identifier used to cap episodes per program. For podcasts this is
-   * the Spotify show id; for music it is undefined.
-   */
   programId?: string;
-  /**
-   * Effective listening time consumed by the planner. For a partially played
-   * podcast this is the remaining time, not necessarily the catalog duration.
-   */
   durationMs: number;
-  /** Catalog duration, retained for diagnostics when `durationMs` is remaining time. */
   originalDurationMs?: number;
-  /** Most recent Spotify playback position for podcasts. */
   resumePositionMs?: number;
-  /** Whether Spotify supplied playback-state information for this episode. */
   playbackPositionKnown?: boolean;
 }
 
 export interface PlaylistRules {
-  /** Target total duration, in milliseconds. */
   targetDurationMs: number;
-  /** Share of the duration budgeted to podcasts (0–100). */
+  /** Explicit composition semantics. Existing destinations migrate to PROPORTION. */
+  compositionMode: CompositionMode;
+  /** Active as a rule only in PROPORTION mode. */
   podcastPercent: number;
-  /** Cyclic sequence of slot types, e.g. [MUSIC, PODCAST, MUSIC, MUSIC, PODCAST]. */
+  /** Active as a rule only in SEQUENCE mode. */
   sequencePattern: ContentType[];
-  /** Maximum episodes of the same program allowed in this playlist. */
   maxEpisodesPerProgram: number;
-  /**
-   * Maximum effective listening time for one podcast episode. `null`/undefined
-   * means no limit. The value is resolved per target before planning.
-   */
   maxPodcastDurationMs?: number | null;
 }
 
@@ -57,33 +44,36 @@ export interface PlannedItem extends Candidate {
 
 export interface PlanResult {
   items: PlannedItem[];
-  /** URIs consumed by this plan — feed these back as `reserved` for the next playlist. */
   usedUris: Set<string>;
   stats: {
+    compositionMode: CompositionMode;
     totalDurationMs: number;
     musicDurationMs: number;
     podcastDurationMs: number;
     musicCount: number;
     podcastCount: number;
-    /** Percentage of planned listening time occupied by podcasts. */
     actualPodcastPercent: number;
-    /** Requested podcast percentage after clamping to 0–100. */
+    /** Retained for compatibility; active as a rule only in PROPORTION mode. */
     requestedPodcastPercent: number;
-    /** Positive duration missing from the requested podcast budget. */
     podcastShortfallMs: number;
-    /** Positive duration missing from the requested music budget. */
     musicShortfallMs: number;
-    /** Absolute difference, in percentage points, between requested and actual podcast share. */
+    /** Retained for compatibility; zero and non-gating in SEQUENCE mode. */
     mixDeviationPoints: number;
-    /** First-run quality gate: deviations over 10 percentage points are material. */
+    /** Retained alias. In SEQUENCE it mirrors sequenceQualityPassed, not a percentage gate. */
     mixQualityPassed: boolean;
-    /** Slots the pattern asked for but that could not be filled. */
+    /** Canonical mode-aware composition gate. */
+    compositionQualityPassed: boolean;
     unfilledSlots: number;
-    /** True when the plan stopped because a pool ran dry rather than hitting the target. */
     poolExhausted: boolean;
-    /** Podcast candidates excluded because they had no trustworthy program/show identity. */
     podcastIdentityMissingCount: number;
-    /** Podcast candidates excluded because their effective duration exceeded the target limit. */
     podcastDurationExceededCount: number;
+    sequenceSlotsRequested: number;
+    sequenceSlotsFilled: number;
+    sequenceUnfilledSlots: number;
+    completedCycles: number;
+    finalPartialCycleSlots: number;
+    stoppedAtPatternIndex: number | null;
+    sequenceQualityPassed: boolean | null;
+    sequenceStopReason: SequenceStopReason | null;
   };
 }
