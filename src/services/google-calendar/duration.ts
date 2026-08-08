@@ -14,6 +14,7 @@ export interface CalendarEventFilter {
 
 export interface CalendarDurationResult {
   durationMs: number;
+  maxEventDurationMs: number;
   matchedEvents: number;
   timedEvents: number;
   filterMode: CalendarEventFilterMode;
@@ -65,6 +66,20 @@ export function sumTimedDurationMs(
     );
 }
 
+/** Largest individual eligible timed event, in milliseconds. */
+export function maxTimedDurationMs(
+  events: CalendarEvent[],
+  filter: CalendarEventFilter = { mode: "ALL" },
+): number {
+  return events
+    .filter((event) => matchesCalendarEventFilter(event, filter))
+    .reduce(
+      (max, event) =>
+        Math.max(max, Math.max(0, event.end.getTime() - event.start.getTime())),
+      0,
+    );
+}
+
 /**
  * Resolves calendar-driven duration for a day across calendars enabled for
  * duration, while also returning audit metadata for CONFIG-04.
@@ -88,6 +103,7 @@ export async function computeCalendarDuration(
   if (durationCalendarIds.length === 0) {
     return {
       durationMs: 0,
+      maxEventDurationMs: 0,
       matchedEvents: 0,
       timedEvents: 0,
       filterMode: filter.mode,
@@ -99,6 +115,7 @@ export async function computeCalendarDuration(
   const client = await GoogleCalendarClient.forUser(userId);
 
   let durationMs = 0;
+  let maxEventDurationMs = 0;
   let matchedEvents = 0;
   let timedEvents = 0;
 
@@ -112,10 +129,15 @@ export async function computeCalendarDuration(
     timedEvents += timed.length;
     matchedEvents += matched.length;
     durationMs += sumTimedDurationMs(matched);
+    maxEventDurationMs = Math.max(
+      maxEventDurationMs,
+      maxTimedDurationMs(matched),
+    );
   }
 
   return {
     durationMs,
+    maxEventDurationMs,
     matchedEvents,
     timedEvents,
     filterMode: filter.mode,

@@ -21,12 +21,14 @@ function podcast(
 function rules(
   targetDurationMs: number,
   maxEpisodesPerProgram = 1,
+  maxPodcastDurationMs?: number | null,
 ): PlaylistRules {
   return {
     targetDurationMs,
     podcastPercent: 100,
     sequencePattern: ["PODCAST"],
     maxEpisodesPerProgram,
+    maxPodcastDurationMs,
   };
 }
 
@@ -161,4 +163,55 @@ test("shares the same show cap across candidates coming from different sources",
   });
 
   assert.equal(result.items.length, 1);
+});
+
+test("#27 rejects podcast candidates whose effective duration exceeds the configured limit", () => {
+  const minute = 60_000;
+  const result = planPlaylist({
+    rules: rules(30 * minute, 1, 45 * minute),
+    pools: {
+      music: [],
+      podcasts: [
+        podcast("spotify:episode:too-long", "show-a", 50 * minute),
+        podcast("spotify:episode:fits", "show-b", 30 * minute),
+      ],
+    },
+  });
+
+  assert.deepEqual(result.items.map((item) => item.uri), ["spotify:episode:fits"]);
+  assert.equal(result.stats.podcastDurationExceededCount, 1);
+  assert.equal(result.stats.podcastShortfallMs, 0);
+});
+
+test("#27 compares the limit with remaining listening time, not catalog duration", () => {
+  const minute = 60_000;
+  const partiallyPlayed: Candidate = {
+    ...podcast("spotify:episode:partial", "show-a", 30 * minute),
+    originalDurationMs: 120 * minute,
+    resumePositionMs: 90 * minute,
+    playbackPositionKnown: true,
+  };
+
+  const result = planPlaylist({
+    rules: rules(30 * minute, 1, 45 * minute),
+    pools: { music: [], podcasts: [partiallyPlayed] },
+  });
+
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.durationMs, 30 * minute);
+  assert.equal(result.stats.podcastDurationExceededCount, 0);
+});
+
+test("#27 preserves current behavior when no podcast duration limit is configured", () => {
+  const minute = 60_000;
+  const result = planPlaylist({
+    rules: rules(60 * minute, 1, null),
+    pools: {
+      music: [],
+      podcasts: [podcast("spotify:episode:long", "show-a", 60 * minute)],
+    },
+  });
+
+  assert.equal(result.items.length, 1);
+  assert.equal(result.stats.podcastDurationExceededCount, 0);
 });

@@ -129,6 +129,9 @@ async function saveTarget(formData: FormData) {
   const calendarEventMarker = String(
     formData.get("calendarEventMarker") ?? "",
   ).trim();
+  const podcastEpisodeMaxDurationMode = String(
+    formData.get("podcastEpisodeMaxDurationMode") ?? "NONE",
+  ).trim();
   const podcastPercent = integerBetween(formData.get("podcastPercent"), 0, 100);
   const maxEpisodesPerProgram = integerBetween(
     formData.get("maxEpisodesPerProgram"),
@@ -172,6 +175,33 @@ async function saveTarget(formData: FormData) {
     (!calendarEventMarker || calendarEventMarker.length > 80)
   ) {
     fail("marker");
+  }
+
+  const normalizedPodcastEpisodeMaxDurationMode =
+    podcastEpisodeMaxDurationMode === "NONE" ||
+    podcastEpisodeMaxDurationMode === "FIXED" ||
+    podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT"
+      ? podcastEpisodeMaxDurationMode
+      : null;
+
+  if (!normalizedPodcastEpisodeMaxDurationMode) fail("episode-duration");
+  if (
+    normalizedPodcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT" &&
+    durationMode !== "CALENDAR"
+  ) {
+    fail("episode-duration");
+  }
+
+  const podcastEpisodeMaxDurationMinutes =
+    normalizedPodcastEpisodeMaxDurationMode === "FIXED"
+      ? integerBetween(formData.get("podcastEpisodeMaxDurationMinutes"), 1, 1440)
+      : null;
+
+  if (
+    normalizedPodcastEpisodeMaxDurationMode === "FIXED" &&
+    podcastEpisodeMaxDurationMinutes === null
+  ) {
+    fail("episode-duration");
   }
 
   if (durationMode === "CALENDAR") {
@@ -252,6 +282,11 @@ async function saveTarget(formData: FormData) {
         ? calendarEventMarker
         : null,
     podcastPercent: podcastPercent!,
+    podcastEpisodeMaxDurationMode: normalizedPodcastEpisodeMaxDurationMode,
+    podcastEpisodeMaxDurationSeconds:
+      normalizedPodcastEpisodeMaxDurationMode === "FIXED"
+        ? podcastEpisodeMaxDurationMinutes! * 60
+        : null,
     sequencePattern,
     maxEpisodesPerProgram: maxEpisodesPerProgram!,
   } as const;
@@ -377,6 +412,22 @@ function emptyBehaviorLabel(value: string) {
   return "esvaziar playlist";
 }
 
+function podcastEpisodeMaxDurationLabel(target: {
+  podcastEpisodeMaxDurationMode: string;
+  podcastEpisodeMaxDurationSeconds: number | null;
+}) {
+  if (target.podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT") {
+    return "máx. por podcast: maior evento elegível";
+  }
+  if (target.podcastEpisodeMaxDurationMode === "FIXED") {
+    return `máx. por podcast: ${Math.max(
+      1,
+      Math.round((target.podcastEpisodeMaxDurationSeconds ?? 0) / 60),
+    )} min`;
+  }
+  return "sem limite de duração por podcast";
+}
+
 export default async function DestinationsPage({ searchParams }: DestinationsPageProps) {
   const session = await auth();
   if (!session?.user?.id) redirect("/");
@@ -447,17 +498,19 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
         ? "Informe um marcador de evento com até 80 caracteres."
         : params.error === "duration"
           ? "Informe uma duração fixa entre 1 minuto e 24 horas."
-        : params.error === "source-conflict"
-          ? "Essa playlist já é uma fonte de conteúdo. Escolha outro destino para evitar que a geração apague a própria fonte."
-          : params.error === "target-conflict"
-            ? "Essa playlist do Spotify já está ligada a outro destino do Sonoriza."
-            : params.error === "unavailable"
-              ? "A playlist escolhida não está entre as playlists próprias disponíveis nesta conta Spotify."
-              : params.error === "spotify"
-                ? "Não foi possível validar ou criar a playlist no Spotify. Revise a conexão e tente novamente."
-                : params.error
-                  ? "A configuração contém um valor inválido. Revise os campos e tente novamente."
-                  : null;
+          : params.error === "episode-duration"
+            ? "Revise a duração máxima por episódio. O limite fixo deve ficar entre 1 minuto e 24 horas, e o maior evento só pode ser usado em destinos baseados no calendário."
+            : params.error === "source-conflict"
+              ? "Essa playlist já é uma fonte de conteúdo. Escolha outro destino para evitar que a geração apague a própria fonte."
+              : params.error === "target-conflict"
+                ? "Essa playlist do Spotify já está ligada a outro destino do Sonoriza."
+                : params.error === "unavailable"
+                  ? "A playlist escolhida não está entre as playlists próprias disponíveis nesta conta Spotify."
+                  : params.error === "spotify"
+                    ? "Não foi possível validar ou criar a playlist no Spotify. Revise a conexão e tente novamente."
+                    : params.error
+                      ? "A configuração contém um valor inválido. Revise os campos e tente novamente."
+                      : null;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#0b021f] px-5 py-8 text-white sm:px-8 lg:px-10">
@@ -606,6 +659,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   calendarEventFilterMode: "ALL",
                   calendarEventMarker: "",
                   podcastPercent: 60,
+                  podcastEpisodeMaxDurationMode: "NONE",
+                  podcastEpisodeMaxDurationMinutes: 45,
                   sequencePattern: ["MUSIC", "PODCAST", "MUSIC", "MUSIC", "PODCAST"],
                   maxEpisodesPerProgram: 1,
                   destinationValue: CREATE_NEW,
@@ -686,6 +741,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                                   : "todos"
                               } · sem evento: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}`
                             : ""}
+                          {` · ${podcastEpisodeMaxDurationLabel(target)}`}
                         </p>
                         <p className="mt-1 text-xs text-violet-300/50">
                           {target.spotifyPlaylistId
@@ -755,6 +811,14 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             calendarEventFilterMode: target.calendarEventFilterMode,
                             calendarEventMarker: target.calendarEventMarker ?? "",
                             podcastPercent: target.podcastPercent,
+                            podcastEpisodeMaxDurationMode:
+                              target.podcastEpisodeMaxDurationMode,
+                            podcastEpisodeMaxDurationMinutes: Math.max(
+                              1,
+                              Math.round(
+                                (target.podcastEpisodeMaxDurationSeconds ?? 45 * 60) / 60,
+                              ),
+                            ),
                             sequencePattern,
                             maxEpisodesPerProgram: target.maxEpisodesPerProgram,
                             destinationValue: target.spotifyPlaylistId

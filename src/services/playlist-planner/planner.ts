@@ -42,6 +42,7 @@ const other = (t: ContentType): ContentType =>
  *  - no URI is placed twice (nor any URI in `reserved`);
  *  - at most `maxEpisodesPerProgram` episodes of the same program;
  *  - podcast candidates without a trustworthy program identity are excluded;
+ *  - podcast candidates above `maxPodcastDurationMs` are excluded before selection;
  *  - the last item may overshoot the target so total duration >= target when
  *    the pools allow it.
  */
@@ -57,14 +58,26 @@ export function planPlaylist({
   const podcastPercent = clamp(rules.podcastPercent, 0, 100);
   const podcastBudget = (target * podcastPercent) / 100;
   const musicBudget = target - podcastBudget;
+  const maxPodcastDurationMs =
+    rules.maxPodcastDurationMs == null
+      ? null
+      : Math.max(0, rules.maxPodcastDurationMs);
 
   const eligiblePodcasts: Candidate[] = [];
   let podcastIdentityMissingCount = 0;
+  let podcastDurationExceededCount = 0;
 
   for (const candidate of pools.podcasts) {
     const programId = candidate.programId?.trim();
     if (!programId) {
       podcastIdentityMissingCount += 1;
+      continue;
+    }
+    if (
+      maxPodcastDurationMs !== null &&
+      Math.max(0, candidate.durationMs) > maxPodcastDurationMs
+    ) {
+      podcastDurationExceededCount += 1;
       continue;
     }
 
@@ -178,6 +191,7 @@ export function planPlaylist({
       unfilledSlots,
       poolExhausted,
       podcastIdentityMissingCount,
+      podcastDurationExceededCount,
     },
   };
 }

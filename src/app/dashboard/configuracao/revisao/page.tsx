@@ -23,6 +23,10 @@ type SimulationTargetSummary = {
   calendarEventFilterMode: "ALL" | "MARKER" | null;
   calendarEventMarker: string | null;
   calendarDurationMinutes: number | null;
+  calendarMaxEventDurationMinutes: number | null;
+  podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT" | null;
+  podcastEpisodeMaxDurationMinutes: number | null;
+  podcastDurationExceededCount: number | null;
   musicCount: number | null;
   podcastCount: number | null;
   requestedPodcastPercent: number | null;
@@ -69,6 +73,17 @@ function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
         calendarEventMarker:
           typeof value.calendarEventMarker === "string" ? value.calendarEventMarker : null,
         calendarDurationMinutes: numberValue(value.calendarDurationMinutes),
+        calendarMaxEventDurationMinutes: numberValue(value.calendarMaxEventDurationMinutes),
+        podcastEpisodeMaxDurationMode:
+          value.podcastEpisodeMaxDurationMode === "NONE" ||
+          value.podcastEpisodeMaxDurationMode === "FIXED" ||
+          value.podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT"
+            ? value.podcastEpisodeMaxDurationMode
+            : null,
+        podcastEpisodeMaxDurationMinutes: numberValue(
+          value.podcastEpisodeMaxDurationMinutes,
+        ),
+        podcastDurationExceededCount: numberValue(value.podcastDurationExceededCount),
         musicCount: numberValue(value.musicCount),
         podcastCount: numberValue(value.podcastCount),
         requestedPodcastPercent: numberValue(value.requestedPodcastPercent),
@@ -113,6 +128,21 @@ function emptyBehaviorLabel(value: "CLEAR" | "KEEP" | "SKIP") {
   if (value === "CLEAR") return "esvaziar playlist";
   if (value === "KEEP") return "manter playlist";
   return "não tocar na playlist";
+}
+
+function configuredPodcastDurationLabel(target: {
+  podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";
+  podcastEpisodeMaxDurationSeconds: number | null;
+}) {
+  if (target.podcastEpisodeMaxDurationMode === "CALENDAR_MAX_EVENT") {
+    return "máximo por episódio = maior evento elegível";
+  }
+  if (target.podcastEpisodeMaxDurationMode === "FIXED") {
+    return `máximo por episódio = ${Math.round(
+      (target.podcastEpisodeMaxDurationSeconds ?? 0) / 60,
+    )} min`;
+  }
+  return "sem máximo de duração por episódio";
 }
 
 function minutesFromMs(ms: number | null) {
@@ -352,6 +382,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                     : `Duração fixa: ${durationLabel(target.fixedDurationSeconds)}`}
                   {target.durationMode === "CALENDAR" ? ` · sem evento elegível: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}` : ""}
                   {` · ${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}
+                  {` · ${configuredPodcastDurationLabel(target)}`}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-violet-200/75">
                   <span>Sequência:</span>
@@ -477,6 +508,21 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                                 ? ` de ${target.calendarTimedEventCount} eventos com horário`
                                 : ""}
                               {` · ${target.calendarDurationMinutes} min calculados pelo calendário`}
+                              {target.calendarMaxEventDurationMinutes !== null
+                                ? ` · maior janela ${target.calendarMaxEventDurationMinutes} min`
+                                : ""}
+                            </p>
+                          )}
+                          {target.podcastEpisodeMaxDurationMode && (
+                            <p className="mt-2 text-xs font-semibold leading-5 text-violet-200/70">
+                              {target.podcastEpisodeMaxDurationMode === "NONE"
+                                ? "Podcasts: sem limite de duração por episódio"
+                                : target.podcastEpisodeMaxDurationMinutes !== null
+                                  ? `Podcasts: limite efetivo de ${target.podcastEpisodeMaxDurationMinutes} min por episódio`
+                                  : "Podcasts: limite efetivo não aplicável nesta execução"}
+                              {target.podcastDurationExceededCount !== null
+                                ? ` · ${target.podcastDurationExceededCount} ${target.podcastDurationExceededCount === 1 ? "episódio descartado" : "episódios descartados"} por duração`
+                                : ""}
                             </p>
                           )}
                           {target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (

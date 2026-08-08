@@ -44,6 +44,11 @@ export interface PlaylistRules {
   sequencePattern: ContentType[];
   /** Maximum episodes of the same program allowed in this playlist. */
   maxEpisodesPerProgram: number;
+  /**
+   * Maximum effective listening time for one podcast episode. `null`/undefined
+   * means no limit. The value is resolved per target before planning.
+   */
+  maxPodcastDurationMs?: number | null;
 }
 
 export interface PlannedItem extends Candidate {
@@ -78,5 +83,7 @@ export interface PlanResult {
     poolExhausted: boolean;
     /** Podcast candidates excluded because they had no trustworthy program/show identity. */
     podcastIdentityMissingCount: number;
+    /** Podcast candidates excluded because their effective duration exceeded the target limit. */
+    podcastDurationExceededCount: number;
   };
 }
