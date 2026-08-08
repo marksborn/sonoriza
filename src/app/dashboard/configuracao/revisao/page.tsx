@@ -110,6 +110,14 @@ function readSkipped(summary: unknown): string[] {
     : [];
 }
 
+function readMusicUnavailableSkippedCount(summary: unknown): number {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return 0;
+  const value = numberValue(
+    (summary as Record<string, unknown>).musicUnavailableSkippedCount,
+  );
+  return value === null ? 0 : Math.max(0, Math.trunc(value));
+}
+
 function readQualityPassed(summary: unknown): boolean | null {
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) return null;
   return booleanValue((summary as Record<string, unknown>).qualityPassed);
@@ -191,6 +199,9 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
   const simulatedTargets = readSimulationTargets(simulation?.summary);
   const skippedTargets = readSkipped(simulation?.summary);
   const simulationQualityPassed = readQualityPassed(simulation?.summary);
+  const musicUnavailableSkippedCount = readMusicUnavailableSkippedCount(
+    simulation?.summary,
+  );
   const inconclusiveSimulation = readInconclusiveSimulation(simulation?.summary);
   const ready = assessment.issues.length === 0;
   const healthySimulation =
@@ -481,6 +492,17 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                     <p className="font-black text-orange-100">Primeira geração real bloqueada</p>
                     <p className="mt-1 text-sm leading-6 text-orange-100/75">
                       O plano conseguiu ser montado, mas ficou materialmente diferente das proporções configuradas. Ajuste fontes ou limites e simule novamente.
+                    </p>
+                  </div>
+                )}
+
+                {musicUnavailableSkippedCount > 0 && (
+                  <div className="mt-4 rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4">
+                    <p className="font-black text-violet-50">
+                      {musicUnavailableSkippedCount} {musicUnavailableSkippedCount === 1 ? "música ignorada" : "músicas ignoradas"} por indisponibilidade
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-violet-100/70">
+                      Essas faixas não contam para sequência, duração, percentual de música ou quality gate porque o Spotify as marcou como indisponíveis para reprodução no contexto atual.
                     </p>
                   </div>
                 )}

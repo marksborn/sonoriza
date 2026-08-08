@@ -216,3 +216,31 @@ test("exhausts the necessary kind before declaring a conclusive quality failure"
   assert.equal(result.qualityFailures.length, 1);
   assert.equal(podcast.calls, 2);
 });
+
+test("a filtered unavailable music slot does not count and a later playable substitute can fill it", async () => {
+  const music = fakeSource({ id: "music-filtered", kind: "MUSIC", batches: [
+    { candidates: [], done: false, unavailableMusicSkippedCount: 1 },
+    { candidates: [candidate("spotify:track:replacement", "MUSIC", 300_000)], done: true },
+  ]});
+  const podcast = fakeSource({ id: "podcast-filtered", kind: "PODCAST", batches: [
+    { candidates: [candidate("spotify:episode:replacement", "PODCAST", 300_000, "show-r")], done: true },
+  ]});
+  const result = await collectIncrementally({ sources: [music, podcast], targets: [target()] });
+  assert.equal(result.qualityFailures.length, 0); assert.equal(music.calls, 2); assert.equal(result.pools.music.length, 1);
+});
+
+test("an exhausted music pool after filtering surfaces real shortfall instead of a fake sequence pass", async () => {
+  const music = fakeSource({ id: "music-unavailable", kind: "MUSIC", batches: [{ candidates: [], done: true, unavailableMusicSkippedCount: 2 }] });
+  const podcast = fakeSource({ id: "podcast-available", kind: "PODCAST", batches: [{ candidates: [candidate("spotify:episode:only", "PODCAST", 300_000, "show-only")], done: true }] });
+  const result = await collectIncrementally({ sources: [music, podcast], targets: [target()] });
+  assert.equal(result.qualityFailures.length, 1); assert.ok((result.qualityFailures[0]?.result.stats.musicShortfallMs ?? 0) > 0);
+});
+
+test("music deduplication by URI remains correct after eligibility filtering", async () => {
+  const duplicate = candidate("spotify:track:same", "MUSIC", 300_000);
+  const musicA = fakeSource({ id: "music-a", kind: "MUSIC", batches: [{ candidates: [duplicate], done: true }] });
+  const musicB = fakeSource({ id: "music-b", kind: "MUSIC", batches: [{ candidates: [duplicate], done: true }] });
+  const podcast = fakeSource({ id: "podcast-dedupe", kind: "PODCAST", batches: [{ candidates: [candidate("spotify:episode:dedupe", "PODCAST", 300_000, "show-d")], done: true }] });
+  const result = await collectIncrementally({ sources: [musicA, musicB, podcast], targets: [target()] });
+  assert.equal(result.pools.music.length, 1); assert.equal(result.pools.music[0]?.uri, "spotify:track:same");
+});

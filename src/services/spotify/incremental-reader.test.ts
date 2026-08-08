@@ -279,3 +279,27 @@ integrationTest(
     }
   },
 );
+
+test("music pages use the authenticated market and exclude explicitly unavailable tracks", async () => {
+  const originalFetch = globalThis.fetch; const urls: string[] = []; let call = 0;
+  globalThis.fetch = (async (input) => {
+    const url = String(input); urls.push(url); call += 1;
+    if (call === 1 || call === 3) return jsonResponse({ snapshot_id: "snapshot-playable" });
+    return jsonResponse({ items: [
+      { item: { uri: "spotify:track:playable", name: "Playable", duration_ms: 180_000, type: "track", is_local: false, is_playable: true, artists: [{ name: "Artist" }] } },
+      { item: { uri: "spotify:track:blocked", name: "Blocked", duration_ms: 180_000, type: "track", is_local: false, is_playable: false, restrictions: { reason: "market" }, artists: [{ name: "Artist" }] } },
+      { item: { uri: "spotify:track:restricted", name: "Restricted", duration_ms: 180_000, type: "track", is_local: false, is_playable: true, restrictions: { reason: "product" }, artists: [{ name: "Artist" }] } },
+      { item: { uri: "spotify:track:local", name: "Local", duration_ms: 180_000, type: "track", is_local: true, artists: [{ name: "Artist" }] } },
+    ], next: null });
+  }) as typeof fetch;
+  try {
+    const reader = createReader();
+    const cursor = await reader.createSource(source({ kind: "MUSIC", spotifyType: "PLAYLIST", name: "Music source" }));
+    const batch = await cursor.readNext();
+    assert.deepEqual(batch.candidates.map((candidate) => candidate.uri), ["spotify:track:playable"]);
+    assert.equal(batch.unavailableMusicSkippedCount, 2);
+    assert.equal(urls.filter((url) => url.includes("/items?")).length, 1);
+    const itemsUrl = urls.find((url) => url.includes("/items?")) ?? "";
+    assert.match(itemsUrl, /market=from_token/); assert.match(itemsUrl, /is_playable/); assert.match(itemsUrl, /restrictions\(reason\)/);
+  } finally { globalThis.fetch = originalFetch; }
+});
