@@ -219,6 +219,7 @@ function inferNeededKinds(
   for (const failure of failures) {
     const stats = failure.result.stats;
     const target = targetById.get(failure.targetPlaylistId);
+    const sizeBefore = needed.size;
 
     if (
       stats.podcastShortfallMs > 0 ||
@@ -233,7 +234,10 @@ function inferNeededKinds(
       needed.add("MUSIC");
     }
 
-    if (stats.poolExhausted && target) {
+    // poolExhausted alone does not mean both kinds are short. Only fall back to
+    // every kind used by this target when the planner gave us no directional
+    // shortfall/deviation signal at all.
+    if (stats.poolExhausted && target && needed.size === sizeBefore) {
       if (
         target.rules.podcastPercent > 0 ||
         target.rules.sequencePattern.includes("PODCAST")
