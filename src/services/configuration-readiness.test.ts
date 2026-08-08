@@ -163,6 +163,19 @@ test("POST /api/generate checks the current gate before invoking the generator",
   );
 });
 
+test("scheduled generation checks the same current gate before invoking the generator", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+  const assessmentCall = source.indexOf("await assessConfiguration(user.id)");
+  const gateCall = source.indexOf("await getFirstRunGate(user.id, assessment)");
+  const gateCheck = source.indexOf("if (!gate.realRunAllowed)");
+  const generatorCall = source.indexOf("await generatePlaylists({");
+
+  assert.ok(assessmentCall >= 0, "scheduled run must assess current configuration");
+  assert.ok(gateCall > assessmentCall, "scheduled run must evaluate current readiness");
+  assert.ok(gateCheck > gateCall, "scheduled run must check realRunAllowed");
+  assert.ok(generatorCall > gateCheck, "scheduled run must block before generatePlaylists can write");
+});
+
 test("CONFIG-04 green CTA is derived from the same realRunAllowed authority", () => {
   const source = readFileSync(
     "src/app/dashboard/configuracao/revisao/page.tsx",
