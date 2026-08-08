@@ -1,7 +1,15 @@
 import type { Candidate } from "@/services/playlist-planner";
 
-const MUSIC_SOURCE_CACHE_VERSION = 2;
-type CachedMusicCandidate = { uri: string; title: string; subtitle: string | null; durationMs: number };
+// v3 adds canonical Spotify track identity so MUSIC-01 can never be bypassed
+// by a snapshot cache produced before playback-history filtering existed.
+const MUSIC_SOURCE_CACHE_VERSION = 3;
+type CachedMusicCandidate = {
+  uri: string;
+  spotifyTrackId: string;
+  title: string;
+  subtitle: string | null;
+  durationMs: number;
+};
 type MusicSourceCachePayload = {
   version: typeof MUSIC_SOURCE_CACHE_VERSION;
   unavailableTrackCount: number;
@@ -15,12 +23,18 @@ export function encodeMusicSourceCache(
   return {
     version: MUSIC_SOURCE_CACHE_VERSION,
     unavailableTrackCount: Math.max(0, Math.trunc(unavailableTrackCount)),
-    candidates: candidates.map((candidate) => ({
-      uri: candidate.uri,
-      title: candidate.title,
-      subtitle: candidate.subtitle ?? null,
-      durationMs: candidate.durationMs,
-    })),
+    candidates: candidates
+      .filter(
+        (candidate): candidate is Candidate & { spotifyTrackId: string } =>
+          typeof candidate.spotifyTrackId === "string" && Boolean(candidate.spotifyTrackId),
+      )
+      .map((candidate) => ({
+        uri: candidate.uri,
+        spotifyTrackId: candidate.spotifyTrackId,
+        title: candidate.title,
+        subtitle: candidate.subtitle ?? null,
+        durationMs: candidate.durationMs,
+      })),
   };
 }
 
@@ -48,6 +62,7 @@ function decodePayload(value: unknown): { candidates: Candidate[]; unavailableTr
     const candidate = item as Record<string, unknown>;
     if (
       typeof candidate.uri !== "string" ||
+      typeof candidate.spotifyTrackId !== "string" || !candidate.spotifyTrackId ||
       typeof candidate.title !== "string" ||
       typeof candidate.durationMs !== "number" ||
       !Number.isFinite(candidate.durationMs) || candidate.durationMs < 0 ||
@@ -55,6 +70,7 @@ function decodePayload(value: unknown): { candidates: Candidate[]; unavailableTr
     ) return null;
     candidates.push({
       uri: candidate.uri,
+      spotifyTrackId: candidate.spotifyTrackId,
       type: "MUSIC",
       title: candidate.title,
       ...(typeof candidate.subtitle === "string" ? { subtitle: candidate.subtitle } : {}),
