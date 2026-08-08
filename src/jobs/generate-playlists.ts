@@ -13,8 +13,10 @@ import {
   type RunTarget,
 } from "@/services/playlist-planner";
 import {
+  isSpotifyApiError,
   SpotifyClient,
   type PodcastCandidateBatch,
+  type SpotifyApiErrorKind,
 } from "@/services/spotify";
 
 export interface GeneratePlaylistsOptions {
@@ -36,6 +38,25 @@ type LogLine = { level: "INFO" | "WARN" | "ERROR"; message: string; data?: unkno
 type ResolvedTargetDuration = {
   durationMs: number;
   calendar: CalendarDurationResult | null;
+};
+
+type SourceCollectionFailure = {
+  source: string;
+  kind: string;
+  spotifyType: string;
+  spotifyId: string;
+  errorKind: SpotifyApiErrorKind | "SOURCE_READ_FAILED";
+  status: number | null;
+  reason: string | null;
+  operation: string | null;
+  retryAfterSeconds: number | null;
+};
+
+type PoolBuildResult = {
+  pools: PlannerPools;
+  configuredSourceCount: number;
+  readSourceCount: number;
+  failures: SourceCollectionFailure[];
 };
 
 /**
@@ -68,23 +89,63 @@ export async function generatePlaylists(
     simulate,
     targets: [] as unknown[],
     qualityPassed: false,
+    collectionComplete: false,
+    inconclusive: false,
   };
 
   let status: RunStatus = "SUCCESS";
+  let spotify: SpotifyClient | null = null;
 
   try {
-    const spotify = await SpotifyClient.forUser(userId);
+    spotify = await SpotifyClient.forUser(userId);
 
     // --- 1. Build shared candidate pools -----------------------------------
     const sources = await prisma.sourcePlaylist.findMany({
       where: { userId, enabled: true },
     });
 
-    const pools = await buildPools(spotify, sources, log);
+    const poolBuild = await buildPools(spotify, sources, log);
+    const pools = poolBuild.pools;
+    const collectionComplete = poolBuild.failures.length === 0;
+
+    summary.collectionComplete = collectionComplete;
+    summary.sourceCollection = {
+      configuredSourceCount: poolBuild.configuredSourceCount,
+      readSourceCount: poolBuild.readSourceCount,
+      unavailableSourceCount: poolBuild.failures.length,
+      failures: poolBuild.failures,
+    };
+    summary.spotifyApi = spotify.getRequestMetrics();
+
     log({
       level: "INFO",
       message: `Pools built: ${pools.music.length} tracks, ${pools.podcasts.length} episodes`,
     });
+
+    // An unread enabled source means the planner does not know whether content
+    // is actually unavailable. Stop before planning so a partial pool can never
+    // be misreported as a configuration/mix failure and can never reach writes.
+    if (!collectionComplete) {
+      status = "FAILED";
+      summary.inconclusive = true;
+      summary.inconclusiveReason = collectionFailureReason(poolBuild.failures);
+      summary.qualityPassed = false;
+      summary.qualityFailures = [];
+
+      const error = collectionFailureMessage(poolBuild.failures, simulate);
+      log({
+        level: "WARN",
+        message: error,
+        data: {
+          configuredSourceCount: poolBuild.configuredSourceCount,
+          readSourceCount: poolBuild.readSourceCount,
+          unavailableSourceCount: poolBuild.failures.length,
+          failures: poolBuild.failures,
+        },
+      });
+      await finalizeRun(run.id, status, logs, summary, error);
+      return { runId: run.id, status };
+    }
 
     // --- 2. Resolve targets + durations ------------------------------------
     const targets = await prisma.targetPlaylist.findMany({
@@ -165,6 +226,7 @@ export async function generatePlaylists(
       status = "FAILED";
       const error =
         "A geração foi bloqueada antes de alterar o Spotify porque o plano não conseguiu atender às proporções configuradas.";
+      summary.spotifyApi = spotify.getRequestMetrics();
       await finalizeRun(run.id, status, logs, summary, error);
       return { runId: run.id, status };
     }
@@ -241,11 +303,13 @@ export async function generatePlaylists(
     }
 
     summary.skipped = skipped.map((t) => t.name);
+    summary.spotifyApi = spotify.getRequestMetrics();
     status = anyFailed ? "PARTIAL" : "SUCCESS";
 
     await finalizeRun(run.id, status, logs, summary);
     return { runId: run.id, status };
   } catch (err) {
+    if (spotify) summary.spotifyApi = spotify.getRequestMetrics();
     log({ level: "ERROR", message: `Run failed: ${errorMessage(err)}` });
     await finalizeRun(run.id, "FAILED", logs, summary, errorMessage(err));
     return { runId: run.id, status: "FAILED" };
@@ -264,14 +328,20 @@ async function buildPools(
     includePlayed: boolean;
   }[],
   log: (line: LogLine) => void,
-): Promise<PlannerPools> {
+): Promise<PoolBuildResult> {
   const music: Candidate[] = [];
   const podcasts: Candidate[] = [];
+  const failures: SourceCollectionFailure[] = [];
+  let readSourceCount = 0;
 
   for (const source of sources) {
     try {
-      if (source.kind === "MUSIC" && source.spotifyType === "PLAYLIST") {
+      if (source.kind === "MUSIC") {
+        if (source.spotifyType !== "PLAYLIST") {
+          throw new Error(`Unsupported music source type: ${source.spotifyType}`);
+        }
         music.push(...(await spotify.getPlaylistTracks(source.spotifyId)));
+        readSourceCount += 1;
         continue;
       }
 
@@ -292,14 +362,38 @@ async function buildPools(
         );
       }
 
-      if (batch) {
-        podcasts.push(...batch.candidates);
-        logPodcastBatch(source.name ?? source.spotifyType, batch, log);
+      if (!batch) {
+        throw new Error(`Unsupported podcast source type: ${source.spotifyType}`);
       }
+
+      podcasts.push(...batch.candidates);
+      logPodcastBatch(source.name ?? source.spotifyType, batch, log);
+      readSourceCount += 1;
     } catch (err) {
+      const spotifyError = isSpotifyApiError(err) ? err : null;
+      const failure: SourceCollectionFailure = {
+        source: source.name ?? `${source.spotifyType}:${source.spotifyId}`,
+        kind: source.kind,
+        spotifyType: source.spotifyType,
+        spotifyId: source.spotifyId,
+        errorKind: spotifyError?.kind ?? "SOURCE_READ_FAILED",
+        status: spotifyError?.status ?? null,
+        reason: spotifyError?.reason ?? null,
+        operation: spotifyError?.operation ?? null,
+        retryAfterSeconds: spotifyError?.retryAfterSeconds ?? null,
+      };
+      failures.push(failure);
+
+      const message =
+        failure.errorKind === "QUOTA_EXCEEDED"
+          ? `Source "${failure.source}" was not read because Spotify quota was exceeded; collection marked incomplete`
+          : failure.errorKind === "RATE_LIMITED"
+            ? `Source "${failure.source}" remained rate limited after retry; collection marked incomplete`
+            : `Source "${failure.source}" could not be read; collection marked incomplete: ${errorMessage(err)}`;
       log({
         level: "WARN",
-        message: `Skipping source ${source.spotifyType}:${source.spotifyId}: ${errorMessage(err)}`,
+        message,
+        data: failure,
       });
     }
   }
@@ -308,7 +402,12 @@ async function buildPools(
   // without a trustworthy program identity and then deduplicates by URI while
   // selecting. This prevents an invalid copy from one source from hiding a
   // valid copy of the same episode from another source.
-  return { music: dedupeByUri(music), podcasts };
+  return {
+    pools: { music: dedupeByUri(music), podcasts },
+    configuredSourceCount: sources.length,
+    readSourceCount,
+    failures,
+  };
 }
 
 function logPodcastBatch(
@@ -424,6 +523,36 @@ async function finalizeRun(
       },
     }),
   ]);
+}
+
+function collectionFailureReason(
+  failures: SourceCollectionFailure[],
+): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "SOURCE_UNAVAILABLE" {
+  if (failures.some((failure) => failure.errorKind === "QUOTA_EXCEEDED")) {
+    return "QUOTA_EXCEEDED";
+  }
+  if (failures.some((failure) => failure.errorKind === "RATE_LIMITED")) {
+    return "RATE_LIMITED";
+  }
+  return "SOURCE_UNAVAILABLE";
+}
+
+function collectionFailureMessage(
+  failures: SourceCollectionFailure[],
+  simulate: boolean,
+): string {
+  const reason = collectionFailureReason(failures);
+  const prefix = simulate
+    ? "Não foi possível concluir a simulação"
+    : "A geração foi bloqueada antes de alterar o Spotify";
+  const cause =
+    reason === "QUOTA_EXCEEDED"
+      ? "o Spotify atingiu a quota disponível durante a leitura das fontes"
+      : reason === "RATE_LIMITED"
+        ? "o Spotify limitou temporariamente a leitura de algumas fontes mesmo após a tentativa controlada de retry"
+        : "uma ou mais fontes do Spotify não puderam ser lidas por completo";
+
+  return `${prefix}: ${cause}. Nenhuma configuração foi considerada incorreta e nenhuma playlist do Spotify foi alterada.`;
 }
 
 function qualityReason(stats: {
