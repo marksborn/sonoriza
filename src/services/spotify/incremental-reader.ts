@@ -14,7 +14,12 @@ import {
   type SpotifyRequestMetrics,
   type SpotifySourceReadMetrics,
 } from "./errors";
-import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";
+import { readPlayableMusicCandidate } from "./music-availability";
+import {
+  decodeMusicSourceCache,
+  decodeMusicSourceCacheUnavailableTrackCount,
+  encodeMusicSourceCache,
+} from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
@@ -210,6 +215,8 @@ export class SpotifyIncrementalReader {
     let done = false;
     let cached: Candidate[] | null = null;
     let cacheDelivered = false;
+    let cachedUnavailableTrackCount = 0;
+    let accumulatedUnavailableTrackCount = 0;
     const accumulated: Candidate[] = [];
 
     return {
@@ -231,6 +238,9 @@ export class SpotifyIncrementalReader {
           cached = snapshotMatches
             ? decodeMusicSourceCache(source.cachedCandidates)
             : null;
+          cachedUnavailableTrackCount = snapshotMatches
+            ? decodeMusicSourceCacheUnavailableTrackCount(source.cachedCandidates) ?? 0
+            : 0;
 
           if (cached !== null) {
             this.requestMetrics.cacheHits += 1;
@@ -244,7 +254,7 @@ export class SpotifyIncrementalReader {
               else metrics.snapshotChanged += 1;
             }
             nextUrl =
-              `/playlists/${source.spotifyId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
+              `/playlists/${source.spotifyId}/items?market=from_token&limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),artists(name)))`;
           }
         }
 
@@ -252,7 +262,12 @@ export class SpotifyIncrementalReader {
           if (cacheDelivered) return { candidates: [], done: true, fromCache: true };
           cacheDelivered = true;
           done = true;
-          return { candidates: cached, done: true, fromCache: true };
+          return {
+            candidates: cached,
+            done: true,
+            fromCache: true,
+            unavailableMusicSkippedCount: cachedUnavailableTrackCount,
+          };
         }
 
         if (!nextUrl || !snapshotBefore) {
@@ -263,17 +278,13 @@ export class SpotifyIncrementalReader {
         const page: SpotifyPage<PlaylistItem> = await this.request(nextUrl);
         metrics.pagesRead += 1;
         const candidates: Candidate[] = [];
+        let unavailableMusicSkippedCount = 0;
         for (const item of page.items) {
-          const track = item.item;
-          if (!track || track.is_local || track.type !== "track") continue;
-          candidates.push({
-            uri: track.uri,
-            type: "MUSIC",
-            title: track.name,
-            subtitle: track.artists?.map((artist) => artist.name).join(", "),
-            durationMs: track.duration_ms,
-          });
+          const result = readPlayableMusicCandidate(item.item);
+          if (result.unavailable) unavailableMusicSkippedCount += 1;
+          if (result.candidate) candidates.push(result.candidate);
         }
+        accumulatedUnavailableTrackCount += unavailableMusicSkippedCount;
         accumulated.push(...candidates);
         nextUrl = page.next ? stripBase(page.next) : null;
         done = nextUrl === null;
@@ -293,6 +304,7 @@ export class SpotifyIncrementalReader {
                 spotifySnapshotId: snapshotAfter,
                 cachedCandidates: encodeMusicSourceCache(
                   accumulated,
+                  accumulatedUnavailableTrackCount,
                 ) as Prisma.InputJsonValue,
                 cacheUpdatedAt: new Date(),
               },
@@ -303,7 +315,7 @@ export class SpotifyIncrementalReader {
           }
         }
 
-        return { candidates, done };
+        return { candidates, done, unavailableMusicSkippedCount };
       },
     };
   }
@@ -436,6 +448,7 @@ interface EpisodeResponse {
   duration_ms: number;
   type: string;
   is_playable?: boolean;
+  restrictions?: { reason?: string | null } | null;
   show?: {
     id?: string;
     name?: string;

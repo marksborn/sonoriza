@@ -13,6 +13,7 @@ export type IncrementalSourceBatch = {
   done: boolean;
   playbackPositionMissingCount?: number;
   fullyPlayedSkippedCount?: number;
+  unavailableMusicSkippedCount?: number;
   fromCache?: boolean;
 };
 

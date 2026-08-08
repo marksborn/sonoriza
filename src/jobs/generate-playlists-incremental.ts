@@ -192,10 +192,12 @@ export async function generatePlaylists(
       return { runId: run.id, status: "FAILED" };
     }
 
+    let musicUnavailableSkippedCount = 0;
     const incremental = await collectIncrementally({
       sources: sourceCursors,
       targets: runTargets,
       onBatch(source, batch) {
+        musicUnavailableSkippedCount += batch.unavailableMusicSkippedCount ?? 0;
         logIncrementalBatch(source, batch, log);
       },
       onRound(round) {
@@ -230,6 +232,7 @@ export async function generatePlaylists(
       podcastCandidatesRead: incremental.pools.podcasts.length,
     };
     summary.spotifyApi = reader.getRequestMetrics();
+    summary.musicUnavailableSkippedCount = musicUnavailableSkippedCount;
 
     if (readFailure) {
       summary.inconclusive = true;
@@ -418,6 +421,13 @@ function logIncrementalBatch(
     level: "INFO",
     message: `Source "${source.label}": ${batch.candidates.length} candidates read${batch.fromCache ? " from cache" : " in next batch"}${batch.done ? " (source exhausted)" : ""}`,
   });
+
+  if ((batch.unavailableMusicSkippedCount ?? 0) > 0) {
+    log({
+      level: "INFO",
+      message: `Music source "${source.label}": ${batch.unavailableMusicSkippedCount} unavailable Spotify tracks excluded`,
+    });
+  }
 
   if ((batch.fullyPlayedSkippedCount ?? 0) > 0) {
     log({

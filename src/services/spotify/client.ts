@@ -10,6 +10,7 @@ import {
   type SpotifyRequestMetrics,
   type SpotifySourceReadMetrics,
 } from "./errors";
+import { readPlayableMusicCandidate } from "./music-availability";
 import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
 
@@ -252,7 +253,9 @@ export class SpotifyClient {
     playlistId: string,
     sourceKey: string,
   ): Promise<Candidate[]> {
-    if (!this.userId) return this.loadPlaylistTracks(playlistId, sourceKey);
+    if (!this.userId) {
+      return (await this.loadPlaylistTracks(playlistId, sourceKey)).candidates;
+    }
 
     const source = await prisma.sourcePlaylist.findFirst({
       where: {
@@ -269,7 +272,9 @@ export class SpotifyClient {
       },
     });
 
-    if (!source) return this.loadPlaylistTracks(playlistId, sourceKey);
+    if (!source) {
+      return (await this.loadPlaylistTracks(playlistId, sourceKey)).candidates;
+    }
 
     const sourceMetrics = this.sourceMetrics(sourceKey);
     const snapshotBefore = await this.getPlaylistSnapshotId(playlistId);
@@ -292,7 +297,8 @@ export class SpotifyClient {
       else sourceMetrics.snapshotChanged += 1;
     }
 
-    const candidates = await this.loadPlaylistTracks(playlistId, sourceKey);
+    const loaded = await this.loadPlaylistTracks(playlistId, sourceKey);
+    const candidates = loaded.candidates;
     const snapshotAfter = await this.getPlaylistSnapshotId(playlistId);
     if (snapshotAfter !== snapshotBefore) {
       throw new Error(
@@ -307,6 +313,7 @@ export class SpotifyClient {
           spotifySnapshotId: snapshotAfter,
           cachedCandidates: encodeMusicSourceCache(
             candidates,
+            loaded.unavailableTrackCount,
           ) as Prisma.InputJsonValue,
           cacheUpdatedAt: new Date(),
         },
@@ -324,28 +331,23 @@ export class SpotifyClient {
   private async loadPlaylistTracks(
     playlistId: string,
     sourceKey: string,
-  ): Promise<Candidate[]> {
+  ): Promise<{ candidates: Candidate[]; unavailableTrackCount: number }> {
     const candidates: Candidate[] = [];
+    let unavailableTrackCount = 0;
     let url: string | null =
-      `/playlists/${playlistId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
+      `/playlists/${playlistId}/items?market=from_token&limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),artists(name)))`;
 
     while (url) {
       const page: SpotifyPage<PlaylistItem> = await this.request(url);
       this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const item of page.items) {
-        const track = item.item;
-        if (!track || track.is_local || track.type !== "track") continue;
-        candidates.push({
-          uri: track.uri,
-          type: "MUSIC",
-          title: track.name,
-          subtitle: track.artists?.map((a) => a.name).join(", "),
-          durationMs: track.duration_ms,
-        });
+        const result = readPlayableMusicCandidate(item.item);
+        if (result.unavailable) unavailableTrackCount += 1;
+        if (result.candidate) candidates.push(result.candidate);
       }
       url = page.next ? stripBase(page.next) : null;
     }
-    return candidates;
+    return { candidates, unavailableTrackCount };
   }
 
   /** Episodes contained in a regular Spotify playlist. */
@@ -526,6 +528,7 @@ interface EpisodeResponse {
   duration_ms: number;
   type: string;
   is_playable?: boolean;
+  restrictions?: { reason?: string | null } | null;
   show?: {
     id?: string;
     name?: string;
