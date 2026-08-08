@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 type Props = {
   disabled?: boolean;
+  label?: string;
+  runningLabel?: string;
 };
 
 type ApiResult = {
@@ -13,7 +15,11 @@ type ApiResult = {
   error?: string;
 };
 
-export function ReviewSimulationButton({ disabled = false }: Props) {
+export function ReviewSimulationButton({
+  disabled = false,
+  label = "Simular configuração",
+  runningLabel = "Simulando…",
+}: Props) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +63,7 @@ export function ReviewSimulationButton({ disabled = false }: Props) {
         className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#ff6b00] to-[#ff8a00] px-5 py-3 font-black text-white shadow-[0_16px_36px_-18px_rgba(255,107,0,0.95)] transition hover:-translate-y-0.5 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0 sm:w-auto"
       >
         <span aria-hidden="true">{running ? "…" : "◇"}</span>
-        {running ? "Simulando…" : "Simular configuração"}
+        {running ? runningLabel : label}
       </button>
 
       {error && (
