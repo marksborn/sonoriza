@@ -271,13 +271,12 @@ export async function executeMusicSourceCleanupPreview(
 
   const plannedUris = parseStringArray(preview.plannedUris);
   let snapshotAfter: string | null = current.snapshotId;
-  const successfullySubmitted = new Set<string>();
 
   try {
     if (plannedUris.length > 0) {
       const accessToken = await getSpotifyAccessToken(userId);
       for (const uris of chunk(plannedUris, MAX_DELETE_ITEMS)) {
-        const result = await spotifyRequest<{ snapshot_id?: string | null }>(
+        const result: { snapshot_id?: string | null } = await spotifyRequest(
           accessToken,
           `/playlists/${preview.source.spotifyId}/items`,
           {
@@ -289,7 +288,6 @@ export async function executeMusicSourceCleanupPreview(
           },
         );
         snapshotAfter = result.snapshot_id ?? snapshotAfter;
-        uris.forEach((uri) => successfullySubmitted.add(uri));
       }
     }
 
