@@ -1,8 +1,22 @@
+import type { Prisma } from "@prisma/client";
+
+import { prisma } from "@/lib/prisma";
 import type { Candidate } from "@/services/playlist-planner";
 
+import {
+  inferSpotifyOperation,
+  SpotifyApiError,
+  spotifyApiErrorFromResponse,
+  type SpotifyRequestMetrics,
+  type SpotifySourceReadMetrics,
+} from "./errors";
+import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
+const MAX_RATE_LIMIT_RETRIES = 1;
+const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
+const RETRY_JITTER_MAX_MS = 250;
 
 export interface SpotifyPlaylistSummary {
   id: string;
@@ -32,28 +46,141 @@ export interface PodcastCandidateBatch {
  * playlists.
  */
 export class SpotifyClient {
-  private constructor(private readonly accessToken: string) {}
+  private quotaExceeded = false;
+  private readonly memoizedReads = new Map<string, Promise<unknown>>();
+  private readonly requestMetrics: SpotifyRequestMetrics = {
+    totalCalls: 0,
+    callsByOperation: {},
+    rateLimitedCount: 0,
+    quotaExceededCount: 0,
+    retries: 0,
+    retryWaitMs: 0,
+    circuitOpenSkips: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    memoizedReadHits: 0,
+    sourceReads: {},
+  };
+
+  private constructor(
+    private readonly accessToken: string,
+    private readonly userId: string | null = null,
+  ) {}
 
   static async forUser(userId: string): Promise<SpotifyClient> {
-    return new SpotifyClient(await getSpotifyAccessToken(userId));
+    return new SpotifyClient(await getSpotifyAccessToken(userId), userId);
+  }
+
+  getRequestMetrics(): SpotifyRequestMetrics {
+    return {
+      ...this.requestMetrics,
+      callsByOperation: { ...this.requestMetrics.callsByOperation },
+      sourceReads: Object.fromEntries(
+        Object.entries(this.requestMetrics.sourceReads).map(([key, value]) => [
+          key,
+          { ...value },
+        ]),
+      ),
+    };
+  }
+
+  private sourceMetrics(sourceKey: string): SpotifySourceReadMetrics {
+    return (this.requestMetrics.sourceReads[sourceKey] ??= {
+      pagesRead: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      snapshotUnchanged: 0,
+      snapshotChanged: 0,
+      memoizedHits: 0,
+      cacheWrites: 0,
+      cacheWriteFailures: 0,
+    });
+  }
+
+  private memoizeRead<T>(
+    key: string,
+    sourceKey: string,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    const existing = this.memoizedReads.get(key);
+    if (existing) {
+      this.requestMetrics.memoizedReadHits += 1;
+      this.sourceMetrics(sourceKey).memoizedHits += 1;
+      return existing as Promise<T>;
+    }
+
+    const promise = load();
+    this.memoizedReads.set(key, promise);
+    return promise;
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${API}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
-    if (!res.ok) {
-      throw new Error(
-        `Spotify API ${init?.method ?? "GET"} ${path} failed (${res.status}): ${await res.text()}`,
-      );
+    const method = (init?.method ?? "GET").toUpperCase();
+    const operation = inferSpotifyOperation(path, method);
+
+    if (this.quotaExceeded && method === "GET") {
+      this.requestMetrics.circuitOpenSkips += 1;
+      throw new SpotifyApiError({
+        kind: "QUOTA_EXCEEDED",
+        status: 429,
+        method,
+        operation,
+        reason: "QUOTA_EXCEEDED",
+        retryable: false,
+        message: `Spotify API quota already exceeded earlier in this run; ${operation} was not requested again`,
+      });
     }
-    if (res.status === 204) return undefined as T;
-    return (await res.json()) as T;
+
+    let retries = 0;
+
+    while (true) {
+      this.requestMetrics.totalCalls += 1;
+      this.requestMetrics.callsByOperation[operation] =
+        (this.requestMetrics.callsByOperation[operation] ?? 0) + 1;
+
+      const res = await fetch(`${API}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": "application/json",
+          ...(init?.headers ?? {}),
+        },
+      });
+
+      if (res.ok) {
+        if (res.status === 204) return undefined as T;
+        return (await res.json()) as T;
+      }
+
+      const error = await spotifyApiErrorFromResponse(res, {
+        method,
+        operation,
+      });
+
+      if (error.kind === "QUOTA_EXCEEDED") {
+        this.requestMetrics.quotaExceededCount += 1;
+        this.quotaExceeded = true;
+        throw error;
+      }
+
+      if (error.kind === "RATE_LIMITED") {
+        this.requestMetrics.rateLimitedCount += 1;
+        if (retries < MAX_RATE_LIMIT_RETRIES) {
+          retries += 1;
+          const waitMs =
+            Math.max(
+              0,
+              error.retryAfterSeconds ?? DEFAULT_RATE_LIMIT_WAIT_SECONDS,
+            ) * 1000 + Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
+          this.requestMetrics.retries += 1;
+          this.requestMetrics.retryWaitMs += waitMs;
+          await sleep(waitMs);
+          continue;
+        }
+      }
+
+      throw error;
+    }
   }
 
   /** Playlists owned or followed by the current user. */
@@ -102,14 +229,109 @@ export class SpotifyClient {
     return shows;
   }
 
+  /** Current Spotify version identifier for a playlist. */
+  async getPlaylistSnapshotId(playlistId: string): Promise<string> {
+    const playlist = await this.request<{ snapshot_id: string }>(
+      `/playlists/${playlistId}?fields=snapshot_id`,
+    );
+    if (!playlist.snapshot_id) {
+      throw new Error(`Spotify playlist ${playlistId} returned no snapshot_id`);
+    }
+    return playlist.snapshot_id;
+  }
+
   /** All non-local tracks of a playlist, mapped to music candidates. */
   async getPlaylistTracks(playlistId: string): Promise<Candidate[]> {
+    const sourceKey = `PLAYLIST:${playlistId}`;
+    return this.memoizeRead(`playlist-tracks:${playlistId}`, sourceKey, () =>
+      this.getPlaylistTracksCached(playlistId, sourceKey),
+    );
+  }
+
+  private async getPlaylistTracksCached(
+    playlistId: string,
+    sourceKey: string,
+  ): Promise<Candidate[]> {
+    if (!this.userId) return this.loadPlaylistTracks(playlistId, sourceKey);
+
+    const source = await prisma.sourcePlaylist.findFirst({
+      where: {
+        userId: this.userId,
+        kind: "MUSIC",
+        spotifyType: "PLAYLIST",
+        spotifyId: playlistId,
+        enabled: true,
+      },
+      select: {
+        id: true,
+        spotifySnapshotId: true,
+        cachedCandidates: true,
+      },
+    });
+
+    if (!source) return this.loadPlaylistTracks(playlistId, sourceKey);
+
+    const sourceMetrics = this.sourceMetrics(sourceKey);
+    const snapshotBefore = await this.getPlaylistSnapshotId(playlistId);
+    const snapshotMatches = source.spotifySnapshotId === snapshotBefore;
+    const cached = snapshotMatches
+      ? decodeMusicSourceCache(source.cachedCandidates)
+      : null;
+
+    if (cached !== null) {
+      this.requestMetrics.cacheHits += 1;
+      sourceMetrics.cacheHits += 1;
+      sourceMetrics.snapshotUnchanged += 1;
+      return cached;
+    }
+
+    this.requestMetrics.cacheMisses += 1;
+    sourceMetrics.cacheMisses += 1;
+    if (source.spotifySnapshotId) {
+      if (snapshotMatches) sourceMetrics.snapshotUnchanged += 1;
+      else sourceMetrics.snapshotChanged += 1;
+    }
+
+    const candidates = await this.loadPlaylistTracks(playlistId, sourceKey);
+    const snapshotAfter = await this.getPlaylistSnapshotId(playlistId);
+    if (snapshotAfter !== snapshotBefore) {
+      throw new Error(
+        `Spotify playlist ${playlistId} changed while its items were being read; collection marked incomplete`,
+      );
+    }
+
+    try {
+      await prisma.sourcePlaylist.update({
+        where: { id: source.id },
+        data: {
+          spotifySnapshotId: snapshotAfter,
+          cachedCandidates: encodeMusicSourceCache(
+            candidates,
+          ) as Prisma.InputJsonValue,
+          cacheUpdatedAt: new Date(),
+        },
+      });
+      sourceMetrics.cacheWrites += 1;
+    } catch {
+      // Cache persistence is an optimization. Freshly collected candidates are
+      // still safe for this run even if the cache itself could not be updated.
+      sourceMetrics.cacheWriteFailures += 1;
+    }
+
+    return candidates;
+  }
+
+  private async loadPlaylistTracks(
+    playlistId: string,
+    sourceKey: string,
+  ): Promise<Candidate[]> {
     const candidates: Candidate[] = [];
     let url: string | null =
       `/playlists/${playlistId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
 
     while (url) {
       const page: SpotifyPage<PlaylistItem> = await this.request(url);
+      this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const item of page.items) {
         const track = item.item;
         if (!track || track.is_local || track.type !== "track") continue;
@@ -131,12 +353,26 @@ export class SpotifyClient {
     playlistId: string,
     includePlayed = false,
   ): Promise<PodcastCandidateBatch> {
+    const sourceKey = `PLAYLIST:${playlistId}`;
+    return this.memoizeRead(
+      `playlist-episodes:${playlistId}:${includePlayed}`,
+      sourceKey,
+      () => this.loadPlaylistEpisodes(playlistId, includePlayed, sourceKey),
+    );
+  }
+
+  private async loadPlaylistEpisodes(
+    playlistId: string,
+    includePlayed: boolean,
+    sourceKey: string,
+  ): Promise<PodcastCandidateBatch> {
     const collector = createPodcastCollector(includePlayed);
     let url: string | null =
       `/playlists/${playlistId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,show(id,name),resume_point(fully_played,resume_position_ms)))`;
 
     while (url) {
       const page: SpotifyPage<PlaylistItem> = await this.request(url);
+      this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const item of page.items) {
         const episode = item.item;
         if (!episode || episode.is_local || episode.type !== "episode") continue;
@@ -153,11 +389,23 @@ export class SpotifyClient {
     showId: string,
     includePlayed = false,
   ): Promise<PodcastCandidateBatch> {
+    const sourceKey = `SHOW:${showId}`;
+    return this.memoizeRead(`show-episodes:${showId}:${includePlayed}`, sourceKey, () =>
+      this.loadShowEpisodes(showId, includePlayed, sourceKey),
+    );
+  }
+
+  private async loadShowEpisodes(
+    showId: string,
+    includePlayed: boolean,
+    sourceKey: string,
+  ): Promise<PodcastCandidateBatch> {
     const collector = createPodcastCollector(includePlayed, showId);
     let url: string | null = `/shows/${showId}/episodes?limit=50`;
 
     while (url) {
       const page: SpotifyPage<EpisodeResponse> = await this.request(url);
+      this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const episode of page.items) {
         if (!episode) continue;
         collector.add(episode);
@@ -172,11 +420,22 @@ export class SpotifyClient {
   async getSavedEpisodes(
     includePlayed = false,
   ): Promise<PodcastCandidateBatch> {
+    const sourceKey = "SAVED_EPISODES";
+    return this.memoizeRead(`saved-episodes:${includePlayed}`, sourceKey, () =>
+      this.loadSavedEpisodes(includePlayed, sourceKey),
+    );
+  }
+
+  private async loadSavedEpisodes(
+    includePlayed: boolean,
+    sourceKey: string,
+  ): Promise<PodcastCandidateBatch> {
     const collector = createPodcastCollector(includePlayed);
     let url: string | null = "/me/episodes?limit=50";
 
     while (url) {
       const page: SpotifyPage<SavedEpisodeResponse> = await this.request(url);
+      this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const item of page.items) {
         if (!item?.episode) continue;
         collector.add(item.episode);
@@ -346,4 +605,8 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
