@@ -1,3 +1,6 @@
+import type { Prisma } from "@prisma/client";
+
+import { prisma } from "@/lib/prisma";
 import type { Candidate } from "@/services/playlist-planner";
 
 import {
@@ -5,7 +8,9 @@ import {
   SpotifyApiError,
   spotifyApiErrorFromResponse,
   type SpotifyRequestMetrics,
+  type SpotifySourceReadMetrics,
 } from "./errors";
+import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
@@ -42,6 +47,7 @@ export interface PodcastCandidateBatch {
  */
 export class SpotifyClient {
   private quotaExceeded = false;
+  private readonly memoizedReads = new Map<string, Promise<unknown>>();
   private readonly requestMetrics: SpotifyRequestMetrics = {
     totalCalls: 0,
     callsByOperation: {},
@@ -50,19 +56,62 @@ export class SpotifyClient {
     retries: 0,
     retryWaitMs: 0,
     circuitOpenSkips: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    memoizedReadHits: 0,
+    sourceReads: {},
   };
 
-  private constructor(private readonly accessToken: string) {}
+  private constructor(
+    private readonly accessToken: string,
+    private readonly userId: string | null = null,
+  ) {}
 
   static async forUser(userId: string): Promise<SpotifyClient> {
-    return new SpotifyClient(await getSpotifyAccessToken(userId));
+    return new SpotifyClient(await getSpotifyAccessToken(userId), userId);
   }
 
   getRequestMetrics(): SpotifyRequestMetrics {
     return {
       ...this.requestMetrics,
       callsByOperation: { ...this.requestMetrics.callsByOperation },
+      sourceReads: Object.fromEntries(
+        Object.entries(this.requestMetrics.sourceReads).map(([key, value]) => [
+          key,
+          { ...value },
+        ]),
+      ),
     };
+  }
+
+  private sourceMetrics(sourceKey: string): SpotifySourceReadMetrics {
+    return (this.requestMetrics.sourceReads[sourceKey] ??= {
+      pagesRead: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      snapshotUnchanged: 0,
+      snapshotChanged: 0,
+      memoizedHits: 0,
+      cacheWrites: 0,
+      cacheWriteFailures: 0,
+    });
+  }
+
+  private memoizeRead<T>(
+    key: string,
+    sourceKey: string,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    const existing = this.memoizedReads.get(key);
+    if (existing) {
+      this.requestMetrics.memoizedReadHits += 1;
+      this.sourceMetrics(sourceKey).memoizedHits += 1;
+      return existing as Promise<T>;
+    }
+
+    const promise = load();
+    this.memoizedReads.set(key, promise);
+    return promise;
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -180,14 +229,109 @@ export class SpotifyClient {
     return shows;
   }
 
+  /** Current Spotify version identifier for a playlist. */
+  async getPlaylistSnapshotId(playlistId: string): Promise<string> {
+    const playlist = await this.request<{ snapshot_id: string }>(
+      `/playlists/${playlistId}?fields=snapshot_id`,
+    );
+    if (!playlist.snapshot_id) {
+      throw new Error(`Spotify playlist ${playlistId} returned no snapshot_id`);
+    }
+    return playlist.snapshot_id;
+  }
+
   /** All non-local tracks of a playlist, mapped to music candidates. */
   async getPlaylistTracks(playlistId: string): Promise<Candidate[]> {
+    const sourceKey = `PLAYLIST:${playlistId}`;
+    return this.memoizeRead(`playlist-tracks:${playlistId}`, sourceKey, () =>
+      this.getPlaylistTracksCached(playlistId, sourceKey),
+    );
+  }
+
+  private async getPlaylistTracksCached(
+    playlistId: string,
+    sourceKey: string,
+  ): Promise<Candidate[]> {
+    if (!this.userId) return this.loadPlaylistTracks(playlistId, sourceKey);
+
+    const source = await prisma.sourcePlaylist.findFirst({
+      where: {
+        userId: this.userId,
+        kind: "MUSIC",
+        spotifyType: "PLAYLIST",
+        spotifyId: playlistId,
+        enabled: true,
+      },
+      select: {
+        id: true,
+        spotifySnapshotId: true,
+        cachedCandidates: true,
+      },
+    });
+
+    if (!source) return this.loadPlaylistTracks(playlistId, sourceKey);
+
+    const sourceMetrics = this.sourceMetrics(sourceKey);
+    const snapshotBefore = await this.getPlaylistSnapshotId(playlistId);
+    const snapshotMatches = source.spotifySnapshotId === snapshotBefore;
+    const cached = snapshotMatches
+      ? decodeMusicSourceCache(source.cachedCandidates)
+      : null;
+
+    if (cached !== null) {
+      this.requestMetrics.cacheHits += 1;
+      sourceMetrics.cacheHits += 1;
+      sourceMetrics.snapshotUnchanged += 1;
+      return cached;
+    }
+
+    this.requestMetrics.cacheMisses += 1;
+    sourceMetrics.cacheMisses += 1;
+    if (source.spotifySnapshotId) {
+      if (snapshotMatches) sourceMetrics.snapshotUnchanged += 1;
+      else sourceMetrics.snapshotChanged += 1;
+    }
+
+    const candidates = await this.loadPlaylistTracks(playlistId, sourceKey);
+    const snapshotAfter = await this.getPlaylistSnapshotId(playlistId);
+    if (snapshotAfter !== snapshotBefore) {
+      throw new Error(
+        `Spotify playlist ${playlistId} changed while its items were being read; collection marked incomplete`,
+      );
+    }
+
+    try {
+      await prisma.sourcePlaylist.update({
+        where: { id: source.id },
+        data: {
+          spotifySnapshotId: snapshotAfter,
+          cachedCandidates: encodeMusicSourceCache(
+            candidates,
+          ) as Prisma.InputJsonValue,
+          cacheUpdatedAt: new Date(),
+        },
+      });
+      sourceMetrics.cacheWrites += 1;
+    } catch {
+      // Cache persistence is an optimization. Freshly collected candidates are
+      // still safe for this run even if the cache itself could not be updated.
+      sourceMetrics.cacheWriteFailures += 1;
+    }
+
+    return candidates;
+  }
+
+  private async loadPlaylistTracks(
+    playlistId: string,
+    sourceKey: string,
+  ): Promise<Candidate[]> {
     const candidates: Candidate[] = [];
     let url: string | null =
       `/playlists/${playlistId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,artists(name)))`;
 
     while (url) {
       const page: SpotifyPage<PlaylistItem> = await this.request(url);
+      this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const item of page.items) {
         const track = item.item;
         if (!track || track.is_local || track.type !== "track") continue;
@@ -209,12 +353,26 @@ export class SpotifyClient {
     playlistId: string,
     includePlayed = false,
   ): Promise<PodcastCandidateBatch> {
+    const sourceKey = `PLAYLIST:${playlistId}`;
+    return this.memoizeRead(
+      `playlist-episodes:${playlistId}:${includePlayed}`,
+      sourceKey,
+      () => this.loadPlaylistEpisodes(playlistId, includePlayed, sourceKey),
+    );
+  }
+
+  private async loadPlaylistEpisodes(
+    playlistId: string,
+    includePlayed: boolean,
+    sourceKey: string,
+  ): Promise<PodcastCandidateBatch> {
     const collector = createPodcastCollector(includePlayed);
     let url: string | null =
       `/playlists/${playlistId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,show(id,name),resume_point(fully_played,resume_position_ms)))`;
 
     while (url) {
       const page: SpotifyPage<PlaylistItem> = await this.request(url);
+      this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const item of page.items) {
         const episode = item.item;
         if (!episode || episode.is_local || episode.type !== "episode") continue;
@@ -231,11 +389,23 @@ export class SpotifyClient {
     showId: string,
     includePlayed = false,
   ): Promise<PodcastCandidateBatch> {
+    const sourceKey = `SHOW:${showId}`;
+    return this.memoizeRead(`show-episodes:${showId}:${includePlayed}`, sourceKey, () =>
+      this.loadShowEpisodes(showId, includePlayed, sourceKey),
+    );
+  }
+
+  private async loadShowEpisodes(
+    showId: string,
+    includePlayed: boolean,
+    sourceKey: string,
+  ): Promise<PodcastCandidateBatch> {
     const collector = createPodcastCollector(includePlayed, showId);
     let url: string | null = `/shows/${showId}/episodes?limit=50`;
 
     while (url) {
       const page: SpotifyPage<EpisodeResponse> = await this.request(url);
+      this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const episode of page.items) {
         if (!episode) continue;
         collector.add(episode);
@@ -250,11 +420,22 @@ export class SpotifyClient {
   async getSavedEpisodes(
     includePlayed = false,
   ): Promise<PodcastCandidateBatch> {
+    const sourceKey = "SAVED_EPISODES";
+    return this.memoizeRead(`saved-episodes:${includePlayed}`, sourceKey, () =>
+      this.loadSavedEpisodes(includePlayed, sourceKey),
+    );
+  }
+
+  private async loadSavedEpisodes(
+    includePlayed: boolean,
+    sourceKey: string,
+  ): Promise<PodcastCandidateBatch> {
     const collector = createPodcastCollector(includePlayed);
     let url: string | null = "/me/episodes?limit=50";
 
     while (url) {
       const page: SpotifyPage<SavedEpisodeResponse> = await this.request(url);
+      this.sourceMetrics(sourceKey).pagesRead += 1;
       for (const item of page.items) {
         if (!item?.episode) continue;
         collector.add(item.episode);
