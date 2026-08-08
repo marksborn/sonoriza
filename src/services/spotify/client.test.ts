@@ -50,6 +50,10 @@ test("429 normal respects Retry-After and retries once", async () => {
       retries: 1,
       retryWaitMs: 0,
       circuitOpenSkips: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      memoizedReadHits: 0,
+      sourceReads: {},
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -127,6 +131,68 @@ test("QUOTA_EXCEEDED does not retry and opens the read circuit for the run", asy
     assert.equal(metrics.quotaExceededCount, 1);
     assert.equal(metrics.retries, 0);
     assert.equal(metrics.circuitOpenSkips, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("playlist snapshot lookup is classified separately from item pagination", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return jsonResponse({ snapshot_id: "snapshot-1" }, { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const client = createClient();
+    assert.equal(await client.getPlaylistSnapshotId("playlist-a"), "snapshot-1");
+    assert.equal(calls, 1);
+    assert.deepEqual(client.getRequestMetrics().callsByOperation, {
+      "playlist-metadata": 1,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("identical source reads are memoized once per SpotifyClient run", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return jsonResponse(
+      {
+        items: [
+          {
+            uri: "spotify:episode:one",
+            name: "Episode one",
+            duration_ms: 60_000,
+            type: "episode",
+            show: { id: "show-a", name: "Show A" },
+            resume_point: { fully_played: false, resume_position_ms: 0 },
+          },
+        ],
+        next: null,
+      },
+      { status: 200 },
+    );
+  }) as typeof fetch;
+
+  try {
+    const client = createClient();
+    const first = await client.getShowEpisodes("show-a");
+    const second = await client.getShowEpisodes("show-a");
+
+    assert.deepEqual(second, first);
+    assert.equal(calls, 1);
+
+    const metrics = client.getRequestMetrics();
+    assert.equal(metrics.memoizedReadHits, 1);
+    assert.equal(metrics.sourceReads["SHOW:show-a"]?.pagesRead, 1);
+    assert.equal(metrics.sourceReads["SHOW:show-a"]?.memoizedHits, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
