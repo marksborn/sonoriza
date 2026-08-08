@@ -21,16 +21,24 @@ export type PlayableMusicCandidateResult = {
 
 /**
  * Spotify can relink a catalog track to a market-specific replacement. When
- * that happens, `linked_from.id` is the stable identity of the originally
- * requested recording and must win over the replacement id for cooldown/history.
+ * available, `linked_from.id` is the preferred stable identity. Older cached or
+ * field-limited playlist payloads can still derive a safe identity from the
+ * canonical `spotify:track:<id>` URI; the history synchronizer stores aliases
+ * for both the relinked and effective ids.
  */
 export function canonicalSpotifyTrackId(
-  track: Pick<SpotifyMusicTrackLike, "id" | "linked_from"> | null | undefined,
+  track: Pick<SpotifyMusicTrackLike, "id" | "uri" | "linked_from"> | null | undefined,
 ): string | null {
   const linked = track?.linked_from?.id;
   if (typeof linked === "string" && linked.trim()) return linked.trim();
   const id = track?.id;
-  return typeof id === "string" && id.trim() ? id.trim() : null;
+  if (typeof id === "string" && id.trim()) return id.trim();
+  const uri = track?.uri;
+  if (typeof uri === "string") {
+    const match = /^spotify:track:([^:]+)$/.exec(uri.trim());
+    if (match?.[1]) return match[1];
+  }
+  return null;
 }
 
 export function readPlayableMusicCandidate(
