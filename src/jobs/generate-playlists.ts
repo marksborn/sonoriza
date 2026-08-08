@@ -5,7 +5,6 @@ import { isSpotifyApiError } from "@/services/spotify";
 import { refreshMusicRepeatContext } from "@/services/spotify/recently-played";
 
 import {
-  currentMusicRepeatState,
   runWithMusicRepeatState,
   type MusicRepeatRunState,
 } from "./music-repeat-runtime";
@@ -51,7 +50,28 @@ export async function generatePlaylists(
   const result = await runWithMusicRepeatState(state, () =>
     generatePlaylistsIncremental(opts),
   );
-  await appendMusicRepeatSummary(result.runId, state);
+
+  // The underlying generator is authoritative for the execution result. If the
+  // auxiliary MUSIC-01 metrics cannot be appended afterwards, never turn a
+  // successfully completed real write into an API-level failure/retry hazard.
+  try {
+    await appendMusicRepeatSummary(result.runId, state);
+  } catch (error) {
+    try {
+      await prisma.generationLog.create({
+        data: {
+          runId: result.runId,
+          level: "WARN",
+          message: `MUSIC-01 metrics persistence failed after generation: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        },
+      });
+    } catch {
+      // Best-effort observability must not change generation semantics.
+    }
+  }
+
   return result;
 }
 
@@ -155,7 +175,3 @@ function musicRepeatSummary(state: MusicRepeatRunState): Record<string, unknown>
       : null,
   };
 }
-
-// Retained to make it explicit that this wrapper owns the AsyncLocalStorage
-// state only while the underlying generation is active.
-void currentMusicRepeatState;
