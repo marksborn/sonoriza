@@ -58,6 +58,21 @@ jobs:
           end = source.index(end_marker, start)
           lines = source[start:end].splitlines()
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+
+          old = '''old2 = '      sequencePattern: parseSequencePattern(target.sequencePattern),'
+          if text.count(old2) != 1:
+              raise SystemExit("toRunTarget sequence field not found")
+          text = text.replace(old2, '      sequencePattern,', 1)'''
+          new = '''old2 = '      sequencePattern: parseSequencePattern(target.sequencePattern),'
+          anchor = text.index("function toRunTarget(")
+          before = text[:anchor]
+          after = text[anchor:]
+          if after.count(old2) != 1:
+              raise SystemExit("toRunTarget sequence field not found")
+          text = before + after.replace(old2, '      sequencePattern,', 1)'''
+          if old not in script:
+              raise SystemExit('expected toRunTarget patch block not found in implementation script')
+          script = script.replace(old, new, 1)
           Path('/tmp/compose-01-implement.sh').write_text(script)
           PY
           bash /tmp/compose-01-implement.sh
