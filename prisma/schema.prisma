@@ -34,6 +34,8 @@ model User {
   sourcePlaylists    SourcePlaylist[]
   targetPlaylists    TargetPlaylist[]
   generationRuns     GenerationRun[]
+  musicPlaybackPolicy MusicPlaybackPolicy?
+  trackListeningStates TrackListeningState[]
 }
 
 model Account {
@@ -144,6 +146,51 @@ model SourcePlaylist {
 
   @@unique([userId, spotifyType, spotifyId])
   @@index([userId, kind])
+}
+
+// ---------------------------------------------------------------------------
+// Native music listening history — MUSIC-01.
+// The policy is global per Spotify user in v1. The history stores only the
+// latest known playback per track, not a full listening timeline.
+// ---------------------------------------------------------------------------
+
+enum MusicRepeatWindowUnit {
+  DAYS
+  MONTHS
+  YEARS
+}
+
+model MusicPlaybackPolicy {
+  id                String                 @id @default(cuid())
+  userId            String                 @unique
+  enabled           Boolean                @default(false)
+  windowValue       Int?
+  windowUnit        MusicRepeatWindowUnit?
+  // Earliest playback timestamp actually observed by Sonoriza.
+  historyKnownSince DateTime?
+  // Last successful synchronization attempt.
+  lastSyncAt        DateTime?
+  // Spotify `after` cursor in milliseconds, stored as text to avoid 32-bit Int limits.
+  syncAfterCursor   String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TrackListeningState {
+  id             String   @id @default(cuid())
+  userId         String
+  spotifyTrackId String
+  spotifyUri     String?
+  lastPlayedAt   DateTime
+  firstSeenAt    DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, spotifyTrackId])
+  @@index([userId, lastPlayedAt])
 }
 
 // ---------------------------------------------------------------------------

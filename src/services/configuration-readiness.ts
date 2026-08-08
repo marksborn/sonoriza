@@ -3,14 +3,17 @@ import { createHash } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 
 type SequenceEntry = "MUSIC" | "PODCAST";
+type MusicRepeatUnit = "DAYS" | "MONTHS" | "YEARS";
 
 type ConfigurationHref =
   | "/dashboard/configuracao/calendarios"
   | "/dashboard/configuracao/fontes"
+  | "/dashboard/configuracao/musica"
   | "/dashboard/configuracao/destinos";
 
 const SPOTIFY_LIBRARY_SCOPE = "user-library-read";
 const SPOTIFY_PLAYBACK_SCOPE = "user-read-playback-position";
+const SPOTIFY_RECENTLY_PLAYED_SCOPE = "user-read-recently-played";
 
 export type ConfigurationIssue = {
   code: string;
@@ -23,6 +26,14 @@ export type ConfigurationAssessment = {
   hasSpotify: boolean;
   hasSpotifyLibraryScope: boolean;
   hasSpotifyPlaybackScope: boolean;
+  hasSpotifyRecentlyPlayedScope: boolean;
+  musicRepeatPolicy: {
+    enabled: boolean;
+    windowValue: number | null;
+    windowUnit: MusicRepeatUnit | null;
+    historyKnownSince: Date | null;
+    lastSyncAt: Date | null;
+  };
   calendars: Array<{
     id: string;
     summary: string | null;
@@ -97,55 +108,66 @@ function scopeIncludes(scope: string | null | undefined, expected: string): bool
 export async function assessConfiguration(
   userId: string,
 ): Promise<ConfigurationAssessment> {
-  const [accounts, calendarsRaw, sourcesRaw, targetsRaw] = await Promise.all([
-    prisma.account.findMany({
-      where: { userId, provider: { in: ["google", "spotify"] } },
-      select: { provider: true, scope: true },
-    }),
-    prisma.calendarSelection.findMany({
-      where: { userId, selected: true },
-      orderBy: [{ usedForDuration: "desc" }, { summary: "asc" }],
-      select: {
-        googleCalendarId: true,
-        summary: true,
-        usedForDuration: true,
-      },
-    }),
-    prisma.sourcePlaylist.findMany({
-      where: { userId, enabled: true },
-      orderBy: [{ kind: "asc" }, { name: "asc" }, { spotifyId: "asc" }],
-      select: {
-        id: true,
-        kind: true,
-        spotifyType: true,
-        spotifyId: true,
-        name: true,
-        includePlayed: true,
-        episodeOrder: true,
-      },
-    }),
-    prisma.targetPlaylist.findMany({
-      where: { userId, enabled: true },
-      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-      select: {
-        id: true,
-        name: true,
-        spotifyPlaylistId: true,
-        priority: true,
-        durationMode: true,
-        fixedDurationSeconds: true,
-        emptyCalendarBehavior: true,
-        calendarEventFilterMode: true,
-        calendarEventMarker: true,
-        compositionMode: true,
-        podcastPercent: true,
-        podcastEpisodeMaxDurationMode: true,
-        podcastEpisodeMaxDurationSeconds: true,
-        sequencePattern: true,
-        maxEpisodesPerProgram: true,
-      },
-    }),
-  ]);
+  const [accounts, calendarsRaw, sourcesRaw, targetsRaw, musicPolicyRaw] =
+    await Promise.all([
+      prisma.account.findMany({
+        where: { userId, provider: { in: ["google", "spotify"] } },
+        select: { provider: true, scope: true },
+      }),
+      prisma.calendarSelection.findMany({
+        where: { userId, selected: true },
+        orderBy: [{ usedForDuration: "desc" }, { summary: "asc" }],
+        select: {
+          googleCalendarId: true,
+          summary: true,
+          usedForDuration: true,
+        },
+      }),
+      prisma.sourcePlaylist.findMany({
+        where: { userId, enabled: true },
+        orderBy: [{ kind: "asc" }, { name: "asc" }, { spotifyId: "asc" }],
+        select: {
+          id: true,
+          kind: true,
+          spotifyType: true,
+          spotifyId: true,
+          name: true,
+          includePlayed: true,
+          episodeOrder: true,
+        },
+      }),
+      prisma.targetPlaylist.findMany({
+        where: { userId, enabled: true },
+        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          spotifyPlaylistId: true,
+          priority: true,
+          durationMode: true,
+          fixedDurationSeconds: true,
+          emptyCalendarBehavior: true,
+          calendarEventFilterMode: true,
+          calendarEventMarker: true,
+          compositionMode: true,
+          podcastPercent: true,
+          podcastEpisodeMaxDurationMode: true,
+          podcastEpisodeMaxDurationSeconds: true,
+          sequencePattern: true,
+          maxEpisodesPerProgram: true,
+        },
+      }),
+      prisma.musicPlaybackPolicy.findUnique({
+        where: { userId },
+        select: {
+          enabled: true,
+          windowValue: true,
+          windowUnit: true,
+          historyKnownSince: true,
+          lastSyncAt: true,
+        },
+      }),
+    ]);
 
   const providers = new Set(accounts.map((account) => account.provider));
   const hasGoogle = providers.has("google");
@@ -159,6 +181,17 @@ export async function assessConfiguration(
     spotifyAccount?.scope,
     SPOTIFY_PLAYBACK_SCOPE,
   );
+  const hasSpotifyRecentlyPlayedScope = scopeIncludes(
+    spotifyAccount?.scope,
+    SPOTIFY_RECENTLY_PLAYED_SCOPE,
+  );
+  const musicRepeatPolicy = {
+    enabled: musicPolicyRaw?.enabled ?? false,
+    windowValue: musicPolicyRaw?.windowValue ?? null,
+    windowUnit: (musicPolicyRaw?.windowUnit ?? null) as MusicRepeatUnit | null,
+    historyKnownSince: musicPolicyRaw?.historyKnownSince ?? null,
+    lastSyncAt: musicPolicyRaw?.lastSyncAt ?? null,
+  };
 
   const calendars = calendarsRaw.map((calendar) => ({
     id: calendar.googleCalendarId,
@@ -286,6 +319,27 @@ export async function assessConfiguration(
     });
   }
 
+  if (
+    musicRepeatPolicy.enabled &&
+    (!Number.isInteger(musicRepeatPolicy.windowValue) ||
+      (musicRepeatPolicy.windowValue ?? 0) < 1 ||
+      !musicRepeatPolicy.windowUnit)
+  ) {
+    pushIssue({
+      code: "INVALID_MUSIC_REPEAT_POLICY",
+      message: "Configure um período válido para evitar repetição de músicas.",
+      href: "/dashboard/configuracao/musica",
+    });
+  }
+
+  if (musicRepeatPolicy.enabled && !hasSpotifyRecentlyPlayedScope) {
+    pushIssue({
+      code: "SPOTIFY_RECENTLY_PLAYED_SCOPE_REQUIRED",
+      message: "Reconecte o Spotify para permitir que o Sonoriza consulte as músicas tocadas recentemente.",
+      href: "/dashboard/configuracao/musica",
+    });
+  }
+
   for (const rawTarget of targetsRaw) {
     const label = `Destino \"${rawTarget.name}\"`;
 
@@ -404,6 +458,11 @@ export async function assessConfiguration(
       .filter((provider) => provider === "google" || provider === "spotify")
       .sort(),
     durationCalendars: durationCalendars.map((calendar) => calendar.id).sort(),
+    musicRepeatPolicy: {
+      enabled: musicRepeatPolicy.enabled,
+      windowValue: musicRepeatPolicy.enabled ? musicRepeatPolicy.windowValue : null,
+      windowUnit: musicRepeatPolicy.enabled ? musicRepeatPolicy.windowUnit : null,
+    },
     sources: sources
       .map((source) => ({
         kind: source.kind,
@@ -441,6 +500,8 @@ export async function assessConfiguration(
     hasSpotify,
     hasSpotifyLibraryScope,
     hasSpotifyPlaybackScope,
+    hasSpotifyRecentlyPlayedScope,
+    musicRepeatPolicy,
     calendars,
     sources,
     targets,

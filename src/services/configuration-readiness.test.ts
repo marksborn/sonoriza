@@ -19,6 +19,14 @@ function assessment(
     hasSpotify: true,
     hasSpotifyLibraryScope: true,
     hasSpotifyPlaybackScope: true,
+    hasSpotifyRecentlyPlayedScope: true,
+    musicRepeatPolicy: {
+      enabled: false,
+      windowValue: null,
+      windowUnit: null,
+      historyKnownSince: null,
+      lastSyncAt: null,
+    },
     calendars: [],
     sources: [],
     targets: [],
@@ -161,6 +169,19 @@ test("historical real runs are not an authority that can bypass the latest simul
   assert.doesNotMatch(source, /generationRun\.findMany/);
   assert.doesNotMatch(source, /hasControlledRealRun/);
   assert.match(source, /generationRun\.findFirst/);
+});
+
+test("MUSIC-01 policy is fingerprinted but dynamic listening timestamps are not", () => {
+  const source = readFileSync("src/services/configuration-readiness.ts", "utf8");
+  const fingerprintStart = source.indexOf("const fingerprintPayload");
+  const fingerprintEnd = source.indexOf("return {", fingerprintStart);
+  const fingerprintSource = source.slice(fingerprintStart, fingerprintEnd);
+
+  assert.match(fingerprintSource, /musicRepeatPolicy/);
+  assert.match(fingerprintSource, /windowValue/);
+  assert.match(fingerprintSource, /windowUnit/);
+  assert.doesNotMatch(fingerprintSource, /historyKnownSince/);
+  assert.doesNotMatch(fingerprintSource, /lastSyncAt/);
 });
 
 test("POST /api/generate checks the current gate before invoking the generator", () => {

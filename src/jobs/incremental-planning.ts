@@ -6,6 +6,11 @@ import {
   type RunTarget,
 } from "@/services/playlist-planner";
 
+import {
+  filterMusicBatchForCurrentRun,
+  revalidateMusicRepeatBeforeRealWrite,
+} from "./music-repeat-runtime";
+
 export type IncrementalSourceKind = "MUSIC" | "PODCAST";
 
 export type IncrementalSourceBatch = {
@@ -14,6 +19,8 @@ export type IncrementalSourceBatch = {
   playbackPositionMissingCount?: number;
   fullyPlayedSkippedCount?: number;
   unavailableMusicSkippedCount?: number;
+  recentlyPlayedSkippedCount?: number;
+  missingTrackIdentitySkippedCount?: number;
   genericPodcastSuppressedCount?: number;
   fromCache?: boolean;
 };
@@ -75,6 +82,7 @@ export async function collectIncrementally<
   let planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
 
   if (planningNeeds.length === 0 && qualityFailures.length === 0) {
+    await revalidateMusicRepeatBeforeRealWrite(plan);
     return {
       pools,
       plan,
@@ -109,6 +117,20 @@ export async function collectIncrementally<
         };
       }
 
+      if (source.kind === "MUSIC") {
+        const filtered = filterMusicBatchForCurrentRun(batch.candidates);
+        batch = {
+          ...batch,
+          candidates: filtered.candidates,
+          recentlyPlayedSkippedCount:
+            (batch.recentlyPlayedSkippedCount ?? 0) +
+            filtered.recentlyPlayedSkippedCount,
+          missingTrackIdentitySkippedCount:
+            (batch.missingTrackIdentitySkippedCount ?? 0) +
+            filtered.missingTrackIdentitySkippedCount,
+        };
+      }
+
       readSourceIds.add(source.id);
       if (source.kind === "MUSIC") {
         pools.music = dedupeByUri([...pools.music, ...batch.candidates]);
@@ -130,6 +152,7 @@ export async function collectIncrementally<
     });
 
     if (qualityFailures.length === 0 && planningNeeds.length === 0) {
+      await revalidateMusicRepeatBeforeRealWrite(plan);
       return {
         pools,
         plan,
@@ -151,6 +174,7 @@ export async function collectIncrementally<
     }
   }
 
+  await revalidateMusicRepeatBeforeRealWrite(plan);
   return {
     pools,
     plan,
