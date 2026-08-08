@@ -121,6 +121,19 @@ test("blocks an inconclusive latest simulation and preserves the provider-specif
   assert.match(gate.reason ?? "", /inconclusiva/i);
 });
 
+test("generator contract finalizes every inconclusive source collection as FAILED with quality denied", () => {
+  const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const inconclusiveAssignments = [...source.matchAll(/summary\.inconclusive = true;/g)];
+
+  assert.ok(inconclusiveAssignments.length > 0, "generator must expose inconclusive branches");
+  for (const assignment of inconclusiveAssignments) {
+    const remainder = source.slice(assignment.index, assignment.index + 1400);
+    assert.match(remainder, /summary\.qualityPassed = false/);
+    assert.match(remainder, /finalizeRun\(run\.id, "FAILED"/);
+    assert.match(remainder, /status: "FAILED"/);
+  }
+});
+
 test("structural configuration issues block real generation before simulation state", () => {
   const gate = evaluateCurrentSimulationGate(
     assessment({
