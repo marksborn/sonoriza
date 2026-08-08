@@ -24,8 +24,10 @@ export type IncrementalCandidateSource = {
   readNext(): Promise<IncrementalSourceBatch>;
 };
 
-export type IncrementalSourceFailure = {
-  source: IncrementalCandidateSource;
+export type IncrementalSourceFailure<
+  TSource extends IncrementalCandidateSource = IncrementalCandidateSource,
+> = {
+  source: TSource;
   error: unknown;
 };
 
@@ -37,23 +39,22 @@ export type IncrementalPlanningRound = {
   qualityPassed: boolean;
 };
 
-export type IncrementalPlanningResult = {
+export type IncrementalPlanningResult<
+  TSource extends IncrementalCandidateSource = IncrementalCandidateSource,
+> = {
   pools: PlannerPools;
   plan: PlanRunResult;
   qualityFailures: PlanRunResult["targets"];
   readSourceIds: Set<string>;
   rounds: number;
   stoppedEarly: boolean;
-  failure: IncrementalSourceFailure | null;
+  failure: IncrementalSourceFailure<TSource> | null;
 };
 
-type CollectIncrementallyOptions = {
-  sources: IncrementalCandidateSource[];
+type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
+  sources: TSource[];
   targets: RunTarget[];
-  onBatch?: (
-    source: IncrementalCandidateSource,
-    batch: IncrementalSourceBatch,
-  ) => void;
+  onBatch?: (source: TSource, batch: IncrementalSourceBatch) => void;
   onRound?: (round: IncrementalPlanningRound) => void;
 };
 
@@ -67,12 +68,14 @@ type CollectIncrementallyOptions = {
  * quota/rate-limit window benefits more from avoiding bursts than from shaving
  * a few milliseconds off source collection.
  */
-export async function collectIncrementally({
+export async function collectIncrementally<
+  TSource extends IncrementalCandidateSource,
+>({
   sources,
   targets,
   onBatch,
   onRound,
-}: CollectIncrementallyOptions): Promise<IncrementalPlanningResult> {
+}: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
   const pools: PlannerPools = { music: [], podcasts: [] };
   const readSourceIds = new Set<string>();
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
