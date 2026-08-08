@@ -1,0 +1,99 @@
+name: COMPOSE-01 compact gate
+
+on:
+  push:
+    branches:
+      - agent/compose-01-composition-mode
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d sonoriza_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_test?schema=public
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: compose-01-validation-only-secret
+      AUTH_SPOTIFY_ID: validation-only
+      AUTH_SPOTIFY_SECRET: validation-only
+      AUTH_GOOGLE_ID: validation-only
+      AUTH_GOOGLE_SECRET: validation-only
+      CRON_SECRET: validation-only
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/compose-01-composition-mode
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Extract and run implementation script
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/compose-01-implement.yml').read_text()
+          start_marker = '      - name: Implement COMPOSE-01\n        shell: bash\n        run: |\n'
+          end_marker = '\n      - name: Install dependencies\n'
+          start = source.index(start_marker) + len(start_marker)
+          end = source.index(end_marker, start)
+          lines = source[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+          Path('/tmp/compose-01-implement.sh').write_text(script)
+          PY
+          bash /tmp/compose-01-implement.sh
+          git rm .github/workflows/compose-01-run.yml
+          git diff --check
+
+      - name: Install dependencies
+        run: npm ci
+      - name: Prisma validate
+        run: npx prisma validate
+      - name: Apply migrations
+        run: npm run db:deploy
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: Planner regressions
+        run: npm run test:planner
+      - name: Spotify regressions
+        run: npm run test:spotify
+      - name: Incremental regressions
+        run: npm run test:incremental
+      - name: Simulation regressions
+        run: npm run test:simulation
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+      - name: Commit functional tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git diff --check
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git add -A
+          git commit -m "feat: separar composição por proporção e sequência (#31)"
+          git push origin HEAD:agent/compose-01-composition-mode
+          echo "Final head: $(git rev-parse HEAD)"
