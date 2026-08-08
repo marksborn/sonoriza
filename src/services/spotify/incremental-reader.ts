@@ -15,6 +15,7 @@ import {
   type SpotifySourceReadMetrics,
 } from "./errors";
 import { readPlayableMusicCandidate } from "./music-availability";
+import { sortShowCandidates } from "./podcast-show-policy";
 import {
   decodeMusicSourceCache,
   decodeMusicSourceCacheUnavailableTrackCount,
@@ -36,6 +37,7 @@ export type IncrementalSpotifySourceConfig = Pick<
   | "spotifyId"
   | "name"
   | "includePlayed"
+  | "episodeOrder"
   | "spotifySnapshotId"
   | "cachedCandidates"
 >;
@@ -67,10 +69,19 @@ export class SpotifyIncrementalReader {
     sourceReads: {},
   };
 
-  private constructor(private readonly accessToken: string) {}
+  private constructor(
+    private readonly accessToken: string,
+    private readonly authoritativePodcastProgramIds: ReadonlySet<string> = new Set(),
+  ) {}
 
-  static async forUser(userId: string): Promise<SpotifyIncrementalReader> {
-    return new SpotifyIncrementalReader(await getSpotifyAccessToken(userId));
+  static async forUser(
+    userId: string,
+    options: { authoritativePodcastProgramIds?: ReadonlySet<string> } = {},
+  ): Promise<SpotifyIncrementalReader> {
+    return new SpotifyIncrementalReader(
+      await getSpotifyAccessToken(userId),
+      options.authoritativePodcastProgramIds ?? new Set(),
+    );
   }
 
   getRequestMetrics(): SpotifyRequestMetrics {
@@ -345,7 +356,11 @@ export class SpotifyIncrementalReader {
         nextUrl = page.next ? stripBase(page.next) : null;
         done = nextUrl === null;
 
-        const collector = createPodcastCollector(source.includePlayed);
+        const collector = createPodcastCollector(source.includePlayed, undefined, {
+          sourceSpotifyType: "PLAYLIST",
+          sourceSpotifyId: source.spotifyId,
+          suppressedProgramIds: this.authoritativePodcastProgramIds,
+        });
         for (const item of page.items) {
           const episode = item.item;
           if (!episode || episode.is_local || episode.type !== "episode") continue;
@@ -375,17 +390,35 @@ export class SpotifyIncrementalReader {
       },
       readNext: async (): Promise<IncrementalSourceBatch> => {
         if (done || !nextUrl) return { candidates: [], done: true };
-        const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
-        metrics.pagesRead += 1;
-        nextUrl = page.next ? stripBase(page.next) : null;
-        done = nextUrl === null;
 
-        const collector = createPodcastCollector(
-          source.includePlayed,
-          source.spotifyId,
-        );
-        for (const episode of page.items) collector.add(episode);
-        return { ...collector.result(), done };
+        const collector = createPodcastCollector(source.includePlayed, source.spotifyId, {
+          sourceSpotifyType: "SHOW",
+          sourceSpotifyId: source.spotifyId,
+        });
+
+        if (source.episodeOrder === "SOURCE_DEFAULT") {
+          const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
+          metrics.pagesRead += 1;
+          nextUrl = page.next ? stripBase(page.next) : null;
+          done = nextUrl === null;
+          for (const episode of page.items) collector.add(episode);
+          return { ...collector.result(), done };
+        }
+
+        // Explicit chronological order must be global, never pagination-incidental.
+        while (nextUrl) {
+          const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
+          metrics.pagesRead += 1;
+          nextUrl = page.next ? stripBase(page.next) : null;
+          for (const episode of page.items) collector.add(episode);
+        }
+        done = true;
+        const result = collector.result();
+        return {
+          ...result,
+          candidates: sortShowCandidates(result.candidates, source.episodeOrder),
+          done: true,
+        };
       },
     };
   }
@@ -414,7 +447,11 @@ export class SpotifyIncrementalReader {
         nextUrl = page.next ? stripBase(page.next) : null;
         done = nextUrl === null;
 
-        const collector = createPodcastCollector(source.includePlayed);
+        const collector = createPodcastCollector(source.includePlayed, undefined, {
+          sourceSpotifyType: "SAVED_EPISODES",
+          sourceSpotifyId: source.spotifyId,
+          suppressedProgramIds: this.authoritativePodcastProgramIds,
+        });
         for (const item of page.items) {
           if (item?.episode) collector.add(item.episode);
         }
@@ -453,21 +490,44 @@ interface EpisodeResponse {
     id?: string;
     name?: string;
   };
+  release_date?: string;
+  release_date_precision?: string;
   resume_point?: {
     fully_played: boolean;
     resume_position_ms: number;
   } | null;
 }
 
-function createPodcastCollector(includePlayed: boolean, fallbackProgramId?: string) {
+type PodcastCollectorOptions = {
+  sourceSpotifyType?: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";
+  sourceSpotifyId?: string;
+  suppressedProgramIds?: ReadonlySet<string>;
+};
+
+function createPodcastCollector(
+  includePlayed: boolean,
+  fallbackProgramId?: string,
+  options: PodcastCollectorOptions = {},
+) {
   const candidates: Candidate[] = [];
   let playbackPositionMissingCount = 0;
   let fullyPlayedSkippedCount = 0;
+  let genericPodcastSuppressedCount = 0;
 
   return {
     add(episode: EpisodeResponse) {
       if (!episode.uri || !episode.name || episode.type !== "episode") return;
       if (episode.is_playable === false) return;
+
+      const programId = episode.show?.id ?? fallbackProgramId;
+      if (
+        programId &&
+        options.sourceSpotifyType !== "SHOW" &&
+        options.suppressedProgramIds?.has(programId)
+      ) {
+        genericPodcastSuppressedCount += 1;
+        return;
+      }
 
       const resumePoint = episode.resume_point ?? null;
       if (!resumePoint) playbackPositionMissingCount += 1;
@@ -494,11 +554,15 @@ function createPodcastCollector(includePlayed: boolean, fallbackProgramId?: stri
         type: "PODCAST",
         title: episode.name,
         subtitle: episode.show?.name,
-        programId: episode.show?.id ?? fallbackProgramId,
+        programId,
         durationMs,
         originalDurationMs,
         resumePositionMs,
         playbackPositionKnown: Boolean(resumePoint),
+        releaseDate: episode.release_date,
+        releaseDatePrecision: episode.release_date_precision,
+        sourceSpotifyType: options.sourceSpotifyType,
+        sourceSpotifyId: options.sourceSpotifyId,
       });
     },
     result() {
@@ -506,6 +570,7 @@ function createPodcastCollector(includePlayed: boolean, fallbackProgramId?: stri
         candidates,
         playbackPositionMissingCount,
         fullyPlayedSkippedCount,
+        genericPodcastSuppressedCount,
       };
     },
   };

@@ -155,7 +155,15 @@ export async function generatePlaylists(
       where: { userId, enabled: true },
     })) as IncrementalSpotifySourceConfig[];
 
-    reader = await SpotifyIncrementalReader.forUser(userId);
+    const authoritativePodcastProgramIds = new Set(
+      sources
+        .filter((source) => source.spotifyType === "SHOW")
+        .map((source) => source.spotifyId),
+    );
+
+    reader = await SpotifyIncrementalReader.forUser(userId, {
+      authoritativePodcastProgramIds,
+    });
     const sourceCursors: SpotifyIncrementalCandidateSource[] = [];
     const setupFailures: SourceCollectionFailure[] = [];
 
@@ -193,11 +201,13 @@ export async function generatePlaylists(
     }
 
     let musicUnavailableSkippedCount = 0;
+    let genericPodcastSuppressedCount = 0;
     const incremental = await collectIncrementally({
       sources: sourceCursors,
       targets: runTargets,
       onBatch(source, batch) {
         musicUnavailableSkippedCount += batch.unavailableMusicSkippedCount ?? 0;
+        genericPodcastSuppressedCount += batch.genericPodcastSuppressedCount ?? 0;
         logIncrementalBatch(source, batch, log);
       },
       onRound(round) {
@@ -233,6 +243,7 @@ export async function generatePlaylists(
     };
     summary.spotifyApi = reader.getRequestMetrics();
     summary.musicUnavailableSkippedCount = musicUnavailableSkippedCount;
+    summary.genericPodcastSuppressedCount = genericPodcastSuppressedCount;
 
     if (readFailure) {
       summary.inconclusive = true;
@@ -298,6 +309,33 @@ export async function generatePlaylists(
       const error =
         "A geração foi bloqueada antes de alterar o Spotify porque o plano divergiu da sequência configurada.";
       log({ level: "ERROR", message: error, data: sequenceViolations });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
+
+    const podcastAuthorityViolations = plan.targets.flatMap((planned) =>
+      planned.result.items
+        .filter(
+          (item) =>
+            item.type === "PODCAST" &&
+            Boolean(item.programId) &&
+            authoritativePodcastProgramIds.has(item.programId!) &&
+            item.sourceSpotifyType !== "SHOW",
+        )
+        .map((item) => ({
+          targetPlaylistId: planned.targetPlaylistId,
+          targetName: planned.name,
+          uri: item.uri,
+          programId: item.programId,
+          sourceSpotifyType: item.sourceSpotifyType ?? null,
+        })),
+    );
+
+    if (!simulate && podcastAuthorityViolations.length > 0) {
+      summary.podcastAuthorityViolations = podcastAuthorityViolations;
+      const error =
+        "A geração foi bloqueada antes de alterar o Spotify porque um programa com fonte SHOW autoritativa recebeu candidato de uma fonte genérica.";
+      log({ level: "ERROR", message: error, data: podcastAuthorityViolations });
       await finalizeRun(run.id, "FAILED", logs, summary, error);
       return { runId: run.id, status: "FAILED" };
     }

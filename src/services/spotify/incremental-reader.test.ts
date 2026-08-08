@@ -27,6 +27,7 @@ function source(
     spotifyId: "playlist-a",
     name: "Podcast source",
     includePlayed: false,
+    episodeOrder: "SOURCE_DEFAULT",
     spotifySnapshotId: null,
     cachedCandidates: null,
     ...overrides,

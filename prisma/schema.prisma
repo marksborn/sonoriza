@@ -113,6 +113,12 @@ enum SpotifySourceType {
   SAVED_EPISODES
 }
 
+enum PodcastEpisodeOrder {
+  SOURCE_DEFAULT
+  OLDEST_FIRST
+  NEWEST_FIRST
+}
+
 model SourcePlaylist {
   id            String            @id @default(cuid())
   userId        String
@@ -124,6 +130,8 @@ model SourcePlaylist {
   // Podcast sources exclude fully played episodes by default. When enabled,
   // fully played episodes can be selected again and use their full duration.
   includePlayed Boolean           @default(false)
+  // SHOW-only ordering policy. Existing rows preserve provider/default order.
+  episodeOrder  PodcastEpisodeOrder @default(SOURCE_DEFAULT)
   // Playlist cache is currently used only for MUSIC sources. Podcast playback
   // state remains live because resume_point can change without a playlist edit.
   spotifySnapshotId String?

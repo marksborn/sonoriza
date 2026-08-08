@@ -35,6 +35,7 @@ export type ConfigurationAssessment = {
     spotifyId: string;
     name: string | null;
     includePlayed: boolean;
+    episodeOrder: "SOURCE_DEFAULT" | "OLDEST_FIRST" | "NEWEST_FIRST";
   }>;
   targets: Array<{
     id: string;
@@ -114,6 +115,7 @@ export async function assessConfiguration(
         spotifyId: true,
         name: true,
         includePlayed: true,
+        episodeOrder: true,
       },
     }),
     prisma.targetPlaylist.findMany({
@@ -402,10 +404,11 @@ export async function assessConfiguration(
         spotifyType: source.spotifyType,
         spotifyId: source.spotifyId,
         includePlayed: source.includePlayed,
+        episodeOrder: source.spotifyType === "SHOW" ? source.episodeOrder : "SOURCE_DEFAULT",
       }))
       .sort((a, b) =>
-        `${a.kind}:${a.spotifyType}:${a.spotifyId}:${a.includePlayed}`.localeCompare(
-          `${b.kind}:${b.spotifyType}:${b.spotifyId}:${b.includePlayed}`,
+        `${a.kind}:${a.spotifyType}:${a.spotifyId}:${a.includePlayed}:${a.episodeOrder}`.localeCompare(
+          `${b.kind}:${b.spotifyType}:${b.spotifyId}:${b.includePlayed}:${b.episodeOrder}`,
         ),
       ),
     targets: targets.map((target) => ({

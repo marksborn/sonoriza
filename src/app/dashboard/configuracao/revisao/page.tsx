@@ -141,6 +141,14 @@ function readSkipped(summary: unknown): string[] {
     : [];
 }
 
+function readGenericPodcastSuppressedCount(summary: unknown): number {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return 0;
+  const value = numberValue(
+    (summary as Record<string, unknown>).genericPodcastSuppressedCount,
+  );
+  return value === null ? 0 : Math.max(0, Math.trunc(value));
+}
+
 function readMusicUnavailableSkippedCount(summary: unknown): number {
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) return 0;
   const value = numberValue(
@@ -231,6 +239,9 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
   const skippedTargets = readSkipped(simulation?.summary);
   const simulationQualityPassed = readQualityPassed(simulation?.summary);
   const musicUnavailableSkippedCount = readMusicUnavailableSkippedCount(
+    simulation?.summary,
+  );
+  const genericPodcastSuppressedCount = readGenericPodcastSuppressedCount(
     simulation?.summary,
   );
   const inconclusiveSimulation = readInconclusiveSimulation(simulation?.summary);
@@ -388,6 +399,9 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                             {source.includePlayed
                               ? "inclui episódios já concluídos"
                               : "somente não concluídos · episódios em andamento usam o tempo restante"}
+                            {source.spotifyType === "SHOW"
+                              ? ` · ${source.episodeOrder === "NEWEST_FIRST" ? "mais novos primeiro" : source.episodeOrder === "OLDEST_FIRST" ? "mais antigos primeiro" : "ordem legada do Spotify"} · prioridade sobre fontes genéricas`
+                              : ""}
                           </p>
                         )}
                       </div>
@@ -527,6 +541,17 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                     <p className="font-black text-orange-100">Primeira geração real bloqueada</p>
                     <p className="mt-1 text-sm leading-6 text-orange-100/75">
                       O plano conseguiu ser montado, mas ficou materialmente diferente da regra de composição configurada. Ajuste fontes ou limites e simule novamente.
+                    </p>
+                  </div>
+                )}
+
+                {genericPodcastSuppressedCount > 0 && (
+                  <div className="mt-4 rounded-2xl border border-orange-300/20 bg-orange-400/10 p-4">
+                    <p className="font-black text-orange-50">
+                      {genericPodcastSuppressedCount} {genericPodcastSuppressedCount === 1 ? "episódio genérico suprimido" : "episódios genéricos suprimidos"} por regra de programa
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-orange-100/70">
+                      Quando um programa está configurado como fonte específica, a política desse SHOW prevalece sobre “Seus episódios” e playlists genéricas do mesmo programa.
                     </p>
                   </div>
                 )}
