@@ -127,7 +127,12 @@ test("blocked music from another source cannot re-enter the shared pool", async 
   );
 
   assert.equal(result.pools.music.length, 0);
-  assert.equal(result.qualityFailures.length, 1);
+  assert.equal(result.plan.targets[0]?.result.items.length, 0);
+  assert.equal(
+    result.plan.targets[0]?.result.stats.sequenceStopReason,
+    "NO_CANDIDATE_FOR_SLOT",
+  );
+  assert.equal(result.plan.targets[0]?.result.stats.sequenceUnfilledSlots, 1);
   assert.equal(runtime.recentlyPlayedSkippedCount, 2);
 });
 
