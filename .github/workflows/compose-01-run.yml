@@ -76,6 +76,27 @@ jobs:
           Path('/tmp/compose-01-implement.sh').write_text(script)
           PY
           bash /tmp/compose-01-implement.sh
+
+          python <<'PY'
+          from pathlib import Path
+
+          p = Path('scripts/plan-example.ts')
+          text = p.read_text()
+          needle = '      targetDurationMs:'
+          if text.count(needle) != 2:
+              raise SystemExit(f'plan-example: expected 2 rules, found {text.count(needle)}')
+          text = text.replace(needle, '      compositionMode: "PROPORTION",\n      targetDurationMs:', 2)
+          p.write_text(text)
+
+          p = Path('src/jobs/generate-playlists-incremental.ts')
+          text = p.read_text()
+          duplicate = '        compositionMode: target.compositionMode,\n        sequencePattern: parseSequencePattern(target.sequencePattern),'
+          if text.count(duplicate) != 1:
+              raise SystemExit(f'generator duplicate composition field: expected 1, found {text.count(duplicate)}')
+          text = text.replace(duplicate, '        sequencePattern: parseSequencePattern(target.sequencePattern),', 1)
+          p.write_text(text)
+          PY
+
           git rm .github/workflows/compose-01-run.yml
           git diff --check
 
