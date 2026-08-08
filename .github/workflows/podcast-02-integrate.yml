@@ -1,0 +1,263 @@
+name: PODCAST-02 integrate SPOTIFY-01
+
+on:
+  push:
+    branches:
+      - agent/podcast-02-max-episode-duration
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d sonoriza_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_test?schema=public
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: podcast-02-validation-only-secret
+      AUTH_SPOTIFY_ID: validation-only
+      AUTH_SPOTIFY_SECRET: validation-only
+      AUTH_GOOGLE_ID: validation-only
+      AUTH_GOOGLE_SECRET: validation-only
+      CRON_SECRET: validation-only
+
+    steps:
+      - name: Checkout PODCAST-02 branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/podcast-02-max-episode-duration
+          fetch-depth: 0
+
+      - name: Setup Node 24.19.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Integrate main and resolve expected conflicts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FEATURE_SHA="b40da8449a1853deceae79da8a640f9fcb4e788d"
+          BASE_SHA="940e5139506b8cd9b00024dd78a9b1aa7d77ca09"
+          EXPECTED_MAIN_SHA="6a60b1b91d488e0b6f540a22e11fb6dfe255f6dc"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+
+          MAIN_SHA="$(git rev-parse origin/main)"
+          echo "main=$MAIN_SHA"
+          test "$MAIN_SHA" = "$EXPECTED_MAIN_SHA"
+
+          set +e
+          git merge --no-commit --no-ff origin/main
+          MERGE_RC=$?
+          set -e
+
+          if [ "$MERGE_RC" -ne 0 ]; then
+            mapfile -t unresolved < <(git diff --name-only --diff-filter=U | sort)
+            printf 'unresolved: %s\n' "${unresolved[*]}"
+            expected=(
+              "prisma/schema.prisma"
+              "src/app/dashboard/configuracao/revisao/page.tsx"
+              "src/jobs/generate-playlists.ts"
+              "src/services/configuration-readiness.ts"
+            )
+            mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+            test "$(printf '%s\n' "${unresolved[@]}")" = "$(printf '%s\n' "${expected_sorted[@]}")"
+          fi
+
+          conflict_files=(
+            "prisma/schema.prisma"
+            "src/app/dashboard/configuracao/revisao/page.tsx"
+            "src/jobs/generate-playlists.ts"
+            "src/services/configuration-readiness.ts"
+          )
+
+          for file in "${conflict_files[@]}"; do
+            git checkout MERGE_HEAD -- "$file"
+            git add "$file"
+          done
+
+          # Reapply the PODCAST-02 deltas onto the new main versions. The old
+          # generator implementation is intentionally excluded: #40 made the
+          # incremental generator authoritative.
+          for file in \
+            prisma/schema.prisma \
+            src/app/dashboard/configuracao/revisao/page.tsx \
+            src/services/configuration-readiness.ts
+          do
+            patch="/tmp/$(echo "$file" | tr '/' '_').patch"
+            git diff "$BASE_SHA" "$FEATURE_SHA" -- "$file" > "$patch"
+            git apply --3way --index "$patch"
+          done
+
+          # Keep the #40 thin re-export exactly as main.
+          git checkout MERGE_HEAD -- src/jobs/generate-playlists.ts
+          git add src/jobs/generate-playlists.ts
+
+          # Port the PODCAST-02 orchestration/safety semantics into the
+          # incremental generator introduced by #40.
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path("src/jobs/generate-playlists-incremental.ts")
+          text = path.read_text()
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '''type ResolvedTargetDuration = {\n  durationMs: number;\n  calendar: CalendarDurationResult | null;\n};''',
+              '''type ResolvedTargetDuration = {\n  durationMs: number;\n  calendar: CalendarDurationResult | null;\n  podcastEpisodeMaxDurationMs: number | null;\n};''',
+              "resolved duration type",
+          )
+
+          replace_once(
+              '          runTargets.push(toRunTarget(target, 0));',
+              '          runTargets.push(toRunTarget(target, 0, null));',
+              "clear target",
+          )
+
+          replace_once(
+              '      runTargets.push(toRunTarget(target, resolved.durationMs));',
+              '''      runTargets.push(\n        toRunTarget(\n          target,\n          resolved.durationMs,\n          resolved.podcastEpisodeMaxDurationMs,\n        ),\n      );''',
+              "normal target",
+          )
+
+          writer_anchor = '    if (!simulate) writer = await SpotifyClient.forUser(userId);\n'
+          duration_gate = '''    // Defense in depth: revalidate the selected podcasts against the\n    // freshly resolved limit before a writer can even be created.\n    const durationLimitViolations = plan.targets.flatMap((planned) => {\n      const maxDurationMs =\n        resolvedDurationByTargetId.get(planned.targetPlaylistId)\n          ?.podcastEpisodeMaxDurationMs ?? null;\n      if (maxDurationMs === null) return [];\n\n      return planned.result.items\n        .filter(\n          (item) =>\n            item.type === "PODCAST" &&\n            Math.max(0, item.durationMs) > maxDurationMs,\n        )\n        .map((item) => ({\n          targetPlaylistId: planned.targetPlaylistId,\n          targetName: planned.name,\n          uri: item.uri,\n          durationMs: item.durationMs,\n          maxDurationMs,\n        }));\n    });\n\n    if (!simulate && durationLimitViolations.length > 0) {\n      summary.podcastDurationLimitViolations = durationLimitViolations;\n      const error =\n        "A geração foi bloqueada antes de alterar o Spotify porque um podcast excedeu a duração máxima efetiva do destino.";\n      log({ level: "ERROR", message: error, data: durationLimitViolations });\n      await finalizeRun(run.id, "FAILED", logs, summary, error);\n      return { runId: run.id, status: "FAILED" };\n    }\n\n    if (!simulate) writer = await SpotifyClient.forUser(userId);\n'''
+          replace_once(writer_anchor, duration_gate, "pre-writer duration gate")
+
+          replace_once(
+              '''      const calendar = resolvedDurationByTargetId.get(target.id)?.calendar ?? null;\n\n      const targetSummary: Record<string, unknown> = {''',
+              '''      const resolvedDuration = resolvedDurationByTargetId.get(target.id);\n      const calendar = resolvedDuration?.calendar ?? null;\n      const podcastEpisodeMaxDurationMs =\n        resolvedDuration?.podcastEpisodeMaxDurationMs ?? null;\n\n      const targetSummary: Record<string, unknown> = {''',
+              "target resolved duration",
+          )
+
+          replace_once(
+              '        qualityReason: stats.mixQualityPassed ? null : qualityReason(stats),',
+              '''        qualityReason: stats.mixQualityPassed ? null : qualityReason(stats),\n        podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,\n        podcastEpisodeMaxDurationMs,\n        podcastEpisodeMaxDurationMinutes:\n          podcastEpisodeMaxDurationMs === null\n            ? null\n            : Math.round(podcastEpisodeMaxDurationMs / 60_000),''',
+              "target summary podcast duration",
+          )
+
+          replace_once(
+              '              calendarDurationMinutes: Math.round(calendar.durationMs / 60_000),',
+              '''              calendarDurationMinutes: Math.round(calendar.durationMs / 60_000),\n              calendarMaxEventDurationMinutes: Math.round(\n                calendar.maxEventDurationMs / 60_000,\n              ),''',
+              "calendar summary max event",
+          )
+
+          replace_once(
+              '''  if (target.durationMode === "FIXED") {\n    return {\n      durationMs: (target.fixedDurationSeconds ?? 0) * 1000,\n      calendar: null,\n    };\n  }''',
+              '''  if (target.durationMode === "FIXED") {\n    const podcastEpisodeMaxDurationMs = resolvePodcastEpisodeMaxDurationMs(\n      target,\n      null,\n    );\n    logPodcastEpisodeMaxDuration(target, podcastEpisodeMaxDurationMs, log);\n    return {\n      durationMs: (target.fixedDurationSeconds ?? 0) * 1000,\n      calendar: null,\n      podcastEpisodeMaxDurationMs,\n    };\n  }''',
+              "fixed duration resolution",
+          )
+
+          replace_once(
+              '    message: `Calendar duration for "${target.name}": ${calendar.matchedEvents}/${calendar.timedEvents} events (${filterDescription}), ${Math.round(calendar.durationMs / 60_000)} min`,',
+              '    message: `Calendar duration for "${target.name}": ${calendar.matchedEvents}/${calendar.timedEvents} events (${filterDescription}), ${Math.round(calendar.durationMs / 60_000)} min total, largest ${Math.round(calendar.maxEventDurationMs / 60_000)} min`,',
+              "calendar log message",
+          )
+
+          replace_once(
+              '''      marker: calendar.marker,\n      durationMs: calendar.durationMs,''',
+              '''      marker: calendar.marker,\n      durationMs: calendar.durationMs,\n      maxEventDurationMs: calendar.maxEventDurationMs,''',
+              "calendar log data",
+          )
+
+          replace_once(
+              '''  return { durationMs: calendar.durationMs, calendar };\n}\n\nfunction toRunTarget(target: TargetPlaylist, durationMs: number): RunTarget {\n  return {\n    targetPlaylistId: target.id,\n    name: target.name,\n    priority: target.priority,\n    rules: {\n      targetDurationMs: durationMs,\n      podcastPercent: target.podcastPercent,\n      sequencePattern: parseSequencePattern(target.sequencePattern),\n      maxEpisodesPerProgram: target.maxEpisodesPerProgram,\n    },\n  };\n}''',
+              '''  const podcastEpisodeMaxDurationMs = resolvePodcastEpisodeMaxDurationMs(\n    target,\n    calendar,\n  );\n  logPodcastEpisodeMaxDuration(target, podcastEpisodeMaxDurationMs, log);\n\n  return {\n    durationMs: calendar.durationMs,\n    calendar,\n    podcastEpisodeMaxDurationMs,\n  };\n}\n\nfunction resolvePodcastEpisodeMaxDurationMs(\n  target: TargetPlaylist,\n  calendar: CalendarDurationResult | null,\n): number | null {\n  if (target.podcastEpisodeMaxDurationMode === "NONE") return null;\n\n  if (target.podcastEpisodeMaxDurationMode === "FIXED") {\n    const seconds = target.podcastEpisodeMaxDurationSeconds ?? 0;\n    if (seconds <= 0) {\n      throw new Error(\n        `Target "${target.name}" has invalid fixed podcast episode duration`,\n      );\n    }\n    return seconds * 1000;\n  }\n\n  if (target.durationMode !== "CALENDAR") {\n    throw new Error(\n      `Target "${target.name}" uses CALENDAR_MAX_EVENT outside CALENDAR duration mode`,\n    );\n  }\n\n  if (!calendar || calendar.matchedEvents <= 0 || calendar.maxEventDurationMs <= 0) {\n    return null;\n  }\n\n  return calendar.maxEventDurationMs;\n}\n\nfunction logPodcastEpisodeMaxDuration(\n  target: TargetPlaylist,\n  effectiveMaxDurationMs: number | null,\n  log: (line: LogLine) => void,\n) {\n  const configured = target.podcastEpisodeMaxDurationMode;\n  const effective =\n    effectiveMaxDurationMs === null\n      ? "no effective limit"\n      : `${Math.round(effectiveMaxDurationMs / 60_000)} min`;\n\n  log({\n    level: "INFO",\n    message: `Podcast episode duration for "${target.name}": ${configured} → ${effective}`,\n    data: {\n      mode: configured,\n      configuredSeconds: target.podcastEpisodeMaxDurationSeconds,\n      effectiveMaxDurationMs,\n    },\n  });\n}\n\nfunction toRunTarget(\n  target: TargetPlaylist,\n  durationMs: number,\n  maxPodcastDurationMs: number | null,\n): RunTarget {\n  return {\n    targetPlaylistId: target.id,\n    name: target.name,\n    priority: target.priority,\n    rules: {\n      targetDurationMs: durationMs,\n      podcastPercent: target.podcastPercent,\n      sequencePattern: parseSequencePattern(target.sequencePattern),\n      maxEpisodesPerProgram: target.maxEpisodesPerProgram,\n      maxPodcastDurationMs,\n    },\n  };\n}''',
+              "calendar resolution and run target",
+          )
+
+          replace_once(
+              '    return `a meta de ${stats.requestedPodcastPercent}% de podcast ficou em ${stats.actualPodcastPercent}% após aplicar fontes e limites por programa`;',
+              '    return `a meta de ${stats.requestedPodcastPercent}% de podcast ficou em ${stats.actualPodcastPercent}% após aplicar fontes, duração máxima e limites por programa`;',
+              "quality reason",
+          )
+
+          path.write_text(text)
+          PY
+
+          git add src/jobs/generate-playlists-incremental.ts
+
+          # No conflict markers or unresolved paths may remain.
+          test -z "$(git diff --name-only --diff-filter=U)"
+          ! grep -R --line-number -E '^(<<<<<<<|=======|>>>>>>>)' \
+            prisma/schema.prisma \
+            src/app/dashboard/configuracao/revisao/page.tsx \
+            src/jobs/generate-playlists-incremental.ts \
+            src/jobs/generate-playlists.ts \
+            src/services/configuration-readiness.ts
+
+          # The #40 entrypoint must remain the incremental re-export.
+          git diff --quiet MERGE_HEAD -- src/jobs/generate-playlists.ts
+
+          # Remove this temporary workflow from the final functional tree.
+          git rm .github/workflows/podcast-02-integrate.yml
+          git diff --check
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma validate
+        run: npx prisma validate
+
+      - name: Apply migrations to disposable PostgreSQL
+        run: npm run db:deploy
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Planner regressions
+        run: npm run test:planner
+
+      - name: Spotify regressions
+        run: npm run test:spotify
+
+      - name: Incremental orchestration regressions
+        run: npm run test:incremental
+
+      - name: Simulation presentation regressions
+        run: npm run test:simulation
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit and push integrated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git diff --name-only --diff-filter=U)"
+          git diff --check
+          git status --short
+          git commit -m "merge: alinhar PODCAST-02 ao fluxo incremental da SPOTIFY-01"
+          git push origin HEAD:agent/podcast-02-max-episode-duration
+          echo "Integrated head: $(git rev-parse HEAD)"
