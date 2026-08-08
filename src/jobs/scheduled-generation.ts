@@ -1,4 +1,8 @@
 import { prisma } from "@/lib/prisma";
+import {
+  assessConfiguration,
+  getFirstRunGate,
+} from "@/services/configuration-readiness";
 
 import { generatePlaylists } from "./generate-playlists";
 
@@ -8,6 +12,8 @@ import { generatePlaylists } from "./generate-playlists";
  *
  * Users are processed sequentially to stay well within Spotify/Google rate
  * limits; failures are isolated so one user cannot block the others.
+ * Scheduled real generation is subject to the same current-configuration
+ * readiness gate as a manual real run.
  */
 export async function runScheduledGeneration(): Promise<{
   processed: number;
@@ -22,6 +28,18 @@ export async function runScheduledGeneration(): Promise<{
 
   for (const user of users) {
     try {
+      const assessment = await assessConfiguration(user.id);
+      const gate = await getFirstRunGate(user.id, assessment);
+
+      if (!gate.realRunAllowed) {
+        results.push({
+          userId: user.id,
+          runId: "",
+          status: `blocked: ${gate.reason ?? "simulação atual não aprovada"}`,
+        });
+        continue;
+      }
+
       const { runId, status } = await generatePlaylists({
         userId: user.id,
         trigger: "SCHEDULED",
