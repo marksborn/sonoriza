@@ -201,7 +201,7 @@ export async function syncRecentlyPlayed(
 
   const accessToken = await getSpotifyAccessToken(userId);
   const syncStartedAt = now;
-  let nextPath = policy.syncAfterCursor
+  let nextPath: string | null = policy.syncAfterCursor
     ? `/me/player/recently-played?limit=50&after=${encodeURIComponent(policy.syncAfterCursor)}`
     : "/me/player/recently-played?limit=50";
   let eventsRead = 0;
