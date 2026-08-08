@@ -24,6 +24,10 @@ export interface Candidate {
   originalDurationMs?: number;
   resumePositionMs?: number;
   playbackPositionKnown?: boolean;
+  releaseDate?: string;
+  releaseDatePrecision?: string;
+  sourceSpotifyType?: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";
+  sourceSpotifyId?: string;
 }
 
 export interface PlaylistRules {

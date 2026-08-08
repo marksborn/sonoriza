@@ -1,4 +1,4 @@
-import { SourceKind, SpotifySourceType } from "@prisma/client";
+import { PodcastEpisodeOrder, SourceKind, SpotifySourceType } from "@prisma/client";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -39,6 +39,7 @@ async function addSource(formData: FormData) {
   const spotifyId = String(formData.get("spotifyId") ?? "").trim();
   const spotifyTypeRaw = String(formData.get("spotifyType") ?? "").trim();
   const kindRaw = String(formData.get("kind") ?? "").trim();
+  const episodeOrderRaw = String(formData.get("episodeOrder") ?? "").trim();
 
   const spotifyType =
     spotifyTypeRaw === SpotifySourceType.PLAYLIST
@@ -48,6 +49,13 @@ async function addSource(formData: FormData) {
         : spotifyTypeRaw === SpotifySourceType.SAVED_EPISODES
           ? SpotifySourceType.SAVED_EPISODES
           : null;
+
+  const episodeOrder =
+    episodeOrderRaw === PodcastEpisodeOrder.OLDEST_FIRST
+      ? PodcastEpisodeOrder.OLDEST_FIRST
+      : episodeOrderRaw === PodcastEpisodeOrder.NEWEST_FIRST
+        ? PodcastEpisodeOrder.NEWEST_FIRST
+        : PodcastEpisodeOrder.SOURCE_DEFAULT;
 
   const requestedKind =
     kindRaw === SourceKind.MUSIC
@@ -122,11 +130,16 @@ async function addSource(formData: FormData) {
       kind,
       enabled: true,
       includePlayed: false,
+      episodeOrder:
+        spotifyType === SpotifySourceType.SHOW
+          ? episodeOrder
+          : PodcastEpisodeOrder.SOURCE_DEFAULT,
     },
     update: {
       name: sourceName,
       kind,
       enabled: true,
+      ...(spotifyType === SpotifySourceType.SHOW ? { episodeOrder } : {}),
     },
   });
 
@@ -152,6 +165,37 @@ async function toggleSource(formData: FormData) {
 
   revalidateConfiguration();
   redirect("/dashboard/configuracao/fontes?saved=updated");
+}
+
+async function updateEpisodeOrder(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+
+  const id = String(formData.get("id") ?? "").trim();
+  const raw = String(formData.get("episodeOrder") ?? "").trim();
+  const episodeOrder =
+    raw === PodcastEpisodeOrder.OLDEST_FIRST
+      ? PodcastEpisodeOrder.OLDEST_FIRST
+      : raw === PodcastEpisodeOrder.NEWEST_FIRST
+        ? PodcastEpisodeOrder.NEWEST_FIRST
+        : null;
+  if (!id || !episodeOrder) redirect("/dashboard/configuracao/fontes?error=invalid");
+
+  const result = await prisma.sourcePlaylist.updateMany({
+    where: {
+      id,
+      userId: session.user.id,
+      kind: SourceKind.PODCAST,
+      spotifyType: SpotifySourceType.SHOW,
+    },
+    data: { episodeOrder },
+  });
+  if (result.count !== 1) redirect("/dashboard/configuracao/fontes?error=invalid");
+
+  revalidateConfiguration();
+  redirect("/dashboard/configuracao/fontes?saved=order");
 }
 
 async function updatePlaybackPolicy(formData: FormData) {
@@ -306,6 +350,7 @@ export default async function SpotifySourcesPage({
             {params.saved === "added" && "Fonte adicionada. Nenhuma geração foi iniciada."}
             {params.saved === "updated" && "Estado da fonte atualizado."}
             {params.saved === "policy" && "Política de episódios atualizada. Uma nova simulação será necessária."}
+            {params.saved === "order" && "Ordem do programa atualizada. Uma nova simulação será necessária."}
             {params.saved === "removed" && "Fonte removida da configuração."}
           </div>
         )}
@@ -395,6 +440,31 @@ export default async function SpotifySourcesPage({
                         </div>
                         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${source.enabled ? "bg-emerald-300" : "bg-violet-500"}`} title={source.enabled ? "Ativa" : "Desativada"} />
                       </div>
+
+                      {source.spotifyType === SpotifySourceType.SHOW && (
+                        <div className="mt-4 rounded-xl border border-orange-300/15 bg-orange-400/5 p-3">
+                          <p className="text-xs font-black text-orange-100">Ordem dos episódios</p>
+                          <p className="mt-1 text-xs leading-5 text-orange-100/65">
+                            Este programa tem prioridade sobre “Seus episódios” e playlists genéricas para o mesmo show.
+                          </p>
+                          <form action={updateEpisodeOrder} className="mt-3 flex gap-2">
+                            <input type="hidden" name="id" value={source.id} />
+                            <select
+                              name="episodeOrder"
+                              defaultValue={
+                                source.episodeOrder === PodcastEpisodeOrder.NEWEST_FIRST
+                                  ? PodcastEpisodeOrder.NEWEST_FIRST
+                                  : PodcastEpisodeOrder.OLDEST_FIRST
+                              }
+                              className="min-w-0 flex-1 rounded-xl border border-orange-300/20 bg-[#160638] px-3 py-2 text-xs font-bold text-orange-50"
+                            >
+                              <option value={PodcastEpisodeOrder.OLDEST_FIRST}>Mais antigos primeiro</option>
+                              <option value={PodcastEpisodeOrder.NEWEST_FIRST}>Mais novos primeiro</option>
+                            </select>
+                            <button type="submit" className="rounded-xl border border-orange-300/25 bg-orange-400/10 px-3 py-2 text-xs font-black text-orange-100 transition hover:bg-orange-400/20">Salvar</button>
+                          </form>
+                        </div>
+                      )}
 
                       {source.kind === SourceKind.PODCAST && (
                         <div className="mt-4 rounded-xl border border-violet-300/15 bg-black/15 p-3">
@@ -518,6 +588,12 @@ export default async function SpotifySourcesPage({
                                   <h3 className="truncate font-black">{show.name}</h3>
                                   <p className="mt-1 truncate text-xs text-violet-200/50">{show.publisher ?? "Programa do Spotify"}</p>
                                 </div>
+                              </div>
+                              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                                <select name="episodeOrder" defaultValue={PodcastEpisodeOrder.OLDEST_FIRST} className="min-w-0 flex-1 rounded-xl border border-violet-300/25 bg-[#160638] px-3 py-2 text-sm font-bold text-violet-100">
+                                  <option value={PodcastEpisodeOrder.OLDEST_FIRST}>Mais antigos primeiro</option>
+                                  <option value={PodcastEpisodeOrder.NEWEST_FIRST}>Mais novos primeiro</option>
+                                </select>
                                 <button type="submit" className="shrink-0 rounded-xl border border-violet-300/25 bg-violet-500/10 px-4 py-2 text-sm font-black text-violet-100 transition hover:bg-violet-500/20">Adicionar</button>
                               </div>
                             </form>

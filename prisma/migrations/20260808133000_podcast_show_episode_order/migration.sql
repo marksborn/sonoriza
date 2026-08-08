@@ -1,0 +1,4 @@
+CREATE TYPE "PodcastEpisodeOrder" AS ENUM ('SOURCE_DEFAULT', 'OLDEST_FIRST', 'NEWEST_FIRST');
+
+ALTER TABLE "SourcePlaylist"
+ADD COLUMN "episodeOrder" "PodcastEpisodeOrder" NOT NULL DEFAULT 'SOURCE_DEFAULT';
