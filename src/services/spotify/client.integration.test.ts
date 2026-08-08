@@ -25,9 +25,11 @@ function jsonResponse(body: unknown): Response {
 }
 
 function cachedTrack(uri: string, title: string): Candidate[] {
+  const match = /^spotify:track:([^:]+)$/.exec(uri);
   return [
     {
       uri,
+      ...(match?.[1] ? { spotifyTrackId: match[1] } : {}),
       type: "MUSIC",
       title,
       subtitle: "Artist",
@@ -113,8 +115,10 @@ integrationTest(
     try {
       // First run: no cache yet, so read one page and persist snapshot + pool.
       const firstClient = createClient(userA.id);
-      assert.deepEqual(await firstClient.getPlaylistTracks("playlist-shared"),
-        cachedTrack("spotify:track:1", "Track 1"));
+      assert.deepEqual(
+        await firstClient.getPlaylistTracks("playlist-shared"),
+        cachedTrack("spotify:track:1", "Track 1"),
+      );
       assert.equal(metadataCalls, 2);
       assert.equal(itemCalls, 1);
 
@@ -137,8 +141,10 @@ integrationTest(
       metadataCalls = 0;
       itemCalls = 0;
       const secondClient = createClient(userA.id);
-      assert.deepEqual(await secondClient.getPlaylistTracks("playlist-shared"),
-        cachedTrack("spotify:track:1", "Track 1"));
+      assert.deepEqual(
+        await secondClient.getPlaylistTracks("playlist-shared"),
+        cachedTrack("spotify:track:1", "Track 1"),
+      );
       assert.equal(metadataCalls, 1);
       assert.equal(itemCalls, 0);
       assert.equal(secondClient.getRequestMetrics().cacheHits, 1);
@@ -160,8 +166,10 @@ integrationTest(
       metadataCalls = 0;
       itemCalls = 0;
       const thirdClient = createClient(userA.id);
-      assert.deepEqual(await thirdClient.getPlaylistTracks("playlist-shared"),
-        cachedTrack("spotify:track:2", "Track 2"));
+      assert.deepEqual(
+        await thirdClient.getPlaylistTracks("playlist-shared"),
+        cachedTrack("spotify:track:2", "Track 2"),
+      );
       assert.equal(metadataCalls, 2);
       assert.equal(itemCalls, 1);
       assert.equal(
