@@ -28,12 +28,14 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts           Account[]
-  sessions           Session[]
-  calendarSelections CalendarSelection[]
-  sourcePlaylists    SourcePlaylist[]
-  targetPlaylists    TargetPlaylist[]
-  generationRuns     GenerationRun[]
+  accounts             Account[]
+  sessions             Session[]
+  calendarSelections   CalendarSelection[]
+  sourcePlaylists      SourcePlaylist[]
+  targetPlaylists      TargetPlaylist[]
+  generationRuns       GenerationRun[]
+  musicPlaybackPolicy  MusicPlaybackPolicy?
+  trackListeningStates TrackListeningState[]
 }
 
 model Account {
@@ -87,7 +89,7 @@ model CalendarSelection {
   // Consulted at all when resolving calendar-based durations.
   selected         Boolean  @default(true)
   // Timed events on this calendar may contribute to calendar-based duration.
-  usedForDuration     Boolean  @default(false)
+  usedForDuration  Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -120,16 +122,16 @@ enum PodcastEpisodeOrder {
 }
 
 model SourcePlaylist {
-  id            String            @id @default(cuid())
+  id            String              @id @default(cuid())
   userId        String
   kind          SourceKind
   spotifyType   SpotifySourceType
   spotifyId     String
   name          String?
-  enabled       Boolean           @default(true)
+  enabled       Boolean             @default(true)
   // Podcast sources exclude fully played episodes by default. When enabled,
   // fully played episodes can be selected again and use their full duration.
-  includePlayed Boolean           @default(false)
+  includePlayed Boolean             @default(false)
   // SHOW-only ordering policy. Existing rows preserve provider/default order.
   episodeOrder  PodcastEpisodeOrder @default(SOURCE_DEFAULT)
   // Playlist cache is currently used only for MUSIC sources. Podcast playback
@@ -137,13 +139,58 @@ model SourcePlaylist {
   spotifySnapshotId String?
   cachedCandidates  Json?
   cacheUpdatedAt    DateTime?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, spotifyType, spotifyId])
   @@index([userId, kind])
+}
+
+// ---------------------------------------------------------------------------
+// Native music listening history — MUSIC-01.
+// The policy is global per Spotify user in v1. The history stores only the
+// latest known playback per track, not a full listening timeline.
+// ---------------------------------------------------------------------------
+
+enum MusicRepeatWindowUnit {
+  DAYS
+  MONTHS
+  YEARS
+}
+
+model MusicPlaybackPolicy {
+  id                String                 @id @default(cuid())
+  userId            String                 @unique
+  enabled           Boolean                @default(false)
+  windowValue       Int?
+  windowUnit        MusicRepeatWindowUnit?
+  // Earliest playback timestamp actually observed by Sonoriza.
+  historyKnownSince DateTime?
+  // Last successful synchronization attempt.
+  lastSyncAt        DateTime?
+  // Spotify `after` cursor in milliseconds, stored as text to avoid 32-bit Int limits.
+  syncAfterCursor   String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TrackListeningState {
+  id             String   @id @default(cuid())
+  userId         String
+  spotifyTrackId String
+  spotifyUri     String?
+  lastPlayedAt   DateTime
+  firstSeenAt    DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, spotifyTrackId])
+  @@index([userId, lastPlayedAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -181,35 +228,35 @@ enum CompositionMode {
 }
 
 model TargetPlaylist {
-  id                              String                        @id @default(cuid())
-  userId                          String
-  name                            String
-  spotifyPlaylistId               String? // set once the playlist exists on Spotify
-  enabled                         Boolean                       @default(true)
+  id                                String                        @id @default(cuid())
+  userId                            String
+  name                              String
+  spotifyPlaylistId                 String? // set once the playlist exists on Spotify
+  enabled                           Boolean                       @default(true)
   // Lower value is generated first and reserves its content.
-  priority                        Int                           @default(0)
+  priority                          Int                           @default(0)
   // Existing destinations migrate safely to proportion semantics.
-  compositionMode                 CompositionMode               @default(PROPORTION)
+  compositionMode                   CompositionMode               @default(PROPORTION)
 
-  durationMode                    DurationMode                  @default(FIXED)
-  fixedDurationSeconds            Int? // required when durationMode = FIXED
-  emptyCalendarBehavior           EmptyCalendarBehavior         @default(CLEAR)
-  calendarEventFilterMode         CalendarEventFilterMode       @default(ALL)
-  calendarEventMarker             String?
+  durationMode                      DurationMode                  @default(FIXED)
+  fixedDurationSeconds              Int? // required when durationMode = FIXED
+  emptyCalendarBehavior             EmptyCalendarBehavior         @default(CLEAR)
+  calendarEventFilterMode           CalendarEventFilterMode       @default(ALL)
+  calendarEventMarker               String?
 
   // Proportion between podcasts and music. musicPercent = 100 - podcastPercent.
-  podcastPercent                  Int                           @default(60)
-  podcastEpisodeMaxDurationMode   PodcastEpisodeMaxDurationMode @default(NONE)
-  podcastEpisodeMaxDurationSeconds Int?
+  podcastPercent                    Int                           @default(60)
+  podcastEpisodeMaxDurationMode     PodcastEpisodeMaxDurationMode @default(NONE)
+  podcastEpisodeMaxDurationSeconds  Int?
 
   // Cyclic play sequence, e.g. ["MUSIC","PODCAST","MUSIC","MUSIC","PODCAST"].
-  sequencePattern                 Json
+  sequencePattern                   Json
 
   // Cap of episodes per program (Spotify show) inside this playlist.
-  maxEpisodesPerProgram           Int                           @default(1)
+  maxEpisodesPerProgram             Int                           @default(1)
 
-  createdAt                       DateTime                      @default(now())
-  updatedAt                       DateTime                      @updatedAt
+  createdAt                         DateTime                      @default(now())
+  updatedAt                         DateTime                      @updatedAt
 
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   generationItems GenerationItem[]
