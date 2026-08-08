@@ -8,6 +8,7 @@ import {
   assessConfiguration,
   getFirstRunGate,
 } from "@/services/configuration-readiness";
+import { readInconclusiveSimulation } from "@/services/simulation-presentation";
 
 type PageProps = {
   searchParams: Promise<{ run?: string }>;
@@ -160,9 +161,11 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
   const simulatedTargets = readSimulationTargets(simulation?.summary);
   const skippedTargets = readSkipped(simulation?.summary);
   const simulationQualityPassed = readQualityPassed(simulation?.summary);
+  const inconclusiveSimulation = readInconclusiveSimulation(simulation?.summary);
   const ready = assessment.issues.length === 0;
   const healthySimulation =
     simulation?.status === "SUCCESS" && simulationQualityPassed === true;
+  const generalStateHealthy = ready && !inconclusiveSimulation;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#0b021f] px-5 py-8 text-white sm:px-8 lg:px-10">
@@ -193,18 +196,22 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
 
         <section
           className={`rounded-[1.75rem] border p-5 sm:p-6 ${
-            ready
+            generalStateHealthy
               ? "border-emerald-400/25 bg-emerald-950/20"
               : "border-orange-400/25 bg-orange-950/15"
           }`}
         >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className={`text-xs font-black uppercase tracking-[0.15em] ${ready ? "text-emerald-300" : "text-orange-300"}`}>
+              <p className={`text-xs font-black uppercase tracking-[0.15em] ${generalStateHealthy ? "text-emerald-300" : "text-orange-300"}`}>
                 Estado geral
               </p>
               <h2 className="mt-1 text-xl font-black">
-                {ready ? "Pronto para simular" : "Existem pendências antes da simulação"}
+                {!ready
+                  ? "Existem pendências antes da simulação"
+                  : inconclusiveSimulation
+                    ? "Configuração válida · simulação inconclusiva"
+                    : "Pronto para simular"}
               </h2>
               <p className="mt-2 text-sm text-violet-100/70">
                 {ready
@@ -365,11 +372,13 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
             <p className="text-xs font-black uppercase tracking-[0.15em] text-orange-300">Resultado da simulação</p>
             <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-xl font-black">
-                {simulation.status !== "SUCCESS"
-                  ? `Simulação: ${simulation.status}`
-                  : healthySimulation
-                    ? "Simulação concluída · regras atendidas"
-                    : "Simulação concluída · ajuste necessário"}
+                {inconclusiveSimulation
+                  ? inconclusiveSimulation.title
+                  : simulation.status !== "SUCCESS"
+                    ? `Simulação: ${simulation.status}`
+                    : healthySimulation
+                      ? "Simulação concluída · regras atendidas"
+                      : "Simulação concluída · ajuste necessário"}
               </h2>
               <span className="rounded-full border border-violet-300/20 bg-violet-950/40 px-3 py-1.5 text-xs font-bold text-violet-200">
                 {new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(simulation.startedAt)}
@@ -377,72 +386,131 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
             </div>
             <p className="mt-2 text-sm font-semibold text-emerald-200">Nada foi aplicado ao Spotify.</p>
 
-            {simulation.error && <p className="mt-3 rounded-2xl border border-red-400/25 bg-red-950/35 p-4 text-sm text-red-200">{simulation.error}</p>}
+            {inconclusiveSimulation ? (
+              <div className="mt-4 space-y-4 rounded-2xl border border-orange-300/25 bg-orange-400/10 p-4 sm:p-5">
+                <div>
+                  <p className="font-black text-orange-100">{inconclusiveSimulation.reasonLabel}</p>
+                  <p className="mt-1 text-sm leading-6 text-orange-50/80">
+                    {inconclusiveSimulation.message}
+                  </p>
+                </div>
 
-            {simulation.status === "SUCCESS" && simulationQualityPassed === false && (
-              <div className="mt-4 rounded-2xl border border-orange-300/25 bg-orange-400/10 p-4">
-                <p className="font-black text-orange-100">Primeira geração real bloqueada</p>
-                <p className="mt-1 text-sm leading-6 text-orange-100/75">
-                  O plano conseguiu ser montado, mas ficou materialmente diferente das proporções configuradas. Ajuste fontes ou limites e simule novamente.
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-orange-200/15 bg-black/15 p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.1em] text-orange-200/70">Fontes configuradas</p>
+                    <p className="mt-1 text-xl font-black text-white">{inconclusiveSimulation.configuredSourceCount}</p>
+                  </div>
+                  <div className="rounded-xl border border-emerald-300/15 bg-black/15 p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.1em] text-emerald-200/70">Lidas com sucesso</p>
+                    <p className="mt-1 text-xl font-black text-white">{inconclusiveSimulation.readSourceCount}</p>
+                  </div>
+                  <div className="rounded-xl border border-orange-200/15 bg-black/15 p-3">
+                    <p className="text-xs font-black uppercase tracking-[0.1em] text-orange-200/70">Indisponíveis</p>
+                    <p className="mt-1 text-xl font-black text-white">{inconclusiveSimulation.unavailableSourceCount}</p>
+                  </div>
+                </div>
+
+                {inconclusiveSimulation.unavailableSources.length > 0 && (
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.1em] text-orange-200/70">Fontes que não puderam ser confirmadas</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {inconclusiveSimulation.unavailableSources.map((source) => (
+                        <span key={source} className="rounded-full border border-orange-200/20 bg-orange-200/10 px-3 py-1.5 text-xs font-bold text-orange-50">
+                          {source}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-xl border border-violet-200/15 bg-black/15 p-3">
+                  <p className="text-sm font-black text-violet-50">A configuração não foi reprovada.</p>
+                  <p className="mt-1 text-sm leading-6 text-violet-100/70">
+                    O planner não avaliou proporções, disponibilidade ou esgotamento usando um pool parcial. A primeira geração real continua bloqueada até uma simulação conclusiva.
+                  </p>
+                </div>
+
+                <p className="text-sm font-semibold leading-6 text-orange-100/80">
+                  {inconclusiveSimulation.retryHint}
                 </p>
+
+                {inconclusiveSimulation.canRetryFromCard && (
+                  <ReviewSimulationButton
+                    label="Tentar simulação novamente"
+                    runningLabel="Tentando novamente…"
+                  />
+                )}
               </div>
-            )}
+            ) : (
+              <>
+                {simulation.error && <p className="mt-3 rounded-2xl border border-red-400/25 bg-red-950/35 p-4 text-sm text-red-200">{simulation.error}</p>}
 
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {simulatedTargets.map((target) => (
-                <article key={target.name} className={`rounded-2xl border p-4 ${target.mixQualityPassed === false ? "border-orange-300/25 bg-orange-950/20" : "border-violet-300/15 bg-black/15"}`}>
-                  <h3 className="font-black">{target.name}</h3>
-                  {target.error ? (
-                    <p className="mt-2 text-sm text-red-200">{target.error}</p>
-                  ) : (
-                    <>
-                      <p className="mt-2 text-sm leading-6 text-violet-100/75">
-                        {target.planned ?? 0} itens · {target.totalMinutes ?? 0} min
-                        {target.musicCount !== null ? ` · ${target.musicCount} músicas` : ""}
-                        {target.podcastCount !== null ? ` · ${target.podcastCount} podcasts` : ""}
-                      </p>
-                      {target.calendarDurationMinutes !== null && (
-                        <p className="mt-2 text-xs font-semibold leading-5 text-violet-200/70">
-                          {target.calendarEventCount ?? 0} eventos considerados
-                          {target.calendarEventFilterMode === "MARKER" && target.calendarEventMarker
-                            ? ` com ${target.calendarEventMarker}`
-                            : ""}
-                          {target.calendarTimedEventCount !== null
-                            ? ` de ${target.calendarTimedEventCount} eventos com horário`
-                            : ""}
-                          {` · ${target.calendarDurationMinutes} min calculados pelo calendário`}
-                        </p>
-                      )}
-                      {target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (
-                        <div className="mt-3 rounded-xl border border-violet-300/15 bg-black/15 p-3 text-sm">
-                          <p className="text-violet-100/80">
-                            Meta: <strong>{target.requestedPodcastPercent}% podcast</strong> · Planejado: <strong>{target.actualPodcastPercent}% podcast</strong>
+                {simulation.status === "SUCCESS" && simulationQualityPassed === false && (
+                  <div className="mt-4 rounded-2xl border border-orange-300/25 bg-orange-400/10 p-4">
+                    <p className="font-black text-orange-100">Primeira geração real bloqueada</p>
+                    <p className="mt-1 text-sm leading-6 text-orange-100/75">
+                      O plano conseguiu ser montado, mas ficou materialmente diferente das proporções configuradas. Ajuste fontes ou limites e simule novamente.
+                    </p>
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {simulatedTargets.map((target) => (
+                    <article key={target.name} className={`rounded-2xl border p-4 ${target.mixQualityPassed === false ? "border-orange-300/25 bg-orange-950/20" : "border-violet-300/15 bg-black/15"}`}>
+                      <h3 className="font-black">{target.name}</h3>
+                      {target.error ? (
+                        <p className="mt-2 text-sm text-red-200">{target.error}</p>
+                      ) : (
+                        <>
+                          <p className="mt-2 text-sm leading-6 text-violet-100/75">
+                            {target.planned ?? 0} itens · {target.totalMinutes ?? 0} min
+                            {target.musicCount !== null ? ` · ${target.musicCount} músicas` : ""}
+                            {target.podcastCount !== null ? ` · ${target.podcastCount} podcasts` : ""}
                           </p>
-                          {target.mixQualityPassed === true ? (
-                            <p className="mt-1 text-xs font-bold text-emerald-300">Dentro da tolerância de 10 pontos percentuais ✓</p>
-                          ) : target.mixQualityPassed === false ? (
-                            <p className="mt-1 text-xs font-bold text-orange-300">
-                              Meta não atendida{target.mixDeviationPoints !== null ? ` · desvio de ${target.mixDeviationPoints} p.p.` : ""}
+                          {target.calendarDurationMinutes !== null && (
+                            <p className="mt-2 text-xs font-semibold leading-5 text-violet-200/70">
+                              {target.calendarEventCount ?? 0} eventos considerados
+                              {target.calendarEventFilterMode === "MARKER" && target.calendarEventMarker
+                                ? ` com ${target.calendarEventMarker}`
+                                : ""}
+                              {target.calendarTimedEventCount !== null
+                                ? ` de ${target.calendarTimedEventCount} eventos com horário`
+                                : ""}
+                              {` · ${target.calendarDurationMinutes} min calculados pelo calendário`}
                             </p>
-                          ) : null}
-                        </div>
+                          )}
+                          {target.requestedPodcastPercent !== null && target.actualPodcastPercent !== null && (
+                            <div className="mt-3 rounded-xl border border-violet-300/15 bg-black/15 p-3 text-sm">
+                              <p className="text-violet-100/80">
+                                Meta: <strong>{target.requestedPodcastPercent}% podcast</strong> · Planejado: <strong>{target.actualPodcastPercent}% podcast</strong>
+                              </p>
+                              {target.mixQualityPassed === true ? (
+                                <p className="mt-1 text-xs font-bold text-emerald-300">Dentro da tolerância de 10 pontos percentuais ✓</p>
+                              ) : target.mixQualityPassed === false ? (
+                                <p className="mt-1 text-xs font-bold text-orange-300">
+                                  Meta não atendida{target.mixDeviationPoints !== null ? ` · desvio de ${target.mixDeviationPoints} p.p.` : ""}
+                                </p>
+                              ) : null}
+                            </div>
+                          )}
+                        </>
                       )}
-                    </>
-                  )}
-                  {target.qualityReason && target.mixQualityPassed === false && (
-                    <p className="mt-2 text-xs font-semibold leading-5 text-orange-200">{target.qualityReason}.</p>
-                  )}
-                  {minutesFromMs(target.podcastShortfallMs) > 0 && (
-                    <p className="mt-1 text-xs text-orange-200/80">Faltaram aproximadamente {minutesFromMs(target.podcastShortfallMs)} min de podcast para a meta.</p>
-                  )}
-                  {target.poolExhausted && <p className="mt-2 text-xs font-semibold text-orange-300">As fontes de conteúdo terminaram antes de preencher todo o tempo planejado.</p>}
-                  {(target.unfilledSlots ?? 0) > 0 && <p className="mt-1 text-xs text-orange-200/80">{target.unfilledSlots} posições da sequência ficaram sem conteúdo.</p>}
-                </article>
-              ))}
-            </div>
+                      {target.qualityReason && target.mixQualityPassed === false && (
+                        <p className="mt-2 text-xs font-semibold leading-5 text-orange-200">{target.qualityReason}.</p>
+                      )}
+                      {minutesFromMs(target.podcastShortfallMs) > 0 && (
+                        <p className="mt-1 text-xs text-orange-200/80">Faltaram aproximadamente {minutesFromMs(target.podcastShortfallMs)} min de podcast para a meta.</p>
+                      )}
+                      {target.poolExhausted && <p className="mt-2 text-xs font-semibold text-orange-300">As fontes de conteúdo terminaram antes de preencher todo o tempo planejado.</p>}
+                      {(target.unfilledSlots ?? 0) > 0 && <p className="mt-1 text-xs text-orange-200/80">{target.unfilledSlots} posições da sequência ficaram sem conteúdo.</p>}
+                    </article>
+                  ))}
+                </div>
 
-            {skippedTargets.length > 0 && (
-              <p className="mt-4 text-sm text-violet-100/70">Sem alteração nesta simulação: {skippedTargets.join(", ")}.</p>
+                {skippedTargets.length > 0 && (
+                  <p className="mt-4 text-sm text-violet-100/70">Sem alteração nesta simulação: {skippedTargets.join(", ")}.</p>
+                )}
+              </>
             )}
 
             {simulation.logs.some((log) => log.level === "WARN" || log.level === "ERROR") && (
@@ -456,11 +524,11 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
               </details>
             )}
 
-            {simulation.status === "SUCCESS" && gate.realRunAllowed ? (
+            {!inconclusiveSimulation && simulation.status === "SUCCESS" && gate.realRunAllowed ? (
               <Link href="/dashboard" className="mt-5 inline-flex items-center gap-2 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm font-black text-emerald-200 hover:bg-emerald-400/15">
                 Primeira geração liberada · voltar ao painel →
               </Link>
-            ) : simulation.status === "SUCCESS" ? (
+            ) : !inconclusiveSimulation && simulation.status === "SUCCESS" ? (
               <Link href="/dashboard/configuracao/fontes" className="mt-5 inline-flex items-center gap-2 rounded-2xl border border-orange-400/25 bg-orange-400/10 px-4 py-2.5 text-sm font-black text-orange-200 hover:bg-orange-400/15">
                 Ajustar fontes e simular novamente →
               </Link>
