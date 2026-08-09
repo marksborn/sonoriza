@@ -19,9 +19,11 @@ databaseTest(
     const userId = `podcast-lock-${randomUUID()}`;
     await prisma.user.create({ data: { id: userId } });
 
-    let pendingObservation: ReturnType<
-      typeof prismaPodcastListeningStateStore.observe
-    > | null = null;
+    const pendingObservation = {
+      current: undefined as
+        | ReturnType<typeof prismaPodcastListeningStateStore.observe>
+        | undefined,
+    };
     let observationSettled = false;
 
     try {
@@ -33,7 +35,7 @@ databaseTest(
           FOR UPDATE
         `;
 
-        pendingObservation = prismaPodcastListeningStateStore
+        pendingObservation.current = prismaPodcastListeningStateStore
           .observe(userId, [
             {
               spotifyEpisodeId: "episode-concurrent",
@@ -56,8 +58,9 @@ databaseTest(
         );
       });
 
-      assert.ok(pendingObservation);
-      const resolved = await pendingObservation;
+      const pending = pendingObservation.current;
+      assert.ok(pending);
+      const resolved = await pending;
       assert.equal(resolved.get("episode-concurrent")?.status, "COMPLETED");
     } finally {
       await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
