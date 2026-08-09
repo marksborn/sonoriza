@@ -1,7 +1,7 @@
 import { MusicIngestionTrigger } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { syncMusicIngestionRule } from "@/services/spotify/music-ingestion";
+import { syncMusicIngestionRuleSerialized } from "@/services/spotify/music-ingestion-serialized";
 
 export type MusicIngestionJobResult = {
   ruleId: string;
@@ -27,7 +27,7 @@ export async function runMusicIngestionJob(): Promise<MusicIngestionJobResult[]>
   const results: MusicIngestionJobResult[] = [];
   for (const rule of rules) {
     try {
-      const result = await syncMusicIngestionRule(rule.userId, rule.id, {
+      const result = await syncMusicIngestionRuleSerialized(rule.userId, rule.id, {
         trigger: MusicIngestionTrigger.SCHEDULED,
       });
       results.push({
