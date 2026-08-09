@@ -4,9 +4,11 @@ import test from "node:test";
 
 import {
   buildMusicSourceCleanupPlan,
+  classifyPostDeleteDiagnosis,
   hashCleanupPlan,
   type PlaylistCleanupOccurrence,
 } from "./source-cleanup";
+import { MusicSourceCleanupStatus } from "@prisma/client";
 
 function occurrence(
   uri: string | null,
@@ -104,6 +106,49 @@ test("plan hash is deterministic but changes when duplicate occurrence count cha
 
   assert.equal(left, reordered);
   assert.notEqual(left, differentOccurrences);
+});
+
+test("post-delete diagnosis recovers SUCCESS only when every DELETE was accepted and every planned URI is gone", () => {
+  const planned = ["spotify:track:a", "spotify:track:b"];
+
+  assert.equal(
+    classifyPostDeleteDiagnosis(planned, planned, planned, []),
+    MusicSourceCleanupStatus.SUCCESS,
+  );
+  assert.equal(
+    classifyPostDeleteDiagnosis(
+      planned,
+      ["spotify:track:a"],
+      planned,
+      [],
+    ),
+    MusicSourceCleanupStatus.PARTIAL,
+  );
+  assert.equal(
+    classifyPostDeleteDiagnosis(
+      planned,
+      planned,
+      ["spotify:track:a"],
+      ["spotify:track:b"],
+    ),
+    MusicSourceCleanupStatus.PARTIAL,
+  );
+  assert.equal(
+    classifyPostDeleteDiagnosis(planned, [], [], planned),
+    MusicSourceCleanupStatus.FAILED,
+  );
+});
+
+test("recovered SUCCESS persists first cleanup and returns success instead of rethrowing verification drift", () => {
+  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
+  const catchStart = source.indexOf("} catch (error) {");
+  const catchBody = source.slice(catchStart);
+
+  assert.match(catchBody, /classifyPostDeleteDiagnosis/);
+  assert.match(catchBody, /musicCleanupFirstCompletedAt: finishedAt/);
+  assert.match(catchBody, /status === MusicSourceCleanupStatus\.SUCCESS/);
+  assert.match(catchBody, /return \{/);
+  assert.match(source, /acceptedDeleteUris\.push\(\.\.\.uris\)/);
 });
 
 test("Spotify mutation contract uses the 2026 items endpoint, snapshot guard and 100 item batches", () => {
