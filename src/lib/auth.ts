@@ -17,6 +17,7 @@ const GOOGLE_SCOPES = [
 
 const SPOTIFY_SCOPES = [
   "user-read-email",
+  "user-read-private",
   "user-library-read",
   "user-read-playback-position",
   "user-read-recently-played",
