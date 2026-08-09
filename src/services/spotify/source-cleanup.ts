@@ -143,6 +143,32 @@ export function hashCleanupPlan(
     .digest("hex");
 }
 
+export function classifyPostDeleteDiagnosis(
+  plannedUris: string[],
+  acceptedDeleteUris: string[],
+  removedUris: string[],
+  failedUris: string[],
+): MusicSourceCleanupStatus {
+  const accepted = new Set(acceptedDeleteUris);
+  const removed = new Set(removedUris);
+  const allDeletesAccepted =
+    plannedUris.length > 0 &&
+    acceptedDeleteUris.length === plannedUris.length &&
+    plannedUris.every((uri) => accepted.has(uri));
+  const allRemovalsConfirmed =
+    failedUris.length === 0 &&
+    removedUris.length === plannedUris.length &&
+    plannedUris.every((uri) => removed.has(uri));
+
+  if (allDeletesAccepted && allRemovalsConfirmed) {
+    return MusicSourceCleanupStatus.SUCCESS;
+  }
+  if (removedUris.length > 0) {
+    return MusicSourceCleanupStatus.PARTIAL;
+  }
+  return MusicSourceCleanupStatus.FAILED;
+}
+
 /**
  * Creates and persists a dry-run only. Spotify is read, never mutated.
  * The preview includes the exact playlist snapshot and plan hash that a later
@@ -292,6 +318,7 @@ export async function executeMusicSourceCleanupPreview(
   }
 
   let snapshotAfter: string | null = current.snapshotId;
+  const acceptedDeleteUris: string[] = [];
 
   try {
     if (plannedUris.length > 0) {
@@ -308,6 +335,7 @@ export async function executeMusicSourceCleanupPreview(
             }),
           },
         );
+        acceptedDeleteUris.push(...uris);
         snapshotAfter = result.snapshot_id ?? snapshotAfter;
       }
     }
@@ -373,11 +401,14 @@ export async function executeMusicSourceCleanupPreview(
       preview.source.spotifyId,
       plannedUris,
     );
-    const status =
-      diagnosis.removedUris.length > 0
-        ? MusicSourceCleanupStatus.PARTIAL
-        : MusicSourceCleanupStatus.FAILED;
+    const status = classifyPostDeleteDiagnosis(
+      plannedUris,
+      acceptedDeleteUris,
+      diagnosis.removedUris,
+      diagnosis.failedUris,
+    );
     const message = error instanceof Error ? error.message : String(error);
+    const finishedAt = new Date();
 
     await prisma.$transaction([
       prisma.musicSourceCleanupRun.update({
@@ -387,19 +418,36 @@ export async function executeMusicSourceCleanupPreview(
           snapshotAfter: diagnosis.snapshotId,
           removedUris: diagnosis.removedUris as Prisma.InputJsonValue,
           failedUris: diagnosis.failedUris as Prisma.InputJsonValue,
-          finishedAt: new Date(),
-          error: message,
+          finishedAt,
+          error: status === MusicSourceCleanupStatus.SUCCESS ? null : message,
         },
       }),
       prisma.sourcePlaylist.update({
         where: { id: preview.source.id },
         data: {
-          musicCleanupLastRunAt: new Date(),
+          musicCleanupLastRunAt: finishedAt,
+          ...(status === MusicSourceCleanupStatus.SUCCESS &&
+          !preview.source.musicCleanupFirstCompletedAt
+            ? { musicCleanupFirstCompletedAt: finishedAt }
+            : {}),
           spotifySnapshotId: null,
           cacheUpdatedAt: null,
         },
       }),
     ]);
+
+    if (status === MusicSourceCleanupStatus.SUCCESS) {
+      return {
+        runId: preview.id,
+        status,
+        examinedCount: preview.examinedCount,
+        plannedTrackCount: plannedUris.length,
+        plannedOccurrenceCount: preview.removalOccurrenceCount,
+        removedTrackCount: diagnosis.removedUris.length,
+        failedTrackCount: diagnosis.failedUris.length,
+        snapshotAfter: diagnosis.snapshotId,
+      };
+    }
 
     throw error;
   }
