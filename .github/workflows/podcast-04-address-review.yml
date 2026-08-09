@@ -1,0 +1,353 @@
+name: PODCAST-04 address review
+
+on:
+  push:
+    branches:
+      - agent/podcast-04-listening-state
+    paths:
+      - .github/workflows/podcast-04-address-review.yml
+
+permissions:
+  contents: write
+
+jobs:
+  address-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/podcast-04-listening-state
+          fetch-depth: 0
+
+      - name: Apply deterministic review fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          state_path = Path("src/services/spotify/podcast-listening-state.ts")
+          state = state_path.read_text()
+          old = '''export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
+  async observe(userId, observations) {
+    if (observations.length === 0) return new Map();
+
+    const normalized = dedupeObservations(observations);
+    const ids = normalized.map((entry) => entry.spotifyEpisodeId);
+    const existing = await prisma.episodeListeningState.findMany({
+      where: {
+        userId,
+        spotifyEpisodeId: { in: ids },
+      },
+    });
+    const existingById = new Map(
+      existing.map((entry) => [entry.spotifyEpisodeId, entry]),
+    );
+
+    const merged = normalized.map((observation) =>
+      mergePodcastListeningState(
+        existingById.get(observation.spotifyEpisodeId) ?? null,
+        observation,
+      ),
+    );
+
+    await prisma.$transaction(
+      merged.map((state) =>
+        prisma.episodeListeningState.upsert({
+          where: {
+            userId_spotifyEpisodeId: {
+              userId,
+              spotifyEpisodeId: state.spotifyEpisodeId,
+            },
+          },
+          create: {
+            userId,
+            spotifyEpisodeId: state.spotifyEpisodeId,
+            spotifyUri: state.spotifyUri,
+            durationMs: state.durationMs,
+            resumePositionMs: state.resumePositionMs,
+            fullyPlayed: state.fullyPlayed,
+            status: state.status,
+            lastObservedAt: state.lastObservedAt,
+          },
+          update: {
+            spotifyUri: state.spotifyUri,
+            durationMs: state.durationMs,
+            resumePositionMs: state.resumePositionMs,
+            fullyPlayed: state.fullyPlayed,
+            status: state.status,
+            lastObservedAt: state.lastObservedAt,
+          },
+        }),
+      ),
+    );
+
+    return new Map(merged.map((state) => [state.spotifyEpisodeId, state]));
+  },
+};'''
+          new = '''export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
+  async observe(userId, observations) {
+    if (observations.length === 0) return new Map();
+
+    const normalized = dedupeObservations(observations);
+    const ids = normalized.map((entry) => entry.spotifyEpisodeId);
+    const merged = await prisma.$transaction(async (tx) => {
+      // Serialize podcast-state observations per user before reading the current
+      // canonical rows. Locking User also protects the first observation of an
+      // episode, where there is no EpisodeListeningState row yet to lock.
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "User"
+        WHERE "id" = ${userId}
+        FOR UPDATE
+      `;
+
+      const existing = await tx.episodeListeningState.findMany({
+        where: {
+          userId,
+          spotifyEpisodeId: { in: ids },
+        },
+      });
+      const existingById = new Map(
+        existing.map((entry) => [entry.spotifyEpisodeId, entry]),
+      );
+      const resolved = normalized.map((observation) =>
+        mergePodcastListeningState(
+          existingById.get(observation.spotifyEpisodeId) ?? null,
+          observation,
+        ),
+      );
+
+      for (const state of resolved) {
+        await tx.episodeListeningState.upsert({
+          where: {
+            userId_spotifyEpisodeId: {
+              userId,
+              spotifyEpisodeId: state.spotifyEpisodeId,
+            },
+          },
+          create: {
+            userId,
+            spotifyEpisodeId: state.spotifyEpisodeId,
+            spotifyUri: state.spotifyUri,
+            durationMs: state.durationMs,
+            resumePositionMs: state.resumePositionMs,
+            fullyPlayed: state.fullyPlayed,
+            status: state.status,
+            lastObservedAt: state.lastObservedAt,
+          },
+          update: {
+            spotifyUri: state.spotifyUri,
+            durationMs: state.durationMs,
+            resumePositionMs: state.resumePositionMs,
+            fullyPlayed: state.fullyPlayed,
+            status: state.status,
+            lastObservedAt: state.lastObservedAt,
+          },
+        });
+      }
+
+      return resolved;
+    });
+
+    return new Map(merged.map((state) => [state.spotifyEpisodeId, state]));
+  },
+};'''
+          if state.count(old) != 1:
+              raise SystemExit("podcast state replacement anchor not found exactly once")
+          state_path.write_text(state.replace(old, new))
+
+          reader_path = Path("src/services/spotify/incremental-reader.ts")
+          reader = reader_path.read_text()
+          old = '''        const originalDurationMs = Math.max(0, episode.duration_ms ?? state.durationMs);
+        const resumePositionMs = clamp(
+          state.resumePositionMs,
+          0,
+          originalDurationMs,
+        );
+        const durationMs =
+          state.status === "COMPLETED"
+            ? originalDurationMs
+            : Math.max(0, originalDurationMs - resumePositionMs);'''
+          new = '''        const originalDurationMs = Math.max(0, episode.duration_ms ?? state.durationMs);
+        const currentReplayResumePositionMs =
+          state.status === "COMPLETED" &&
+          includePlayed &&
+          resumePoint?.fully_played === false &&
+          (resumePoint.resume_position_ms ?? 0) > 0
+            ? clamp(resumePoint.resume_position_ms, 0, originalDurationMs)
+            : null;
+        const resumePositionMs =
+          currentReplayResumePositionMs ??
+          clamp(state.resumePositionMs, 0, originalDurationMs);
+        const durationMs =
+          state.status === "COMPLETED"
+            ? currentReplayResumePositionMs === null
+              ? originalDurationMs
+              : Math.max(0, originalDurationMs - currentReplayResumePositionMs)
+            : Math.max(0, originalDurationMs - resumePositionMs);'''
+          if reader.count(old) != 1:
+              raise SystemExit("replay duration replacement anchor not found exactly once")
+          reader_path.write_text(reader.replace(old, new))
+
+          Path("src/services/spotify/podcast-replay-policy.test.ts").write_text('''import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  SpotifyIncrementalReader,
+  type IncrementalSpotifySourceConfig,
+} from "./incremental-reader";
+import { createVolatilePodcastListeningStateStore } from "./podcast-listening-state";
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function source(): IncrementalSpotifySourceConfig {
+  return {
+    id: "source-replay",
+    userId: "user-replay",
+    kind: "PODCAST",
+    spotifyType: "SHOW",
+    spotifyId: "show-replay",
+    name: "Replay show",
+    includePlayed: true,
+    episodeOrder: "SOURCE_DEFAULT",
+    spotifySnapshotId: null,
+    cachedCandidates: null,
+  };
+}
+
+test("completed episode replay uses the current replay remaining duration without losing sticky completion", async () => {
+  const originalFetch = globalThis.fetch;
+  let replaying = false;
+  globalThis.fetch = (async () =>
+    jsonResponse({
+      items: [
+        {
+          id: "episode-replay",
+          uri: "spotify:episode:episode-replay",
+          name: "Replay episode",
+          duration_ms: 100,
+          type: "episode",
+          resume_point: {
+            fully_played: !replaying,
+            resume_position_ms: replaying ? 40 : 100,
+          },
+        },
+      ],
+      next: null,
+    })) as typeof fetch;
+
+  try {
+    const stateStore = createVolatilePodcastListeningStateStore();
+    const Constructor = SpotifyIncrementalReader as unknown as new (
+      accessToken: string,
+      authoritativePodcastProgramIds?: ReadonlySet<string>,
+      store?: ReturnType<typeof createVolatilePodcastListeningStateStore>,
+    ) => SpotifyIncrementalReader;
+
+    const firstReader = new Constructor("test-token", new Set(), stateStore);
+    const first = await (await firstReader.createSource(source())).readNext();
+    assert.equal(first.podcastCompletedCount, 1);
+    assert.equal(first.candidates[0]?.durationMs, 100);
+
+    replaying = true;
+    const replayReader = new Constructor("test-token", new Set(), stateStore);
+    const replay = await (await replayReader.createSource(source())).readNext();
+
+    assert.equal(replay.podcastCompletedCount, 1);
+    assert.equal(replay.candidates[0]?.resumePositionMs, 40);
+    assert.equal(replay.candidates[0]?.durationMs, 60);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+''')
+
+          Path("src/services/spotify/podcast-listening-state.integration.test.ts").write_text('''import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import test from "node:test";
+
+import { prisma } from "@/lib/prisma";
+
+import { prismaPodcastListeningStateStore } from "./podcast-listening-state";
+
+const databaseTest =
+  process.env.PODCAST_LISTENING_STATE_DB_TEST === "1" ? test : test.skip;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+databaseTest(
+  "Prisma podcast store serializes observations on the canonical user row",
+  async () => {
+    const userId = `podcast-lock-${randomUUID()}`;
+    await prisma.user.create({ data: { id: userId } });
+
+    let pendingObservation: ReturnType<
+      typeof prismaPodcastListeningStateStore.observe
+    > | null = null;
+    let observationSettled = false;
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id"
+          FROM "User"
+          WHERE "id" = ${userId}
+          FOR UPDATE
+        `;
+
+        pendingObservation = prismaPodcastListeningStateStore
+          .observe(userId, [
+            {
+              spotifyEpisodeId: "episode-concurrent",
+              spotifyUri: "spotify:episode:episode-concurrent",
+              durationMs: 100_000,
+              resumePositionMs: 100_000,
+              fullyPlayed: true,
+              observedAt: new Date("2026-08-09T18:00:00.000Z"),
+            },
+          ])
+          .finally(() => {
+            observationSettled = true;
+          });
+
+        await sleep(250);
+        assert.equal(
+          observationSettled,
+          false,
+          "observation must wait for the per-user canonical-state lock",
+        );
+      });
+
+      assert.ok(pendingObservation);
+      const resolved = await pendingObservation;
+      assert.equal(resolved.get("episode-concurrent")?.status, "COMPLETED");
+    } finally {
+      await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
+    }
+  },
+);
+''')
+          PY
+
+      - name: Verify patch shape
+        run: |
+          git diff --check
+          git diff -- src/services/spotify/podcast-listening-state.ts src/services/spotify/incremental-reader.ts src/services/spotify/podcast-replay-policy.test.ts src/services/spotify/podcast-listening-state.integration.test.ts
+
+      - name: Commit review fixes
+        run: |
+          git config user.name "ChatGPT Codex Connector"
+          git config user.email "noreply@openai.com"
+          git add src/services/spotify/podcast-listening-state.ts \
+                  src/services/spotify/incremental-reader.ts \
+                  src/services/spotify/podcast-replay-policy.test.ts \
+                  src/services/spotify/podcast-listening-state.integration.test.ts
+          git commit -m "fix: address PODCAST-04 review findings"
+          git push origin HEAD:agent/podcast-04-listening-state
