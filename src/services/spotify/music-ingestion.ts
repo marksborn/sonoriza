@@ -26,7 +26,6 @@ import {
   type IngestionCandidate,
   type IngestionRuleState,
   type MusicIngestionTrack,
-  type PlaylistRuleState,
   type SavedRuleState,
   type SavedTrackEvent,
 } from "./music-ingestion-core";
@@ -36,7 +35,7 @@ import {
   type SpotifyMusicTrackLike,
 } from "./music-availability";
 import { refreshMusicRepeatContext } from "./recently-played";
-import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";
+import { decodeMusicSourceCache } from "./source-cache";
 import {
   isSpotifyApiError,
   spotifyApiErrorFromResponse,
@@ -97,18 +96,12 @@ type PlaylistReadResult = {
   unavailableCount: number;
 };
 
-type WriteResult = {
-  acceptedUris: string[];
-};
-
 export class MusicIngestionPartialWriteError extends Error {
   readonly acceptedUris: string[];
   readonly causeError: unknown;
 
   constructor(acceptedUris: string[], causeError: unknown) {
-    super(
-      `Spotify accepted ${acceptedUris.length} item(s) before a later ingestion batch failed.`,
-    );
+    super(`Spotify accepted ${acceptedUris.length} item(s) before a later ingestion batch failed.`);
     this.name = "MusicIngestionPartialWriteError";
     this.acceptedUris = acceptedUris;
     this.causeError = causeError;
@@ -308,16 +301,12 @@ class MusicIngestionSpotifyApi {
 
   async readAlbumTracks(albumId: string): Promise<{
     albumId: string;
-    albumType: string | null;
-    albumName: string;
     tracks: MusicIngestionTrack[];
     unavailableCount: number;
   }> {
-    const album = await this.request<{
-      id: string;
-      name: string;
-      album_type?: string;
-    }>(`/albums/${encodeURIComponent(albumId)}?market=from_token`);
+    const album = await this.request<{ id: string; album_type?: string }>(
+      `/albums/${encodeURIComponent(albumId)}?market=from_token`,
+    );
     const tracks: MusicIngestionTrack[] = [];
     let unavailableCount = 0;
     let next: string | null = `/albums/${encodeURIComponent(albumId)}/tracks?market=from_token&limit=50`;
@@ -337,8 +326,6 @@ class MusicIngestionSpotifyApi {
 
     return {
       albumId: album.id,
-      albumType: album.album_type ?? null,
-      albumName: album.name,
       tracks: sortAlbumTracks(tracks),
       unavailableCount,
     };
@@ -347,11 +334,7 @@ class MusicIngestionSpotifyApi {
   async resolveManualReference(
     value: string,
     preferredType: "track" | "album",
-  ): Promise<{
-    tracks: MusicIngestionTrack[];
-    unavailableCount: number;
-    originAlbumId?: string;
-  }> {
+  ): Promise<{ tracks: MusicIngestionTrack[]; unavailableCount: number; originAlbumId?: string }> {
     const parsed = parseSpotifyReference(value);
     const type = parsed?.type ?? preferredType;
     let id = parsed?.id ?? null;
@@ -360,14 +343,14 @@ class MusicIngestionSpotifyApi {
       const q = encodeURIComponent(value.trim());
       if (!q) throw new Error("Informe uma música, álbum, URL ou URI Spotify.");
       if (type === "track") {
-        const search = await this.request<{
-          tracks?: { items?: SpotifyTrackResponse[] };
-        }>(`/search?q=${q}&type=track&market=from_token&limit=1`);
+        const search = await this.request<{ tracks?: { items?: SpotifyTrackResponse[] } }>(
+          `/search?q=${q}&type=track&market=from_token&limit=1`,
+        );
         id = search.tracks?.items?.[0]?.id ?? null;
       } else {
-        const search = await this.request<{
-          albums?: { items?: Array<{ id?: string }> };
-        }>(`/search?q=${q}&type=album&market=from_token&limit=1`);
+        const search = await this.request<{ albums?: { items?: Array<{ id?: string }> } }>(
+          `/search?q=${q}&type=album&market=from_token&limit=1`,
+        );
         id = search.albums?.items?.[0]?.id ?? null;
       }
     }
@@ -392,16 +375,13 @@ class MusicIngestionSpotifyApi {
     return { tracks: [converted.track], unavailableCount: 0 };
   }
 
-  async addPlaylistItems(playlistId: string, uris: string[]): Promise<WriteResult> {
+  async addPlaylistItems(playlistId: string, uris: string[]): Promise<string[]> {
     const acceptedUris: string[] = [];
     for (const batch of chunk(uris, 100)) {
       try {
         await this.request(
           `/playlists/${encodeURIComponent(playlistId)}/items`,
-          {
-            method: "POST",
-            body: JSON.stringify({ uris: batch }),
-          },
+          { method: "POST", body: JSON.stringify({ uris: batch }) },
           "playlist-write",
         );
         acceptedUris.push(...batch);
@@ -409,7 +389,7 @@ class MusicIngestionSpotifyApi {
         throw new MusicIngestionPartialWriteError(acceptedUris, error);
       }
     }
-    return { acceptedUris };
+    return acceptedUris;
   }
 }
 
@@ -439,7 +419,8 @@ export async function createMusicIngestionRule(
   const api = await MusicIngestionSpotifyApi.forUser(userId);
   await api.assertPlaylistWritable(target.spotifyId);
 
-  let capabilityStatus = MusicIngestionCapabilityStatus.SUPPORTED;
+  let capabilityStatus: MusicIngestionCapabilityStatus =
+    MusicIngestionCapabilityStatus.SUPPORTED;
   let capabilityMessage: string | null = null;
   let sourceName: string | null = null;
   if (input.type === MusicIngestionRuleType.PLAYLIST_COPY && sourceSpotifyId) {
@@ -464,7 +445,6 @@ export async function createMusicIngestionRule(
   });
 
   if (capabilityStatus === MusicIngestionCapabilityStatus.BLOCKED) return rule;
-
   if (input.initialMode === MusicIngestionInitialMode.FROM_NOW) {
     return initializeRuleFromNow(userId, rule.id, api);
   }
@@ -552,18 +532,21 @@ export async function syncMusicIngestionRule(
 
   try {
     const collected = await collectRuleEvents(rule, api, allowInitialImport);
-    const incoming = collected.incoming;
     let targetTrackIds = new Set<string>();
     let blockedTrackIds = new Set<string>();
 
-    if (incoming.length > 0) {
+    if (collected.incoming.length > 0) {
       targetTrackIds = await loadTargetTrackIds(rule.target, api);
       const repeat = await refreshMusicRepeatContext(userId, new Date());
       blockedTrackIds = new Set(repeat.context.blockedTrackIds);
     }
 
-    const plan = planMusicIngestion(incoming, targetTrackIds, blockedTrackIds);
-    const details = buildRunDetails(collected.sourceEventCount, plan, collected.unavailableCount);
+    const plan = planMusicIngestion(collected.incoming, targetTrackIds, blockedTrackIds);
+    const details = buildRunDetails(
+      collected.sourceEventCount,
+      plan,
+      collected.unavailableCount,
+    );
 
     if (preview) {
       await prisma.musicIngestionRun.create({
@@ -585,25 +568,24 @@ export async function syncMusicIngestionRule(
           finishedAt: new Date(),
         },
       });
-      return {
-        ruleId: rule.id,
-        status: MusicIngestionRunStatus.PREVIEW,
-        sourceEventCount: collected.sourceEventCount,
-        addedCount: plan.add.length,
-        duplicateCount: plan.duplicate.length,
-        cooldownCount: plan.cooldown.length,
-        unavailableCount: collected.unavailableCount,
-      };
+      return resultFor(
+        rule.id,
+        MusicIngestionRunStatus.PREVIEW,
+        collected.sourceEventCount,
+        plan.add.length,
+        plan.duplicate.length,
+        plan.cooldown.length,
+        collected.unavailableCount,
+      );
     }
 
     await api.assertPlaylistWritable(rule.target.spotifyId);
     let acceptedUris: string[] = [];
     try {
-      const write = await api.addPlaylistItems(
+      acceptedUris = await api.addPlaylistItems(
         rule.target.spotifyId,
         plan.add.map((item) => item.track.uri),
       );
-      acceptedUris = write.acceptedUris;
     } catch (error) {
       if (error instanceof MusicIngestionPartialWriteError) {
         acceptedUris = error.acceptedUris;
@@ -628,7 +610,7 @@ export async function syncMusicIngestionRule(
             error: errorText(error.causeError),
           },
         });
-        throw error.causeError;
+        throw error;
       }
       throw error;
     }
@@ -636,7 +618,9 @@ export async function syncMusicIngestionRule(
     if (acceptedUris.length > 0) await invalidateTargetCache(rule.target.id);
     const finishedAt = new Date();
     const status =
-      acceptedUris.length > 0 ? MusicIngestionRunStatus.SUCCESS : MusicIngestionRunStatus.NOOP;
+      acceptedUris.length > 0
+        ? MusicIngestionRunStatus.SUCCESS
+        : MusicIngestionRunStatus.NOOP;
 
     await prisma.$transaction([
       prisma.musicIngestionRule.update({
@@ -671,17 +655,21 @@ export async function syncMusicIngestionRule(
       }),
     ]);
 
-    return {
-      ruleId: rule.id,
+    return resultFor(
+      rule.id,
       status,
-      sourceEventCount: collected.sourceEventCount,
-      addedCount: acceptedUris.length,
-      duplicateCount: plan.duplicate.length,
-      cooldownCount: plan.cooldown.length,
-      unavailableCount: collected.unavailableCount,
-    };
+      collected.sourceEventCount,
+      acceptedUris.length,
+      plan.duplicate.length,
+      plan.cooldown.length,
+      collected.unavailableCount,
+    );
   } catch (error) {
-    if (rule.type === MusicIngestionRuleType.PLAYLIST_COPY && isSpotifyApiError(error) && error.status === 403) {
+    if (
+      rule.type === MusicIngestionRuleType.PLAYLIST_COPY &&
+      isSpotifyApiError(error) &&
+      error.status === 403
+    ) {
       await prisma.musicIngestionRule.update({
         where: { id: rule.id },
         data: {
@@ -693,10 +681,7 @@ export async function syncMusicIngestionRule(
       });
     }
 
-    const existingPartial =
-      error instanceof MusicIngestionPartialWriteError ||
-      (error && typeof error === "object" && "acceptedUris" in error);
-    if (!existingPartial) {
+    if (!(error instanceof MusicIngestionPartialWriteError)) {
       await prisma.musicIngestionRun.create({
         data: {
           userId,
@@ -733,8 +718,10 @@ export async function runManualMusicIngestion(
         ...(resolved.originAlbumId ? { albumId: resolved.originAlbumId } : {}),
       },
     }));
-    const existing = incoming.length > 0 ? await loadTargetTrackIds(target, api) : new Set<string>();
-    const repeat = incoming.length > 0 ? await refreshMusicRepeatContext(userId, new Date()) : null;
+    const existing =
+      incoming.length > 0 ? await loadTargetTrackIds(target, api) : new Set<string>();
+    const repeat =
+      incoming.length > 0 ? await refreshMusicRepeatContext(userId, new Date()) : null;
     const plan = planMusicIngestion(
       incoming,
       existing,
@@ -761,26 +748,24 @@ export async function runManualMusicIngestion(
           finishedAt: new Date(),
         },
       });
-      return {
-        ruleId: null,
-        status: MusicIngestionRunStatus.PREVIEW,
-        sourceEventCount: 1,
-        addedCount: plan.add.length,
-        duplicateCount: plan.duplicate.length,
-        cooldownCount: plan.cooldown.length,
-        unavailableCount: resolved.unavailableCount,
-      };
+      return resultFor(
+        null,
+        MusicIngestionRunStatus.PREVIEW,
+        1,
+        plan.add.length,
+        plan.duplicate.length,
+        plan.cooldown.length,
+        resolved.unavailableCount,
+      );
     }
 
     await api.assertPlaylistWritable(target.spotifyId);
     let acceptedUris: string[] = [];
     try {
-      acceptedUris = (
-        await api.addPlaylistItems(
-          target.spotifyId,
-          plan.add.map((candidate) => candidate.track.uri),
-        )
-      ).acceptedUris;
+      acceptedUris = await api.addPlaylistItems(
+        target.spotifyId,
+        plan.add.map((candidate) => candidate.track.uri),
+      );
     } catch (error) {
       if (error instanceof MusicIngestionPartialWriteError) {
         acceptedUris = error.acceptedUris;
@@ -803,13 +788,16 @@ export async function runManualMusicIngestion(
             error: errorText(error.causeError),
           },
         });
-        throw error.causeError;
+        throw error;
       }
       throw error;
     }
 
     if (acceptedUris.length > 0) await invalidateTargetCache(target.id);
-    const status = acceptedUris.length > 0 ? MusicIngestionRunStatus.SUCCESS : MusicIngestionRunStatus.NOOP;
+    const status =
+      acceptedUris.length > 0
+        ? MusicIngestionRunStatus.SUCCESS
+        : MusicIngestionRunStatus.NOOP;
     await prisma.musicIngestionRun.create({
       data: {
         userId,
@@ -827,18 +815,17 @@ export async function runManualMusicIngestion(
         finishedAt: new Date(),
       },
     });
-    return {
-      ruleId: null,
+    return resultFor(
+      null,
       status,
-      sourceEventCount: 1,
-      addedCount: acceptedUris.length,
-      duplicateCount: plan.duplicate.length,
-      cooldownCount: plan.cooldown.length,
-      unavailableCount: resolved.unavailableCount,
-    };
+      1,
+      acceptedUris.length,
+      plan.duplicate.length,
+      plan.cooldown.length,
+      resolved.unavailableCount,
+    );
   } catch (error) {
-    const partial = error instanceof MusicIngestionPartialWriteError;
-    if (!partial) {
+    if (!(error instanceof MusicIngestionPartialWriteError)) {
       await prisma.musicIngestionRun.create({
         data: {
           userId,
@@ -903,9 +890,7 @@ async function collectRuleEvents(
     }
     const read = await api.readPlaylistTracks(rule.sourceSpotifyId);
     const newTracks =
-      previous || allowInitialImport
-        ? playlistNewOccurrences(previous, read.tracks)
-        : [];
+      previous || allowInitialImport ? playlistNewOccurrences(previous, read.tracks) : [];
     return {
       incoming: newTracks.map((track) => ({
         track,
@@ -918,11 +903,9 @@ async function collectRuleEvents(
   }
 
   const expectedKind = rule.type;
-  const previous =
-    rawState?.kind === expectedKind ? rawState : null;
+  const previous = rawState?.kind === expectedKind ? rawState : null;
   const observed = await api.readSavedEvents(previous);
-  const events =
-    previous || allowInitialImport ? savedTrackNewEvents(previous, observed) : [];
+  const events = previous || allowInitialImport ? savedTrackNewEvents(previous, observed) : [];
   const nextState = createSavedRuleState(expectedKind, observed, previous);
   let unavailableCount = 0;
   const incoming: IngestionCandidate[] = [];
@@ -1014,20 +997,13 @@ async function loadTargetTrackIds(
     );
   }
 
-  // Reuse the established source cache path when possible. This is important
-  // for large inboxes such as Escutar: unchanged snapshots avoid a full scan.
   const spotifyClient = await SpotifyClient.forUser(target.userId);
   const candidates = await spotifyClient.getPlaylistTracks(target.spotifyId);
-  const ids = new Set(
+  return new Set(
     candidates.flatMap((candidate) =>
       candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],
     ),
   );
-
-  // getPlaylistTracks persists the cache for configured MUSIC sources. If the
-  // row was disabled and therefore bypassed by that optimization, keep the
-  // fresh data useful to this caller without inventing cache state here.
-  return ids;
 }
 
 async function invalidateTargetCache(sourcePlaylistId: string): Promise<void> {
@@ -1058,8 +1034,7 @@ function toMusicIngestionTrack(
   if (!raw) return { track: null, unavailable: false };
   const result = readPlayableMusicCandidate(raw);
   if (!result.candidate) return { track: null, unavailable: result.unavailable };
-  const spotifyTrackId =
-    result.candidate.spotifyTrackId ?? canonicalSpotifyTrackId(raw);
+  const spotifyTrackId = result.candidate.spotifyTrackId ?? canonicalSpotifyTrackId(raw);
   if (!spotifyTrackId) return { track: null, unavailable: false };
   return {
     track: {
@@ -1099,6 +1074,26 @@ function buildRunDetails(
   };
 }
 
+function resultFor(
+  ruleId: string | null,
+  status: MusicIngestionRunStatus,
+  sourceEventCount: number,
+  addedCount: number,
+  duplicateCount: number,
+  cooldownCount: number,
+  unavailableCount: number,
+): MusicIngestionSyncResult {
+  return {
+    ruleId,
+    status,
+    sourceEventCount,
+    addedCount,
+    duplicateCount,
+    cooldownCount,
+    unavailableCount,
+  };
+}
+
 function asJson(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
 }
@@ -1116,10 +1111,7 @@ interface SpotifyTrackResponse extends SpotifyMusicTrackLike {
   id?: string | null;
   disc_number?: number;
   track_number?: number;
-  album?: {
-    id?: string;
-    album_type?: string;
-  } | null;
+  album?: { id?: string; album_type?: string } | null;
 }
 
 interface SavedTrackItemResponse {
@@ -1133,7 +1125,9 @@ function stripBase(url: string): string {
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
-  for (let index = 0; index < items.length; index += size) out.push(items.slice(index, index + size));
+  for (let index = 0; index < items.length; index += size) {
+    out.push(items.slice(index, index + size));
+  }
   return out;
 }
 
