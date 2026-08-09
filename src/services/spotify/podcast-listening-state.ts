@@ -105,26 +105,35 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
 
     const normalized = dedupeObservations(observations);
     const ids = normalized.map((entry) => entry.spotifyEpisodeId);
-    const existing = await prisma.episodeListeningState.findMany({
-      where: {
-        userId,
-        spotifyEpisodeId: { in: ids },
-      },
-    });
-    const existingById = new Map(
-      existing.map((entry) => [entry.spotifyEpisodeId, entry]),
-    );
+    const merged = await prisma.$transaction(async (tx) => {
+      // Serialize podcast-state observations per user before reading the current
+      // canonical rows. Locking User also protects the first observation of an
+      // episode, where there is no EpisodeListeningState row yet to lock.
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "User"
+        WHERE "id" = ${userId}
+        FOR UPDATE
+      `;
 
-    const merged = normalized.map((observation) =>
-      mergePodcastListeningState(
-        existingById.get(observation.spotifyEpisodeId) ?? null,
-        observation,
-      ),
-    );
+      const existing = await tx.episodeListeningState.findMany({
+        where: {
+          userId,
+          spotifyEpisodeId: { in: ids },
+        },
+      });
+      const existingById = new Map(
+        existing.map((entry) => [entry.spotifyEpisodeId, entry]),
+      );
+      const resolved = normalized.map((observation) =>
+        mergePodcastListeningState(
+          existingById.get(observation.spotifyEpisodeId) ?? null,
+          observation,
+        ),
+      );
 
-    await prisma.$transaction(
-      merged.map((state) =>
-        prisma.episodeListeningState.upsert({
+      for (const state of resolved) {
+        await tx.episodeListeningState.upsert({
           where: {
             userId_spotifyEpisodeId: {
               userId,
@@ -149,9 +158,11 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
             status: state.status,
             lastObservedAt: state.lastObservedAt,
           },
-        }),
-      ),
-    );
+        });
+      }
+
+      return resolved;
+    });
 
     return new Map(merged.map((state) => [state.spotifyEpisodeId, state]));
   },

@@ -599,14 +599,21 @@ function createPodcastCollector(
         }
 
         const originalDurationMs = Math.max(0, episode.duration_ms ?? state.durationMs);
-        const resumePositionMs = clamp(
-          state.resumePositionMs,
-          0,
-          originalDurationMs,
-        );
+        const currentReplayResumePositionMs =
+          state.status === "COMPLETED" &&
+          includePlayed &&
+          resumePoint?.fully_played === false &&
+          (resumePoint.resume_position_ms ?? 0) > 0
+            ? clamp(resumePoint.resume_position_ms, 0, originalDurationMs)
+            : null;
+        const resumePositionMs =
+          currentReplayResumePositionMs ??
+          clamp(state.resumePositionMs, 0, originalDurationMs);
         const durationMs =
           state.status === "COMPLETED"
-            ? originalDurationMs
+            ? currentReplayResumePositionMs === null
+              ? originalDurationMs
+              : Math.max(0, originalDurationMs - currentReplayResumePositionMs)
             : Math.max(0, originalDurationMs - resumePositionMs);
         if (durationMs <= 0) continue;
 
