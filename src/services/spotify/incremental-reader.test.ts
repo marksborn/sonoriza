@@ -8,12 +8,19 @@ import {
   SpotifyIncrementalReader,
   type IncrementalSpotifySourceConfig,
 } from "./incremental-reader";
+import { createVolatilePodcastListeningStateStore } from "./podcast-listening-state";
 
 function createReader(): SpotifyIncrementalReader {
   const Constructor = SpotifyIncrementalReader as unknown as new (
     accessToken: string,
+    authoritativePodcastProgramIds?: ReadonlySet<string>,
+    stateStore?: ReturnType<typeof createVolatilePodcastListeningStateStore>,
   ) => SpotifyIncrementalReader;
-  return new Constructor("test-token");
+  return new Constructor(
+    "test-token",
+    new Set(),
+    createVolatilePodcastListeningStateStore(),
+  );
 }
 
 function source(

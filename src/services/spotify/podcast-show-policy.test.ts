@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SpotifyIncrementalReader, type IncrementalSpotifySourceConfig } from "./incremental-reader";
+import { createVolatilePodcastListeningStateStore } from "./podcast-listening-state";
 import { sortShowCandidates } from "./podcast-show-policy";
 
 function jsonResponse(body: unknown): Response {
@@ -12,8 +13,13 @@ function reader(authoritative: ReadonlySet<string> = new Set()): SpotifyIncremen
   const Constructor = SpotifyIncrementalReader as unknown as new (
     accessToken: string,
     authoritativePodcastProgramIds?: ReadonlySet<string>,
+    stateStore?: ReturnType<typeof createVolatilePodcastListeningStateStore>,
   ) => SpotifyIncrementalReader;
-  return new Constructor("test-token", authoritative);
+  return new Constructor(
+    "test-token",
+    authoritative,
+    createVolatilePodcastListeningStateStore(),
+  );
 }
 
 function source(overrides: Partial<IncrementalSpotifySourceConfig> = {}): IncrementalSpotifySourceConfig {
@@ -97,5 +103,37 @@ test("includePlayed=false keeps partially played episode first in OLDEST_FIRST w
     assert.deepEqual(batch.candidates.map((c) => c.uri), ["spotify:episode:e2", "spotify:episode:e3"]);
     assert.equal(batch.candidates[0]?.durationMs, 60);
     assert.equal(batch.fullyPlayedSkippedCount, 1);
+    assert.equal(batch.podcastCompletedCount, 1);
+    assert.equal(batch.podcastInProgressCount, 1);
+    assert.equal(batch.podcastNotStartedCount, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("canonical completion stays excluded when a later Spotify response resets resume state", async () => {
+  const originalFetch = globalThis.fetch;
+  let completed = true;
+  globalThis.fetch = (async () => jsonResponse({ items: [
+    { uri: "spotify:episode:e1", name: "E1", duration_ms: 100, type: "episode", release_date: "2021-01-01", release_date_precision: "day", resume_point: { fully_played: completed, resume_position_ms: completed ? 100 : 0 } },
+  ], next: null })) as typeof fetch;
+
+  try {
+    const stateStore = createVolatilePodcastListeningStateStore();
+    const Constructor = SpotifyIncrementalReader as unknown as new (
+      accessToken: string,
+      authoritativePodcastProgramIds?: ReadonlySet<string>,
+      store?: ReturnType<typeof createVolatilePodcastListeningStateStore>,
+    ) => SpotifyIncrementalReader;
+
+    const firstReader = new Constructor("test-token", new Set(), stateStore);
+    const first = await (await firstReader.createSource(source())).readNext();
+    assert.equal(first.candidates.length, 0);
+    assert.equal(first.podcastCompletedCount, 1);
+
+    completed = false;
+    const secondReader = new Constructor("test-token", new Set(), stateStore);
+    const second = await (await secondReader.createSource(source())).readNext();
+    assert.equal(second.candidates.length, 0);
+    assert.equal(second.podcastCompletedCount, 1);
+    assert.equal(second.fullyPlayedSkippedCount, 1);
   } finally { globalThis.fetch = originalFetch; }
 });

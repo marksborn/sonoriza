@@ -14,9 +14,6 @@ datasource db {
 
 // ---------------------------------------------------------------------------
 // Auth.js (NextAuth v5) — application authentication + linked OAuth providers.
-// A single User links one Account row per provider (spotify, google). The
-// Account rows hold the access/refresh tokens the engine uses to call the
-// Spotify Web API and the Google Calendar API from the scheduled job.
 // ---------------------------------------------------------------------------
 
 model User {
@@ -36,6 +33,7 @@ model User {
   generationRuns         GenerationRun[]
   musicPlaybackPolicy    MusicPlaybackPolicy?
   trackListeningStates   TrackListeningState[]
+  episodeListeningStates EpisodeListeningState[]
   musicSourceCleanupRuns MusicSourceCleanupRun[]
 }
 
@@ -43,7 +41,7 @@ model Account {
   id                String  @id @default(cuid())
   userId            String
   type              String
-  provider          String // "spotify" | "google"
+  provider          String
   providerAccountId String
   refresh_token     String? @db.Text
   access_token      String? @db.Text
@@ -78,8 +76,7 @@ model VerificationToken {
 }
 
 // ---------------------------------------------------------------------------
-// Google Calendar — which calendars are consulted and which ones may
-// contribute event duration to calendar-based target playlists.
+// Google Calendar
 // ---------------------------------------------------------------------------
 
 model CalendarSelection {
@@ -87,9 +84,7 @@ model CalendarSelection {
   userId           String
   googleCalendarId String
   summary          String?
-  // Consulted at all when resolving calendar-based durations.
   selected         Boolean  @default(true)
-  // Timed events on this calendar may contribute to calendar-based duration.
   usedForDuration  Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -101,8 +96,7 @@ model CalendarSelection {
 }
 
 // ---------------------------------------------------------------------------
-// Source content — Spotify playlists (music), shows and the user's native
-// "Your Episodes" library that supply candidates to the planner.
+// Source content
 // ---------------------------------------------------------------------------
 
 enum SourceKind {
@@ -136,33 +130,27 @@ enum MusicSourceCleanupStatus {
 }
 
 model SourcePlaylist {
-  id            String            @id @default(cuid())
+  id            String              @id @default(cuid())
   userId        String
   kind          SourceKind
   spotifyType   SpotifySourceType
   spotifyId     String
   name          String?
-  enabled       Boolean           @default(true)
-  // Podcast sources exclude fully played episodes by default. When enabled,
-  // fully played episodes can be selected again and use their full duration.
-  includePlayed Boolean           @default(false)
-  // SHOW-only ordering policy. Existing rows preserve provider/default order.
+  enabled       Boolean             @default(true)
+  includePlayed Boolean             @default(false)
   episodeOrder  PodcastEpisodeOrder @default(SOURCE_DEFAULT)
-  // Playlist cache is currently used only for MUSIC sources. Podcast playback
-  // state remains live because resume_point can change without a playlist edit.
+
   spotifySnapshotId String?
   cachedCandidates  Json?
   cacheUpdatedAt    DateTime?
 
-  // MUSIC-02 is opt-in and intentionally independent from candidate eligibility.
-  // Existing sources remain non-destructive after migration.
-  musicRetentionMode             MusicSourceRetentionMode @default(KEEP_ALL)
-  musicCleanupAutomationEnabled  Boolean                  @default(false)
-  musicCleanupFirstCompletedAt   DateTime?
-  musicCleanupLastRunAt          DateTime?
+  musicRetentionMode            MusicSourceRetentionMode @default(KEEP_ALL)
+  musicCleanupAutomationEnabled Boolean                  @default(false)
+  musicCleanupFirstCompletedAt  DateTime?
+  musicCleanupLastRunAt         DateTime?
 
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   cleanupRuns MusicSourceCleanupRun[]
@@ -198,9 +186,7 @@ model MusicSourceCleanupRun {
 }
 
 // ---------------------------------------------------------------------------
-// Native music listening history — MUSIC-01.
-// The policy is global per Spotify user in v1. The history stores only the
-// latest known playback per track, not a full listening timeline.
+// Native music listening history — MUSIC-01
 // ---------------------------------------------------------------------------
 
 enum MusicRepeatWindowUnit {
@@ -215,11 +201,8 @@ model MusicPlaybackPolicy {
   enabled           Boolean                @default(false)
   windowValue       Int?
   windowUnit        MusicRepeatWindowUnit?
-  // Earliest playback timestamp actually observed by Sonoriza.
   historyKnownSince DateTime?
-  // Last successful synchronization attempt.
   lastSyncAt        DateTime?
-  // Spotify `after` cursor in milliseconds, stored as text to avoid 32-bit Int limits.
   syncAfterCursor   String?
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
@@ -243,26 +226,56 @@ model TrackListeningState {
 }
 
 // ---------------------------------------------------------------------------
-// Target playlists — the destinations that get (re)built on each run.
-// Priority defines generation order: lower runs first and reserves its
-// content, so later playlists only see what is left (cross-playlist
-// exclusivity within a single run).
+// Native podcast listening state — PODCAST-04.
+// This is intentionally separate from MUSIC-01. Episode identity is Spotify
+// episode id/URI and completion is persisted so a provider representation
+// change cannot silently make a completed episode look new again.
+// ---------------------------------------------------------------------------
+
+enum PodcastListeningStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model EpisodeListeningState {
+  id               String                 @id @default(cuid())
+  userId           String
+  spotifyEpisodeId String
+  spotifyUri       String
+  durationMs       Int
+  resumePositionMs Int                    @default(0)
+  fullyPlayed      Boolean                @default(false)
+  status           PodcastListeningStatus @default(NOT_STARTED)
+  lastObservedAt   DateTime
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, spotifyEpisodeId])
+  @@index([userId, status])
+  @@index([userId, lastObservedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Target playlists
 // ---------------------------------------------------------------------------
 
 enum DurationMode {
-  FIXED // fixedDurationSeconds
-  CALENDAR // sum of eligible timed calendar events for the day
+  FIXED
+  CALENDAR
 }
 
 enum EmptyCalendarBehavior {
-  CLEAR // empty the playlist when there are no eligible events
-  KEEP // leave the previous contents untouched
-  SKIP // do not touch the playlist at all this run
+  CLEAR
+  KEEP
+  SKIP
 }
 
 enum CalendarEventFilterMode {
-  ALL // every timed event on calendars enabled for duration
-  MARKER // only timed events whose title/description contains calendarEventMarker
+  ALL
+  MARKER
 }
 
 enum PodcastEpisodeMaxDurationMode {
@@ -277,35 +290,29 @@ enum CompositionMode {
 }
 
 model TargetPlaylist {
-  id                              String                        @id @default(cuid())
-  userId                          String
-  name                            String
-  spotifyPlaylistId               String? // set once the playlist exists on Spotify
-  enabled                         Boolean                       @default(true)
-  // Lower value is generated first and reserves its content.
-  priority                        Int                           @default(0)
-  // Existing destinations migrate safely to proportion semantics.
-  compositionMode                 CompositionMode               @default(PROPORTION)
+  id                                String                        @id @default(cuid())
+  userId                            String
+  name                              String
+  spotifyPlaylistId                 String?
+  enabled                           Boolean                       @default(true)
+  priority                          Int                           @default(0)
+  compositionMode                   CompositionMode               @default(PROPORTION)
 
-  durationMode                    DurationMode                  @default(FIXED)
-  fixedDurationSeconds            Int? // required when durationMode = FIXED
-  emptyCalendarBehavior           EmptyCalendarBehavior         @default(CLEAR)
-  calendarEventFilterMode         CalendarEventFilterMode       @default(ALL)
-  calendarEventMarker             String?
+  durationMode                      DurationMode                  @default(FIXED)
+  fixedDurationSeconds              Int?
+  emptyCalendarBehavior             EmptyCalendarBehavior         @default(CLEAR)
+  calendarEventFilterMode           CalendarEventFilterMode       @default(ALL)
+  calendarEventMarker               String?
 
-  // Proportion between podcasts and music. musicPercent = 100 - podcastPercent.
-  podcastPercent                  Int                           @default(60)
-  podcastEpisodeMaxDurationMode   PodcastEpisodeMaxDurationMode @default(NONE)
-  podcastEpisodeMaxDurationSeconds Int?
+  podcastPercent                    Int                           @default(60)
+  podcastEpisodeMaxDurationMode     PodcastEpisodeMaxDurationMode @default(NONE)
+  podcastEpisodeMaxDurationSeconds  Int?
 
-  // Cyclic play sequence, e.g. ["MUSIC","PODCAST","MUSIC","MUSIC","PODCAST"].
-  sequencePattern                 Json
+  sequencePattern                   Json
+  maxEpisodesPerProgram             Int                           @default(1)
 
-  // Cap of episodes per program (Spotify show) inside this playlist.
-  maxEpisodesPerProgram           Int                           @default(1)
-
-  createdAt                       DateTime                      @default(now())
-  updatedAt                       DateTime                      @updatedAt
+  createdAt                         DateTime                      @default(now())
+  updatedAt                         DateTime                      @updatedAt
 
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   generationItems GenerationItem[]
@@ -314,7 +321,7 @@ model TargetPlaylist {
 }
 
 // ---------------------------------------------------------------------------
-// Generation runs — history, results and errors of each execution.
+// Generation runs
 // ---------------------------------------------------------------------------
 
 enum RunTrigger {
@@ -327,7 +334,7 @@ enum RunStatus {
   PENDING
   RUNNING
   SUCCESS
-  PARTIAL // some target playlists succeeded, others failed
+  PARTIAL
   FAILED
 }
 
@@ -341,13 +348,11 @@ model GenerationRun {
   id         String     @id @default(cuid())
   userId     String
   trigger    RunTrigger
-  // Simulation runs never write to Spotify.
   simulation Boolean    @default(false)
   status     RunStatus  @default(PENDING)
   startedAt  DateTime   @default(now())
   finishedAt DateTime?
   error      String?    @db.Text
-  // Free-form structured summary (per-playlist counts, durations, skips...).
   summary    Json?
 
   user  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -381,15 +386,10 @@ model GenerationItem {
   targetPlaylistId String
   position         Int
   contentType      ContentType
-  // Spotify URI, e.g. "spotify:track:..." or "spotify:episode:...".
   spotifyUri       String
   title            String?
-  // Track artist(s) or, for episodes, the show (program) name.
   subtitle         String?
-  // Spotify show id for episodes — used to enforce max episodes per program.
   programId        String?
-  // Effective listening duration used by the planner. For a partially played
-  // podcast this is the remaining duration, not necessarily its catalog length.
   durationMs       Int         @default(0)
 
   run    GenerationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
