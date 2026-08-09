@@ -18,6 +18,23 @@ test("zero-item MUSIC-02 previews cannot reach destructive confirmation", () => 
   assert.match(page, /rotina periódica continua bloqueada/);
 });
 
+test("destructive confirmation exposes pending feedback and disables duplicate submit", () => {
+  const page = readFileSync(
+    "src/app/dashboard/configuracao/limpeza/page.tsx",
+    "utf8",
+  );
+  const button = readFileSync(
+    "src/app/dashboard/configuracao/limpeza/cleanup-submit-button.tsx",
+    "utf8",
+  );
+
+  assert.match(page, /<CleanupSubmitButton/);
+  assert.match(button, /useFormStatus/);
+  assert.match(button, /disabled=\{pending\}/);
+  assert.match(button, /Removendo \$\{removableTrackCount\} faixa\(s\)\.\.\./);
+  assert.match(button, /disabled:cursor-wait/);
+});
+
 test("core rejects an empty first cleanup before Spotify sync or DELETE", () => {
   const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
   const executeStart = source.indexOf(
