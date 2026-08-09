@@ -67,34 +67,32 @@ export function mergePodcastListeningState(
     observation.resumePositionMs === null
       ? null
       : clamp(Math.trunc(observation.resumePositionMs), 0, durationMs);
+  const mergedResume = clamp(
+    Math.max(existing?.resumePositionMs ?? 0, observedResume ?? 0),
+    0,
+    durationMs,
+  );
 
   if (existing?.status === "COMPLETED" || observation.fullyPlayed === true) {
     return {
       spotifyEpisodeId: observation.spotifyEpisodeId,
       spotifyUri: observation.spotifyUri || existing?.spotifyUri || "",
       durationMs,
-      resumePositionMs: Math.max(
-        existing?.resumePositionMs ?? 0,
-        observedResume ?? 0,
-      ),
+      resumePositionMs: mergedResume,
       fullyPlayed: true,
       status: "COMPLETED",
       lastObservedAt: observedAt,
     };
   }
 
-  const resumePositionMs = Math.max(
-    existing?.resumePositionMs ?? 0,
-    observedResume ?? 0,
-  );
   const status: PodcastListeningStatus =
-    resumePositionMs > 0 ? "IN_PROGRESS" : "NOT_STARTED";
+    mergedResume > 0 ? "IN_PROGRESS" : "NOT_STARTED";
 
   return {
     spotifyEpisodeId: observation.spotifyEpisodeId,
     spotifyUri: observation.spotifyUri || existing?.spotifyUri || "",
     durationMs,
-    resumePositionMs,
+    resumePositionMs: mergedResume,
     fullyPlayed: false,
     status,
     lastObservedAt: observedAt,
@@ -187,12 +185,39 @@ export function spotifyEpisodeIdFromUri(uri: string): string | null {
 function dedupeObservations(
   observations: PodcastListeningObservation[],
 ): PodcastListeningObservation[] {
-  const byId = new Map<string, PodcastListeningObservation>();
+  const merged = new Map<string, PodcastListeningObservation>();
+
   for (const observation of observations) {
     if (!observation.spotifyEpisodeId) continue;
-    byId.set(observation.spotifyEpisodeId, observation);
+    const previous = merged.get(observation.spotifyEpisodeId);
+    if (!previous) {
+      merged.set(observation.spotifyEpisodeId, observation);
+      continue;
+    }
+
+    merged.set(observation.spotifyEpisodeId, {
+      spotifyEpisodeId: observation.spotifyEpisodeId,
+      spotifyUri: observation.spotifyUri || previous.spotifyUri,
+      durationMs: Math.max(previous.durationMs, observation.durationMs),
+      resumePositionMs:
+        previous.resumePositionMs === null && observation.resumePositionMs === null
+          ? null
+          : Math.max(previous.resumePositionMs ?? 0, observation.resumePositionMs ?? 0),
+      fullyPlayed:
+        previous.fullyPlayed === true || observation.fullyPlayed === true
+          ? true
+          : previous.fullyPlayed === false || observation.fullyPlayed === false
+            ? false
+            : null,
+      observedAt:
+        (observation.observedAt?.getTime() ?? 0) >=
+        (previous.observedAt?.getTime() ?? 0)
+          ? observation.observedAt
+          : previous.observedAt,
+    });
   }
-  return [...byId.values()];
+
+  return [...merged.values()];
 }
 
 function clamp(value: number, min: number, max: number): number {
