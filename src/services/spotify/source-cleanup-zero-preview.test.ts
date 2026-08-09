@@ -17,3 +17,48 @@ test("zero-item MUSIC-02 previews cannot reach destructive confirmation", () => 
   assert.match(page, /Nada para remover neste preview/);
   assert.match(page, /rotina periódica continua bloqueada/);
 });
+
+test("core rejects an empty first cleanup before Spotify sync or DELETE", () => {
+  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
+  const executeStart = source.indexOf(
+    "export async function executeMusicSourceCleanupPreview",
+  );
+  const guard = source.indexOf(
+    "Preview sem faixas removíveis não pode concluir a primeira limpeza.",
+    executeStart,
+  );
+  const sync = source.indexOf(
+    "const history = await syncRecentlyPlayed(userId, now);",
+    executeStart,
+  );
+  const deleteCall = source.indexOf('method: "DELETE"', executeStart);
+
+  assert.ok(executeStart >= 0);
+  assert.ok(guard > executeStart);
+  assert.ok(sync > guard);
+  assert.ok(deleteCall > guard);
+  assert.match(source.slice(executeStart, sync), /!preview\.source\.musicCleanupFirstCompletedAt/);
+  assert.match(source.slice(executeStart, sync), /preview\.removableTrackCount < 1/);
+  assert.match(source.slice(executeStart, sync), /preview\.removalOccurrenceCount < 1/);
+  assert.match(source.slice(executeStart, sync), /plannedUris\.length < 1/);
+});
+
+test("core rejects inconsistent persisted cleanup plans", () => {
+  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
+  const executeStart = source.indexOf(
+    "export async function executeMusicSourceCleanupPreview",
+  );
+  const sync = source.indexOf(
+    "const history = await syncRecentlyPlayed(userId, now);",
+    executeStart,
+  );
+  const preSync = source.slice(executeStart, sync);
+
+  assert.match(preSync, /plannedUris\.length !== uniquePlannedUris\.size/);
+  assert.match(preSync, /preview\.removableTrackCount !== plannedUris\.length/);
+  assert.match(
+    preSync,
+    /preview\.removalOccurrenceCount < preview\.removableTrackCount/,
+  );
+  assert.match(preSync, /O preview de limpeza está inconsistente/);
+});
