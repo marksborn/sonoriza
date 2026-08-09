@@ -25,10 +25,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma validate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_static?schema=public
       - run: npm run db:generate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_static?schema=public
       - run: npm run test:planner
       - run: npm run test:spotify
       - run: npm run test:incremental
       - run: npm run test:simulation
       - run: npm run typecheck
       - run: npm run build
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_static?schema=public
