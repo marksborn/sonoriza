@@ -1,0 +1,42 @@
+name: MUSIC-02 preview feedback gate
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d sonoriza_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_test?schema=public
+      NEXTAUTH_SECRET: ci-only-secret
+      AUTH_SECRET: ci-only-secret
+      NEXTAUTH_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run db:deploy
+      - run: npm run test:planner
+      - run: npm run test:spotify
+      - run: npm run test:incremental
+      - run: npm run test:simulation
+      - run: npm run typecheck
+      - run: npm run build
