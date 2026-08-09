@@ -2,6 +2,8 @@ import {
   MusicIngestionCapabilityStatus,
   MusicIngestionInitialMode,
   MusicIngestionRuleType,
+  MusicIngestionRunStatus,
+  MusicIngestionTrigger,
   MusicSourceRetentionMode,
   SourceKind,
   SpotifySourceType,
@@ -16,10 +18,12 @@ import { SpotifyClient, type SpotifyPlaylistSummary } from "@/services/spotify";
 import {
   createMusicIngestionRule,
   deleteMusicIngestionRule,
-  runManualMusicIngestion,
   setMusicIngestionRuleEnabled,
-  syncMusicIngestionRule,
 } from "@/services/spotify/music-ingestion";
+import {
+  runManualMusicIngestionSerialized,
+  syncMusicIngestionRuleSerialized,
+} from "@/services/spotify/music-ingestion-serialized";
 
 function revalidateConfiguration() {
   revalidatePath("/dashboard");
@@ -31,6 +35,10 @@ function revalidateConfiguration() {
 function safeError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   return raw.slice(0, 220);
+}
+
+function rethrowNextRedirect(error: unknown) {
+  if (error && typeof error === "object" && "digest" in error) throw error;
 }
 
 async function createRule(formData: FormData) {
@@ -55,7 +63,9 @@ async function createRule(formData: FormData) {
       ? MusicIngestionInitialMode.IMPORT_CURRENT
       : MusicIngestionInitialMode.FROM_NOW;
 
-  if (!targetSourcePlaylistId || !type) redirect("/dashboard/configuracao/alimentacao?error=Dados%20inválidos");
+  if (!targetSourcePlaylistId || !type) {
+    redirect("/dashboard/configuracao/alimentacao?error=Dados%20inválidos");
+  }
 
   try {
     const rule = await createMusicIngestionRule(session.user.id, {
@@ -73,6 +83,7 @@ async function createRule(formData: FormData) {
           : "active";
     redirect(`/dashboard/configuracao/alimentacao?saved=${status}`);
   } catch (error) {
+    rethrowNextRedirect(error);
     redirect(`/dashboard/configuracao/alimentacao?error=${encodeURIComponent(safeError(error))}`);
   }
 }
@@ -90,7 +101,7 @@ async function previewRule(formData: FormData) {
       select: { initialMode: true, enabled: true },
     });
     if (!rule) throw new Error("Regra de alimentação não encontrada.");
-    const result = await syncMusicIngestionRule(session.user.id, id, {
+    const result = await syncMusicIngestionRuleSerialized(session.user.id, id, {
       preview: true,
       allowInitialImport:
         !rule.enabled && rule.initialMode === MusicIngestionInitialMode.IMPORT_CURRENT,
@@ -100,6 +111,7 @@ async function previewRule(formData: FormData) {
       `/dashboard/configuracao/alimentacao?preview=1&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}`,
     );
   } catch (error) {
+    rethrowNextRedirect(error);
     redirect(`/dashboard/configuracao/alimentacao?error=${encodeURIComponent(safeError(error))}`);
   }
 }
@@ -112,12 +124,13 @@ async function syncRule(formData: FormData) {
   if (!id) redirect("/dashboard/configuracao/alimentacao?error=Regra%20inválida");
 
   try {
-    const result = await syncMusicIngestionRule(session.user.id, id);
+    const result = await syncMusicIngestionRuleSerialized(session.user.id, id);
     revalidateConfiguration();
     redirect(
       `/dashboard/configuracao/alimentacao?synced=1&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}`,
     );
   } catch (error) {
+    rethrowNextRedirect(error);
     redirect(`/dashboard/configuracao/alimentacao?error=${encodeURIComponent(safeError(error))}`);
   }
 }
@@ -130,12 +143,13 @@ async function importCurrent(formData: FormData) {
   if (!id) redirect("/dashboard/configuracao/alimentacao?error=Regra%20inválida");
 
   try {
-    const result = await syncMusicIngestionRule(session.user.id, id, {
+    const result = await syncMusicIngestionRuleSerialized(session.user.id, id, {
       allowInitialImport: true,
     });
     revalidateConfiguration();
     redirect(`/dashboard/configuracao/alimentacao?imported=1&add=${result.addedCount}`);
   } catch (error) {
+    rethrowNextRedirect(error);
     redirect(`/dashboard/configuracao/alimentacao?error=${encodeURIComponent(safeError(error))}`);
   }
 }
@@ -151,6 +165,7 @@ async function toggleRule(formData: FormData) {
     revalidateConfiguration();
     redirect("/dashboard/configuracao/alimentacao?saved=updated");
   } catch (error) {
+    rethrowNextRedirect(error);
     redirect(`/dashboard/configuracao/alimentacao?error=${encodeURIComponent(safeError(error))}`);
   }
 }
@@ -165,6 +180,7 @@ async function removeRule(formData: FormData) {
     revalidateConfiguration();
     redirect("/dashboard/configuracao/alimentacao?saved=removed");
   } catch (error) {
+    rethrowNextRedirect(error);
     redirect(`/dashboard/configuracao/alimentacao?error=${encodeURIComponent(safeError(error))}`);
   }
 }
@@ -179,7 +195,7 @@ async function manualAdd(formData: FormData) {
   const preview = String(formData.get("submitMode") ?? "") === "preview";
 
   try {
-    const result = await runManualMusicIngestion(session.user.id, {
+    const result = await runManualMusicIngestionSerialized(session.user.id, {
       targetSourcePlaylistId,
       reference,
       preferredType,
@@ -190,6 +206,7 @@ async function manualAdd(formData: FormData) {
       `/dashboard/configuracao/alimentacao?manual=${preview ? "preview" : "added"}&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}`,
     );
   } catch (error) {
+    rethrowNextRedirect(error);
     redirect(`/dashboard/configuracao/alimentacao?error=${encodeURIComponent(safeError(error))}`);
   }
 }
@@ -239,7 +256,19 @@ export default async function MusicIngestionConfigurationPage({
     }),
     prisma.musicIngestionRule.findMany({
       where: { userId: session.user.id },
-      include: { target: true },
+      include: {
+        target: true,
+        runs: {
+          where: {
+            preview: true,
+            status: MusicIngestionRunStatus.PREVIEW,
+            trigger: MusicIngestionTrigger.INITIAL_IMPORT,
+          },
+          select: { id: true },
+          orderBy: { startedAt: "desc" },
+          take: 1,
+        },
+      },
       orderBy: { createdAt: "asc" },
     }),
     prisma.musicIngestionRun.findMany({
@@ -400,6 +429,7 @@ export default async function MusicIngestionConfigurationPage({
           {rules.map((rule) => {
             const blocked = rule.capabilityStatus === MusicIngestionCapabilityStatus.BLOCKED;
             const awaitingImport = !rule.enabled && rule.initialMode === MusicIngestionInitialMode.IMPORT_CURRENT && !rule.state;
+            const hasInitialImportPreview = rule.runs.length > 0;
             return (
               <article key={rule.id} className="rounded-[1.5rem] border border-violet-300/15 bg-[#13052f]/90 p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
@@ -419,10 +449,16 @@ export default async function MusicIngestionConfigurationPage({
                   <div><dt className="text-violet-300/60">Estratégia inicial</dt><dd className="font-bold">{rule.initialMode === MusicIngestionInitialMode.FROM_NOW ? "A partir de agora" : "Importar conteúdo atual"}</dd></div>
                 </dl>
 
+                {awaitingImport && !blocked && !hasInitialImportPreview ? (
+                  <p className="mt-4 rounded-xl border border-orange-400/20 bg-orange-500/10 p-3 text-xs font-bold leading-5 text-orange-100">
+                    Faça o preview primeiro. A confirmação da importação só é liberada depois que um preview inicial for registrado.
+                  </p>
+                ) : null}
+
                 <div className="mt-5 flex flex-wrap gap-2">
                   {!blocked ? <form action={previewRule}><input type="hidden" name="id" value={rule.id} /><button className="rounded-xl border border-violet-300/20 px-3 py-2 text-xs font-black text-violet-100">Pré-visualizar</button></form> : null}
                   {rule.enabled && !blocked ? <form action={syncRule}><input type="hidden" name="id" value={rule.id} /><button className="rounded-xl border border-orange-300/25 bg-orange-500/10 px-3 py-2 text-xs font-black text-orange-100">Sincronizar agora</button></form> : null}
-                  {awaitingImport && !blocked ? <form action={importCurrent}><input type="hidden" name="id" value={rule.id} /><button className="rounded-xl bg-orange-500 px-3 py-2 text-xs font-black text-white">Confirmar importação atual</button></form> : null}
+                  {awaitingImport && !blocked && hasInitialImportPreview ? <form action={importCurrent}><input type="hidden" name="id" value={rule.id} /><button className="rounded-xl bg-orange-500 px-3 py-2 text-xs font-black text-white">Confirmar importação atual</button></form> : null}
                   {!awaitingImport && !blocked ? <form action={toggleRule}><input type="hidden" name="id" value={rule.id} /><input type="hidden" name="enabled" value={rule.enabled ? "false" : "true"} /><button className="rounded-xl border border-violet-300/20 px-3 py-2 text-xs font-black text-violet-100">{rule.enabled ? "Desativar" : "Ativar"}</button></form> : null}
                   <form action={removeRule}><input type="hidden" name="id" value={rule.id} /><button className="rounded-xl border border-red-300/20 px-3 py-2 text-xs font-black text-red-200">Excluir regra</button></form>
                 </div>
