@@ -226,14 +226,14 @@ export type SpotifyReference =
 export function parseSpotifyReference(value: string): SpotifyReference | null {
   const trimmed = value.trim();
   let match = /^spotify:(track|album):([A-Za-z0-9]+)$/.exec(trimmed);
-  if (match) return { type: match[1] as "track" | "album", id: match[2] };
+  if (match) return { type: match[1]! as "track" | "album", id: match[2]! };
 
   try {
     const url = new URL(trimmed);
     if (url.hostname !== "open.spotify.com") return null;
     match = /^\/(track|album)\/([A-Za-z0-9]+)\/?$/.exec(url.pathname);
     if (!match) return null;
-    return { type: match[1] as "track" | "album", id: match[2] };
+    return { type: match[1]! as "track" | "album", id: match[2]! };
   } catch {
     return null;
   }
