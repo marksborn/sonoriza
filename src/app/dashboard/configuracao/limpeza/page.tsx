@@ -90,6 +90,30 @@ async function executeCleanup(formData: FormData) {
   const previewId = String(formData.get("previewId") ?? "").trim();
   if (!previewId) redirect("/dashboard/configuracao/limpeza?error=invalid");
 
+  const executablePreview = await prisma.musicSourceCleanupRun.findFirst({
+    where: {
+      id: previewId,
+      userId: session.user.id,
+      status: MusicSourceCleanupStatus.PREVIEW,
+    },
+    select: {
+      removableTrackCount: true,
+      removalOccurrenceCount: true,
+    },
+  });
+
+  if (!executablePreview) {
+    redirect("/dashboard/configuracao/limpeza?error=invalid");
+  }
+
+  if (
+    executablePreview.removableTrackCount < 1 ||
+    executablePreview.removalOccurrenceCount < 1
+  ) {
+    revalidateCleanupPages();
+    redirect(`/dashboard/configuracao/limpeza?error=empty&preview=${previewId}`);
+  }
+
   try {
     const result = await executeMusicSourceCleanupPreview(
       session.user.id,
@@ -263,9 +287,11 @@ export default async function MusicSourceCleanupPage({ searchParams }: CleanupPa
                 ? "A playlist ou o histórico mudou depois do preview. Nenhum plano antigo foi executado; gere um novo preview."
                 : params.error === "automation"
                   ? "A rotina periódica só pode ser ligada depois de uma primeira limpeza manual concluída com sucesso."
-                  : params.error === "execute"
-                    ? "A limpeza não pôde ser concluída. O resultado parcial, se houver, ficou registrado para auditoria."
-                    : "Não foi possível preparar o preview desta fonte agora."}
+                  : params.error === "empty"
+                    ? "Este preview não possui nenhuma faixa removível. Nada foi executado e a rotina periódica permanece bloqueada."
+                    : params.error === "execute"
+                      ? "A limpeza não pôde ser concluída. O resultado parcial, se houver, ficou registrado para auditoria."
+                      : "Não foi possível preparar o preview desta fonte agora."}
           </div>
         )}
 
@@ -307,21 +333,30 @@ export default async function MusicSourceCleanupPage({ searchParams }: CleanupPa
             </p>
 
             {preview.status === MusicSourceCleanupStatus.PREVIEW ? (
-              <div className="mt-5 rounded-2xl border border-red-300/20 bg-red-400/10 p-4">
-                <p className="font-black text-red-100">Confirmação destrutiva separada</p>
-                <p className="mt-1 text-sm leading-6 text-red-100/70">
-                  Ao confirmar, o Sonoriza sincroniza o histórico e lê a playlist novamente. Se snapshot ou plano mudarem, a exclusão é bloqueada e um novo preview será exigido.
-                </p>
-                <form action={executeCleanup} className="mt-4">
-                  <input type="hidden" name="previewId" value={preview.id} />
-                  <button
-                    type="submit"
-                    className="rounded-xl border border-red-200/30 bg-red-500/20 px-4 py-2.5 text-sm font-black text-red-50 transition hover:bg-red-500/30"
-                  >
-                    Confirmar remoção de {preview.removableTrackCount} faixa(s)
-                  </button>
-                </form>
-              </div>
+              preview.removableTrackCount > 0 && preview.removalOccurrenceCount > 0 ? (
+                <div className="mt-5 rounded-2xl border border-red-300/20 bg-red-400/10 p-4">
+                  <p className="font-black text-red-100">Confirmação destrutiva separada</p>
+                  <p className="mt-1 text-sm leading-6 text-red-100/70">
+                    Ao confirmar, o Sonoriza sincroniza o histórico e lê a playlist novamente. Se snapshot ou plano mudarem, a exclusão é bloqueada e um novo preview será exigido.
+                  </p>
+                  <form action={executeCleanup} className="mt-4">
+                    <input type="hidden" name="previewId" value={preview.id} />
+                    <button
+                      type="submit"
+                      className="rounded-xl border border-red-200/30 bg-red-500/20 px-4 py-2.5 text-sm font-black text-red-50 transition hover:bg-red-500/30"
+                    >
+                      Confirmar remoção de {preview.removableTrackCount} faixa(s)
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <div className="mt-5 rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4">
+                  <p className="font-black text-emerald-100">Nada para remover neste preview</p>
+                  <p className="mt-1 text-sm leading-6 text-emerald-100/70">
+                    Nenhuma faixa possui evidência de reprodução compatível com esta inbox. Não há confirmação destrutiva e a rotina periódica continua bloqueada.
+                  </p>
+                </div>
+              )
             ) : (
               <p className="mt-5 rounded-xl border border-violet-300/15 bg-black/15 p-3 text-sm text-violet-200/65">
                 Este preview está em estado {preview.status} e não pode mais ser executado.
