@@ -15,6 +15,12 @@ import {
   type SpotifySourceReadMetrics,
 } from "./errors";
 import { readPlayableMusicCandidate } from "./music-availability";
+import {
+  prismaPodcastListeningStateStore,
+  spotifyEpisodeIdFromUri,
+  type PodcastListeningObservation,
+  type PodcastListeningStateStore,
+} from "./podcast-listening-state";
 import { sortShowCandidates } from "./podcast-show-policy";
 import {
   decodeMusicSourceCache,
@@ -72,6 +78,8 @@ export class SpotifyIncrementalReader {
   private constructor(
     private readonly accessToken: string,
     private readonly authoritativePodcastProgramIds: ReadonlySet<string> = new Set(),
+    private readonly podcastListeningStateStore: PodcastListeningStateStore =
+      prismaPodcastListeningStateStore,
   ) {}
 
   static async forUser(
@@ -81,6 +89,7 @@ export class SpotifyIncrementalReader {
     return new SpotifyIncrementalReader(
       await getSpotifyAccessToken(userId),
       options.authoritativePodcastProgramIds ?? new Set(),
+      prismaPodcastListeningStateStore,
     );
   }
 
@@ -337,7 +346,7 @@ export class SpotifyIncrementalReader {
     const sourceKey = `PLAYLIST:${source.spotifyId}`;
     const metrics = this.sourceMetrics(sourceKey);
     let nextUrl: string | null =
-      `/playlists/${source.spotifyId}/items?limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,show(id,name),resume_point(fully_played,resume_position_ms)))`;
+      `/playlists/${source.spotifyId}/items?limit=50&fields=next,items(item(id,uri,name,duration_ms,is_local,type,is_playable,show(id,name),resume_point(fully_played,resume_position_ms)))`;
     let done = false;
 
     return {
@@ -357,6 +366,8 @@ export class SpotifyIncrementalReader {
         done = nextUrl === null;
 
         const collector = createPodcastCollector(source.includePlayed, undefined, {
+          userId: source.userId,
+          stateStore: this.podcastListeningStateStore,
           sourceSpotifyType: "PLAYLIST",
           sourceSpotifyId: source.spotifyId,
           suppressedProgramIds: this.authoritativePodcastProgramIds,
@@ -366,7 +377,7 @@ export class SpotifyIncrementalReader {
           if (!episode || episode.is_local || episode.type !== "episode") continue;
           collector.add(episode);
         }
-        return { ...collector.result(), done };
+        return { ...(await collector.result()), done };
       },
     };
   }
@@ -392,6 +403,8 @@ export class SpotifyIncrementalReader {
         if (done || !nextUrl) return { candidates: [], done: true };
 
         const collector = createPodcastCollector(source.includePlayed, source.spotifyId, {
+          userId: source.userId,
+          stateStore: this.podcastListeningStateStore,
           sourceSpotifyType: "SHOW",
           sourceSpotifyId: source.spotifyId,
         });
@@ -402,7 +415,7 @@ export class SpotifyIncrementalReader {
           nextUrl = page.next ? stripBase(page.next) : null;
           done = nextUrl === null;
           for (const episode of page.items) collector.add(episode);
-          return { ...collector.result(), done };
+          return { ...(await collector.result()), done };
         }
 
         // Explicit chronological order must be global, never pagination-incidental.
@@ -413,7 +426,7 @@ export class SpotifyIncrementalReader {
           for (const episode of page.items) collector.add(episode);
         }
         done = true;
-        const result = collector.result();
+        const result = await collector.result();
         return {
           ...result,
           candidates: sortShowCandidates(result.candidates, source.episodeOrder),
@@ -448,6 +461,8 @@ export class SpotifyIncrementalReader {
         done = nextUrl === null;
 
         const collector = createPodcastCollector(source.includePlayed, undefined, {
+          userId: source.userId,
+          stateStore: this.podcastListeningStateStore,
           sourceSpotifyType: "SAVED_EPISODES",
           sourceSpotifyId: source.spotifyId,
           suppressedProgramIds: this.authoritativePodcastProgramIds,
@@ -455,7 +470,7 @@ export class SpotifyIncrementalReader {
         for (const item of page.items) {
           if (item?.episode) collector.add(item.episode);
         }
-        return { ...collector.result(), done };
+        return { ...(await collector.result()), done };
       },
     };
   }
@@ -480,6 +495,7 @@ interface SavedEpisodeResponse {
 }
 
 interface EpisodeResponse {
+  id?: string;
   uri: string;
   name: string;
   duration_ms: number;
@@ -499,6 +515,8 @@ interface EpisodeResponse {
 }
 
 type PodcastCollectorOptions = {
+  userId: string;
+  stateStore: PodcastListeningStateStore;
   sourceSpotifyType?: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";
   sourceSpotifyId?: string;
   suppressedProgramIds?: ReadonlySet<string>;
@@ -506,71 +524,120 @@ type PodcastCollectorOptions = {
 
 function createPodcastCollector(
   includePlayed: boolean,
-  fallbackProgramId?: string,
-  options: PodcastCollectorOptions = {},
+  fallbackProgramId: string | undefined,
+  options: PodcastCollectorOptions,
 ) {
-  const candidates: Candidate[] = [];
-  let playbackPositionMissingCount = 0;
-  let fullyPlayedSkippedCount = 0;
-  let genericPodcastSuppressedCount = 0;
+  const episodes: EpisodeResponse[] = [];
 
   return {
     add(episode: EpisodeResponse) {
       if (!episode.uri || !episode.name || episode.type !== "episode") return;
       if (episode.is_playable === false) return;
-
-      const programId = episode.show?.id ?? fallbackProgramId;
-      if (
-        programId &&
-        options.sourceSpotifyType !== "SHOW" &&
-        options.suppressedProgramIds?.has(programId)
-      ) {
-        genericPodcastSuppressedCount += 1;
-        return;
-      }
-
-      const resumePoint = episode.resume_point ?? null;
-      if (!resumePoint) playbackPositionMissingCount += 1;
-
-      const fullyPlayed = resumePoint?.fully_played === true;
-      if (fullyPlayed && !includePlayed) {
-        fullyPlayedSkippedCount += 1;
-        return;
-      }
-
-      const originalDurationMs = Math.max(0, episode.duration_ms ?? 0);
-      const resumePositionMs = clamp(
-        resumePoint?.resume_position_ms ?? 0,
-        0,
-        originalDurationMs,
-      );
-      const durationMs = fullyPlayed
-        ? originalDurationMs
-        : Math.max(0, originalDurationMs - resumePositionMs);
-      if (durationMs <= 0) return;
-
-      candidates.push({
-        uri: episode.uri,
-        type: "PODCAST",
-        title: episode.name,
-        subtitle: episode.show?.name,
-        programId,
-        durationMs,
-        originalDurationMs,
-        resumePositionMs,
-        playbackPositionKnown: Boolean(resumePoint),
-        releaseDate: episode.release_date,
-        releaseDatePrecision: episode.release_date_precision,
-        sourceSpotifyType: options.sourceSpotifyType,
-        sourceSpotifyId: options.sourceSpotifyId,
-      });
+      episodes.push(episode);
     },
-    result() {
+    async result(): Promise<Omit<IncrementalSourceBatch, "done">> {
+      const observedAt = new Date();
+      const observations: PodcastListeningObservation[] = [];
+
+      for (const episode of episodes) {
+        const spotifyEpisodeId =
+          episode.id?.trim() || spotifyEpisodeIdFromUri(episode.uri);
+        if (!spotifyEpisodeId) continue;
+        const originalDurationMs = Math.max(0, episode.duration_ms ?? 0);
+        const resumePoint = episode.resume_point ?? null;
+        observations.push({
+          spotifyEpisodeId,
+          spotifyUri: episode.uri,
+          durationMs: originalDurationMs,
+          resumePositionMs: resumePoint
+            ? clamp(resumePoint.resume_position_ms ?? 0, 0, originalDurationMs)
+            : null,
+          fullyPlayed: resumePoint ? resumePoint.fully_played === true : null,
+          observedAt,
+        });
+      }
+
+      const canonicalStates = await options.stateStore.observe(
+        options.userId,
+        observations,
+      );
+      const candidates: Candidate[] = [];
+      let playbackPositionMissingCount = 0;
+      let fullyPlayedSkippedCount = 0;
+      let genericPodcastSuppressedCount = 0;
+      let podcastNotStartedCount = 0;
+      let podcastInProgressCount = 0;
+      let podcastCompletedCount = 0;
+
+      for (const episode of episodes) {
+        const spotifyEpisodeId =
+          episode.id?.trim() || spotifyEpisodeIdFromUri(episode.uri);
+        if (!spotifyEpisodeId) continue;
+        const state = canonicalStates.get(spotifyEpisodeId);
+        if (!state) continue;
+
+        const programId = episode.show?.id ?? fallbackProgramId;
+        if (
+          programId &&
+          options.sourceSpotifyType !== "SHOW" &&
+          options.suppressedProgramIds?.has(programId)
+        ) {
+          genericPodcastSuppressedCount += 1;
+          continue;
+        }
+
+        const resumePoint = episode.resume_point ?? null;
+        if (!resumePoint) playbackPositionMissingCount += 1;
+
+        if (state.status === "NOT_STARTED") podcastNotStartedCount += 1;
+        else if (state.status === "IN_PROGRESS") podcastInProgressCount += 1;
+        else podcastCompletedCount += 1;
+
+        if (state.status === "COMPLETED" && !includePlayed) {
+          fullyPlayedSkippedCount += 1;
+          continue;
+        }
+
+        const originalDurationMs = Math.max(0, episode.duration_ms ?? state.durationMs);
+        const resumePositionMs = clamp(
+          state.resumePositionMs,
+          0,
+          originalDurationMs,
+        );
+        const durationMs =
+          state.status === "COMPLETED"
+            ? originalDurationMs
+            : Math.max(0, originalDurationMs - resumePositionMs);
+        if (durationMs <= 0) continue;
+
+        candidates.push({
+          uri: episode.uri,
+          type: "PODCAST",
+          title: episode.name,
+          subtitle: episode.show?.name,
+          programId,
+          durationMs,
+          originalDurationMs,
+          resumePositionMs,
+          playbackPositionKnown:
+            Boolean(resumePoint) ||
+            state.status !== "NOT_STARTED" ||
+            state.resumePositionMs > 0,
+          releaseDate: episode.release_date,
+          releaseDatePrecision: episode.release_date_precision,
+          sourceSpotifyType: options.sourceSpotifyType,
+          sourceSpotifyId: options.sourceSpotifyId,
+        });
+      }
+
       return {
         candidates,
         playbackPositionMissingCount,
         fullyPlayedSkippedCount,
         genericPodcastSuppressedCount,
+        podcastNotStartedCount,
+        podcastInProgressCount,
+        podcastCompletedCount,
       };
     },
   };
