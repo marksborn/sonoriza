@@ -28,14 +28,15 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts           Account[]
-  sessions           Session[]
-  calendarSelections CalendarSelection[]
-  sourcePlaylists    SourcePlaylist[]
-  targetPlaylists    TargetPlaylist[]
-  generationRuns     GenerationRun[]
-  musicPlaybackPolicy MusicPlaybackPolicy?
-  trackListeningStates TrackListeningState[]
+  accounts               Account[]
+  sessions               Session[]
+  calendarSelections     CalendarSelection[]
+  sourcePlaylists        SourcePlaylist[]
+  targetPlaylists        TargetPlaylist[]
+  generationRuns         GenerationRun[]
+  musicPlaybackPolicy    MusicPlaybackPolicy?
+  trackListeningStates   TrackListeningState[]
+  musicSourceCleanupRuns MusicSourceCleanupRun[]
 }
 
 model Account {
@@ -89,7 +90,7 @@ model CalendarSelection {
   // Consulted at all when resolving calendar-based durations.
   selected         Boolean  @default(true)
   // Timed events on this calendar may contribute to calendar-based duration.
-  usedForDuration     Boolean  @default(false)
+  usedForDuration  Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -121,6 +122,19 @@ enum PodcastEpisodeOrder {
   NEWEST_FIRST
 }
 
+enum MusicSourceRetentionMode {
+  KEEP_ALL
+  REMOVE_AFTER_PLAYED
+}
+
+enum MusicSourceCleanupStatus {
+  PREVIEW
+  SUCCESS
+  PARTIAL
+  FAILED
+  STALE
+}
+
 model SourcePlaylist {
   id            String            @id @default(cuid())
   userId        String
@@ -139,13 +153,48 @@ model SourcePlaylist {
   spotifySnapshotId String?
   cachedCandidates  Json?
   cacheUpdatedAt    DateTime?
+
+  // MUSIC-02 is opt-in and intentionally independent from candidate eligibility.
+  // Existing sources remain non-destructive after migration.
+  musicRetentionMode             MusicSourceRetentionMode @default(KEEP_ALL)
+  musicCleanupAutomationEnabled  Boolean                  @default(false)
+  musicCleanupFirstCompletedAt   DateTime?
+  musicCleanupLastRunAt          DateTime?
+
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cleanupRuns MusicSourceCleanupRun[]
 
   @@unique([userId, spotifyType, spotifyId])
   @@index([userId, kind])
+}
+
+model MusicSourceCleanupRun {
+  id                     String                   @id @default(cuid())
+  userId                 String
+  sourcePlaylistId       String
+  status                 MusicSourceCleanupStatus @default(PREVIEW)
+  snapshotBefore         String
+  snapshotAfter          String?
+  planHash               String
+  examinedCount          Int
+  removableTrackCount    Int
+  removalOccurrenceCount Int
+  keptCount              Int
+  plannedUris            Json
+  removedUris            Json?
+  failedUris             Json?
+  startedAt              DateTime                 @default(now())
+  finishedAt             DateTime?
+  error                  String?                  @db.Text
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source SourcePlaylist @relation(fields: [sourcePlaylistId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([sourcePlaylistId, startedAt])
 }
 
 // ---------------------------------------------------------------------------
