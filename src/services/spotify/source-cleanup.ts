@@ -234,6 +234,28 @@ export async function executeMusicSourceCleanupPreview(
     throw new MusicSourceCleanupError("A fonte não está mais habilitada como inbox de música.");
   }
 
+  const plannedUris = parseStringArray(preview.plannedUris);
+  const uniquePlannedUris = new Set(plannedUris);
+  if (
+    plannedUris.length !== uniquePlannedUris.size ||
+    preview.removableTrackCount !== plannedUris.length ||
+    preview.removalOccurrenceCount < preview.removableTrackCount
+  ) {
+    throw new MusicSourceCleanupError(
+      "O preview de limpeza está inconsistente. Gere um novo preview antes de confirmar.",
+    );
+  }
+  if (
+    !preview.source.musicCleanupFirstCompletedAt &&
+    (preview.removableTrackCount < 1 ||
+      preview.removalOccurrenceCount < 1 ||
+      plannedUris.length < 1)
+  ) {
+    throw new MusicSourceCleanupError(
+      "Preview sem faixas removíveis não pode concluir a primeira limpeza.",
+    );
+  }
+
   const history = await syncRecentlyPlayed(userId, now);
   if (!history.enabled) {
     throw new MusicSourceCleanupHistoryRequiredError(
@@ -269,7 +291,6 @@ export async function executeMusicSourceCleanupPreview(
     );
   }
 
-  const plannedUris = parseStringArray(preview.plannedUris);
   let snapshotAfter: string | null = current.snapshotId;
 
   try {
