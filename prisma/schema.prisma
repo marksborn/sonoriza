@@ -35,6 +35,8 @@ model User {
   trackListeningStates   TrackListeningState[]
   episodeListeningStates EpisodeListeningState[]
   musicSourceCleanupRuns MusicSourceCleanupRun[]
+  musicIngestionRules    MusicIngestionRule[]
+  musicIngestionRuns     MusicIngestionRun[]
 }
 
 model Account {
@@ -81,7 +83,7 @@ model VerificationToken {
 
 model CalendarSelection {
   id               String   @id @default(cuid())
-  userId           String
+  userId            String
   googleCalendarId String
   summary          String?
   selected         Boolean  @default(true)
@@ -152,8 +154,10 @@ model SourcePlaylist {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cleanupRuns MusicSourceCleanupRun[]
+  user                User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cleanupRuns         MusicSourceCleanupRun[]
+  ingestionRulesTarget MusicIngestionRule[]   @relation("MusicIngestionTarget")
+  ingestionRunsTarget  MusicIngestionRun[]    @relation("MusicIngestionRunTarget")
 
   @@unique([userId, spotifyType, spotifyId])
   @@index([userId, kind])
@@ -183,6 +187,96 @@ model MusicSourceCleanupRun {
 
   @@index([userId, startedAt])
   @@index([sourcePlaylistId, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// MUSIC-03 — playlist-inbox ingestion rules and audit history.
+// ---------------------------------------------------------------------------
+
+enum MusicIngestionRuleType {
+  PLAYLIST_COPY
+  SAVED_TRACK
+  SAVED_TRACK_ALBUM
+}
+
+enum MusicIngestionInitialMode {
+  FROM_NOW
+  IMPORT_CURRENT
+}
+
+enum MusicIngestionCapabilityStatus {
+  UNKNOWN
+  SUPPORTED
+  BLOCKED
+}
+
+enum MusicIngestionTrigger {
+  INITIAL_BASELINE
+  INITIAL_IMPORT
+  USER_SYNC
+  SCHEDULED
+  MANUAL
+}
+
+enum MusicIngestionRunStatus {
+  PREVIEW
+  SUCCESS
+  PARTIAL
+  FAILED
+  NOOP
+}
+
+model MusicIngestionRule {
+  id                     String                         @id @default(cuid())
+  userId                 String
+  targetSourcePlaylistId String
+  type                   MusicIngestionRuleType
+  sourceSpotifyId        String?
+  sourceName             String?
+  enabled                Boolean                        @default(false)
+  initialMode            MusicIngestionInitialMode      @default(FROM_NOW)
+  state                  Json?
+  capabilityStatus       MusicIngestionCapabilityStatus @default(UNKNOWN)
+  capabilityMessage      String?                        @db.Text
+  lastSyncAt             DateTime?
+  lastSuccessAt          DateTime?
+  createdAt              DateTime                       @default(now())
+  updatedAt              DateTime                       @updatedAt
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target SourcePlaylist @relation("MusicIngestionTarget", fields: [targetSourcePlaylistId], references: [id], onDelete: Cascade)
+  runs   MusicIngestionRun[]
+
+  @@index([userId, enabled])
+  @@index([targetSourcePlaylistId])
+}
+
+model MusicIngestionRun {
+  id                     String                  @id @default(cuid())
+  userId                 String
+  ruleId                 String?
+  targetSourcePlaylistId String
+  ruleType               MusicIngestionRuleType?
+  trigger                MusicIngestionTrigger
+  status                 MusicIngestionRunStatus
+  preview                Boolean                 @default(false)
+  sourceEventCount       Int                     @default(0)
+  addedCount             Int                     @default(0)
+  duplicateCount         Int                     @default(0)
+  cooldownCount          Int                     @default(0)
+  unavailableCount       Int                     @default(0)
+  details                Json?
+  startedAt              DateTime                @default(now())
+  finishedAt             DateTime?
+  error                  String?                 @db.Text
+
+  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rule   MusicIngestionRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  target SourcePlaylist      @relation("MusicIngestionRunTarget", fields: [targetSourcePlaylistId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([ruleId, startedAt])
+  @@index([targetSourcePlaylistId, startedAt])
 }
 
 // ---------------------------------------------------------------------------
@@ -227,9 +321,6 @@ model TrackListeningState {
 
 // ---------------------------------------------------------------------------
 // Native podcast listening state — PODCAST-04.
-// This is intentionally separate from MUSIC-01. Episode identity is Spotify
-// episode id/URI and completion is persisted so a provider representation
-// change cannot silently make a completed episode look new again.
 // ---------------------------------------------------------------------------
 
 enum PodcastListeningStatus {
@@ -290,29 +381,25 @@ enum CompositionMode {
 }
 
 model TargetPlaylist {
-  id                                String                        @id @default(cuid())
-  userId                            String
-  name                              String
-  spotifyPlaylistId                 String?
-  enabled                           Boolean                       @default(true)
-  priority                          Int                           @default(0)
-  compositionMode                   CompositionMode               @default(PROPORTION)
-
-  durationMode                      DurationMode                  @default(FIXED)
-  fixedDurationSeconds              Int?
-  emptyCalendarBehavior             EmptyCalendarBehavior         @default(CLEAR)
-  calendarEventFilterMode           CalendarEventFilterMode       @default(ALL)
-  calendarEventMarker               String?
-
-  podcastPercent                    Int                           @default(60)
-  podcastEpisodeMaxDurationMode     PodcastEpisodeMaxDurationMode @default(NONE)
-  podcastEpisodeMaxDurationSeconds  Int?
-
-  sequencePattern                   Json
-  maxEpisodesPerProgram             Int                           @default(1)
-
-  createdAt                         DateTime                      @default(now())
-  updatedAt                         DateTime                      @updatedAt
+  id                               String                        @id @default(cuid())
+  userId                           String
+  name                             String
+  spotifyPlaylistId                String?
+  enabled                          Boolean                       @default(true)
+  priority                         Int                           @default(0)
+  compositionMode                  CompositionMode               @default(PROPORTION)
+  durationMode                     DurationMode                  @default(FIXED)
+  fixedDurationSeconds             Int?
+  emptyCalendarBehavior            EmptyCalendarBehavior         @default(CLEAR)
+  calendarEventFilterMode          CalendarEventFilterMode       @default(ALL)
+  calendarEventMarker              String?
+  podcastPercent                   Int                           @default(60)
+  podcastEpisodeMaxDurationMode    PodcastEpisodeMaxDurationMode @default(NONE)
+  podcastEpisodeMaxDurationSeconds Int?
+  sequencePattern                  Json
+  maxEpisodesPerProgram            Int                           @default(1)
+  createdAt                        DateTime                       @default(now())
+  updatedAt                        DateTime                       @updatedAt
 
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   generationItems GenerationItem[]
