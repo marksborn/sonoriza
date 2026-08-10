@@ -4,7 +4,9 @@ import type { Candidate } from "@/services/playlist-planner";
 import {
   decodeMusicSourceCache,
   decodeMusicSourceCacheUnavailableTrackCount,
+  decodePartialMusicSourceCache,
   encodeMusicSourceCache,
+  encodePartialMusicSourceCache,
   patchMusicSourceCacheAfterAppend,
   patchMusicSourceCacheAfterRemove,
 } from "./source-cache";
@@ -93,4 +95,23 @@ test("remove patch fails closed when the removed URI is absent from the planner 
     patchMusicSourceCacheAfterRemove(encoded, ["spotify:track:not-cached"]),
     null,
   );
+});
+
+
+test("partial cache checkpoints are resumable but never decode as a complete cache", () => {
+  const partial = encodePartialMusicSourceCache(candidates, 4, 100);
+  assert.equal(decodeMusicSourceCache(partial), null);
+  assert.deepEqual(decodePartialMusicSourceCache(partial), {
+    candidates,
+    unavailableTrackCount: 4,
+    nextOffset: 100,
+  });
+});
+
+test("partial cache may checkpoint all item pages while waiting for final snapshot validation", () => {
+  const partial = encodePartialMusicSourceCache(candidates, 1, null);
+  const decoded = decodePartialMusicSourceCache(partial);
+  assert.ok(decoded);
+  assert.equal(decoded.nextOffset, null);
+  assert.equal(decodeMusicSourceCache(partial), null);
 });

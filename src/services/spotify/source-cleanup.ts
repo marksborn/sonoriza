@@ -506,13 +506,6 @@ export async function executeAutomaticMusicSourceCleanup(
     );
   }
 
-  const history = await syncRecentlyPlayed(userId, now);
-  if (!history.enabled) {
-    throw new MusicSourceCleanupHistoryRequiredError(
-      "O histórico nativo precisa permanecer ativo para executar a limpeza.",
-    );
-  }
-
   const cachedCandidates = decodeMusicSourceCache(source.cachedCandidates);
   if (!source.spotifySnapshotId || !cachedCandidates) {
     throw new MusicSourceCleanupError(
@@ -521,26 +514,32 @@ export async function executeAutomaticMusicSourceCleanup(
   }
 
   const accessToken = await getSpotifyAccessToken(userId);
-  const [me, metadata, playedStates] = await Promise.all([
-    spotifyRequest<{ id?: string | null }>(accessToken, "/me"),
-    readPlaylistMetadata(accessToken, source.spotifyId),
-    prisma.trackListeningState.findMany({
-      where: { userId },
-      select: { spotifyTrackId: true },
-    }),
-  ]);
-
+  const metadata = await readPlaylistMetadata(accessToken, source.spotifyId);
   if (!metadata.snapshot_id || metadata.snapshot_id !== source.spotifySnapshotId) {
     throw new MusicSourceCleanupStaleError(
       "A limpeza automática foi adiada porque a playlist mudou fora do cache conhecido. O Sonoriza não fará uma varredura integral só para a rotina periódica.",
     );
   }
+
+  const history = await syncRecentlyPlayed(userId, now);
+  if (!history.enabled) {
+    throw new MusicSourceCleanupHistoryRequiredError(
+      "O histórico nativo precisa permanecer ativo para executar a limpeza.",
+    );
+  }
+
+  const me = await spotifyRequest<{ id?: string | null }>(accessToken, "/me");
   const ownerId = metadata.owner?.id ?? null;
   if (ownerId !== me.id && metadata.collaborative !== true) {
     throw new MusicSourceCleanupPermissionError(
       "A conta conectada não é proprietária nem colaboradora desta playlist.",
     );
   }
+
+  const playedStates = await prisma.trackListeningState.findMany({
+    where: { userId },
+    select: { spotifyTrackId: true },
+  });
 
   const plan = buildCachedMusicSourceCleanupPlan(
     cachedCandidates,

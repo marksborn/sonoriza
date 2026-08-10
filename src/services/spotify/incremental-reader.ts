@@ -25,7 +25,9 @@ import { sortShowCandidates } from "./podcast-show-policy";
 import {
   decodeMusicSourceCache,
   decodeMusicSourceCacheUnavailableTrackCount,
+  decodePartialMusicSourceCache,
   encodeMusicSourceCache,
+  encodePartialMusicSourceCache,
 } from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
 
@@ -231,13 +233,55 @@ export class SpotifyIncrementalReader {
     const metrics = this.sourceMetrics(sourceKey);
     let initialized = false;
     let snapshotBefore: string | null = null;
+    let persistedSnapshotId: string | null = source.spotifySnapshotId;
     let nextUrl: string | null = null;
     let done = false;
     let cached: Candidate[] | null = null;
     let cacheDelivered = false;
+    let partialCached: Candidate[] | null = null;
+    let partialCacheDelivered = false;
     let cachedUnavailableTrackCount = 0;
     let accumulatedUnavailableTrackCount = 0;
     const accumulated: Candidate[] = [];
+
+    const itemsPath = (offset: number): string =>
+      `/playlists/${source.spotifyId}/items?market=from_token&limit=50${
+        offset > 0 ? `&offset=${offset}` : ""
+      }&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),artists(name)))`;
+
+    const nextOffsetFrom = (next: string | null): number | null => {
+      if (!next) return null;
+      try {
+        const value = Number(new URL(next, API).searchParams.get("offset"));
+        return Number.isInteger(value) && value >= 0 ? value : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const persistCache = async (
+      snapshotId: string,
+      payload: Prisma.InputJsonValue,
+    ): Promise<void> => {
+      try {
+        const result = await prisma.sourcePlaylist.updateMany({
+          where: { id: source.id, spotifySnapshotId: persistedSnapshotId },
+          data: {
+            spotifySnapshotId: snapshotId,
+            cachedCandidates: payload,
+            cacheUpdatedAt: new Date(),
+          },
+        });
+        if (result.count !== 1) {
+          metrics.cacheWriteFailures += 1;
+          return;
+        }
+        persistedSnapshotId = snapshotId;
+        metrics.cacheWrites += 1;
+      } catch {
+        metrics.cacheWriteFailures += 1;
+      }
+    };
 
     return {
       id: source.id,
@@ -261,11 +305,40 @@ export class SpotifyIncrementalReader {
           cachedUnavailableTrackCount = snapshotMatches
             ? decodeMusicSourceCacheUnavailableTrackCount(source.cachedCandidates) ?? 0
             : 0;
+          const partial =
+            snapshotMatches && cached === null
+              ? decodePartialMusicSourceCache(source.cachedCandidates)
+              : null;
 
           if (cached !== null) {
             this.requestMetrics.cacheHits += 1;
             metrics.cacheHits += 1;
             metrics.snapshotUnchanged += 1;
+          } else if (partial !== null) {
+            this.requestMetrics.cacheHits += 1;
+            metrics.cacheHits += 1;
+            metrics.snapshotUnchanged += 1;
+            partialCached = partial.candidates;
+            cachedUnavailableTrackCount = partial.unavailableTrackCount;
+            accumulated.push(...partial.candidates);
+            accumulatedUnavailableTrackCount = partial.unavailableTrackCount;
+
+            if (partial.nextOffset === null) {
+              // Every item page was already collected before an earlier run
+              // lost the final validation call. The metadata read above proves
+              // the same snapshot is still current, so promotion is safe.
+              await persistCache(
+                snapshotBefore,
+                encodeMusicSourceCache(
+                  accumulated,
+                  accumulatedUnavailableTrackCount,
+                ) as Prisma.InputJsonValue,
+              );
+              cached = accumulated.slice();
+              partialCached = null;
+            } else {
+              nextUrl = itemsPath(partial.nextOffset);
+            }
           } else {
             this.requestMetrics.cacheMisses += 1;
             metrics.cacheMisses += 1;
@@ -273,8 +346,7 @@ export class SpotifyIncrementalReader {
               if (snapshotMatches) metrics.snapshotUnchanged += 1;
               else metrics.snapshotChanged += 1;
             }
-            nextUrl =
-              `/playlists/${source.spotifyId}/items?market=from_token&limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),artists(name)))`;
+            nextUrl = itemsPath(0);
           }
         }
 
@@ -285,6 +357,16 @@ export class SpotifyIncrementalReader {
           return {
             candidates: cached,
             done: true,
+            fromCache: true,
+            unavailableMusicSkippedCount: cachedUnavailableTrackCount,
+          };
+        }
+
+        if (partialCached !== null && !partialCacheDelivered) {
+          partialCacheDelivered = true;
+          return {
+            candidates: partialCached,
+            done: false,
             fromCache: true,
             unavailableMusicSkippedCount: cachedUnavailableTrackCount,
           };
@@ -306,8 +388,22 @@ export class SpotifyIncrementalReader {
         }
         accumulatedUnavailableTrackCount += unavailableMusicSkippedCount;
         accumulated.push(...candidates);
-        nextUrl = page.next ? stripBase(page.next) : null;
+
+        const providerNext = page.next;
+        const nextOffset = nextOffsetFrom(providerNext);
+        nextUrl = providerNext ? stripBase(providerNext) : null;
         done = nextUrl === null;
+
+        if (!providerNext || nextOffset !== null) {
+          await persistCache(
+            snapshotBefore,
+            encodePartialMusicSourceCache(
+              accumulated,
+              accumulatedUnavailableTrackCount,
+              nextOffset,
+            ) as Prisma.InputJsonValue,
+          );
+        }
 
         if (done) {
           const snapshotAfter = await this.getPlaylistSnapshotId(source.spotifyId);
@@ -317,22 +413,13 @@ export class SpotifyIncrementalReader {
             );
           }
 
-          try {
-            await prisma.sourcePlaylist.update({
-              where: { id: source.id },
-              data: {
-                spotifySnapshotId: snapshotAfter,
-                cachedCandidates: encodeMusicSourceCache(
-                  accumulated,
-                  accumulatedUnavailableTrackCount,
-                ) as Prisma.InputJsonValue,
-                cacheUpdatedAt: new Date(),
-              },
-            });
-            metrics.cacheWrites += 1;
-          } catch {
-            metrics.cacheWriteFailures += 1;
-          }
+          await persistCache(
+            snapshotAfter,
+            encodeMusicSourceCache(
+              accumulated,
+              accumulatedUnavailableTrackCount,
+            ) as Prisma.InputJsonValue,
+          );
         }
 
         return { candidates, done, unavailableMusicSkippedCount };

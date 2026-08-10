@@ -5,6 +5,11 @@ import { prisma } from "@/lib/prisma";
 
 import { SpotifyApiError } from "./errors";
 import {
+  decodeMusicSourceCache,
+  decodePartialMusicSourceCache,
+  encodePartialMusicSourceCache,
+} from "./source-cache";
+import {
   SpotifyIncrementalReader,
   type IncrementalSpotifySourceConfig,
 } from "./incremental-reader";
@@ -310,4 +315,139 @@ test("music pages use the authenticated market and exclude explicitly unavailabl
     const itemsUrl = urls.find((url) => url.includes("/items?")) ?? "";
     assert.match(itemsUrl, /market=from_token/); assert.match(itemsUrl, /is_playable/); assert.match(itemsUrl, /restrictions\(reason\)/);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+
+integrationTest(
+  "quota checkpoint resumes from the next music page instead of restarting a large playlist",
+  async (t) => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const user = await prisma.user.create({
+      data: { email: `incremental-resume-${suffix}@example.test` },
+    });
+    const dbSource = await prisma.sourcePlaylist.create({
+      data: {
+        userId: user.id,
+        kind: "MUSIC",
+        spotifyType: "PLAYLIST",
+        spotifyId: "playlist-resume",
+        name: "Resume playlist",
+      },
+    });
+    t.after(async () => {
+      await prisma.user.delete({ where: { id: user.id } });
+    });
+
+    const originalFetch = globalThis.fetch;
+    const urls: string[] = [];
+    let mode: "quota" | "resume" = "quota";
+
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/playlists/playlist-resume?fields=snapshot_id")) {
+        return jsonResponse({ snapshot_id: "resume-snapshot" });
+      }
+      if (url.includes("/playlists/playlist-resume/items?")) {
+        if (mode === "quota") {
+          if (url.includes("offset=50")) {
+            return jsonResponse(
+              { error: { status: 429, message: "Too many requests", reason: "QUOTA_EXCEEDED" } },
+              { status: 429 },
+            );
+          }
+          return jsonResponse({
+            items: [{ item: { uri: "spotify:track:first", name: "First", duration_ms: 180_000, is_local: false, type: "track", artists: [{ name: "Artist" }] } }],
+            next: "https://api.spotify.com/v1/playlists/playlist-resume/items?offset=50&limit=50",
+          });
+        }
+        assert.match(url, /offset=50/);
+        return jsonResponse({
+          items: [{ item: { uri: "spotify:track:second", name: "Second", duration_ms: 180_000, is_local: false, type: "track", artists: [{ name: "Artist" }] } }],
+          next: null,
+        });
+      }
+      throw new Error(`Unexpected Spotify request: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const firstConfig = await prisma.sourcePlaylist.findUniqueOrThrow({ where: { id: dbSource.id } });
+      const firstReader = createReader();
+      const firstCursor = await firstReader.createSource(firstConfig);
+      const firstBatch = await firstCursor.readNext();
+      assert.deepEqual(firstBatch.candidates.map((item) => item.uri), ["spotify:track:first"]);
+      await assert.rejects(firstCursor.readNext(), (error: unknown) => {
+        assert.ok(error instanceof SpotifyApiError);
+        assert.equal(error.kind, "QUOTA_EXCEEDED");
+        return true;
+      });
+
+      const checkpoint = await prisma.sourcePlaylist.findUniqueOrThrow({ where: { id: dbSource.id } });
+      assert.equal(checkpoint.spotifySnapshotId, "resume-snapshot");
+      const partial = decodePartialMusicSourceCache(checkpoint.cachedCandidates);
+      assert.ok(partial);
+      assert.equal(partial.nextOffset, 50);
+      assert.deepEqual(partial.candidates.map((item) => item.uri), ["spotify:track:first"]);
+      assert.equal(decodeMusicSourceCache(checkpoint.cachedCandidates), null);
+
+      mode = "resume";
+      urls.length = 0;
+      const secondReader = createReader();
+      const secondCursor = await secondReader.createSource(checkpoint);
+      const cachedBatch = await secondCursor.readNext();
+      assert.equal(cachedBatch.fromCache, true);
+      assert.equal(cachedBatch.done, false);
+      assert.deepEqual(cachedBatch.candidates.map((item) => item.uri), ["spotify:track:first"]);
+      const resumedBatch = await secondCursor.readNext();
+      assert.equal(resumedBatch.done, true);
+      assert.deepEqual(resumedBatch.candidates.map((item) => item.uri), ["spotify:track:second"]);
+      const itemUrls = urls.filter((url) => url.includes("/items?"));
+      assert.equal(itemUrls.length, 1);
+      assert.match(itemUrls[0]!, /offset=50/);
+
+      const complete = await prisma.sourcePlaylist.findUniqueOrThrow({ where: { id: dbSource.id } });
+      assert.deepEqual(
+        decodeMusicSourceCache(complete.cachedCandidates)?.map((item) => item.uri),
+        ["spotify:track:first", "spotify:track:second"],
+      );
+      assert.equal(decodePartialMusicSourceCache(complete.cachedCandidates), null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  },
+);
+
+test("changed playlist snapshot discards a partial checkpoint and restarts from page zero", async () => {
+  const originalFetch = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.includes("?fields=snapshot_id")) return jsonResponse({ snapshot_id: "new-snapshot" });
+    if (url.includes("/items?")) return jsonResponse({ items: [], next: null });
+    throw new Error(`Unexpected Spotify request: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const partial = encodePartialMusicSourceCache(
+      [{ uri: "spotify:track:old", spotifyTrackId: "old", type: "MUSIC", title: "Old", durationMs: 1 }],
+      0,
+      50,
+    );
+    const reader = createReader();
+    const cursor = await reader.createSource(
+      source({
+        kind: "MUSIC",
+        spotifyType: "PLAYLIST",
+        name: "Music source",
+        spotifySnapshotId: "old-snapshot",
+        cachedCandidates: partial,
+      }),
+    );
+    await cursor.readNext();
+    const itemsUrl = urls.find((url) => url.includes("/items?")) ?? "";
+    assert.doesNotMatch(itemsUrl, /offset=50/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
