@@ -600,14 +600,14 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                   </p>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <Metric
                     label="Fontes configuradas"
                     value={inconclusiveSimulation.configuredSourceCount}
                   />
                   <Metric
-                    label="Lidas com sucesso"
-                    value={inconclusiveSimulation.readSourceCount}
+                    label="Confirmadas"
+                    value={inconclusiveSimulation.confirmedSourceCount}
                     tone="success"
                   />
                   <Metric
@@ -615,22 +615,62 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                     value={inconclusiveSimulation.unavailableSourceCount}
                     tone="warning"
                   />
+                  <Metric
+                    label="Não verificadas"
+                    value={inconclusiveSimulation.notAttemptedSourceCount}
+                  />
                 </div>
 
-                {inconclusiveSimulation.unavailableSources.length > 0 && (
+                {!inconclusiveSimulation.countsExact &&
+                  inconclusiveSimulation.notAttemptedSourceCount > 0 && (
+                    <p className="text-xs leading-5 opacity-70">
+                      Este resultado foi registrado antes do detalhamento por fonte. A quantidade de fontes não verificadas foi reconstruída pelos totais conhecidos; uma nova simulação passa a registrar cada estado individualmente.
+                    </p>
+                  )}
+
+                {inconclusiveSimulation.sourceDiagnostics.length > 0 && (
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.1em]">
-                      Fontes que não puderam ser confirmadas
+                      Diagnóstico das fontes
                     </p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {inconclusiveSimulation.unavailableSources.map((source) => (
-                        <span key={source} className="product-badge">
-                          {source}
-                        </span>
-                      ))}
+                    <div className="mt-2 space-y-2">
+                      {inconclusiveSimulation.sourceDiagnostics.map((diagnostic, index) => {
+                        const toneClass =
+                          diagnostic.state === "CONFIRMED"
+                            ? "status-success"
+                            : diagnostic.state === "UNAVAILABLE"
+                              ? "status-warning"
+                              : "border-line-dark/45 bg-canvas-dark/20 text-ink-inverse";
+                        return (
+                          <article
+                            key={`${diagnostic.source}-${diagnostic.state}-${index}`}
+                            className={`rounded-xl border p-3 ${toneClass}`}
+                          >
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                              <p className="text-sm font-black">{diagnostic.source}</p>
+                              <span className="w-fit rounded-full border border-current/20 px-2.5 py-1 text-xs font-black">
+                                {diagnostic.stateLabel}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-sm leading-6 opacity-80">
+                              {diagnostic.detail}
+                            </p>
+                          </article>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
+
+                {!inconclusiveSimulation.countsExact &&
+                  inconclusiveSimulation.notAttemptedSourceCount > 0 && (
+                    <div className="status-info rounded-xl border p-3">
+                      <p className="text-sm font-black">Qual fonte ficou sem tentativa?</p>
+                      <p className="mt-1 text-sm leading-6 opacity-80">
+                        O run anterior não gravou essa identidade. A próxima simulação registrará pelo nome quais fontes foram confirmadas, quais falharam e quais não chegaram a ser verificadas.
+                      </p>
+                    </div>
+                  )}
 
                 <div className="status-info rounded-xl border p-3">
                   <p className="text-sm font-black">A configuração não foi reprovada.</p>

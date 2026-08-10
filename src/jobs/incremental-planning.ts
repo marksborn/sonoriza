@@ -57,6 +57,7 @@ export type IncrementalPlanningResult<
   pools: PlannerPools;
   plan: PlanRunResult;
   qualityFailures: PlanRunResult["targets"];
+  attemptedSourceIds: Set<string>;
   readSourceIds: Set<string>;
   rounds: number;
   stoppedEarly: boolean;
@@ -74,6 +75,7 @@ export async function collectIncrementally<
   TSource extends IncrementalCandidateSource,
 >({ sources, targets, onBatch, onRound }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
   const pools: PlannerPools = { music: [], podcasts: [] };
+  const attemptedSourceIds = new Set<string>();
   const readSourceIds = new Set<string>();
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
@@ -90,6 +92,7 @@ export async function collectIncrementally<
       pools,
       plan,
       qualityFailures,
+      attemptedSourceIds,
       readSourceIds,
       rounds,
       stoppedEarly: sources.some((source) => !source.done),
@@ -106,6 +109,7 @@ export async function collectIncrementally<
     rounds += 1;
     for (const source of readable) {
       let batch: IncrementalSourceBatch;
+      attemptedSourceIds.add(source.id);
       try {
         batch = await source.readNext();
       } catch (error) {
@@ -113,6 +117,7 @@ export async function collectIncrementally<
           pools,
           plan,
           qualityFailures,
+          attemptedSourceIds,
           readSourceIds,
           rounds,
           stoppedEarly: false,
@@ -160,6 +165,7 @@ export async function collectIncrementally<
         pools,
         plan,
         qualityFailures,
+        attemptedSourceIds,
         readSourceIds,
         rounds,
         stoppedEarly: sources.some((source) => !source.done),
@@ -182,6 +188,7 @@ export async function collectIncrementally<
     pools,
     plan,
     qualityFailures,
+    attemptedSourceIds,
     readSourceIds,
     rounds,
     stoppedEarly: false,

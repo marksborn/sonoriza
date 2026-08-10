@@ -21,9 +21,26 @@ type RunSummary = {
     podcastCandidatesRead: number;
   };
   sourceCollection: {
+    configuredSourceCount: number;
+    attemptedSourceCount: number;
     unavailableSourceCount: number;
     readSourceCount: number;
+    confirmedSourceCount: number;
+    notAttemptedSourceCount: number;
     planningRounds: number;
+    failures: Array<{
+      source: string;
+      errorKind: string;
+      status: number | null;
+      operation: string | null;
+      retryAfterSeconds: number | null;
+    }>;
+    sources: Array<{
+      source: string;
+      state: "CONFIRMED" | "UNAVAILABLE" | "NOT_ATTEMPTED";
+      pagesRead: number;
+      partialRead: boolean;
+    }>;
   };
   spotifyApi: {
     rateLimitedCount: number;
@@ -200,10 +217,10 @@ integrationTest(
 );
 
 integrationTest(
-  "newest inconclusive simulation overrides an older success and never turns a partial pool into mix failure",
+  "newest inconclusive simulation classifies confirmed, unavailable and not-attempted sources without using a partial pool",
   { concurrency: false },
   async (t) => {
-    const user = await createFixture({ sources: 2 });
+    const user = await createFixture({ sources: 3 });
     t.after(async () => {
       await prisma.user.delete({ where: { id: user.id } });
     });
@@ -264,10 +281,26 @@ integrationTest(
       assert.equal(summary.qualityPassed, false);
       assert.deepEqual(summary.qualityFailures, []);
       assert.equal(summary.incrementalCollection.podcastCandidatesRead, 1);
+      assert.equal(summary.sourceCollection.configuredSourceCount, 3);
+      assert.equal(summary.sourceCollection.attemptedSourceCount, 2);
+      assert.equal(summary.sourceCollection.readSourceCount, 1);
+      assert.equal(summary.sourceCollection.confirmedSourceCount, 1);
       assert.equal(summary.sourceCollection.unavailableSourceCount, 1);
+      assert.equal(summary.sourceCollection.notAttemptedSourceCount, 1);
+      assert.deepEqual(
+        summary.sourceCollection.sources.map((source) => source.state).sort(),
+        ["CONFIRMED", "NOT_ATTEMPTED", "UNAVAILABLE"],
+      );
+      assert.equal(summary.sourceCollection.failures.length, 1);
+      assert.equal(summary.sourceCollection.failures[0]?.errorKind, "RATE_LIMITED");
+      assert.equal(summary.sourceCollection.failures[0]?.status, 429);
+      assert.equal(summary.sourceCollection.failures[0]?.operation, "playlist-items");
       assert.equal(summary.spotifyApi.rateLimitedCount, 2);
       assert.equal(summary.spotifyApi.retries, 1);
       assert.equal(summary.spotifyApi.totalCalls, 3);
+
+      const sourceCollectionSerialized = JSON.stringify(summary.sourceCollection);
+      assert.doesNotMatch(sourceCollectionSerialized, /playlist-source-/i);
 
       const serialized = JSON.stringify({
         summary: run.summary,
@@ -385,6 +418,8 @@ integrationTest(
       const summary = summaryObject(run.summary);
       assert.equal(summary.qualityPassed, true);
       assert.equal(summary.sourceCollection.readSourceCount, 1);
+      assert.equal(summary.sourceCollection.confirmedSourceCount, 1);
+      assert.equal(summary.sourceCollection.notAttemptedSourceCount, 0);
       assert.equal(summary.sourceCollection.planningRounds, 1);
       assert.equal(summary.targets.length, 2);
       assert.equal(summary.spotifyApi.totalCalls, 1);

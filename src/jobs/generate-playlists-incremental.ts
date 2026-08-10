@@ -10,9 +10,13 @@ import {
   type RunTarget,
 } from "@/services/playlist-planner";
 import {
+  buildSourceCollectionDiagnosticSummary,
+  safeConfiguredSourceLabel,
+  type SourceCollectionFailureRecord,
+} from "@/services/source-collection-diagnostics";
+import {
   isSpotifyApiError,
   SpotifyClient,
-  type SpotifyApiErrorKind,
   type SpotifyRequestMetrics,
 } from "@/services/spotify";
 import {
@@ -51,18 +55,6 @@ type ResolvedTargetDuration = {
   durationMs: number;
   calendar: CalendarDurationResult | null;
   podcastEpisodeMaxDurationMs: number | null;
-};
-
-type SourceCollectionFailure = {
-  source: string;
-  kind: string;
-  spotifyType: string;
-  spotifyId: string;
-  errorKind: SpotifyApiErrorKind | "SOURCE_READ_FAILED";
-  status: number | null;
-  reason: string | null;
-  operation: string | null;
-  retryAfterSeconds: number | null;
 };
 
 /**
@@ -165,7 +157,7 @@ export async function generatePlaylists(
       authoritativePodcastProgramIds,
     });
     const sourceCursors: SpotifyIncrementalCandidateSource[] = [];
-    const setupFailures: SourceCollectionFailure[] = [];
+    const setupFailures: SourceCollectionFailureRecord[] = [];
 
     // Cursor creation is sequential by design. Podcast cursors are local-only;
     // music snapshot validation is also serialized to avoid a metadata burst.
@@ -178,21 +170,27 @@ export async function generatePlaylists(
     }
 
     if (setupFailures.length > 0) {
+      const spotifyMetrics = reader.getRequestMetrics();
+      const sourceCollection = buildSourceCollectionDiagnosticSummary({
+        sources,
+        attemptedSourceIds: new Set(setupFailures.map((failure) => failure.sourceId)),
+        readSourceIds: new Set(),
+        failures: setupFailures,
+        sourceReads: spotifyMetrics.sourceReads,
+      });
+
       summary.collectionComplete = false;
       summary.inconclusive = true;
       summary.inconclusiveReason = collectionFailureReason(setupFailures);
       summary.qualityPassed = false;
       summary.qualityFailures = [];
       summary.sourceCollection = {
-        configuredSourceCount: sources.length,
-        readSourceCount: 0,
-        unavailableSourceCount: setupFailures.length,
+        ...sourceCollection,
         exhaustedSourceCount: 0,
         stoppedEarly: false,
         planningRounds: 0,
-        failures: setupFailures,
       };
-      summary.spotifyApi = reader.getRequestMetrics();
+      summary.spotifyApi = spotifyMetrics;
 
       const error = collectionFailureMessage(setupFailures, simulate);
       log({ level: "WARN", message: error, data: summary.sourceCollection });
@@ -223,16 +221,21 @@ export async function generatePlaylists(
       : null;
     const failures = readFailure ? [readFailure] : [];
     const exhaustedSourceCount = sourceCursors.filter((source) => source.done).length;
+    const spotifyMetrics = reader.getRequestMetrics();
+    const sourceCollection = buildSourceCollectionDiagnosticSummary({
+      sources,
+      attemptedSourceIds: incremental.attemptedSourceIds,
+      readSourceIds: incremental.readSourceIds,
+      failures,
+      sourceReads: spotifyMetrics.sourceReads,
+    });
 
     summary.collectionComplete = failures.length === 0;
     summary.sourceCollection = {
-      configuredSourceCount: sources.length,
-      readSourceCount: incremental.readSourceIds.size,
-      unavailableSourceCount: failures.length,
+      ...sourceCollection,
       exhaustedSourceCount,
       stoppedEarly: incremental.stoppedEarly,
       planningRounds: incremental.rounds,
-      failures,
     };
     summary.incrementalCollection = {
       pageSize: 50,
@@ -241,7 +244,7 @@ export async function generatePlaylists(
       musicCandidatesRead: incremental.pools.music.length,
       podcastCandidatesRead: incremental.pools.podcasts.length,
     };
-    summary.spotifyApi = reader.getRequestMetrics();
+    summary.spotifyApi = spotifyMetrics;
     summary.musicUnavailableSkippedCount = musicUnavailableSkippedCount;
     summary.genericPodcastSuppressedCount = genericPodcastSuppressedCount;
 
@@ -520,13 +523,13 @@ function logIncrementalRound(
 function sourceFailureFromConfig(
   source: IncrementalSpotifySourceConfig,
   error: unknown,
-): SourceCollectionFailure {
+): SourceCollectionFailureRecord {
   const spotifyError = isSpotifyApiError(error) ? error : null;
   return {
-    source: source.name ?? `${source.spotifyType}:${source.spotifyId}`,
+    sourceId: source.id,
+    source: safeConfiguredSourceLabel(source),
     kind: source.kind,
     spotifyType: source.spotifyType,
-    spotifyId: source.spotifyId,
     errorKind: spotifyError?.kind ?? "SOURCE_READ_FAILED",
     status: spotifyError?.status ?? null,
     reason: spotifyError?.reason ?? null,
@@ -538,13 +541,13 @@ function sourceFailureFromConfig(
 function sourceFailureFromCursor(
   source: SpotifyIncrementalCandidateSource,
   error: unknown,
-): SourceCollectionFailure {
+): SourceCollectionFailureRecord {
   const spotifyError = isSpotifyApiError(error) ? error : null;
   return {
+    sourceId: source.id,
     source: source.label,
     kind: source.kind,
     spotifyType: source.spotifyType,
-    spotifyId: source.spotifyId,
     errorKind: spotifyError?.kind ?? "SOURCE_READ_FAILED",
     status: spotifyError?.status ?? null,
     reason: spotifyError?.reason ?? null,
@@ -728,7 +731,7 @@ async function finalizeRun(
 }
 
 function collectionFailureReason(
-  failures: SourceCollectionFailure[],
+  failures: SourceCollectionFailureRecord[],
 ): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "SOURCE_UNAVAILABLE" {
   if (failures.some((failure) => failure.errorKind === "QUOTA_EXCEEDED")) {
     return "QUOTA_EXCEEDED";
@@ -740,7 +743,7 @@ function collectionFailureReason(
 }
 
 function collectionFailureMessage(
-  failures: SourceCollectionFailure[],
+  failures: SourceCollectionFailureRecord[],
   simulate: boolean,
 ): string {
   const reason = collectionFailureReason(failures);

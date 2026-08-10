@@ -3,6 +3,18 @@ export type SimulationInconclusiveReason =
   | "RATE_LIMITED"
   | "SOURCE_UNAVAILABLE";
 
+export type InconclusiveSourceDiagnostic = {
+  source: string;
+  state: "CONFIRMED" | "UNAVAILABLE" | "NOT_ATTEMPTED";
+  stateLabel: string;
+  detail: string;
+  pagesRead: number;
+  partialRead: boolean;
+  httpStatus: number | null;
+  operation: string | null;
+  retryAfterSeconds: number | null;
+};
+
 export type InconclusiveSimulationView = {
   title: string;
   reason: SimulationInconclusiveReason;
@@ -12,8 +24,12 @@ export type InconclusiveSimulationView = {
   canRetryFromCard: boolean;
   configuredSourceCount: number;
   readSourceCount: number;
+  confirmedSourceCount: number;
   unavailableSourceCount: number;
+  notAttemptedSourceCount: number;
+  countsExact: boolean;
   unavailableSources: string[];
+  sourceDiagnostics: InconclusiveSourceDiagnostic[];
 };
 
 type UnknownRecord = Record<string, unknown>;
@@ -31,6 +47,12 @@ export function readInconclusiveSimulation(
         return value ? [value] : [];
       })
     : [];
+  const sourceStatuses = Array.isArray(sourceCollection?.sources)
+    ? sourceCollection.sources.flatMap((entry) => {
+        const value = asRecord(entry);
+        return value ? [value] : [];
+      })
+    : [];
 
   const reason = readReason(root.inconclusiveReason, failures);
   const retryAfterSeconds = failures.reduce<number | null>((current, failure) => {
@@ -39,6 +61,33 @@ export function readInconclusiveSimulation(
     return current === null ? candidate : Math.max(current, candidate);
   }, null);
 
+  const configuredSourceCount = nonNegativeCount(sourceCollection?.configuredSourceCount);
+  const readSourceCount = nonNegativeCount(sourceCollection?.readSourceCount);
+  const exactStatusesAvailable = sourceStatuses.length > 0;
+  const confirmedSourceCount = nonNegativeCount(
+    sourceCollection?.confirmedSourceCount,
+    exactStatusesAvailable
+      ? sourceStatuses.filter((source) => source.state === "CONFIRMED").length
+      : readSourceCount,
+  );
+  const unavailableSourceCount = nonNegativeCount(
+    sourceCollection?.unavailableSourceCount,
+    exactStatusesAvailable
+      ? sourceStatuses.filter((source) => source.state === "UNAVAILABLE").length
+      : failures.length,
+  );
+  const exactNotAttemptedSourceCount = finiteNumber(sourceCollection?.notAttemptedSourceCount);
+  const notAttemptedSourceCount =
+    exactNotAttemptedSourceCount !== null
+      ? Math.max(0, Math.trunc(exactNotAttemptedSourceCount))
+      : exactStatusesAvailable
+        ? sourceStatuses.filter((source) => source.state === "NOT_ATTEMPTED").length
+        : Math.max(0, configuredSourceCount - readSourceCount - unavailableSourceCount);
+
+  const sourceDiagnostics = exactStatusesAvailable
+    ? sourceStatuses.map((source) => readSourceStatusDiagnostic(source))
+    : failures.map((failure) => readFailureDiagnostic(failure));
+
   return {
     title: "Não foi possível concluir a simulação",
     reason,
@@ -46,16 +95,159 @@ export function readInconclusiveSimulation(
     message: reasonMessage(reason),
     retryHint: retryHint(reason, retryAfterSeconds),
     canRetryFromCard: reason === "SOURCE_UNAVAILABLE",
-    configuredSourceCount: nonNegativeCount(sourceCollection?.configuredSourceCount),
-    readSourceCount: nonNegativeCount(sourceCollection?.readSourceCount),
-    unavailableSourceCount: nonNegativeCount(
-      sourceCollection?.unavailableSourceCount,
-      failures.length,
-    ),
+    configuredSourceCount,
+    readSourceCount,
+    confirmedSourceCount,
+    unavailableSourceCount,
+    notAttemptedSourceCount,
+    countsExact: exactStatusesAvailable || exactNotAttemptedSourceCount !== null,
     unavailableSources: unique(
-      failures.map((failure) => safeSourceLabel(failure)),
+      sourceDiagnostics
+        .filter((diagnostic) => diagnostic.state === "UNAVAILABLE")
+        .map((diagnostic) => diagnostic.source),
     ),
+    sourceDiagnostics,
   };
+}
+
+function readSourceStatusDiagnostic(source: UnknownRecord): InconclusiveSourceDiagnostic {
+  const state =
+    source.state === "CONFIRMED" ||
+    source.state === "UNAVAILABLE" ||
+    source.state === "NOT_ATTEMPTED"
+      ? source.state
+      : "NOT_ATTEMPTED";
+  const pagesRead = nonNegativeCount(source.pagesRead);
+  const partialRead = source.partialRead === true;
+
+  if (state === "CONFIRMED") {
+    return {
+      source: safeSourceLabel(source),
+      state,
+      stateLabel: "Confirmada",
+      detail:
+        pagesRead > 0
+          ? `Fonte consultada sem falhas até o ponto necessário nesta execução (${pagesRead} ${pagesRead === 1 ? "página lida" : "páginas lidas"}).`
+          : "Fonte confirmada sem falhas nesta execução, possivelmente com reaproveitamento seguro do cache conhecido.",
+      pagesRead,
+      partialRead: false,
+      httpStatus: null,
+      operation: null,
+      retryAfterSeconds: null,
+    };
+  }
+
+  if (state === "NOT_ATTEMPTED") {
+    return {
+      source: safeSourceLabel(source),
+      state,
+      stateLabel: "Não verificada",
+      detail:
+        "Esta fonte não chegou a ser verificada porque a execução foi interrompida depois da falha de outra fonte. Isso não significa que ela esteja vazia ou com problema.",
+      pagesRead,
+      partialRead: false,
+      httpStatus: null,
+      operation: null,
+      retryAfterSeconds: null,
+    };
+  }
+
+  const errorKind = safeErrorKind(source.errorKind);
+  const status = nonNegativeNullableInteger(source.status);
+  const operation = safeOperation(source.operation);
+  const retryAfterSeconds = nonNegativeNullableInteger(source.retryAfterSeconds);
+  const partialPrefix = partialRead
+    ? pagesRead > 0
+      ? `A fonte chegou a ser lida parcialmente (${pagesRead} ${pagesRead === 1 ? "página" : "páginas"}) antes da falha. `
+      : "A fonte chegou a ser lida parcialmente antes da falha. "
+    : "";
+
+  return {
+    source: safeSourceLabel(source),
+    state,
+    stateLabel: "Indisponível",
+    detail:
+      partialPrefix +
+      failureDetail(errorKind, status, operation, retryAfterSeconds),
+    pagesRead,
+    partialRead,
+    httpStatus: status,
+    operation,
+    retryAfterSeconds,
+  };
+}
+
+function readFailureDiagnostic(failure: UnknownRecord): InconclusiveSourceDiagnostic {
+  const errorKind = safeErrorKind(failure.errorKind);
+  const status = nonNegativeNullableInteger(failure.status);
+  const operation = safeOperation(failure.operation);
+  const retryAfterSeconds = nonNegativeNullableInteger(failure.retryAfterSeconds);
+
+  return {
+    source: safeSourceLabel(failure),
+    state: "UNAVAILABLE",
+    stateLabel: "Indisponível",
+    detail: failureDetail(errorKind, status, operation, retryAfterSeconds),
+    pagesRead: 0,
+    partialRead: false,
+    httpStatus: status,
+    operation,
+    retryAfterSeconds,
+  };
+}
+
+function safeErrorKind(
+  value: unknown,
+): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "HTTP_ERROR" | "SOURCE_READ_FAILED" {
+  return value === "QUOTA_EXCEEDED" ||
+    value === "RATE_LIMITED" ||
+    value === "HTTP_ERROR" ||
+    value === "SOURCE_READ_FAILED"
+    ? value
+    : "SOURCE_READ_FAILED";
+}
+
+function failureDetail(
+  errorKind: "QUOTA_EXCEEDED" | "RATE_LIMITED" | "HTTP_ERROR" | "SOURCE_READ_FAILED",
+  status: number | null,
+  operation: string | null,
+  retryAfterSeconds: number | null,
+): string {
+  const during = operation ? ` durante ${operationLabel(operation)}` : "";
+
+  if (errorKind === "QUOTA_EXCEEDED") {
+    return `O Spotify recusou a leitura porque a quota disponível foi atingida${during}. Nenhum dado parcial dessa fonte foi usado para validar o plano.`;
+  }
+
+  if (errorKind === "RATE_LIMITED") {
+    const retry =
+      retryAfterSeconds !== null && retryAfterSeconds > 0
+        ? ` O Spotify pediu para aguardar pelo menos ${retryAfterSeconds} ${
+            retryAfterSeconds === 1 ? "segundo" : "segundos"
+          }.`
+        : "";
+    return `O Spotify limitou temporariamente a leitura${during}, mesmo após a tentativa controlada de retry.${retry}`;
+  }
+
+  if (errorKind === "HTTP_ERROR") {
+    if (status === 404) {
+      return `O Spotify informou que a fonte não foi encontrada${during} (HTTP 404). Ela pode ter sido removida, tornado privada ou deixado de estar acessível para esta conta.`;
+    }
+    if (status === 403) {
+      return `O Spotify recusou o acesso à fonte${during} (HTTP 403). A fonte existe, mas esta conta ou aplicação não recebeu permissão para essa leitura.`;
+    }
+    if (status === 401) {
+      return `O Spotify não aceitou a autorização usada para ler a fonte${during} (HTTP 401). Pode ser necessário reconectar a conta do Spotify.`;
+    }
+    if (status !== null && status >= 500) {
+      return `O Spotify apresentou uma falha temporária${during} (HTTP ${status}). A configuração não foi considerada incorreta.`;
+    }
+    if (status !== null) {
+      return `O Spotify não conseguiu concluir a leitura${during} (HTTP ${status}). A configuração não foi considerada incorreta.`;
+    }
+  }
+
+  return `A leitura da fonte não pôde ser concluída${during}. O Sonoriza interrompeu a coleta para não avaliar a configuração com dados incompletos.`;
 }
 
 function readReason(
@@ -125,6 +317,37 @@ function safeSourceLabel(failure: UnknownRecord): string {
   return "Fonte do Spotify";
 }
 
+function safeOperation(value: unknown): string | null {
+  if (
+    value === "playlist-items" ||
+    value === "playlist-metadata" ||
+    value === "show-episodes" ||
+    value === "saved-episodes" ||
+    value === "recently-played" ||
+    value === "user-playlists" ||
+    value === "saved-shows" ||
+    value === "current-user" ||
+    value === "playlist-write" ||
+    value === "spotify-api"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function operationLabel(operation: string): string {
+  if (operation === "playlist-items") return "a leitura dos itens da playlist";
+  if (operation === "playlist-metadata") return "a confirmação dos dados da playlist";
+  if (operation === "show-episodes") return "a leitura dos episódios do programa";
+  if (operation === "saved-episodes") return "a leitura dos seus episódios salvos";
+  if (operation === "recently-played") return "a leitura do histórico recente";
+  if (operation === "user-playlists") return "a leitura das playlists da conta";
+  if (operation === "saved-shows") return "a leitura dos programas salvos";
+  if (operation === "current-user") return "a confirmação da conta Spotify";
+  if (operation === "playlist-write") return "uma operação de playlist";
+  return "a chamada à API do Spotify";
+}
+
 function asRecord(value: unknown): UnknownRecord | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as UnknownRecord)
@@ -138,6 +361,11 @@ function finiteNumber(value: unknown): number | null {
 function nonNegativeCount(value: unknown, fallback = 0): number {
   const number = finiteNumber(value);
   return number === null ? fallback : Math.max(0, Math.trunc(number));
+}
+
+function nonNegativeNullableInteger(value: unknown): number | null {
+  const number = finiteNumber(value);
+  return number === null ? null : Math.max(0, Math.trunc(number));
 }
 
 function unique(values: string[]): string[] {
