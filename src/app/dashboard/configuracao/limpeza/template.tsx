@@ -128,7 +128,7 @@ export default function MusicSourceCleanupTemplate({ children }: { children: Rea
   return (
     <div ref={rootRef} onSubmitCapture={handleSubmitCapture}>
       {backoff ? (
-        <div className="mx-auto mt-4 max-w-5xl rounded-2xl border border-orange-400/30 bg-orange-950/30 px-4 py-3 text-sm font-semibold text-orange-100">
+        <div className="status-warning mx-auto mt-4 max-w-5xl rounded-2xl border px-4 py-3 text-sm font-semibold">
           MUSIC-02 bloqueada até {formatBackoffDate(backoff.blockedUntil)} por indisponibilidade temporária do Spotify.
         </div>
       ) : null}
