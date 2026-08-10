@@ -9,11 +9,20 @@ type State = {
   message?: string;
 };
 
+type SpotifyBackoff = {
+  code: "SPOTIFY_BACKOFF_ACTIVE";
+  reason: "QUOTA_EXCEEDED" | "RATE_LIMITED";
+  operation: string | null;
+  blockedUntil: string;
+  retryAfterSecondsRemaining: number;
+};
+
 type GateState = {
   loading: boolean;
   realRunAllowed: boolean;
   requiresSimulation: boolean;
   reason: string | null;
+  spotifyBackoff: SpotifyBackoff | null;
 };
 
 export function RunControls() {
@@ -24,6 +33,7 @@ export function RunControls() {
     realRunAllowed: false,
     requiresSimulation: true,
     reason: null,
+    spotifyBackoff: null,
   });
 
   useEffect(() => {
@@ -36,6 +46,7 @@ export function RunControls() {
           realRunAllowed?: boolean;
           requiresSimulation?: boolean;
           reason?: string | null;
+          spotifyBackoff?: SpotifyBackoff | null;
           error?: string;
         };
 
@@ -47,6 +58,7 @@ export function RunControls() {
           realRunAllowed: Boolean(data.realRunAllowed),
           requiresSimulation: Boolean(data.requiresSimulation),
           reason: data.reason ?? null,
+          spotifyBackoff: data.spotifyBackoff ?? null,
         });
       } catch (error) {
         if (!active) return;
@@ -55,6 +67,7 @@ export function RunControls() {
           realRunAllowed: false,
           requiresSimulation: true,
           reason: error instanceof Error ? error.message : String(error),
+          spotifyBackoff: null,
         });
       }
     }
@@ -66,6 +79,7 @@ export function RunControls() {
   }, []);
 
   async function runReal() {
+    if (gate.spotifyBackoff) return;
     setState({ status: "running" });
 
     try {
@@ -74,9 +88,34 @@ export function RunControls() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ simulate: false }),
       });
-      const data = (await response.json()) as { status?: string; error?: string };
+      const data = (await response.json()) as {
+        status?: string;
+        error?: string;
+        code?: string;
+        reason?: SpotifyBackoff["reason"];
+        operation?: string | null;
+        blockedUntil?: string;
+        retryAfterSecondsRemaining?: number;
+      };
 
       if (!response.ok) {
+        if (
+          data.code === "SPOTIFY_BACKOFF_ACTIVE" &&
+          data.reason &&
+          data.blockedUntil &&
+          typeof data.retryAfterSecondsRemaining === "number"
+        ) {
+          setGate((current) => ({
+            ...current,
+            spotifyBackoff: {
+              code: "SPOTIFY_BACKOFF_ACTIVE",
+              reason: data.reason!,
+              operation: data.operation ?? null,
+              blockedUntil: data.blockedUntil!,
+              retryAfterSecondsRemaining: data.retryAfterSecondsRemaining!,
+            },
+          }));
+        }
         throw new Error(data.error ?? `HTTP ${response.status}`);
       }
 
@@ -84,7 +123,12 @@ export function RunControls() {
         status: "done",
         message: `Execução: ${data.status}`,
       });
-      setGate((current) => ({ ...current, realRunAllowed: true, requiresSimulation: false, reason: null }));
+      setGate((current) => ({
+        ...current,
+        realRunAllowed: true,
+        requiresSimulation: false,
+        reason: null,
+      }));
       router.refresh();
     } catch (error) {
       setState({
@@ -95,7 +139,8 @@ export function RunControls() {
   }
 
   const busy = state.status === "running";
-  const realDisabled = busy || gate.loading || !gate.realRunAllowed;
+  const realDisabled =
+    busy || gate.loading || !gate.realRunAllowed || Boolean(gate.spotifyBackoff);
 
   return (
     <div className="space-y-4">
@@ -114,7 +159,13 @@ export function RunControls() {
           >
             {busy ? "…" : "▶"}
           </span>
-          {busy ? "Gerando…" : gate.loading ? "Verificando…" : "Gerar agora"}
+          {busy
+            ? "Gerando…"
+            : gate.loading
+              ? "Verificando…"
+              : gate.spotifyBackoff
+                ? "Spotify temporariamente bloqueado"
+                : "Gerar agora"}
         </button>
 
         <Link
@@ -126,14 +177,16 @@ export function RunControls() {
         </Link>
       </div>
 
-      {!gate.loading && !gate.realRunAllowed && (
+      {gate.spotifyBackoff ? (
+        <SpotifyBackoffNotice backoff={gate.spotifyBackoff} />
+      ) : !gate.loading && !gate.realRunAllowed ? (
         <div className="rounded-2xl border border-orange-400/25 bg-orange-950/20 px-4 py-3 text-sm text-orange-100/85">
           <p className="font-semibold">{gate.reason ?? "Revise e simule a configuração antes da primeira geração real."}</p>
           <Link href="/dashboard/configuracao/revisao" className="mt-2 inline-flex font-black text-orange-300 hover:text-orange-200">
             Abrir CONFIG-04 →
           </Link>
         </div>
-      )}
+      ) : null}
 
       {state.message && (
         <div
@@ -149,4 +202,39 @@ export function RunControls() {
       )}
     </div>
   );
+}
+
+function SpotifyBackoffNotice({ backoff }: { backoff: SpotifyBackoff }) {
+  const until = new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "America/Sao_Paulo",
+  }).format(new Date(backoff.blockedUntil));
+  const remaining = formatRemaining(backoff.retryAfterSecondsRemaining);
+  const reason =
+    backoff.reason === "QUOTA_EXCEEDED"
+      ? "quota do Spotify excedida"
+      : "limite temporário de requisições do Spotify";
+
+  return (
+    <div className="rounded-2xl border border-orange-400/30 bg-orange-950/25 px-4 py-3 text-sm text-orange-100/90">
+      <p className="font-black">Ações do Spotify bloqueadas temporariamente</p>
+      <p className="mt-1 font-semibold">
+        Motivo: {reason}. Tente novamente após <strong>{until}</strong>
+        {remaining ? ` (${remaining})` : ""}.
+      </p>
+      <p className="mt-1 text-orange-100/70">
+        Até esse horário o Sonoriza não iniciará novas chamadas ao Spotify.
+      </p>
+    </div>
+  );
+}
+
+function formatRemaining(seconds: number): string {
+  const safe = Math.max(0, Math.ceil(seconds));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.ceil((safe % 3600) / 60);
+  if (hours > 0) return `aprox. ${hours}h${String(minutes).padStart(2, "0")}`;
+  if (minutes > 0) return `aprox. ${minutes} min`;
+  return "menos de 1 min";
 }
