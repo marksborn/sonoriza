@@ -40,8 +40,11 @@ a {
 }
 
 button:focus-visible,
-a:focus-visible {
-  outline: 3px solid rgba(255, 114, 0, 0.38);
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(255, 152, 43, 0.62);
   outline-offset: 3px;
 }
 
@@ -59,10 +62,62 @@ a:focus-visible {
   }
 
   .primary-button {
-    @apply inline-flex items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 font-bold text-white shadow-action transition duration-200 hover:-translate-y-0.5 hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0;
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-accent px-5 py-3 font-black text-brand-900 shadow-action transition duration-200 hover:-translate-y-0.5 hover:bg-accent-light disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0;
   }
 
   .secondary-button {
     @apply inline-flex items-center justify-center gap-2 rounded-full border border-brand/20 bg-white px-5 py-3 font-bold text-brand-dark shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand/40 hover:bg-brand-soft disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0;
+  }
+
+  .product-shell {
+    @apply relative min-h-screen overflow-hidden bg-canvas-dark text-ink-inverse;
+  }
+
+  .product-ambient {
+    background:
+      radial-gradient(circle at 12% 5%, rgba(146, 45, 242, 0.25), transparent 31rem),
+      radial-gradient(circle at 90% 10%, rgba(255, 114, 0, 0.1), transparent 25rem),
+      linear-gradient(180deg, #12032f 0%, #0b021f 55%, #090119 100%);
+    @apply pointer-events-none absolute inset-0;
+  }
+
+  .product-panel {
+    @apply rounded-[1.75rem] border border-line-dark/60 bg-product-gradient shadow-product-card backdrop-blur-xl;
+  }
+
+  .product-card {
+    @apply rounded-2xl border border-line-dark/55 bg-surface-subtle/75 transition hover:border-brand-400/45 hover:bg-surface-elevated/80;
+  }
+
+  .product-icon-tile {
+    @apply flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-brand-400/25 bg-brand/15 text-brand-400;
+  }
+
+  .product-icon-tile-accent {
+    @apply flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-accent/30 bg-accent/10 text-accent-400;
+  }
+
+  .product-badge {
+    @apply inline-flex w-fit items-center gap-2 rounded-full border border-line-dark/60 bg-surface-elevated/70 px-3 py-1.5 text-xs font-bold text-muted-inverse;
+  }
+
+  .product-link {
+    @apply inline-flex items-center gap-2 text-sm font-black text-accent-400 transition hover:gap-3 hover:text-accent-soft;
+  }
+
+  .status-success {
+    @apply border-success/30 bg-success-soft text-success;
+  }
+
+  .status-warning {
+    @apply border-warning/30 bg-warning-soft text-warning;
+  }
+
+  .status-danger {
+    @apply border-danger/30 bg-danger-soft text-danger;
+  }
+
+  .status-info {
+    @apply border-info/30 bg-info-soft text-info;
   }
 }
