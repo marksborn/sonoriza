@@ -3,6 +3,7 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import Google from "next-auth/providers/google";
 import Spotify from "next-auth/providers/spotify";
 
+import { isEmailAllowed } from "@/lib/access-control";
 import { prisma } from "@/lib/prisma";
 
 // Scopes the engine needs. Google: read the calendar to compute trip durations.
@@ -27,7 +28,7 @@ const SPOTIFY_SCOPES = [
   "playlist-modify-public",
 ].join(" ");
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+const nextAuth = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "database" },
   providers: [
@@ -59,6 +60,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   callbacks: {
     async signIn({ user, account }) {
+      // AUTH-01: reject before persisting/refreshing provider credentials. The
+      // same allowlist is also applied when reading an existing session below,
+      // so removing an email revokes product access without waiting for expiry.
+      if (!isEmailAllowed(user.email)) return false;
+
       if (
         account &&
         user.id &&
@@ -96,3 +102,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     error: "/auth/error",
   },
 });
+
+export const { handlers, signIn, signOut } = nextAuth;
+const rawAuth = nextAuth.auth;
+
+/**
+ * Application session gate. A user removed from SONORIZA_ALLOWED_EMAILS is
+ * treated as signed out immediately by every server page/API that calls auth(),
+ * even if an older database Session row has not expired yet.
+ */
+export async function auth() {
+  const session = await rawAuth();
+  if (!session?.user) return session;
+  return isEmailAllowed(session.user.email) ? session : null;
+}
