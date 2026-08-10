@@ -46,11 +46,12 @@ jobs:
           node-version: '24.19.0'
           cache: npm
 
-      - name: Apply implementation and safety hardening
+      - name: Apply final cache-continuity hardening
         run: |
           python3 <<'PY'
           from pathlib import Path
 
+          # Keep the original bootstrap idempotent for a clean branch checkout.
           workflow = Path('.github/workflows/spotify-01-cache-continuity-gate.yml').read_text().splitlines()
           start = workflow.index("          python3 <<'PY'") + 1
           end = workflow.index("          PY", start)
@@ -65,6 +66,8 @@ jobs:
           )
           test_path.write_text(text)
 
+          # Fail closed if a DELETE response is ambiguous: the remote playlist
+          # may have changed even though the client did not receive a snapshot.
           cleanup_path = Path('src/services/spotify/source-cleanup.ts')
           cleanup = cleanup_path.read_text()
           old = '''  const patchedCache = patchMusicSourceCacheAfterRemove(\n    source.cachedCandidates,\n    patchUris,\n  );\n\n  const [automaticRun] = await prisma.$transaction([\n'''
@@ -83,6 +86,57 @@ jobs:
           if 'ambiguous automatic DELETE failure invalidates cache' not in cleanup_test:
               cleanup_test += '''\n\ntest("ambiguous automatic DELETE failure invalidates cache instead of trusting the last known snapshot", () => {\n  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");\n  const start = source.indexOf("export async function executeAutomaticMusicSourceCleanup");\n  const end = source.indexOf("\\nasync function loadManagedMusicSource", start);\n  assert.ok(start >= 0 && end > start);\n  const automatic = source.slice(start, end);\n  assert.match(automatic, /const patchedCache = writeError\\s*\\? null/);\n  assert.match(automatic, /writeError[\\s\\S]*spotifySnapshotId: null/);\n});\n'''
           cleanup_test_path.write_text(cleanup_test)
+
+          # MUSIC-03 may build a missing source cache during its target read.
+          # Carry that refreshed DB cache into the append patch instead of
+          # continuing with the stale SourcePlaylist object loaded beforehand.
+          ingestion_path = Path('src/services/spotify/music-ingestion.ts')
+          ingestion = ingestion_path.read_text()
+          ingestion = ingestion.replace(
+              '''type TargetTrackIndex = {\n  trackIds: Set<string>;\n  cacheSnapshotId: string | null;\n};\n''',
+              '''type TargetTrackIndex = {\n  trackIds: Set<string>;\n  cacheSnapshotId: string | null;\n  cacheValue: unknown;\n};\n''',
+              1,
+          )
+          ingestion = ingestion.replace(
+              '''    let targetIndex: TargetTrackIndex = {\n      trackIds: new Set<string>(),\n      cacheSnapshotId: null,\n    };\n''',
+              '''    let targetIndex: TargetTrackIndex = {\n      trackIds: new Set<string>(),\n      cacheSnapshotId: null,\n      cacheValue: null,\n    };\n''',
+              1,
+          )
+          ingestion = ingestion.replace(
+              'targetIndex = await loadTargetTrackIds(rule.target, api);',
+              'targetIndex = await loadTargetTrackIds(rule.target);',
+              1,
+          )
+          ingestion = ingestion.replace(
+              '? await loadTargetTrackIds(target, api)\n        : { trackIds: new Set<string>(), cacheSnapshotId: null };',
+              '? await loadTargetTrackIds(target)\n        : { trackIds: new Set<string>(), cacheSnapshotId: null, cacheValue: null };',
+              1,
+          )
+          ingestion = ingestion.replace(
+              '            error.snapshotId,\n            plan.add.slice(0, acceptedUris.length).map((item) => item.track),',
+              '            error.snapshotId,\n            targetIndex.cacheValue,\n            plan.add.slice(0, acceptedUris.length).map((item) => item.track),',
+          )
+          ingestion = ingestion.replace(
+              '        writeSnapshotId,\n        plan.add.slice(0, acceptedUris.length).map((item) => item.track),',
+              '        writeSnapshotId,\n        targetIndex.cacheValue,\n        plan.add.slice(0, acceptedUris.length).map((item) => item.track),',
+          )
+
+          old_loader = '''async function loadTargetTrackIds(\n  target: SourcePlaylist,\n  api: MusicIngestionSpotifyApi,\n): Promise<TargetTrackIndex> {\n  const metadata = await api.getPlaylistMetadata(target.spotifyId);\n  const cached =\n    target.spotifySnapshotId === metadata.snapshotId\n      ? decodeMusicSourceCache(target.cachedCandidates)\n      : null;\n  if (cached) {\n    return {\n      trackIds: new Set(\n        cached.flatMap((candidate) =>\n          candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],\n        ),\n      ),\n      cacheSnapshotId: metadata.snapshotId,\n    };\n  }\n\n  const spotifyClient = await SpotifyClient.forUser(target.userId);\n  const candidates = await spotifyClient.getPlaylistTracks(target.spotifyId);\n  return {\n    trackIds: new Set(\n      candidates.flatMap((candidate) =>\n        candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],\n      ),\n    ),\n    cacheSnapshotId: null,\n  };\n}\n'''
+          new_loader = '''async function loadTargetTrackIds(\n  target: SourcePlaylist,\n): Promise<TargetTrackIndex> {\n  const spotifyClient = await SpotifyClient.forUser(target.userId);\n  const candidates = await spotifyClient.getPlaylistTracks(target.spotifyId);\n  const refreshed = await prisma.sourcePlaylist.findUnique({\n    where: { id: target.id },\n    select: { spotifySnapshotId: true, cachedCandidates: true },\n  });\n  const refreshedCache =\n    refreshed?.spotifySnapshotId\n      ? decodeMusicSourceCache(refreshed.cachedCandidates)\n      : null;\n\n  if (refreshed?.spotifySnapshotId && refreshedCache) {\n    return {\n      trackIds: new Set(\n        refreshedCache.flatMap((candidate) =>\n          candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],\n        ),\n      ),\n      cacheSnapshotId: refreshed.spotifySnapshotId,\n      cacheValue: refreshed.cachedCandidates,\n    };\n  }\n\n  return {\n    trackIds: new Set(\n      candidates.flatMap((candidate) =>\n        candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],\n      ),\n    ),\n    cacheSnapshotId: null,\n    cacheValue: null,\n  };\n}\n'''
+          if old_loader in ingestion:
+              ingestion = ingestion.replace(old_loader, new_loader, 1)
+
+          old_maintain = '''async function maintainTargetCacheAfterAppend(\n  target: SourcePlaylist,\n  baseSnapshotId: string | null,\n  nextSnapshotId: string | null,\n  tracks: MusicIngestionTrack[],\n): Promise<void> {\n  if (\n    !baseSnapshotId ||\n    !nextSnapshotId ||\n    target.spotifySnapshotId !== baseSnapshotId\n  ) {\n    await invalidateTargetCache(target.id, target.spotifySnapshotId);\n    return;\n  }\n\n  const patched = patchMusicSourceCacheAfterAppend(\n    target.cachedCandidates,\n'''
+          new_maintain = '''async function maintainTargetCacheAfterAppend(\n  target: SourcePlaylist,\n  baseSnapshotId: string | null,\n  nextSnapshotId: string | null,\n  cacheValue: unknown,\n  tracks: MusicIngestionTrack[],\n): Promise<void> {\n  if (!baseSnapshotId || !nextSnapshotId) {\n    if (baseSnapshotId) await invalidateTargetCache(target.id, baseSnapshotId);\n    return;\n  }\n\n  const patched = patchMusicSourceCacheAfterAppend(\n    cacheValue,\n'''
+          if old_maintain in ingestion:
+              ingestion = ingestion.replace(old_maintain, new_maintain, 1)
+          ingestion_path.write_text(ingestion)
+
+          ingestion_test_path = Path('src/services/spotify/music-ingestion-core.test.ts')
+          ingestion_test = ingestion_test_path.read_text()
+          if 'refreshed DB cache is carried into managed append patches' not in ingestion_test:
+              ingestion_test += '''\n\ntest("MUSIC-03 refreshed DB cache is carried into managed append patches", () => {\n  const source = readFileSync("src/services/spotify/music-ingestion.ts", "utf8");\n  assert.match(source, /const refreshed = await prisma\\.sourcePlaylist\\.findUnique/);\n  assert.match(source, /cacheValue: refreshed\\.cachedCandidates/);\n  assert.match(source, /targetIndex\\.cacheValue/);\n});\n'''
+          ingestion_test_path.write_text(ingestion_test)
           PY
 
       - run: npm ci
@@ -107,6 +161,6 @@ jobs:
                   src/services/spotify/source-cleanup.ts \
                   src/services/spotify/source-cleanup.test.ts
           if ! git diff --cached --quiet; then
-            git commit -m "fix: fail closed on ambiguous cleanup writes"
+            git commit -m "fix: carry refreshed Spotify cache through managed appends"
             git push origin HEAD:agent/spotify-01-cache-continuity
           fi
