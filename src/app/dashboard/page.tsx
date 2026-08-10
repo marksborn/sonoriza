@@ -334,6 +334,13 @@ export default async function DashboardPage() {
                       </div>
                       <span className="product-badge px-2.5 py-1">#{target.priority}</span>
                     </div>
+                    <a
+                      href={`/dashboard/playlists/${target.id}`}
+                      className="mt-4 inline-flex items-center gap-2 rounded-xl border border-brand-400/35 bg-surface-elevated/70 px-3 py-2 text-sm font-black text-ink-inverse transition hover:border-brand-400/65 hover:bg-surface-elevated"
+                    >
+                      <UiIcon name="list" size={16} />
+                      Ver playlist
+                    </a>
                   </li>
                 ))}
               </ul>
