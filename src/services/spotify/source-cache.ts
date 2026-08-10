@@ -3,6 +3,7 @@ import type { Candidate } from "@/services/playlist-planner";
 // v3 adds canonical Spotify track identity so MUSIC-01 can never be bypassed
 // by a snapshot cache produced before playback-history filtering existed.
 const MUSIC_SOURCE_CACHE_VERSION = 3;
+const PARTIAL_MUSIC_SOURCE_CACHE_VERSION = 4;
 type CachedMusicCandidate = {
   uri: string;
   spotifyTrackId: string;
@@ -36,6 +37,104 @@ export function encodeMusicSourceCache(
         durationMs: candidate.durationMs,
       })),
   };
+}
+
+export type PartialMusicSourceCache = {
+  candidates: Candidate[];
+  unavailableTrackCount: number;
+  nextOffset: number | null;
+};
+
+export function encodePartialMusicSourceCache(
+  candidates: Candidate[],
+  unavailableTrackCount: number,
+  nextOffset: number | null,
+) {
+  const full = encodeMusicSourceCache(candidates, unavailableTrackCount);
+  return {
+    version: PARTIAL_MUSIC_SOURCE_CACHE_VERSION,
+    complete: false as const,
+    unavailableTrackCount: full.unavailableTrackCount,
+    nextOffset,
+    candidates: full.candidates,
+  };
+}
+
+export function decodePartialMusicSourceCache(
+  value: unknown,
+): PartialMusicSourceCache | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const payload = value as {
+    version?: unknown;
+    complete?: unknown;
+    unavailableTrackCount?: unknown;
+    nextOffset?: unknown;
+    candidates?: unknown;
+  };
+  if (
+    payload.version !== PARTIAL_MUSIC_SOURCE_CACHE_VERSION ||
+    payload.complete !== false ||
+    (payload.nextOffset !== null &&
+      (!Number.isInteger(payload.nextOffset) || Number(payload.nextOffset) < 0))
+  ) {
+    return null;
+  }
+
+  const decoded = decodePayload({
+    version: MUSIC_SOURCE_CACHE_VERSION,
+    unavailableTrackCount: payload.unavailableTrackCount,
+    candidates: payload.candidates,
+  });
+  if (!decoded) return null;
+  return {
+    candidates: decoded.candidates,
+    unavailableTrackCount: decoded.unavailableTrackCount,
+    nextOffset: payload.nextOffset as number | null,
+  };
+}
+
+export function patchMusicSourceCacheAfterAppend(
+  value: unknown,
+  appendedCandidates: Candidate[],
+): MusicSourceCachePayload | null {
+  const payload = decodePayload(value);
+  if (!payload) return null;
+  if (
+    appendedCandidates.some(
+      (candidate) =>
+        candidate.type !== "MUSIC" ||
+        typeof candidate.uri !== "string" ||
+        !candidate.uri ||
+        typeof candidate.spotifyTrackId !== "string" ||
+        !candidate.spotifyTrackId,
+    )
+  ) {
+    return null;
+  }
+  return encodeMusicSourceCache(
+    [...payload.candidates, ...appendedCandidates],
+    payload.unavailableTrackCount,
+  );
+}
+
+export function patchMusicSourceCacheAfterRemove(
+  value: unknown,
+  removedUris: readonly string[],
+): MusicSourceCachePayload | null {
+  const payload = decodePayload(value);
+  if (!payload) return null;
+  const removed = new Set(removedUris.filter(Boolean));
+  if (removed.size === 0) {
+    return encodeMusicSourceCache(payload.candidates, payload.unavailableTrackCount);
+  }
+
+  const cachedUris = new Set(payload.candidates.map((candidate) => candidate.uri));
+  if ([...removed].some((uri) => !cachedUris.has(uri))) return null;
+
+  return encodeMusicSourceCache(
+    payload.candidates.filter((candidate) => !removed.has(candidate.uri)),
+    payload.unavailableTrackCount,
+  );
 }
 
 export function decodeMusicSourceCache(value: unknown): Candidate[] | null {

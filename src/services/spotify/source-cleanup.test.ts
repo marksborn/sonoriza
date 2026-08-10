@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  buildCachedMusicSourceCleanupPlan,
   buildMusicSourceCleanupPlan,
   classifyPostDeleteDiagnosis,
   hashCleanupPlan,
@@ -167,4 +168,62 @@ test("periodic cleanup remains gated behind explicit automation and a completed 
   assert.match(source, /!source\.musicCleanupAutomationEnabled/);
   assert.match(source, /!source\.musicCleanupFirstCompletedAt/);
   assert.match(source, /A limpeza periódica não está autorizada/);
+});
+
+
+test("cached cleanup planning stays conservative and accounts for duplicate occurrences", () => {
+  const plan = buildCachedMusicSourceCleanupPlan(
+    [
+      { uri: "spotify:track:a", spotifyTrackId: "a" },
+      { uri: "spotify:track:a", spotifyTrackId: "a" },
+      { uri: "spotify:track:b", spotifyTrackId: "b" },
+    ],
+    new Set(["a"]),
+  );
+  assert.deepEqual(plan.removableUris, ["spotify:track:a"]);
+  assert.equal(plan.removalOccurrenceCount, 2);
+  assert.equal(plan.keptCount, 1);
+});
+
+test("periodic cleanup is cache-backed and never performs a full playlist-items scan", () => {
+  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
+  const start = source.indexOf("export async function executeAutomaticMusicSourceCleanup");
+  const end = source.indexOf("\nasync function loadManagedMusicSource", start);
+  assert.ok(start >= 0 && end > start);
+  const automatic = source.slice(start, end);
+
+  assert.match(automatic, /decodeMusicSourceCache/);
+  assert.match(automatic, /readPlaylistMetadata/);
+  assert.match(automatic, /snapshot_id: snapshotAfter/);
+  assert.match(automatic, /patchMusicSourceCacheAfterRemove/);
+  assert.doesNotMatch(automatic, /readStablePlaylist\(/);
+  assert.doesNotMatch(automatic, /createMusicSourceCleanupPreview\(/);
+});
+
+test("manual cleanup preserves cache continuity when the pre-write snapshot was proven", () => {
+  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
+  assert.match(source, /preview\.source\.spotifySnapshotId === current\.snapshotId/);
+  assert.match(source, /patchMusicSourceCacheAfterRemove/);
+});
+
+
+test("ambiguous automatic DELETE failure invalidates cache instead of trusting the last known snapshot", () => {
+  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
+  const start = source.indexOf("export async function executeAutomaticMusicSourceCleanup");
+  const end = source.indexOf("\nasync function loadManagedMusicSource", start);
+  assert.ok(start >= 0 && end > start);
+  const automatic = source.slice(start, end);
+  assert.match(automatic, /const patchedCache = writeError\s*\? null/);
+  assert.match(automatic, /writeError[\s\S]*spotifySnapshotId: null/);
+});
+
+
+test("periodic cleanup rejects missing cache before Spotify history traffic", () => {
+  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
+  const start = source.indexOf("export async function executeAutomaticMusicSourceCleanup");
+  const end = source.indexOf("\nasync function loadManagedMusicSource", start);
+  assert.ok(start >= 0 && end > start);
+  const automatic = source.slice(start, end);
+  assert.ok(automatic.indexOf("decodeMusicSourceCache") < automatic.indexOf("syncRecentlyPlayed"));
+  assert.ok(automatic.indexOf("readPlaylistMetadata") < automatic.indexOf("syncRecentlyPlayed"));
 });

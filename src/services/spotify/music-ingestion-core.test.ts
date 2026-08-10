@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -140,4 +141,21 @@ test("persisted ingestion state decoder rejects malformed payloads", () => {
       boundaryTrackIds: [],
     },
   );
+});
+
+
+test("MUSIC-03 managed writes preserve SPOTIFY-01 cache continuity", () => {
+  const source = readFileSync("src/services/spotify/music-ingestion.ts", "utf8");
+  assert.match(source, /snapshot_id\?: string \| null/);
+  assert.match(source, /maintainTargetCacheAfterAppend/);
+  assert.match(source, /patchMusicSourceCacheAfterAppend/);
+  assert.match(source, /spotifySnapshotId: nextSnapshotId/);
+});
+
+
+test("MUSIC-03 refreshed DB cache is carried into managed append patches", () => {
+  const source = readFileSync("src/services/spotify/music-ingestion.ts", "utf8");
+  assert.match(source, /const refreshed = await prisma\.sourcePlaylist\.findUnique/);
+  assert.match(source, /cacheValue: refreshed\.cachedCandidates/);
+  assert.match(source, /targetIndex\.cacheValue/);
 });
