@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BrandLogo } from "@/components/BrandLogo";
+import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn } from "@/lib/auth";
 
 function GoogleIcon() {
@@ -33,7 +34,7 @@ function SpotifyIcon() {
       <path
         d="M6.6 9.3c3.7-1.1 8.2-.8 11.2.9M7.4 12.7c3.1-.8 6.9-.5 9.5.8M8.2 15.8c2.6-.6 5.4-.3 7.7.7"
         fill="none"
-        stroke="white"
+        stroke="#27106f"
         strokeWidth="1.45"
         strokeLinecap="round"
       />
@@ -106,7 +107,7 @@ export default async function HomePage() {
                 </div>
                 <Link href="/dashboard" className="primary-button">
                   Abrir meu painel
-                  <span aria-hidden="true">→</span>
+                  <UiIcon name="arrow-right" size={18} />
                 </Link>
               </div>
             ) : (
@@ -135,8 +136,8 @@ export default async function HomePage() {
             <ul className="mt-10 grid gap-3 text-sm font-semibold text-ink sm:grid-cols-3">
               {highlights.map((highlight) => (
                 <li key={highlight} className="flex items-start gap-2.5">
-                  <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-soft text-[11px] font-black text-brand">
-                    ✓
+                  <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand">
+                    <UiIcon name="check" size={13} strokeWidth={2.5} />
                   </span>
                   <span>{highlight}</span>
                 </li>
@@ -156,8 +157,8 @@ export default async function HomePage() {
                     Foco da manhã
                   </h2>
                 </div>
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-2xl text-accent">
-                  ♪
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+                  <UiIcon name="music" size={23} />
                 </div>
               </div>
 
@@ -176,9 +177,9 @@ export default async function HomePage() {
                   </div>
                   <span
                     aria-hidden="true"
-                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-lg text-brand-dark shadow-lg"
+                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-brand-dark shadow-lg"
                   >
-                    ▶
+                    <UiIcon name="play" size={20} fill="currentColor" strokeWidth={1.5} />
                   </span>
                 </div>
 
