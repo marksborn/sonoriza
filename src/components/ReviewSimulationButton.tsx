@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+
+import { UiIcon } from "@/components/UiIcon";
 
 type Props = {
   disabled?: boolean;
@@ -124,9 +126,16 @@ export function ReviewSimulationButton({
         type="button"
         disabled={blocked}
         onClick={simulate}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#ff6b00] to-[#ff8a00] px-5 py-3 font-black text-white shadow-[0_16px_36px_-18px_rgba(255,107,0,0.95)] transition hover:-translate-y-0.5 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0 sm:w-auto"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3 font-black text-brand-900 shadow-action transition hover:-translate-y-0.5 hover:bg-accent-400 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0 sm:w-auto"
       >
-        <span aria-hidden="true">{running || checking ? "…" : "◇"}</span>
+        {running || checking ? (
+          <span
+            aria-hidden="true"
+            className="h-4 w-4 animate-spin rounded-full border-2 border-brand-900/30 border-t-brand-900"
+          />
+        ) : (
+          <UiIcon name="play" size={18} fill="currentColor" strokeWidth={1.5} />
+        )}
         {running
           ? runningLabel
           : checking
@@ -139,7 +148,8 @@ export function ReviewSimulationButton({
       {backoff ? <SpotifyBackoffNotice backoff={backoff} /> : null}
 
       {error && !backoff ? (
-        <p role="alert" className="rounded-2xl border border-red-400/30 bg-red-950/40 px-4 py-3 text-sm font-semibold text-red-200">
+        <p role="alert" className="status-danger flex items-start gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold">
+          <UiIcon name="warning" size={17} className="mt-0.5 shrink-0" />
           {error}
         </p>
       ) : null}
@@ -156,8 +166,9 @@ function SpotifyBackoffNotice({ backoff }: { backoff: SpotifyBackoff }) {
   const remaining = formatRemaining(backoff.retryAfterSecondsRemaining);
 
   return (
-    <div role="status" className="max-w-xl rounded-2xl border border-orange-400/30 bg-orange-950/30 px-4 py-3 text-sm text-orange-100">
-      <p className="font-black">
+    <div role="status" className="status-warning max-w-xl rounded-2xl border px-4 py-3 text-sm">
+      <p className="flex items-center gap-2 font-black">
+        <UiIcon name="warning" size={17} />
         {backoff.reason === "QUOTA_EXCEEDED"
           ? "Quota do Spotify temporariamente indisponível"
           : "Limite temporário de requisições do Spotify"}
@@ -165,7 +176,7 @@ function SpotifyBackoffNotice({ backoff }: { backoff: SpotifyBackoff }) {
       <p className="mt-1 font-semibold">
         Tente novamente após <strong>{until}</strong> ({remaining}).
       </p>
-      <p className="mt-1 text-orange-100/70">
+      <p className="mt-1 opacity-75">
         Até esse horário a simulação permanece desabilitada e nenhuma nova chamada ao Spotify será iniciada.
       </p>
     </div>
