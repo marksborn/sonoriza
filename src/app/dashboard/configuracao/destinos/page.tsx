@@ -7,6 +7,7 @@ import {
   TargetPlaylistForm,
   type SpotifyDestinationOption,
 } from "@/components/TargetPlaylistForm";
+import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
@@ -520,38 +521,37 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                       : null;
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0b021f] px-5 py-8 text-white sm:px-8 lg:px-10">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_5%,rgba(126,34,206,0.3),transparent_31rem),radial-gradient(circle_at_90%_10%,rgba(255,107,0,0.12),transparent_25rem),linear-gradient(180deg,#12032f_0%,#0b021f_55%,#090119_100%)]" />
+    <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
+      <div className="product-ambient" />
 
       <div className="relative mx-auto max-w-6xl">
         <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <Link
-              href="/dashboard/configuracao"
-              className="inline-flex items-center gap-2 text-sm font-bold text-violet-300 transition hover:text-white"
-            >
-              <span aria-hidden="true">←</span>
+            <Link href="/dashboard/configuracao" className="product-link">
+              <UiIcon name="arrow-left" size={18} />
               Central de configuração
             </Link>
-            <p className="mt-6 text-xs font-black uppercase tracking-[0.17em] text-orange-400">
+            <p className="mt-6 text-xs font-black uppercase tracking-[0.17em] text-accent-400">
               CONFIG-03
             </p>
-            <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] sm:text-4xl">
+            <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse sm:text-4xl">
               Destinos e regras
             </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-violet-200/75 sm:text-base">
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-inverse sm:text-base">
               Defina onde o Sonoriza monta suas playlists, quanto conteúdo preparar e como música e podcast se alternam. Nenhuma alteração nesta tela inicia uma geração.
             </p>
           </div>
 
-          <div className="rounded-2xl border border-violet-400/20 bg-violet-950/45 px-4 py-3 text-sm text-violet-200/75">
-            <p className="font-bold text-white">Conta atual</p>
-            <p className="mt-1">{session.user.email}</p>
+          <div className="product-badge max-w-full px-4 py-3">
+            <div className="min-w-0">
+              <p className="font-black text-ink-inverse">Conta atual</p>
+              <p className="mt-1 truncate">{session.user.email}</p>
+            </div>
           </div>
         </header>
 
         {params.saved && (
-          <div className="mt-7 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-3 text-sm font-bold text-emerald-200">
+          <div className="status-success mt-7 rounded-2xl border px-4 py-3 text-sm font-bold">
             {params.saved === "created" && "Destino criado. Nenhuma geração foi iniciada."}
             {params.saved === "updated" && "Regras atualizadas. Nenhuma geração foi iniciada."}
             {params.saved === "enabled" && "Destino ativado para as próximas gerações."}
@@ -561,97 +561,116 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
         )}
 
         {errorMessage && (
-          <div className="mt-7 rounded-2xl border border-orange-400/25 bg-orange-400/10 px-4 py-3 text-sm font-bold leading-6 text-orange-200">
-            {errorMessage}
+          <div className="status-danger mt-7 flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm font-bold leading-6">
+            <UiIcon name="warning" size={18} className="mt-0.5 shrink-0" />
+            <span>{errorMessage}</span>
           </div>
         )}
 
-        <section className="mt-7 rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-5 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] sm:p-6">
+        <section className="product-panel mt-7 p-5 sm:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">
+              <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
                 Duração baseada no calendário
               </p>
-              <h2 className="mt-1 text-xl font-black">Calendários que podem entrar no cálculo</h2>
+              <h2 className="mt-1 text-xl font-black text-ink-inverse">
+                Calendários que podem entrar no cálculo
+              </h2>
               {durationCalendarNames.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {durationCalendarNames.map((name) => (
-                    <span
-                      key={name}
-                      className="rounded-full border border-violet-300/20 bg-violet-400/10 px-3 py-1.5 text-xs font-black text-violet-200"
-                    >
+                    <span key={name} className="product-badge">
+                      <UiIcon name="calendar" size={15} />
                       {name}
                     </span>
                   ))}
                 </div>
               ) : (
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-orange-200/80">
-                  Nenhum calendário está habilitado para duração. Destinos baseados no calendário só poderão ser salvos depois dessa definição.
-                </p>
+                <div className="status-warning mt-3 flex max-w-3xl items-start gap-3 rounded-2xl border px-4 py-3 text-sm leading-6">
+                  <UiIcon name="warning" size={18} className="mt-0.5 shrink-0" />
+                  <span>
+                    Nenhum calendário está habilitado para duração. Destinos baseados no calendário só poderão ser salvos depois dessa definição.
+                  </span>
+                </div>
               )}
             </div>
             <Link
               href="/dashboard/configuracao/calendarios"
-              className="w-fit rounded-xl border border-violet-300/25 bg-violet-400/10 px-4 py-2.5 text-sm font-black text-violet-100 transition hover:bg-violet-400/20"
+              className="inline-flex w-fit items-center gap-2 rounded-full border border-brand-400/25 bg-brand/15 px-4 py-2.5 text-sm font-black text-ink-inverse transition hover:bg-brand/25"
             >
+              <UiIcon name="settings" size={17} />
               Configurar calendários
             </Link>
           </div>
         </section>
 
         {!spotifyAccount ? (
-          <section className="mt-5 rounded-[1.75rem] border border-orange-400/20 bg-orange-400/10 p-6">
-            <h2 className="text-xl font-black">Conecte o Spotify para escolher destinos</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-orange-100/70">
-              O Sonoriza valida playlists diretamente na sua conta e nunca pede que você digite IDs.
-            </p>
-            <form action={connectSpotify}>
-              <button
-                type="submit"
-                className="mt-4 rounded-xl bg-gradient-to-r from-[#ff6b00] to-[#ff8a00] px-5 py-3 text-sm font-black text-white transition hover:brightness-110"
-              >
-                Conectar Spotify
-              </button>
-            </form>
+          <section className="product-panel mt-5 p-6">
+            <div className="flex items-start gap-4">
+              <div className="product-icon-tile-accent">
+                <UiIcon name="music" size={22} />
+              </div>
+              <div>
+                <h2 className="text-xl font-black text-ink-inverse">
+                  Conecte o Spotify para escolher destinos
+                </h2>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
+                  O Sonoriza valida playlists diretamente na sua conta e nunca pede que você digite IDs.
+                </p>
+                <form action={connectSpotify}>
+                  <button type="submit" className="primary-button mt-4">
+                    Conectar Spotify
+                  </button>
+                </form>
+              </div>
+            </div>
           </section>
         ) : spotifyLoadError ? (
-          <section className="mt-5 rounded-[1.75rem] border border-orange-400/20 bg-orange-400/10 p-6">
-            <h2 className="text-xl font-black">Não foi possível carregar suas playlists</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-orange-100/70">
-              Revise a conexão com o Spotify antes de criar ou trocar o destino de uma playlist.
-            </p>
-            <form action={connectSpotify}>
-              <button
-                type="submit"
-                className="mt-4 rounded-xl border border-orange-300/30 bg-orange-300/10 px-4 py-2.5 text-sm font-black text-orange-100 transition hover:bg-orange-300/20"
-              >
-                Reconectar Spotify
-              </button>
-            </form>
+          <section className="status-danger mt-5 rounded-[1.75rem] border p-6">
+            <div className="flex items-start gap-4">
+              <UiIcon name="warning" size={22} className="mt-0.5 shrink-0" />
+              <div>
+                <h2 className="text-xl font-black">Não foi possível carregar suas playlists</h2>
+                <p className="mt-2 max-w-3xl text-sm leading-6 opacity-80">
+                  Revise a conexão com o Spotify antes de criar ou trocar o destino de uma playlist.
+                </p>
+                <form action={connectSpotify}>
+                  <button
+                    type="submit"
+                    className="mt-4 inline-flex items-center gap-2 rounded-full border border-danger/35 bg-danger/10 px-4 py-2.5 text-sm font-black transition hover:bg-danger/20"
+                  >
+                    <UiIcon name="repeat" size={17} />
+                    Reconectar Spotify
+                  </button>
+                </form>
+              </div>
+            </div>
           </section>
         ) : (
           <details
             open={targets.length === 0}
-            className="group mt-5 rounded-[1.75rem] border border-orange-400/25 bg-[linear-gradient(145deg,rgba(62,17,116,0.96),rgba(30,8,66,0.96))] p-5 shadow-[0_24px_70px_-40px_rgba(255,107,0,0.55)] sm:p-6"
+            className="product-panel group mt-5 p-5 sm:p-6"
           >
             <summary className="cursor-pointer list-none">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.15em] text-orange-400">
+                  <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
                     Novo destino
                   </p>
-                  <h2 className="mt-1 text-xl font-black">Adicionar playlist gerenciada</h2>
-                  <p className="mt-1 text-sm text-violet-200/65">
+                  <h2 className="mt-1 text-xl font-black text-ink-inverse">
+                    Adicionar playlist gerenciada
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-inverse">
                     Nova playlist entra por último na ordem de geração e pode ser reorganizada depois.
                   </p>
                 </div>
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-orange-300/25 bg-orange-400/10 text-xl font-black text-orange-200 transition group-open:rotate-45">
-                  +
+                <span className="product-icon-tile-accent transition group-open:rotate-45">
+                  <UiIcon name="plus" size={22} />
                 </span>
               </div>
             </summary>
 
-            <div className="mt-6 border-t border-violet-400/15 pt-6">
+            <div className="mt-6 border-t border-line-dark/55 pt-6">
               <TargetPlaylistForm
                 saveAction={saveTarget}
                 submitLabel="Criar destino"
@@ -678,26 +697,29 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
           </details>
         )}
 
-        <section className="mt-5 rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-5 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] sm:p-6">
+        <section className="product-panel mt-5 p-5 sm:p-6">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">
+              <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
                 Ordem de geração
               </p>
-              <h2 className="mt-1 text-xl font-black">Playlists configuradas</h2>
-              <p className="mt-1 text-sm leading-6 text-violet-200/65">
-                As primeiras playlists reservam conteúdo antes das seguintes. Use as setas para definir essa ordem sem lidar com números técnicos.
+              <h2 className="mt-1 text-xl font-black text-ink-inverse">
+                Playlists configuradas
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-muted-inverse">
+                As primeiras playlists reservam conteúdo antes das seguintes. Reordene sem lidar com números técnicos.
               </p>
             </div>
-            <span className="w-fit rounded-full border border-violet-400/20 bg-violet-400/10 px-3 py-1.5 text-xs font-black text-violet-200">
+            <span className="product-badge">
+              <UiIcon name="list" size={15} />
               {targets.filter((target) => target.enabled).length} ativas
             </span>
           </div>
 
           {targets.length === 0 ? (
-            <div className="mt-5 rounded-2xl border border-dashed border-violet-400/25 bg-violet-950/30 p-7 text-center">
-              <p className="font-black">Nenhum destino configurado</p>
-              <p className="mt-1 text-sm text-violet-200/60">
+            <div className="mt-5 rounded-2xl border border-dashed border-line-dark/60 bg-surface-subtle/55 p-7 text-center">
+              <p className="font-black text-ink-inverse">Nenhum destino configurado</p>
+              <p className="mt-1 text-sm text-muted-inverse">
                 Abra “Adicionar playlist gerenciada” acima para criar o primeiro.
               </p>
             </div>
@@ -717,43 +739,48 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 return (
                   <article
                     key={target.id}
-                    className={`rounded-2xl border p-4 sm:p-5 ${
-                      target.enabled
-                        ? "border-violet-300/25 bg-violet-900/30"
-                        : "border-violet-500/15 bg-violet-950/25 opacity-75"
+                    className={`product-card p-4 sm:p-5 ${
+                      target.enabled ? "" : "opacity-65"
                     }`}
                   >
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full border border-orange-400/25 bg-orange-400/10 px-2.5 py-1 text-xs font-black text-orange-200">
+                          <span className="inline-flex rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-black text-accent-400">
                             {index + 1}ª na geração
                           </span>
                           <span
                             className={`rounded-full border px-2.5 py-1 text-xs font-black ${
-                              target.enabled
-                                ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-200"
-                                : "border-violet-400/20 bg-violet-400/10 text-violet-300"
+                              target.enabled ? "status-success" : "product-badge"
                             }`}
                           >
                             {target.enabled ? "Ativa" : "Inativa"}
                           </span>
                         </div>
-                        <h3 className="mt-3 text-lg font-black text-white">{target.name}</h3>
-                        <p className="mt-1 text-sm leading-6 text-violet-200/65">
-                          {durationLabel(target)} · {target.compositionMode === "SEQUENCE"
-                            ? `por sequência: ${sequencePattern.map((entry) => entry === "MUSIC" ? "M" : "P").join(" → ")}`
-                            : `${target.podcastPercent}% podcast / ${100 - target.podcastPercent}% música`}
+                        <h3 className="mt-3 text-lg font-black text-ink-inverse">{target.name}</h3>
+                        <p className="mt-1 text-sm leading-6 text-muted-inverse">
+                          {durationLabel(target)} ·{" "}
+                          {target.compositionMode === "SEQUENCE"
+                            ? `por sequência: ${sequencePattern
+                                .map((entry) => (entry === "MUSIC" ? "M" : "P"))
+                                .join(" → ")}`
+                            : `${target.podcastPercent}% podcast / ${
+                                100 - target.podcastPercent
+                              }% música`}
                           {target.durationMode === "CALENDAR"
                             ? ` · eventos: ${
                                 target.calendarEventFilterMode === "MARKER"
-                                  ? `marcador ${target.calendarEventMarker ?? "não informado"}`
+                                  ? `marcador ${
+                                      target.calendarEventMarker ?? "não informado"
+                                    }`
                                   : "todos"
-                              } · sem evento: ${emptyBehaviorLabel(target.emptyCalendarBehavior)}`
+                              } · sem evento: ${emptyBehaviorLabel(
+                                target.emptyCalendarBehavior,
+                              )}`
                             : ""}
                           {` · ${podcastEpisodeMaxDurationLabel(target)}`}
                         </p>
-                        <p className="mt-1 text-xs text-violet-300/50">
+                        <p className="mt-1 text-xs text-muted-inverse/65">
                           {target.spotifyPlaylistId
                             ? currentSpotifyName
                               ? `Spotify: ${currentSpotifyName}`
@@ -769,9 +796,10 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           <button
                             type="submit"
                             disabled={index === 0}
-                            className="rounded-xl border border-violet-400/25 bg-violet-400/10 px-3 py-2 text-xs font-black text-violet-100 transition hover:bg-violet-400/20 disabled:cursor-not-allowed disabled:opacity-30"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-line-dark/60 bg-surface-elevated/65 px-3 py-2 text-xs font-black text-ink-inverse transition hover:border-brand-400/45 hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-30"
                           >
-                            ↑ Subir
+                            <UiIcon name="arrow-left" size={15} className="rotate-90" />
+                            Subir
                           </button>
                         </form>
                         <form action={reorderTarget}>
@@ -780,9 +808,10 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           <button
                             type="submit"
                             disabled={index === targets.length - 1}
-                            className="rounded-xl border border-violet-400/25 bg-violet-400/10 px-3 py-2 text-xs font-black text-violet-100 transition hover:bg-violet-400/20 disabled:cursor-not-allowed disabled:opacity-30"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-line-dark/60 bg-surface-elevated/65 px-3 py-2 text-xs font-black text-ink-inverse transition hover:border-brand-400/45 hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-30"
                           >
-                            ↓ Descer
+                            <UiIcon name="arrow-right" size={15} className="rotate-90" />
+                            Descer
                           </button>
                         </form>
                         <form action={toggleTarget}>
@@ -790,7 +819,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           <input type="hidden" name="enabled" value={String(!target.enabled)} />
                           <button
                             type="submit"
-                            className="rounded-xl border border-orange-400/25 bg-orange-400/10 px-3 py-2 text-xs font-black text-orange-100 transition hover:bg-orange-400/20"
+                            className="inline-flex items-center rounded-full border border-line-dark/60 bg-surface-elevated/65 px-3 py-2 text-xs font-black text-ink-inverse transition hover:border-brand-400/45 hover:bg-surface-elevated"
                           >
                             {target.enabled ? "Desativar" : "Ativar"}
                           </button>
@@ -798,11 +827,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                       </div>
                     </div>
 
-                    <details className="mt-4 rounded-2xl border border-violet-400/15 bg-[#12052d]/55 p-4">
-                      <summary className="cursor-pointer text-sm font-black text-violet-100">
+                    <details className="mt-4 rounded-2xl border border-line-dark/55 bg-surface-dark/60 p-4">
+                      <summary className="cursor-pointer text-sm font-black text-ink-inverse">
                         Editar regras e destino
                       </summary>
-                      <div className="mt-5 border-t border-violet-400/15 pt-5">
+                      <div className="mt-5 border-t border-line-dark/55 pt-5">
                         <TargetPlaylistForm
                           saveAction={saveTarget}
                           submitLabel="Salvar alterações"
