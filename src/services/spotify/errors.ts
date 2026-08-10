@@ -1,3 +1,5 @@
+import { recordSpotifyBackoff } from "./backoff";
+
 export type SpotifyApiErrorKind =
   | "RATE_LIMITED"
   | "QUOTA_EXCEEDED"
@@ -102,7 +104,7 @@ export async function spotifyApiErrorFromResponse(
     message = `Spotify API ${input.method} ${input.operation} failed (${response.status})${providerMessage}`;
   }
 
-  return new SpotifyApiError({
+  const error = new SpotifyApiError({
     kind,
     status: response.status,
     method: input.method,
@@ -112,6 +114,23 @@ export async function spotifyApiErrorFromResponse(
     retryable: kind === "RATE_LIMITED" || response.status >= 500,
     message,
   });
+
+  // SPOTIFY-02: Retry-After is an app-wide provider contract, not just a hint
+  // for the current request. Persist it before returning the error so every
+  // subsequent product action/cron can fail locally without another API call.
+  if (
+    (kind === "QUOTA_EXCEEDED" || kind === "RATE_LIMITED") &&
+    retryAfterSeconds !== null &&
+    retryAfterSeconds > 0
+  ) {
+    await recordSpotifyBackoff({
+      reason: kind,
+      operation: input.operation,
+      retryAfterSeconds,
+    });
+  }
+
+  return error;
 }
 
 export function inferSpotifyOperation(
