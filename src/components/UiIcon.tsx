@@ -1,4 +1,4 @@
-import type { SVGProps } from "react";
+import type { ReactNode, SVGProps } from "react";
 
 export type UiIconName =
   | "arrow-left"
@@ -45,7 +45,7 @@ export function UiIcon({
   );
 }
 
-const ICON_PATHS: Record<UiIconName, React.ReactNode> = {
+const ICON_PATHS: Record<UiIconName, ReactNode> = {
   "arrow-left": (
     <>
       <path d="M19 12H5" />
