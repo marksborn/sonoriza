@@ -64,6 +64,14 @@ export function ReviewSimulationButton({
     };
   }, []);
 
+  useEffect(() => {
+    const blockedUntil = backoff?.blockedUntil;
+    if (!blockedUntil) return;
+    const delay = Math.max(250, Date.parse(blockedUntil) - Date.now() + 250);
+    const timer = window.setTimeout(() => window.location.reload(), delay);
+    return () => window.clearTimeout(timer);
+  }, [backoff?.blockedUntil]);
+
   async function simulate() {
     if (disabled || running || checking || backoff) return;
 
