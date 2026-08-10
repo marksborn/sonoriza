@@ -590,10 +590,9 @@ export async function executeAutomaticMusicSourceCleanup(
   const patchUris = status === MusicSourceCleanupStatus.SUCCESS
     ? plan.removableUris
     : acceptedDeleteUris;
-  const patchedCache = patchMusicSourceCacheAfterRemove(
-    source.cachedCandidates,
-    patchUris,
-  );
+  const patchedCache = writeError
+    ? null
+    : patchMusicSourceCacheAfterRemove(source.cachedCandidates, patchUris);
 
   const [automaticRun] = await prisma.$transaction([
     prisma.musicSourceCleanupRun.create({
@@ -624,15 +623,21 @@ export async function executeAutomaticMusicSourceCleanup(
       where: { id: source.id },
       data: {
         musicCleanupLastRunAt: finishedAt,
-        ...(patchedCache && snapshotAfter
+        ...(writeError
           ? {
-              spotifySnapshotId: snapshotAfter,
-              cachedCandidates: patchedCache as Prisma.InputJsonValue,
-              cacheUpdatedAt: finishedAt,
+              spotifySnapshotId: null,
+              cacheUpdatedAt: null,
             }
-          : status === MusicSourceCleanupStatus.FAILED
-            ? {}
-            : { spotifySnapshotId: null, cacheUpdatedAt: null }),
+          : patchedCache && snapshotAfter
+            ? {
+                spotifySnapshotId: snapshotAfter,
+                cachedCandidates: patchedCache as Prisma.InputJsonValue,
+                cacheUpdatedAt: finishedAt,
+              }
+            : {
+                spotifySnapshotId: null,
+                cacheUpdatedAt: null,
+              }),
       },
     }),
   ]);

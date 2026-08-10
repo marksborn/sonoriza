@@ -205,3 +205,14 @@ test("manual cleanup preserves cache continuity when the pre-write snapshot was 
   assert.match(source, /preview\.source\.spotifySnapshotId === current\.snapshotId/);
   assert.match(source, /patchMusicSourceCacheAfterRemove/);
 });
+
+
+test("ambiguous automatic DELETE failure invalidates cache instead of trusting the last known snapshot", () => {
+  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");
+  const start = source.indexOf("export async function executeAutomaticMusicSourceCleanup");
+  const end = source.indexOf("\nasync function loadManagedMusicSource", start);
+  assert.ok(start >= 0 && end > start);
+  const automatic = source.slice(start, end);
+  assert.match(automatic, /const patchedCache = writeError\s*\? null/);
+  assert.match(automatic, /writeError[\s\S]*spotifySnapshotId: null/);
+});
