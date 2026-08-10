@@ -55,7 +55,7 @@ export default function DestinationsTemplate({ children }: { children: ReactNode
   return (
     <div ref={rootRef} onSubmitCapture={blockProviderSubmit}>
       {backoff ? (
-        <div className="mx-auto mt-4 max-w-6xl rounded-2xl border border-orange-400/30 bg-orange-950/30 px-4 py-3 text-sm font-semibold text-orange-100">
+        <div className="status-warning mx-auto mt-4 max-w-6xl rounded-2xl border px-4 py-3 text-sm font-semibold">
           Criação ou troca de destino Spotify bloqueada até {formatBackoffDate(backoff.blockedUntil)}. Reordenar ou ativar/desativar regras locais continua disponível.
         </div>
       ) : null}

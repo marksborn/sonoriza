@@ -2,6 +2,7 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { GoogleCalendarClient } from "@/services/google-calendar";
@@ -128,89 +129,88 @@ export default async function CalendarSettingsPage({
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0b021f] px-5 py-8 text-white sm:px-8 lg:px-10">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_5%,rgba(126,34,206,0.3),transparent_31rem),radial-gradient(circle_at_90%_10%,rgba(255,107,0,0.12),transparent_25rem),linear-gradient(180deg,#12032f_0%,#0b021f_55%,#090119_100%)]" />
+    <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
+      <div className="product-ambient" />
 
       <div className="relative mx-auto max-w-5xl">
         <header className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <Link
               href="/dashboard"
-              className="inline-flex items-center gap-2 text-sm font-bold text-violet-300 transition hover:text-white"
+              className="inline-flex items-center gap-2 text-sm font-bold text-muted-inverse transition hover:text-ink-inverse"
             >
-              <span aria-hidden="true">←</span>
+              <UiIcon name="arrow-left" size={18} />
               Voltar ao painel
             </Link>
-            <p className="mt-6 text-xs font-black uppercase tracking-[0.17em] text-orange-400">
+            <p className="mt-6 text-xs font-black uppercase tracking-[0.17em] text-accent-400">
               CONFIG-01
             </p>
-            <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] sm:text-4xl">
+            <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse sm:text-4xl">
               Calendários do Google
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-violet-200/75 sm:text-base">
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-inverse sm:text-base">
               Escolha quais calendários o Sonoriza consulta e quais deles podem contribuir com eventos para calcular a duração das playlists.
             </p>
           </div>
 
-          <div className="rounded-2xl border border-violet-400/20 bg-violet-950/45 px-4 py-3 text-sm text-violet-200/75">
-            <p className="font-bold text-white">Conta atual</p>
-            <p className="mt-1">{session.user.email}</p>
+          <div className="product-card px-4 py-3 text-sm">
+            <p className="font-bold text-ink-inverse">Conta atual</p>
+            <p className="mt-1 text-muted-inverse">{session.user.email}</p>
           </div>
         </header>
 
         {params.saved === "1" && (
-          <div className="mt-7 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-3 text-sm font-bold text-emerald-200">
+          <div className="status-success mt-7 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
+            <UiIcon name="check" size={17} />
             Configuração salva. Nenhuma playlist foi gerada automaticamente.
           </div>
         )}
 
         {(params.error === "google" || loadError) && (
-          <div className="mt-7 rounded-2xl border border-orange-400/25 bg-orange-400/10 p-5">
-            <p className="font-black text-orange-200">
+          <div className="status-warning mt-7 rounded-2xl border p-5">
+            <p className="flex items-center gap-2 font-black">
+              <UiIcon name="warning" size={18} />
               Não foi possível consultar os calendários agora.
             </p>
-            <p className="mt-2 text-sm leading-6 text-orange-100/70">
-              O acesso do Google pode ter expirado. Volte ao painel e reconecte a conta
-              antes de tentar novamente.
+            <p className="mt-2 text-sm leading-6 opacity-80">
+              O acesso do Google pode ter expirado. Volte ao painel e reconecte a conta antes de tentar novamente.
             </p>
             <Link
               href="/dashboard"
-              className="mt-4 inline-flex rounded-xl border border-orange-300/30 px-4 py-2 text-sm font-bold text-orange-100 transition hover:bg-orange-300/10"
+              className="mt-4 inline-flex items-center gap-2 rounded-xl border border-warning/35 px-4 py-2 text-sm font-bold transition hover:bg-warning/10"
             >
               Revisar conexão
+              <UiIcon name="arrow-right" size={16} />
             </Link>
           </div>
         )}
 
         {!googleAccount && (
-          <section className="mt-7 rounded-[1.75rem] border border-violet-400/20 bg-violet-950/45 p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] sm:p-8">
-            <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">
+          <section className="product-panel mt-7 p-6 sm:p-8">
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
               Conexão necessária
             </p>
-            <h2 className="mt-2 text-2xl font-black">Conecte o Google Agenda primeiro</h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-violet-200/70">
-              O Sonoriza só consegue listar calendários depois que a conta Google está
-              vinculada ao seu usuário.
+            <h2 className="mt-2 text-2xl font-black text-ink-inverse">Conecte o Google Agenda primeiro</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-inverse">
+              O Sonoriza só consegue listar calendários depois que a conta Google está vinculada ao seu usuário.
             </p>
-            <Link
-              href="/dashboard"
-              className="mt-5 inline-flex rounded-xl bg-gradient-to-r from-[#ff6b00] to-[#ff8a00] px-5 py-3 text-sm font-black text-white transition hover:brightness-110"
-            >
+            <Link href="/dashboard" className="mt-5 inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-black text-brand-900 shadow-action transition hover:bg-accent-400">
               Ir para conexões
+              <UiIcon name="arrow-right" size={17} />
             </Link>
           </section>
         )}
 
         {googleAccount && !loadError && calendars.length > 0 && (
           <form action={saveCalendarSelections} className="mt-7 space-y-5">
-            <section className="overflow-hidden rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)]">
-              <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b border-violet-400/15 px-4 py-4 text-xs font-black uppercase tracking-[0.13em] text-violet-300 sm:px-6">
+            <section className="product-panel overflow-hidden">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b border-line-dark/50 px-4 py-4 text-xs font-black uppercase tracking-[0.13em] text-brand-400 sm:px-6">
                 <span>Calendário</span>
                 <span className="text-center">Consultar</span>
                 <span className="text-center">Duração</span>
               </div>
 
-              <div className="divide-y divide-violet-400/15">
+              <div className="divide-y divide-line-dark/45">
                 {calendars.map((calendar, index) => {
                   const saved = selectionByCalendar.get(calendar.id);
                   const selected = saved?.selected ?? Boolean(calendar.primary);
@@ -221,27 +221,23 @@ export default async function CalendarSettingsPage({
                   return (
                     <article
                       key={calendar.id}
-                      className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-5 transition hover:bg-violet-900/20 sm:px-6"
+                      className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 px-4 py-5 transition hover:bg-surface-elevated/45 sm:px-6"
                     >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="truncate font-black text-white">
-                            {calendar.summary}
-                          </h2>
+                          <h2 className="truncate font-black text-ink-inverse">{calendar.summary}</h2>
                           {calendar.primary && (
-                            <span className="rounded-full border border-orange-400/25 bg-orange-400/10 px-2.5 py-1 text-[0.68rem] font-black uppercase tracking-wide text-orange-300">
+                            <span className="product-badge border-accent/30 bg-accent/10 text-accent-400">
                               Principal
                             </span>
                           )}
                         </div>
-                        <p className="mt-1 truncate text-xs text-violet-200/55">
-                          {calendar.id}
-                        </p>
+                        <p className="mt-1 truncate text-xs text-muted-inverse/65">{calendar.id}</p>
                       </div>
 
                       <label
                         htmlFor={selectedInputId}
-                        className="flex min-w-20 cursor-pointer flex-col items-center gap-2 text-xs font-bold text-violet-200/70"
+                        className="flex min-w-20 cursor-pointer flex-col items-center gap-2 text-xs font-bold text-muted-inverse"
                       >
                         <input
                           id={selectedInputId}
@@ -249,14 +245,14 @@ export default async function CalendarSettingsPage({
                           value={calendar.id}
                           type="checkbox"
                           defaultChecked={selected}
-                          className="h-5 w-5 accent-violet-500"
+                          className="h-5 w-5 accent-brand"
                         />
                         Usar
                       </label>
 
                       <label
                         htmlFor={durationInputId}
-                        className="flex min-w-20 cursor-pointer flex-col items-center gap-2 text-xs font-bold text-violet-200/70"
+                        className="flex min-w-20 cursor-pointer flex-col items-center gap-2 text-xs font-bold text-muted-inverse"
                       >
                         <input
                           id={durationInputId}
@@ -264,7 +260,7 @@ export default async function CalendarSettingsPage({
                           value={calendar.id}
                           type="checkbox"
                           defaultChecked={usedForDuration}
-                          className="h-5 w-5 accent-orange-500"
+                          className="h-5 w-5 accent-accent"
                         />
                         Duração
                       </label>
@@ -274,14 +270,15 @@ export default async function CalendarSettingsPage({
               </div>
             </section>
 
-            <div className="flex flex-col gap-4 rounded-2xl border border-violet-400/20 bg-violet-950/45 p-5 sm:flex-row sm:items-center sm:justify-between">
-              <p className="max-w-2xl text-sm leading-6 text-violet-200/65">
+            <div className="product-card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <p className="max-w-2xl text-sm leading-6 text-muted-inverse">
                 Um calendário habilitado para duração só será considerado quando também estiver marcado para consulta. Essa regra é garantida novamente no servidor ao salvar.
               </p>
               <button
                 type="submit"
-                className="shrink-0 rounded-xl bg-gradient-to-r from-[#ff6b00] to-[#ff8a00] px-5 py-3 text-sm font-black text-white shadow-[0_14px_35px_-18px_rgba(255,107,0,0.95)] transition hover:-translate-y-0.5 hover:brightness-110"
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-black text-brand-900 shadow-action transition hover:-translate-y-0.5 hover:bg-accent-400"
               >
+                <UiIcon name="check" size={18} />
                 Salvar calendários
               </button>
             </div>
@@ -289,7 +286,7 @@ export default async function CalendarSettingsPage({
         )}
 
         {googleAccount && !loadError && calendars.length === 0 && (
-          <div className="mt-7 rounded-2xl border border-violet-400/20 bg-violet-950/45 p-6 text-center text-violet-200/70">
+          <div className="product-card mt-7 p-6 text-center text-muted-inverse">
             A conta Google não retornou nenhum calendário disponível.
           </div>
         )}

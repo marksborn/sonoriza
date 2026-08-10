@@ -55,7 +55,7 @@ export default function SpotifySourcesTemplate({ children }: { children: ReactNo
   return (
     <div ref={rootRef} onSubmitCapture={blockProviderSubmit}>
       {backoff ? (
-        <div className="mx-auto mt-4 max-w-6xl rounded-2xl border border-orange-400/30 bg-orange-950/30 px-4 py-3 text-sm font-semibold text-orange-100">
+        <div className="status-warning mx-auto mt-4 max-w-6xl rounded-2xl border px-4 py-3 text-sm font-semibold">
           Novas fontes do Spotify não podem ser consultadas/adicionadas até {formatBackoffDate(backoff.blockedUntil)}. Ativar, desativar ou remover fontes já cadastradas continua disponível porque essas ações são locais.
         </div>
       ) : null}

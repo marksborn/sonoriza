@@ -67,7 +67,7 @@ export default function MusicIngestionTemplate({ children }: { children: ReactNo
   return (
     <div ref={rootRef} onSubmitCapture={blockSpotifySubmit}>
       {backoff ? (
-        <div className="mx-auto mt-4 max-w-5xl rounded-2xl border border-orange-400/30 bg-orange-950/30 px-4 py-3 text-sm text-orange-100">
+        <div className="status-warning mx-auto mt-4 max-w-5xl rounded-2xl border px-4 py-3 text-sm">
           <p className="font-black">MUSIC-03 temporariamente bloqueada pelo Spotify</p>
           <p className="mt-1 font-semibold">
             Novas consultas e escritas ficam desabilitadas até {formatBackoffDate(backoff.blockedUntil)} ({formatRemaining(backoff.retryAfterSecondsRemaining)}).

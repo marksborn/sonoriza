@@ -2,8 +2,51 @@ import { MusicSourceRetentionMode } from "@prisma/client";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { UiIcon, type UiIconName } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+
+type ConfigCardProps = {
+  href: string;
+  icon: UiIconName;
+  badge: string;
+  code: string;
+  title: string;
+  description: string;
+  action: string;
+  accent?: boolean;
+};
+
+function ConfigCard({
+  href,
+  icon,
+  badge,
+  code,
+  title,
+  description,
+  action,
+  accent = false,
+}: ConfigCardProps) {
+  return (
+    <Link href={href} className="product-panel group p-6 transition hover:-translate-y-0.5 hover:border-brand-400/45">
+      <div className="flex items-start justify-between gap-4">
+        <span className={accent ? "product-icon-tile-accent" : "product-icon-tile"}>
+          <UiIcon name={icon} size={22} />
+        </span>
+        <span className="product-badge">{badge}</span>
+      </div>
+      <p className={`mt-5 text-xs font-black uppercase tracking-[0.15em] ${accent ? "text-accent-400" : "text-brand-400"}`}>
+        {code}
+      </p>
+      <h2 className="mt-1 text-xl font-black text-ink-inverse">{title}</h2>
+      <p className="mt-2 text-sm leading-6 text-muted-inverse">{description}</p>
+      <span className="product-link mt-5">
+        {action}
+        <UiIcon name="arrow-right" size={18} />
+      </span>
+    </Link>
+  );
+}
 
 export default async function ConfigurationHubPage() {
   const session = await auth();
@@ -52,128 +95,103 @@ export default async function ConfigurationHubPage() {
     : "Desativada";
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0b021f] px-5 py-8 text-white sm:px-8 lg:px-10">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_5%,rgba(126,34,206,0.3),transparent_31rem),radial-gradient(circle_at_90%_10%,rgba(255,107,0,0.12),transparent_25rem),linear-gradient(180deg,#12032f_0%,#0b021f_55%,#090119_100%)]" />
+    <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
+      <div className="product-ambient" />
 
       <div className="relative mx-auto max-w-5xl">
         <Link
           href="/dashboard"
-          className="inline-flex items-center gap-2 text-sm font-bold text-violet-300 transition hover:text-white"
+          className="inline-flex items-center gap-2 text-sm font-bold text-muted-inverse transition hover:text-ink-inverse"
         >
-          <span aria-hidden="true">←</span>
+          <UiIcon name="arrow-left" size={18} />
           Voltar ao painel
         </Link>
 
         <div className="mt-7 max-w-3xl">
-          <p className="text-xs font-black uppercase tracking-[0.17em] text-orange-400">
+          <p className="text-xs font-black uppercase tracking-[0.17em] text-accent-400">
             Configuração
           </p>
-          <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] sm:text-4xl">
+          <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse sm:text-4xl">
             Prepare o Sonoriza para o seu dia.
           </h1>
-          <p className="mt-3 text-sm leading-6 text-violet-200/75 sm:text-base">
+          <p className="mt-3 text-sm leading-6 text-muted-inverse sm:text-base">
             Escolha de onde o conteúdo vem, quais eventos entram no cálculo de tempo e como cada playlist de destino deve ser montada.
           </p>
         </div>
 
         <div className="mt-8 grid gap-5 md:grid-cols-2">
-          <Link
+          <ConfigCard
             href="/dashboard/configuracao/calendarios"
-            className="group rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] transition hover:-translate-y-0.5 hover:border-violet-300/40"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-300/20 bg-violet-500/15 text-xl text-violet-100">◷</span>
-              <span className="rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1.5 text-xs font-black text-violet-200">{calendarCount} ativos</span>
-            </div>
-            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-violet-400">CONFIG-01</p>
-            <h2 className="mt-1 text-xl font-black">Calendários do Google</h2>
-            <p className="mt-2 text-sm leading-6 text-violet-200/70">Defina os calendários consultados e quais eventos representam viagens.</p>
-            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">Configurar calendários <span aria-hidden="true">→</span></span>
-          </Link>
+            icon="calendar"
+            badge={`${calendarCount} ativos`}
+            code="CONFIG-01"
+            title="Calendários do Google"
+            description="Defina os calendários consultados e quais eventos representam viagens."
+            action="Configurar calendários"
+          />
 
-          <Link
+          <ConfigCard
             href="/dashboard/configuracao/fontes"
-            className="group rounded-[1.75rem] border border-orange-400/25 bg-[linear-gradient(145deg,rgba(62,17,116,0.96),rgba(30,8,66,0.96))] p-6 shadow-[0_24px_70px_-40px_rgba(255,107,0,0.55)] transition hover:-translate-y-0.5 hover:border-orange-300/45"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-300/20 bg-orange-400/10 text-xl text-orange-200">♪</span>
-              <span className="rounded-full border border-orange-300/20 bg-orange-400/10 px-3 py-1.5 text-xs font-black text-orange-200">{sourceCount} ativas</span>
-            </div>
-            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-orange-400">CONFIG-02</p>
-            <h2 className="mt-1 text-xl font-black">Fontes do Spotify</h2>
-            <p className="mt-2 text-sm leading-6 text-violet-200/70">Escolha playlists de músicas e programas de podcast que alimentam o motor.</p>
-            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">Configurar fontes <span aria-hidden="true">→</span></span>
-          </Link>
+            icon="music"
+            badge={`${sourceCount} ativas`}
+            code="CONFIG-02"
+            title="Fontes do Spotify"
+            description="Escolha playlists de músicas e programas de podcast que alimentam o motor."
+            action="Configurar fontes"
+            accent
+          />
 
-          <Link
+          <ConfigCard
             href="/dashboard/configuracao/musica"
-            className="group rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] transition hover:-translate-y-0.5 hover:border-violet-300/40"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-300/20 bg-violet-500/15 text-xl text-violet-100">↺</span>
-              <span className="rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1.5 text-xs font-black text-violet-200">{musicPolicyLabel}</span>
-            </div>
-            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-violet-400">MUSIC-01</p>
-            <h2 className="mt-1 text-xl font-black">Repetição de músicas</h2>
-            <p className="mt-2 text-sm leading-6 text-violet-200/70">Evite faixas tocadas recentemente usando o histórico nativo do Spotify.</p>
-            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">Configurar repetição <span aria-hidden="true">→</span></span>
-          </Link>
+            icon="repeat"
+            badge={musicPolicyLabel}
+            code="MUSIC-01"
+            title="Repetição de músicas"
+            description="Evite faixas tocadas recentemente usando o histórico nativo do Spotify."
+            action="Configurar repetição"
+          />
 
-          <Link
+          <ConfigCard
             href="/dashboard/configuracao/limpeza"
-            className="group rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] transition hover:-translate-y-0.5 hover:border-violet-300/40"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-300/20 bg-violet-500/15 text-xl text-violet-100">⌫</span>
-              <span className="rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1.5 text-xs font-black text-violet-200">{cleanupInboxCount} inbox</span>
-            </div>
-            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-violet-400">MUSIC-02</p>
-            <h2 className="mt-1 text-xl font-black">Limpeza de fontes</h2>
-            <p className="mt-2 text-sm leading-6 text-violet-200/70">Trate playlists de entrada como filas e remova somente músicas com reprodução confirmada.</p>
-            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">Configurar limpeza <span aria-hidden="true">→</span></span>
-          </Link>
+            icon="trash"
+            badge={`${cleanupInboxCount} inbox`}
+            code="MUSIC-02"
+            title="Limpeza de fontes"
+            description="Trate playlists de entrada como filas e remova somente músicas com reprodução confirmada."
+            action="Configurar limpeza"
+          />
 
-          <Link
+          <ConfigCard
             href="/dashboard/configuracao/alimentacao"
-            className="group rounded-[1.75rem] border border-orange-400/25 bg-[linear-gradient(145deg,rgba(62,17,116,0.96),rgba(30,8,66,0.96))] p-6 shadow-[0_24px_70px_-40px_rgba(255,107,0,0.55)] transition hover:-translate-y-0.5 hover:border-orange-300/45"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-300/20 bg-orange-400/10 text-xl text-orange-200">＋</span>
-              <span className="rounded-full border border-orange-300/20 bg-orange-400/10 px-3 py-1.5 text-xs font-black text-orange-200">{ingestionRuleCount} ativas</span>
-            </div>
-            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-orange-400">MUSIC-03</p>
-            <h2 className="mt-1 text-xl font-black">Alimentação da inbox</h2>
-            <p className="mt-2 text-sm leading-6 text-violet-200/70">Traga novidades, músicas curtidas e álbuns para a Escutar sem depender de IFTTT.</p>
-            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">Configurar alimentação <span aria-hidden="true">→</span></span>
-          </Link>
+            icon="plus"
+            badge={`${ingestionRuleCount} ativas`}
+            code="MUSIC-03"
+            title="Alimentação da inbox"
+            description="Traga novidades, músicas curtidas e álbuns para a Escutar sem depender de IFTTT."
+            action="Configurar alimentação"
+            accent
+          />
 
-          <Link
+          <ConfigCard
             href="/dashboard/configuracao/destinos"
-            className="group rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] transition hover:-translate-y-0.5 hover:border-violet-300/40"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-300/20 bg-violet-500/15 text-xl text-violet-100">▤</span>
-              <span className="rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-1.5 text-xs font-black text-violet-200">{targetCount} ativas</span>
-            </div>
-            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-violet-400">CONFIG-03</p>
-            <h2 className="mt-1 text-xl font-black">Destinos e regras</h2>
-            <p className="mt-2 text-sm leading-6 text-violet-200/70">Escolha as playlists gerenciadas, duração, mistura, sequência e ordem de geração.</p>
-            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">Configurar destinos <span aria-hidden="true">→</span></span>
-          </Link>
+            icon="list"
+            badge={`${targetCount} ativas`}
+            code="CONFIG-03"
+            title="Destinos e regras"
+            description="Escolha as playlists gerenciadas, duração, mistura, sequência e ordem de geração."
+            action="Configurar destinos"
+          />
 
-          <Link
+          <ConfigCard
             href="/dashboard/configuracao/revisao"
-            className="group rounded-[1.75rem] border border-orange-400/25 bg-[linear-gradient(145deg,rgba(62,17,116,0.96),rgba(30,8,66,0.96))] p-6 shadow-[0_24px_70px_-40px_rgba(255,107,0,0.55)] transition hover:-translate-y-0.5 hover:border-orange-300/45"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-300/20 bg-orange-400/10 text-xl text-orange-200">✓</span>
-              <span className="rounded-full border border-orange-300/20 bg-orange-400/10 px-3 py-1.5 text-xs font-black text-orange-200">Etapa final</span>
-            </div>
-            <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-orange-400">CONFIG-04</p>
-            <h2 className="mt-1 text-xl font-black">Revisar e testar</h2>
-            <p className="mt-2 text-sm leading-6 text-violet-200/70">Confira conexões e regras, corrija pendências e simule antes da geração real.</p>
-            <span className="mt-5 inline-flex items-center gap-2 text-sm font-black text-orange-300 transition group-hover:gap-3">Revisar configuração <span aria-hidden="true">→</span></span>
-          </Link>
+            icon="check"
+            badge="Etapa final"
+            code="CONFIG-04"
+            title="Revisar e testar"
+            description="Confira conexões e regras, corrija pendências e simule antes da geração real."
+            action="Revisar configuração"
+            accent
+          />
         </div>
       </div>
     </main>

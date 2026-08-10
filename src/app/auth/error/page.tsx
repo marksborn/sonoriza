@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BrandLogo } from "@/components/BrandLogo";
+import { UiIcon } from "@/components/UiIcon";
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   OAuthAccountNotLinked:
@@ -34,13 +35,11 @@ export default async function AuthErrorPage({ searchParams }: AuthErrorPageProps
       <section className="glass-panel relative w-full max-w-xl rounded-[2rem] p-6 sm:p-9">
         <BrandLogo compact />
 
-        <div className="mt-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-soft text-2xl font-black text-accent">
-          !
+        <div className="mt-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-danger-soft text-danger">
+          <UiIcon name="warning" size={26} />
         </div>
 
-        <p className="mt-6 text-xs font-bold uppercase tracking-[0.16em] text-brand">
-          Autenticação
-        </p>
+        <p className="mt-6 text-xs font-bold uppercase tracking-[0.16em] text-brand">Autenticação</p>
         <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-brand-dark sm:text-4xl">
           Não foi possível entrar
         </h1>
@@ -54,7 +53,7 @@ export default async function AuthErrorPage({ searchParams }: AuthErrorPageProps
 
         <Link href="/" className="primary-button mt-8">
           Voltar ao início
-          <span aria-hidden="true">→</span>
+          <UiIcon name="arrow-right" size={18} />
         </Link>
       </section>
     </main>

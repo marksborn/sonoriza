@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { BrandLogo } from "@/components/BrandLogo";
 import { RunControls } from "@/components/RunControls";
+import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn, signOut } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -52,11 +53,8 @@ function formatRunDate(date: Date) {
   }).format(date);
 }
 
-const panelClass =
-  "rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.92),rgba(22,6,53,0.94))] shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)] backdrop-blur-xl";
-
-const innerCardClass =
-  "rounded-2xl border border-violet-400/20 bg-violet-950/40 transition hover:border-violet-300/35 hover:bg-violet-900/35";
+const panelClass = "product-panel";
+const innerCardClass = "product-card";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -125,27 +123,27 @@ export default async function DashboardPage() {
   const connectionCount = Number(hasGoogle) + Number(hasSpotify);
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0b021f] pb-12 text-white">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_4%,rgba(126,34,206,0.28),transparent_31rem),radial-gradient(circle_at_88%_16%,rgba(255,107,0,0.14),transparent_26rem),linear-gradient(180deg,#12032f_0%,#0b021f_52%,#090119_100%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-20 h-[34rem] w-[34rem] -translate-x-1/2 rounded-full bg-violet-600/10 blur-3xl" />
+    <main className="product-shell pb-12">
+      <div className="product-ambient" />
+      <div className="pointer-events-none absolute left-1/2 top-20 h-[34rem] w-[34rem] -translate-x-1/2 rounded-full bg-brand/10 blur-3xl" />
 
-      <header className="relative z-10 border-b border-violet-300/15 bg-[#10032a]/90 backdrop-blur-xl">
+      <header className="relative z-10 border-b border-line-dark/50 bg-surface-dark/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4 sm:px-8 lg:px-10">
           <BrandLogo compact variant="light" />
 
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="hidden text-right sm:block">
-              <p className="text-sm font-bold text-white">
+              <p className="text-sm font-bold text-ink-inverse">
                 {session.user.name ?? "Minha conta"}
               </p>
-              <p className="text-xs text-violet-200/70">{session.user.email}</p>
+              <p className="text-xs text-muted-inverse">{session.user.email}</p>
             </div>
             <form action={logOut}>
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 rounded-2xl border border-violet-300/30 bg-violet-950/35 px-4 py-2 text-sm font-bold text-violet-100 transition hover:border-violet-200/60 hover:bg-violet-900/55 hover:text-white"
+                className="inline-flex items-center gap-2 rounded-2xl border border-line-dark/70 bg-surface-subtle/70 px-4 py-2 text-sm font-bold text-muted-inverse transition hover:border-brand-400/50 hover:bg-surface-elevated hover:text-ink-inverse"
               >
-                <span aria-hidden="true">↪</span>
+                <UiIcon name="logout" size={18} />
                 Sair
               </button>
             </form>
@@ -154,24 +152,24 @@ export default async function DashboardPage() {
       </header>
 
       <div className="relative z-10 mx-auto max-w-7xl space-y-5 px-5 py-6 sm:space-y-6 sm:px-8 lg:px-10 lg:py-8">
-        <section className="relative overflow-hidden rounded-[2rem] border border-violet-300/25 bg-[linear-gradient(120deg,#1d0758_0%,#34108a_42%,#7928e8_76%,#a02cf2_100%)] p-6 shadow-[0_28px_90px_-42px_rgba(124,58,237,0.95)] sm:p-8 lg:p-9">
+        <section className="relative overflow-hidden rounded-[2rem] border border-brand-400/30 bg-brand-gradient p-6 shadow-product-card sm:p-8 lg:p-9">
           <div className="pointer-events-none absolute -right-14 -top-24 h-72 w-72 rounded-full border-[42px] border-white/10" />
-          <div className="pointer-events-none absolute -bottom-32 right-20 h-72 w-72 rounded-full bg-orange-500/30 blur-3xl" />
-          <div className="pointer-events-none absolute right-10 top-8 hidden h-48 w-48 rounded-full bg-violet-300/10 blur-2xl lg:block" />
+          <div className="pointer-events-none absolute -bottom-32 right-20 h-72 w-72 rounded-full bg-accent/25 blur-3xl" />
+          <div className="pointer-events-none absolute right-10 top-8 hidden h-48 w-48 rounded-full bg-brand-400/15 blur-2xl lg:block" />
 
           <div className="relative flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-black uppercase tracking-[0.16em] text-orange-300 backdrop-blur-sm">
-                <span aria-hidden="true">♫</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-black uppercase tracking-[0.16em] text-accent-400 backdrop-blur-sm">
+                <UiIcon name="music" size={16} />
                 Seu painel musical
               </span>
 
-              <h1 className="mt-5 text-3xl font-black leading-tight tracking-[-0.04em] sm:text-4xl lg:text-5xl">
+              <h1 className="mt-5 text-3xl font-black leading-tight tracking-[-0.04em] text-ink-inverse sm:text-4xl lg:text-5xl">
                 Sua agenda e suas playlists,
-                <span className="block text-orange-400">em sintonia.</span>
+                <span className="block text-accent-400">em sintonia.</span>
               </h1>
 
-              <p className="mt-4 max-w-xl text-sm leading-6 text-violet-100/80 sm:text-base">
+              <p className="mt-4 max-w-xl text-sm leading-6 text-white/80 sm:text-base">
                 Gere, simule e acompanhe as playlists criadas para o seu tempo disponível.
               </p>
             </div>
@@ -179,15 +177,15 @@ export default async function DashboardPage() {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <div className="rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-center backdrop-blur-md">
                 <p className="text-2xl font-black sm:text-3xl">{connectionCount}/2</p>
-                <p className="mt-1 text-xs text-violet-100/75">conexões</p>
+                <p className="mt-1 text-xs text-white/75">conexões</p>
               </div>
               <div className="rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-center backdrop-blur-md">
                 <p className="text-2xl font-black sm:text-3xl">{targets.length}</p>
-                <p className="mt-1 text-xs text-violet-100/75">playlists</p>
+                <p className="mt-1 text-xs text-white/75">playlists</p>
               </div>
               <div className="col-span-2 rounded-2xl border border-white/15 bg-white/10 px-5 py-4 text-center backdrop-blur-md sm:col-span-1">
                 <p className="text-2xl font-black sm:text-3xl">{runs.length}</p>
-                <p className="mt-1 text-xs text-violet-100/75">execuções recentes</p>
+                <p className="mt-1 text-xs text-white/75">execuções recentes</p>
               </div>
             </div>
           </div>
@@ -196,24 +194,22 @@ export default async function DashboardPage() {
         <section className={`${panelClass} p-5 sm:p-6`}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">
+              <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
                 Integrações
               </p>
-              <h2 className="mt-1 text-xl font-black tracking-tight text-white">
+              <h2 className="mt-1 text-xl font-black tracking-tight text-ink-inverse">
                 Conexões da conta
               </h2>
-              <p className="mt-1 text-sm text-violet-200/70">
+              <p className="mt-1 text-sm text-muted-inverse">
                 Com os dois provedores vinculados, você pode entrar com qualquer um deles.
               </p>
             </div>
             <span
-              className={`w-fit rounded-full border px-3 py-1.5 text-xs font-bold ${
-                connectionCount === 2
-                  ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-300"
-                  : "border-orange-400/25 bg-orange-400/10 text-orange-300"
+              className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${
+                connectionCount === 2 ? "status-success" : "status-warning"
               }`}
             >
-              <span className="mr-2 inline-block h-2 w-2 rounded-full bg-current" />
+              {connectionCount === 2 ? <UiIcon name="check" size={15} /> : <UiIcon name="warning" size={15} />}
               {connectionCount === 2 ? "Tudo conectado" : "Conexão pendente"}
             </span>
           </div>
@@ -221,13 +217,20 @@ export default async function DashboardPage() {
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <article className={`${innerCardClass} flex flex-col justify-between gap-5 p-5 sm:flex-row sm:items-center`}>
               <div className="flex items-center gap-4">
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-lg shadow-violet-950/30">
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-lg">
                   <GoogleIcon />
                 </span>
                 <div>
-                  <h3 className="font-black text-white">Google Agenda</h3>
-                  <p className={hasGoogle ? "text-sm font-semibold text-emerald-300" : "text-sm text-violet-200/65"}>
-                    {hasGoogle ? "Conectado ✓" : "Ainda não conectado"}
+                  <h3 className="font-black text-ink-inverse">Google Agenda</h3>
+                  <p className={hasGoogle ? "mt-1 inline-flex items-center gap-1.5 text-sm font-semibold text-success" : "mt-1 text-sm text-muted-inverse"}>
+                    {hasGoogle ? (
+                      <>
+                        <UiIcon name="check" size={15} />
+                        Conectado
+                      </>
+                    ) : (
+                      "Ainda não conectado"
+                    )}
                   </p>
                 </div>
               </div>
@@ -235,7 +238,7 @@ export default async function DashboardPage() {
                 <form action={connectGoogle}>
                   <button
                     type="submit"
-                    className="w-full rounded-xl border border-violet-400/40 bg-violet-900/45 px-4 py-2 text-sm font-bold text-violet-100 transition hover:bg-violet-800/60 sm:w-auto"
+                    className="w-full rounded-xl border border-brand-400/40 bg-surface-elevated/70 px-4 py-2 text-sm font-bold text-ink-inverse transition hover:border-brand-400/70 hover:bg-surface-elevated sm:w-auto"
                   >
                     Conectar Google
                   </button>
@@ -245,13 +248,20 @@ export default async function DashboardPage() {
 
             <article className={`${innerCardClass} flex flex-col justify-between gap-5 p-5 sm:flex-row sm:items-center`}>
               <div className="flex items-center gap-4">
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#181016] shadow-lg shadow-violet-950/40">
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-black/55 shadow-lg">
                   <SpotifyIcon />
                 </span>
                 <div>
-                  <h3 className="font-black text-white">Spotify</h3>
-                  <p className={hasSpotify ? "text-sm font-semibold text-emerald-300" : "text-sm text-violet-200/65"}>
-                    {hasSpotify ? "Conectado ✓" : "Ainda não conectado"}
+                  <h3 className="font-black text-ink-inverse">Spotify</h3>
+                  <p className={hasSpotify ? "mt-1 inline-flex items-center gap-1.5 text-sm font-semibold text-success" : "mt-1 text-sm text-muted-inverse"}>
+                    {hasSpotify ? (
+                      <>
+                        <UiIcon name="check" size={15} />
+                        Conectado
+                      </>
+                    ) : (
+                      "Ainda não conectado"
+                    )}
                   </p>
                 </div>
               </div>
@@ -259,7 +269,7 @@ export default async function DashboardPage() {
                 <form action={connectSpotify}>
                   <button
                     type="submit"
-                    className="w-full rounded-xl bg-gradient-to-r from-[#ff6b00] to-[#ff8a00] px-4 py-2 text-sm font-black text-white transition hover:brightness-110 sm:w-auto"
+                    className="w-full rounded-xl bg-accent px-4 py-2 text-sm font-black text-brand-900 shadow-action transition hover:bg-accent-400 sm:w-auto"
                   >
                     Conectar Spotify
                   </button>
@@ -273,41 +283,41 @@ export default async function DashboardPage() {
           <section className={`${panelClass} p-5 sm:p-6`}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.15em] text-orange-400">
+                <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
                   Geração
                 </p>
-                <h2 className="mt-1 text-xl font-black tracking-tight text-white">
+                <h2 className="mt-1 text-xl font-black tracking-tight text-ink-inverse">
                   Atualize suas playlists
                 </h2>
-                <p className="mt-1 text-sm leading-6 text-violet-200/70">
+                <p className="mt-1 text-sm leading-6 text-muted-inverse">
                   Execute a geração real ou simule o resultado antes de aplicar mudanças no Spotify.
                 </p>
               </div>
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-orange-400/20 bg-orange-400/10 text-xl text-orange-300">
-                ♪
+              <span className="product-icon-tile-accent h-11 w-11">
+                <UiIcon name="music" size={21} />
               </span>
             </div>
 
-            <div className="mt-6 rounded-2xl border border-violet-400/20 bg-violet-950/35 p-4 sm:p-5">
+            <div className="mt-6 rounded-2xl border border-line-dark/55 bg-surface-subtle/65 p-4 sm:p-5">
               <RunControls />
             </div>
           </section>
 
           <section className={`${panelClass} p-5 sm:p-6`}>
-            <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
               Destinos
             </p>
-            <h2 className="mt-1 text-xl font-black tracking-tight text-white">
+            <h2 className="mt-1 text-xl font-black tracking-tight text-ink-inverse">
               Playlists configuradas
             </h2>
 
             {targets.length === 0 ? (
-              <div className="mt-5 rounded-2xl border border-dashed border-violet-400/30 bg-violet-950/30 p-6 text-center">
-                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 text-xl text-white shadow-lg shadow-violet-900/50">
-                  +
+              <div className="mt-5 rounded-2xl border border-dashed border-line-dark bg-surface-subtle/60 p-6 text-center">
+                <div className="product-icon-tile mx-auto h-11 w-11">
+                  <UiIcon name="plus" size={21} />
                 </div>
-                <p className="mt-3 font-bold text-white">Nenhuma playlist ainda</p>
-                <p className="mt-1 text-sm leading-6 text-violet-200/65">
+                <p className="mt-3 font-bold text-ink-inverse">Nenhuma playlist ainda</p>
+                <p className="mt-1 text-sm leading-6 text-muted-inverse">
                   A configuração pela interface será a próxima etapa funcional do MVP.
                 </p>
               </div>
@@ -317,14 +327,12 @@ export default async function DashboardPage() {
                   <li key={target.id} className={`${innerCardClass} p-4`}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="font-black text-white">{target.name}</p>
-                        <p className="mt-1 text-sm text-violet-200/65">
+                        <p className="font-black text-ink-inverse">{target.name}</p>
+                        <p className="mt-1 text-sm text-muted-inverse">
                           {target.durationMode} · {target.podcastPercent}% podcasts
                         </p>
                       </div>
-                      <span className="rounded-full border border-violet-400/20 bg-violet-400/10 px-2.5 py-1 text-xs font-bold text-violet-200">
-                        #{target.priority}
-                      </span>
+                      <span className="product-badge px-2.5 py-1">#{target.priority}</span>
                     </div>
                   </li>
                 ))}
@@ -335,48 +343,49 @@ export default async function DashboardPage() {
 
         <section className={`${panelClass} p-5 sm:p-6`}>
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
               Histórico
             </p>
-            <h2 className="mt-1 text-xl font-black tracking-tight text-white">
+            <h2 className="mt-1 text-xl font-black tracking-tight text-ink-inverse">
               Execuções recentes
             </h2>
           </div>
 
           {runs.length === 0 ? (
-            <div className="mt-5 flex flex-col items-center justify-center rounded-2xl border border-violet-400/20 bg-violet-950/30 px-5 py-8 text-center sm:flex-row sm:gap-4 sm:text-left">
-              <span className="flex h-11 w-11 items-center justify-center rounded-full border border-violet-300/20 bg-violet-500/20 text-violet-200">
-                ◷
+            <div className="mt-5 flex flex-col items-center justify-center rounded-2xl border border-line-dark/55 bg-surface-subtle/60 px-5 py-8 text-center sm:flex-row sm:gap-4 sm:text-left">
+              <span className="product-icon-tile h-11 w-11 rounded-full">
+                <UiIcon name="history" size={20} />
               </span>
               <div className="mt-3 sm:mt-0">
-                <p className="font-bold text-white">Nenhuma execução registrada</p>
-                <p className="mt-1 text-sm text-violet-200/65">
+                <p className="font-bold text-ink-inverse">Nenhuma execução registrada</p>
+                <p className="mt-1 text-sm text-muted-inverse">
                   Sua primeira geração aparecerá aqui.
                 </p>
               </div>
             </div>
           ) : (
-            <ul className="mt-5 divide-y divide-violet-400/15 overflow-hidden rounded-2xl border border-violet-400/20 bg-violet-950/30">
+            <ul className="mt-5 divide-y divide-line-dark/45 overflow-hidden rounded-2xl border border-line-dark/55 bg-surface-subtle/60">
               {runs.map((run) => (
                 <li key={run.id} className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                   <div className="flex items-center gap-3">
                     <span
                       className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-black ${
                         run.status === "SUCCESS"
-                          ? "bg-emerald-400/15 text-emerald-300"
-                          : "bg-orange-400/15 text-orange-300"
+                          ? "bg-success-soft text-success"
+                          : "bg-warning-soft text-warning"
                       }`}
                     >
                       {run.simulation ? "S" : "G"}
                     </span>
                     <div>
-                      <p className="font-bold text-white">
+                      <p className="font-bold text-ink-inverse">
                         {run.simulation ? "Simulação" : "Geração"} · {run.trigger}
                       </p>
-                      <p className="text-sm text-violet-200/60">{formatRunDate(run.startedAt)}</p>
+                      <p className="text-sm text-muted-inverse">{formatRunDate(run.startedAt)}</p>
                     </div>
                   </div>
-                  <span className="w-fit rounded-full border border-violet-400/20 bg-violet-900/35 px-3 py-1.5 text-xs font-bold text-violet-200">
+                  <span className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${run.status === "SUCCESS" ? "status-success" : "status-warning"}`}>
+                    {run.status === "SUCCESS" ? <UiIcon name="check" size={14} /> : <UiIcon name="warning" size={14} />}
                     {run.status}
                   </span>
                 </li>
