@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { ReconnectSpotifyAction } from "@/app/dashboard/configuracao/revisao/reconnect-spotify-action";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { assessConfiguration } from "@/services/configuration-readiness";
@@ -127,6 +128,7 @@ export default async function ConfigurationReviewLayout({
                   ? "Recently Played disponível ✓"
                   : "Reconexão necessária"}
               </p>
+              <ReconnectSpotifyAction />
             </div>
           </div>
 
