@@ -70,7 +70,6 @@ export function buildSourceCollectionDiagnosticSummary(input: {
     const failure = failureBySourceId.get(source.id) ?? null;
     const pagesRead = sourcePagesRead(source, input.sourceReads ?? {});
     const wasRead = input.readSourceIds.has(source.id);
-    const wasAttempted = input.attemptedSourceIds.has(source.id);
 
     const state: SourceCollectionState = failure
       ? "UNAVAILABLE"
@@ -90,10 +89,6 @@ export function buildSourceCollectionDiagnosticSummary(input: {
       reason: failure?.reason ?? null,
       operation: failure?.operation ?? null,
       retryAfterSeconds: failure?.retryAfterSeconds ?? null,
-      // `wasAttempted` is intentionally not serialized as another public state:
-      // a failed attempt is already UNAVAILABLE and a successful attempt is
-      // CONFIRMED. Sources never reached by the collector are NOT_ATTEMPTED.
-      ...(wasAttempted ? {} : {}),
     };
   });
 
