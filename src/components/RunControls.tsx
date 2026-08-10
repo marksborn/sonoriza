@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+
+import { UiIcon } from "@/components/UiIcon";
 
 type State = {
   status: "idle" | "running" | "done" | "error";
@@ -157,16 +159,16 @@ export function RunControls() {
           type="button"
           disabled={realDisabled}
           onClick={runReal}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#ff6b00] to-[#ff8a00] px-5 py-3 font-black text-white shadow-[0_16px_36px_-18px_rgba(255,107,0,0.95)] transition hover:-translate-y-0.5 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3 font-black text-brand-900 shadow-action transition hover:-translate-y-0.5 hover:bg-accent-400 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 sm:w-auto"
         >
-          <span
-            aria-hidden="true"
-            className={`flex h-5 w-5 items-center justify-center rounded-full bg-white/20 text-xs ${
-              busy ? "animate-pulse" : ""
-            }`}
-          >
-            {busy ? "…" : "▶"}
-          </span>
+          {busy ? (
+            <span
+              aria-hidden="true"
+              className="h-4 w-4 animate-spin rounded-full border-2 border-brand-900/30 border-t-brand-900"
+            />
+          ) : (
+            <UiIcon name="play" size={18} fill="currentColor" strokeWidth={1.5} />
+          )}
           {busy
             ? "Gerando…"
             : gate.loading
@@ -178,9 +180,9 @@ export function RunControls() {
 
         <Link
           href="/dashboard/configuracao/revisao"
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-400/50 bg-violet-950/40 px-5 py-3 font-bold text-violet-200 transition hover:-translate-y-0.5 hover:border-violet-300 hover:bg-violet-900/60 hover:text-white sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-line-dark/70 bg-surface-elevated/70 px-5 py-3 font-bold text-ink-inverse transition hover:-translate-y-0.5 hover:border-brand-400/60 hover:bg-surface-elevated sm:w-auto"
         >
-          <span aria-hidden="true">◇</span>
+          <UiIcon name="check" size={18} />
           Revisar e simular
         </Link>
       </div>
@@ -188,10 +190,11 @@ export function RunControls() {
       {gate.spotifyBackoff ? (
         <SpotifyBackoffNotice backoff={gate.spotifyBackoff} />
       ) : !gate.loading && !gate.realRunAllowed ? (
-        <div className="rounded-2xl border border-orange-400/25 bg-orange-950/20 px-4 py-3 text-sm text-orange-100/85">
+        <div className="status-warning rounded-2xl border px-4 py-3 text-sm">
           <p className="font-semibold">{gate.reason ?? "Revise e simule a configuração antes da primeira geração real."}</p>
-          <Link href="/dashboard/configuracao/revisao" className="mt-2 inline-flex font-black text-orange-300 hover:text-orange-200">
-            Abrir CONFIG-04 →
+          <Link href="/dashboard/configuracao/revisao" className="product-link mt-2">
+            Abrir CONFIG-04
+            <UiIcon name="arrow-right" size={17} />
           </Link>
         </div>
       ) : null}
@@ -200,12 +203,13 @@ export function RunControls() {
         <div
           role={state.status === "error" ? "alert" : "status"}
           className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${
-            state.status === "error"
-              ? "border-red-400/35 bg-red-950/45 text-red-200"
-              : "border-violet-400/25 bg-violet-950/50 text-violet-100"
+            state.status === "error" ? "status-danger" : "status-success"
           }`}
         >
-          {state.message}
+          <span className="inline-flex items-center gap-2">
+            <UiIcon name={state.status === "error" ? "warning" : "check"} size={17} />
+            {state.message}
+          </span>
         </div>
       )}
     </div>
@@ -225,13 +229,16 @@ function SpotifyBackoffNotice({ backoff }: { backoff: SpotifyBackoff }) {
       : "limite temporário de requisições do Spotify";
 
   return (
-    <div className="rounded-2xl border border-orange-400/30 bg-orange-950/25 px-4 py-3 text-sm text-orange-100/90">
-      <p className="font-black">Ações do Spotify bloqueadas temporariamente</p>
+    <div className="status-warning rounded-2xl border px-4 py-3 text-sm">
+      <p className="flex items-center gap-2 font-black">
+        <UiIcon name="warning" size={17} />
+        Ações do Spotify bloqueadas temporariamente
+      </p>
       <p className="mt-1 font-semibold">
         Motivo: {reason}. Tente novamente após <strong>{until}</strong>
         {remaining ? ` (${remaining})` : ""}.
       </p>
-      <p className="mt-1 text-orange-100/70">
+      <p className="mt-1 opacity-75">
         Até esse horário o Sonoriza não iniciará novas chamadas ao Spotify.
       </p>
     </div>
