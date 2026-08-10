@@ -18,7 +18,7 @@ test("zero-item MUSIC-02 previews cannot reach destructive confirmation", () => 
   assert.match(page, /rotina periódica continua bloqueada/);
 });
 
-test("destructive confirmation exposes pending feedback and disables duplicate submit", () => {
+test("destructive confirmation blocks duplicate submit and active Spotify Retry-After", () => {
   const page = readFileSync(
     "src/app/dashboard/configuracao/limpeza/page.tsx",
     "utf8",
@@ -30,9 +30,11 @@ test("destructive confirmation exposes pending feedback and disables duplicate s
 
   assert.match(page, /<CleanupSubmitButton/);
   assert.match(button, /useFormStatus/);
-  assert.match(button, /disabled=\{pending\}/);
+  assert.match(button, /const blocked = pending \|\| checking \|\| Boolean\(backoff\)/);
+  assert.match(button, /disabled=\{blocked\}/);
   assert.match(button, /Removendo \$\{removableTrackCount\} faixa\(s\)\.\.\./);
-  assert.match(button, /disabled:cursor-wait/);
+  assert.match(button, /Remoção bloqueada pelo Spotify/);
+  assert.match(button, /disabled:cursor-not-allowed/);
 });
 
 test("core rejects an empty first cleanup before Spotify sync or DELETE", () => {
