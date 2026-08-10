@@ -23,8 +23,10 @@ test("keeps the CTA running until navigation changes the run id", () => {
   assert.notEqual(navigationStart, -1);
 
   const successBlockStart = source.indexOf('if (!data.runId) {');
-  const catchStart = source.indexOf("} catch (err) {");
-  assert.ok(successBlockStart >= 0 && catchStart > successBlockStart);
+  assert.notEqual(successBlockStart, -1);
+
+  const catchStart = source.indexOf("} catch (err) {", successBlockStart);
+  assert.ok(catchStart > successBlockStart);
 
   const successBlock = source.slice(successBlockStart, catchStart);
   assert.doesNotMatch(successBlock, /setRunning\(false\)/);
