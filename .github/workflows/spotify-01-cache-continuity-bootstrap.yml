@@ -46,7 +46,7 @@ jobs:
           node-version: '24.19.0'
           cache: npm
 
-      - name: Apply implementation and bootstrap correction
+      - name: Apply implementation and safety hardening
         run: |
           python3 <<'PY'
           from pathlib import Path
@@ -80,10 +80,8 @@ jobs:
 
           cleanup_test_path = Path('src/services/spotify/source-cleanup.test.ts')
           cleanup_test = cleanup_test_path.read_text()
-          marker = 'test("manual cleanup preserves cache continuity when the pre-write snapshot was proven", () => {'
           if 'ambiguous automatic DELETE failure invalidates cache' not in cleanup_test:
-              cleanup_test += '''\n\ntest("ambiguous automatic DELETE failure invalidates cache instead of trusting the last known snapshot", () => {\n  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");\n  const start = source.indexOf("export async function executeAutomaticMusicSourceCleanup");\n  const end = source.indexOf("\\nasync function loadManagedMusicSource", start);\n  assert.ok(start >= 0 && end > start);\n  const automatic = source.slice(start, end);\n\n  assert.match(automatic, /const patchedCache = writeError\\s*\\? null/);\n  assert.match(\n    automatic,\n    /writeError[\\s\\S]*spotifySnapshotId: null,[\\s\\S]*cachedCandidates: Prisma\\.DbNull/,
-  );\n});\n'''
+              cleanup_test += '''\n\ntest("ambiguous automatic DELETE failure invalidates cache instead of trusting the last known snapshot", () => {\n  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");\n  const start = source.indexOf("export async function executeAutomaticMusicSourceCleanup");\n  const end = source.indexOf("\\nasync function loadManagedMusicSource", start);\n  assert.ok(start >= 0 && end > start);\n  const automatic = source.slice(start, end);\n  assert.match(automatic, /const patchedCache = writeError\\s*\\? null/);\n  assert.match(automatic, /cachedCandidates: Prisma\\.DbNull/);\n});\n'''
           cleanup_test_path.write_text(cleanup_test)
           PY
 
