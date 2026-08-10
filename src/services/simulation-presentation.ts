@@ -5,9 +5,11 @@ export type SimulationInconclusiveReason =
 
 export type InconclusiveSourceDiagnostic = {
   source: string;
-  state: "UNAVAILABLE";
+  state: "CONFIRMED" | "UNAVAILABLE" | "NOT_ATTEMPTED";
   stateLabel: string;
   detail: string;
+  pagesRead: number;
+  partialRead: boolean;
   httpStatus: number | null;
   operation: string | null;
   retryAfterSeconds: number | null;
@@ -22,6 +24,7 @@ export type InconclusiveSimulationView = {
   canRetryFromCard: boolean;
   configuredSourceCount: number;
   readSourceCount: number;
+  confirmedSourceCount: number;
   unavailableSourceCount: number;
   notAttemptedSourceCount: number;
   countsExact: boolean;
@@ -44,6 +47,12 @@ export function readInconclusiveSimulation(
         return value ? [value] : [];
       })
     : [];
+  const sourceStatuses = Array.isArray(sourceCollection?.sources)
+    ? sourceCollection.sources.flatMap((entry) => {
+        const value = asRecord(entry);
+        return value ? [value] : [];
+      })
+    : [];
 
   const reason = readReason(root.inconclusiveReason, failures);
   const retryAfterSeconds = failures.reduce<number | null>((current, failure) => {
@@ -54,17 +63,30 @@ export function readInconclusiveSimulation(
 
   const configuredSourceCount = nonNegativeCount(sourceCollection?.configuredSourceCount);
   const readSourceCount = nonNegativeCount(sourceCollection?.readSourceCount);
+  const exactStatusesAvailable = sourceStatuses.length > 0;
+  const confirmedSourceCount = nonNegativeCount(
+    sourceCollection?.confirmedSourceCount,
+    exactStatusesAvailable
+      ? sourceStatuses.filter((source) => source.state === "CONFIRMED").length
+      : readSourceCount,
+  );
   const unavailableSourceCount = nonNegativeCount(
     sourceCollection?.unavailableSourceCount,
-    failures.length,
+    exactStatusesAvailable
+      ? sourceStatuses.filter((source) => source.state === "UNAVAILABLE").length
+      : failures.length,
   );
   const exactNotAttemptedSourceCount = finiteNumber(sourceCollection?.notAttemptedSourceCount);
   const notAttemptedSourceCount =
-    exactNotAttemptedSourceCount === null
-      ? Math.max(0, configuredSourceCount - readSourceCount - unavailableSourceCount)
-      : Math.max(0, Math.trunc(exactNotAttemptedSourceCount));
+    exactNotAttemptedSourceCount !== null
+      ? Math.max(0, Math.trunc(exactNotAttemptedSourceCount))
+      : exactStatusesAvailable
+        ? sourceStatuses.filter((source) => source.state === "NOT_ATTEMPTED").length
+        : Math.max(0, configuredSourceCount - readSourceCount - unavailableSourceCount);
 
-  const sourceDiagnostics = failures.map((failure) => readFailureDiagnostic(failure));
+  const sourceDiagnostics = exactStatusesAvailable
+    ? sourceStatuses.map((source) => readSourceStatusDiagnostic(source))
+    : failures.map((failure) => readFailureDiagnostic(failure));
 
   return {
     title: "Não foi possível concluir a simulação",
@@ -75,22 +97,88 @@ export function readInconclusiveSimulation(
     canRetryFromCard: reason === "SOURCE_UNAVAILABLE",
     configuredSourceCount,
     readSourceCount,
+    confirmedSourceCount,
     unavailableSourceCount,
     notAttemptedSourceCount,
-    countsExact: exactNotAttemptedSourceCount !== null,
-    unavailableSources: unique(sourceDiagnostics.map((diagnostic) => diagnostic.source)),
+    countsExact: exactStatusesAvailable || exactNotAttemptedSourceCount !== null,
+    unavailableSources: unique(
+      sourceDiagnostics
+        .filter((diagnostic) => diagnostic.state === "UNAVAILABLE")
+        .map((diagnostic) => diagnostic.source),
+    ),
     sourceDiagnostics,
   };
 }
 
+function readSourceStatusDiagnostic(source: UnknownRecord): InconclusiveSourceDiagnostic {
+  const state =
+    source.state === "CONFIRMED" ||
+    source.state === "UNAVAILABLE" ||
+    source.state === "NOT_ATTEMPTED"
+      ? source.state
+      : "NOT_ATTEMPTED";
+  const pagesRead = nonNegativeCount(source.pagesRead);
+  const partialRead = source.partialRead === true;
+
+  if (state === "CONFIRMED") {
+    return {
+      source: safeSourceLabel(source),
+      state,
+      stateLabel: "Confirmada",
+      detail:
+        pagesRead > 0
+          ? `Fonte consultada sem falhas até o ponto necessário nesta execução (${pagesRead} ${pagesRead === 1 ? "página lida" : "páginas lidas"}).`
+          : "Fonte confirmada sem falhas nesta execução, possivelmente com reaproveitamento seguro do cache conhecido.",
+      pagesRead,
+      partialRead: false,
+      httpStatus: null,
+      operation: null,
+      retryAfterSeconds: null,
+    };
+  }
+
+  if (state === "NOT_ATTEMPTED") {
+    return {
+      source: safeSourceLabel(source),
+      state,
+      stateLabel: "Não verificada",
+      detail:
+        "Esta fonte não chegou a ser verificada porque a execução foi interrompida depois da falha de outra fonte. Isso não significa que ela esteja vazia ou com problema.",
+      pagesRead,
+      partialRead: false,
+      httpStatus: null,
+      operation: null,
+      retryAfterSeconds: null,
+    };
+  }
+
+  const errorKind = safeErrorKind(source.errorKind);
+  const status = nonNegativeNullableInteger(source.status);
+  const operation = safeOperation(source.operation);
+  const retryAfterSeconds = nonNegativeNullableInteger(source.retryAfterSeconds);
+  const partialPrefix = partialRead
+    ? pagesRead > 0
+      ? `A fonte chegou a ser lida parcialmente (${pagesRead} ${pagesRead === 1 ? "página" : "páginas"}) antes da falha. `
+      : "A fonte chegou a ser lida parcialmente antes da falha. "
+    : "";
+
+  return {
+    source: safeSourceLabel(source),
+    state,
+    stateLabel: "Indisponível",
+    detail:
+      partialPrefix +
+      failureDetail(errorKind, status, operation, retryAfterSeconds),
+    pagesRead,
+    partialRead,
+    httpStatus: status,
+    operation,
+    retryAfterSeconds,
+  };
+}
+
 function readFailureDiagnostic(failure: UnknownRecord): InconclusiveSourceDiagnostic {
-  const errorKind =
-    failure.errorKind === "QUOTA_EXCEEDED" ||
-    failure.errorKind === "RATE_LIMITED" ||
-    failure.errorKind === "HTTP_ERROR" ||
-    failure.errorKind === "SOURCE_READ_FAILED"
-      ? failure.errorKind
-      : "SOURCE_READ_FAILED";
+  const errorKind = safeErrorKind(failure.errorKind);
   const status = nonNegativeNullableInteger(failure.status);
   const operation = safeOperation(failure.operation);
   const retryAfterSeconds = nonNegativeNullableInteger(failure.retryAfterSeconds);
@@ -100,10 +188,23 @@ function readFailureDiagnostic(failure: UnknownRecord): InconclusiveSourceDiagno
     state: "UNAVAILABLE",
     stateLabel: "Indisponível",
     detail: failureDetail(errorKind, status, operation, retryAfterSeconds),
+    pagesRead: 0,
+    partialRead: false,
     httpStatus: status,
     operation,
     retryAfterSeconds,
   };
+}
+
+function safeErrorKind(
+  value: unknown,
+): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "HTTP_ERROR" | "SOURCE_READ_FAILED" {
+  return value === "QUOTA_EXCEEDED" ||
+    value === "RATE_LIMITED" ||
+    value === "HTTP_ERROR" ||
+    value === "SOURCE_READ_FAILED"
+    ? value
+    : "SOURCE_READ_FAILED";
 }
 
 function failureDetail(
