@@ -1,0 +1,253 @@
+name: SPOTIFY-01 cache continuity gate
+
+on:
+  push:
+    branches:
+      - agent/spotify-01-cache-continuity
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_test?schema=public
+      AUTH_SECRET: spotify-01-cache-continuity-ci-secret
+      AUTH_GOOGLE_ID: ci-google
+      AUTH_GOOGLE_SECRET: ci-google-secret
+      AUTH_SPOTIFY_ID: ci-spotify
+      AUTH_SPOTIFY_SECRET: ci-spotify-secret
+      CRON_SECRET: ci-cron-secret
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/spotify-01-cache-continuity
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+
+      - name: Apply SPOTIFY-01 cache continuity implementation
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, got {count}")
+              return text.replace(old, new, 1)
+
+          # -----------------------------------------------------------------
+          # Shared MUSIC source-cache patch helpers.
+          # -----------------------------------------------------------------
+          path = Path("src/services/spotify/source-cache.ts")
+          text = path.read_text()
+          if "patchMusicSourceCacheAfterAppend" not in text:
+              marker = "export function decodeMusicSourceCache(value: unknown): Candidate[] | null {\n"
+              helpers = '''export function patchMusicSourceCacheAfterAppend(\n  value: unknown,\n  appendedCandidates: Candidate[],\n): MusicSourceCachePayload | null {\n  const payload = decodePayload(value);\n  if (!payload) return null;\n  if (\n    appendedCandidates.some(\n      (candidate) =>\n        candidate.type !== "MUSIC" ||\n        typeof candidate.uri !== "string" ||\n        !candidate.uri ||\n        typeof candidate.spotifyTrackId !== "string" ||\n        !candidate.spotifyTrackId,\n    )\n  ) {\n    return null;\n  }\n  return encodeMusicSourceCache(\n    [...payload.candidates, ...appendedCandidates],\n    payload.unavailableTrackCount,\n  );\n}\n\nexport function patchMusicSourceCacheAfterRemove(\n  value: unknown,\n  removedUris: readonly string[],\n): MusicSourceCachePayload | null {\n  const payload = decodePayload(value);\n  if (!payload) return null;\n  const removed = new Set(removedUris.filter(Boolean));\n  if (removed.size === 0) {\n    return encodeMusicSourceCache(payload.candidates, payload.unavailableTrackCount);\n  }\n\n  const cachedUris = new Set(payload.candidates.map((candidate) => candidate.uri));\n  if ([...removed].some((uri) => !cachedUris.has(uri))) return null;\n\n  return encodeMusicSourceCache(\n    payload.candidates.filter((candidate) => !removed.has(candidate.uri)),\n    payload.unavailableTrackCount,\n  );\n}\n\n'''
+              text = replace_once(text, marker, helpers + marker, "source-cache helpers")
+              path.write_text(text)
+
+          # -----------------------------------------------------------------
+          # MUSIC-03: preserve a proven cache across append-only writes.
+          # -----------------------------------------------------------------
+          path = Path("src/services/spotify/music-ingestion.ts")
+          text = path.read_text()
+          if "maintainTargetCacheAfterAppend" not in text:
+              text = replace_once(
+                  text,
+                  'import { decodeMusicSourceCache } from "./source-cache";\n',
+                  'import {\n  decodeMusicSourceCache,\n  patchMusicSourceCacheAfterAppend,\n} from "./source-cache";\n',
+                  "music-ingestion cache import",
+              )
+              text = replace_once(
+                  text,
+                  'type PlaylistReadResult = {\n  metadata: PlaylistMetadata;\n  tracks: MusicIngestionTrack[];\n  unavailableCount: number;\n};\n',
+                  'type PlaylistReadResult = {\n  metadata: PlaylistMetadata;\n  tracks: MusicIngestionTrack[];\n  unavailableCount: number;\n};\n\ntype TargetTrackIndex = {\n  trackIds: Set<string>;\n  cacheSnapshotId: string | null;\n};\n\ntype PlaylistWriteResult = {\n  acceptedUris: string[];\n  snapshotId: string | null;\n};\n',
+                  "music-ingestion types",
+              )
+              text = replace_once(
+                  text,
+                  '''export class MusicIngestionPartialWriteError extends Error {\n  readonly acceptedUris: string[];\n  readonly causeError: unknown;\n\n  constructor(acceptedUris: string[], causeError: unknown) {\n    super(`Spotify accepted ${acceptedUris.length} item(s) before a later ingestion batch failed.`);\n    this.name = "MusicIngestionPartialWriteError";\n    this.acceptedUris = acceptedUris;\n    this.causeError = causeError;\n  }\n}\n''',
+                  '''export class MusicIngestionPartialWriteError extends Error {\n  readonly acceptedUris: string[];\n  readonly snapshotId: string | null;\n  readonly causeError: unknown;\n\n  constructor(acceptedUris: string[], snapshotId: string | null, causeError: unknown) {\n    super(`Spotify accepted ${acceptedUris.length} item(s) before a later ingestion batch failed.`);\n    this.name = "MusicIngestionPartialWriteError";\n    this.acceptedUris = acceptedUris;\n    this.snapshotId = snapshotId;\n    this.causeError = causeError;\n  }\n}\n''',
+                  "partial write snapshot",
+              )
+              text = replace_once(
+                  text,
+                  '''  async addPlaylistItems(playlistId: string, uris: string[]): Promise<string[]> {\n    const acceptedUris: string[] = [];\n    for (const batch of chunk(uris, 100)) {\n      try {\n        await this.request(\n          `/playlists/${encodeURIComponent(playlistId)}/items`,\n          { method: "POST", body: JSON.stringify({ uris: batch }) },\n          "playlist-write",\n        );\n        acceptedUris.push(...batch);\n      } catch (error) {\n        throw new MusicIngestionPartialWriteError(acceptedUris, error);\n      }\n    }\n    return acceptedUris;\n  }\n''',
+                  '''  async addPlaylistItems(playlistId: string, uris: string[]): Promise<PlaylistWriteResult> {\n    const acceptedUris: string[] = [];\n    let snapshotId: string | null = null;\n    for (const batch of chunk(uris, 100)) {\n      try {\n        const result = await this.request<{ snapshot_id?: string | null }>(\n          `/playlists/${encodeURIComponent(playlistId)}/items`,\n          { method: "POST", body: JSON.stringify({ uris: batch }) },\n          "playlist-write",\n        );\n        acceptedUris.push(...batch);\n        snapshotId = result.snapshot_id ?? snapshotId;\n      } catch (error) {\n        throw new MusicIngestionPartialWriteError(acceptedUris, snapshotId, error);\n      }\n    }\n    return { acceptedUris, snapshotId };\n  }\n''',
+                  "playlist append snapshot",
+              )
+              text = replace_once(
+                  text,
+                  '''    let targetTrackIds = new Set<string>();\n    let blockedTrackIds = new Set<string>();\n\n    if (collected.incoming.length > 0) {\n      targetTrackIds = await loadTargetTrackIds(rule.target, api);\n      const repeat = await refreshMusicRepeatContext(userId, new Date());\n      blockedTrackIds = new Set(repeat.context.blockedTrackIds);\n    }\n\n    const plan = planMusicIngestion(collected.incoming, targetTrackIds, blockedTrackIds);\n''',
+                  '''    let targetIndex: TargetTrackIndex = {\n      trackIds: new Set<string>(),\n      cacheSnapshotId: null,\n    };\n    let blockedTrackIds = new Set<string>();\n\n    if (collected.incoming.length > 0) {\n      targetIndex = await loadTargetTrackIds(rule.target, api);\n      const repeat = await refreshMusicRepeatContext(userId, new Date());\n      blockedTrackIds = new Set(repeat.context.blockedTrackIds);\n    }\n\n    const plan = planMusicIngestion(\n      collected.incoming,\n      targetIndex.trackIds,\n      blockedTrackIds,\n    );\n''',
+                  "rule target index",
+              )
+              text = replace_once(
+                  text,
+                  '''    await api.assertPlaylistWritable(rule.target.spotifyId);\n    let acceptedUris: string[] = [];\n    try {\n      acceptedUris = await api.addPlaylistItems(\n        rule.target.spotifyId,\n        plan.add.map((item) => item.track.uri),\n      );\n    } catch (error) {\n      if (error instanceof MusicIngestionPartialWriteError) {\n        acceptedUris = error.acceptedUris;\n        if (acceptedUris.length > 0) await invalidateTargetCache(rule.target.id);\n        await prisma.musicIngestionRun.create({\n''',
+                  '''    const writableTarget = await api.assertPlaylistWritable(rule.target.spotifyId);\n    let acceptedUris: string[] = [];\n    let writeSnapshotId: string | null = null;\n    try {\n      const write = await api.addPlaylistItems(\n        rule.target.spotifyId,\n        plan.add.map((item) => item.track.uri),\n      );\n      acceptedUris = write.acceptedUris;\n      writeSnapshotId = write.snapshotId;\n    } catch (error) {\n      if (error instanceof MusicIngestionPartialWriteError) {\n        acceptedUris = error.acceptedUris;\n        if (acceptedUris.length > 0) {\n          await maintainTargetCacheAfterAppend(\n            rule.target,\n            targetIndex.cacheSnapshotId === writableTarget.snapshotId\n              ? writableTarget.snapshotId\n              : null,\n            error.snapshotId,\n            plan.add.slice(0, acceptedUris.length).map((item) => item.track),\n          );\n        }\n        await prisma.musicIngestionRun.create({\n''',
+                  "rule write cache prelude",
+              )
+              text = replace_once(
+                  text,
+                  '    if (acceptedUris.length > 0) await invalidateTargetCache(rule.target.id);\n    const finishedAt = new Date();\n',
+                  '''    if (acceptedUris.length > 0) {\n      await maintainTargetCacheAfterAppend(\n        rule.target,\n        targetIndex.cacheSnapshotId === writableTarget.snapshotId\n          ? writableTarget.snapshotId\n          : null,\n        writeSnapshotId,\n        plan.add.slice(0, acceptedUris.length).map((item) => item.track),\n      );\n    }\n    const finishedAt = new Date();\n''',
+                  "rule successful cache update",
+              )
+              text = replace_once(
+                  text,
+                  '''    const existing =\n      incoming.length > 0 ? await loadTargetTrackIds(target, api) : new Set<string>();\n    const repeat =\n      incoming.length > 0 ? await refreshMusicRepeatContext(userId, new Date()) : null;\n    const plan = planMusicIngestion(\n      incoming,\n      existing,\n      repeat?.context.blockedTrackIds ?? new Set<string>(),\n    );\n''',
+                  '''    const targetIndex =\n      incoming.length > 0\n        ? await loadTargetTrackIds(target, api)\n        : { trackIds: new Set<string>(), cacheSnapshotId: null };\n    const repeat =\n      incoming.length > 0 ? await refreshMusicRepeatContext(userId, new Date()) : null;\n    const plan = planMusicIngestion(\n      incoming,\n      targetIndex.trackIds,\n      repeat?.context.blockedTrackIds ?? new Set<string>(),\n    );\n''',
+                  "manual target index",
+              )
+              text = replace_once(
+                  text,
+                  '''    await api.assertPlaylistWritable(target.spotifyId);\n    let acceptedUris: string[] = [];\n    try {\n      acceptedUris = await api.addPlaylistItems(\n        target.spotifyId,\n        plan.add.map((candidate) => candidate.track.uri),\n      );\n    } catch (error) {\n      if (error instanceof MusicIngestionPartialWriteError) {\n        acceptedUris = error.acceptedUris;\n        if (acceptedUris.length > 0) await invalidateTargetCache(target.id);\n        await prisma.musicIngestionRun.create({\n''',
+                  '''    const writableTarget = await api.assertPlaylistWritable(target.spotifyId);\n    let acceptedUris: string[] = [];\n    let writeSnapshotId: string | null = null;\n    try {\n      const write = await api.addPlaylistItems(\n        target.spotifyId,\n        plan.add.map((candidate) => candidate.track.uri),\n      );\n      acceptedUris = write.acceptedUris;\n      writeSnapshotId = write.snapshotId;\n    } catch (error) {\n      if (error instanceof MusicIngestionPartialWriteError) {\n        acceptedUris = error.acceptedUris;\n        if (acceptedUris.length > 0) {\n          await maintainTargetCacheAfterAppend(\n            target,\n            targetIndex.cacheSnapshotId === writableTarget.snapshotId\n              ? writableTarget.snapshotId\n              : null,\n            error.snapshotId,\n            plan.add.slice(0, acceptedUris.length).map((item) => item.track),\n          );\n        }\n        await prisma.musicIngestionRun.create({\n''',
+                  "manual write cache prelude",
+              )
+              text = replace_once(
+                  text,
+                  '    if (acceptedUris.length > 0) await invalidateTargetCache(target.id);\n    const status =\n',
+                  '''    if (acceptedUris.length > 0) {\n      await maintainTargetCacheAfterAppend(\n        target,\n        targetIndex.cacheSnapshotId === writableTarget.snapshotId\n          ? writableTarget.snapshotId\n          : null,\n        writeSnapshotId,\n        plan.add.slice(0, acceptedUris.length).map((item) => item.track),\n      );\n    }\n    const status =\n''',
+                  "manual successful cache update",
+              )
+              text = replace_once(
+                  text,
+                  '''async function loadTargetTrackIds(\n  target: SourcePlaylist,\n  api: MusicIngestionSpotifyApi,\n): Promise<Set<string>> {\n  const metadata = await api.getPlaylistMetadata(target.spotifyId);\n  const cached =\n    target.spotifySnapshotId === metadata.snapshotId\n      ? decodeMusicSourceCache(target.cachedCandidates)\n      : null;\n  if (cached) {\n    return new Set(\n      cached.flatMap((candidate) =>\n        candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],\n      ),\n    );\n  }\n\n  const spotifyClient = await SpotifyClient.forUser(target.userId);\n  const candidates = await spotifyClient.getPlaylistTracks(target.spotifyId);\n  return new Set(\n    candidates.flatMap((candidate) =>\n      candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],\n    ),\n  );\n}\n\nasync function invalidateTargetCache(sourcePlaylistId: string): Promise<void> {\n  await prisma.sourcePlaylist.update({\n    where: { id: sourcePlaylistId },\n    data: {\n      spotifySnapshotId: null,\n      cachedCandidates: Prisma.DbNull,\n      cacheUpdatedAt: null,\n    },\n  });\n}\n''',
+                  '''async function loadTargetTrackIds(\n  target: SourcePlaylist,\n  api: MusicIngestionSpotifyApi,\n): Promise<TargetTrackIndex> {\n  const metadata = await api.getPlaylistMetadata(target.spotifyId);\n  const cached =\n    target.spotifySnapshotId === metadata.snapshotId\n      ? decodeMusicSourceCache(target.cachedCandidates)\n      : null;\n  if (cached) {\n    return {\n      trackIds: new Set(\n        cached.flatMap((candidate) =>\n          candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],\n        ),\n      ),\n      cacheSnapshotId: metadata.snapshotId,\n    };\n  }\n\n  const spotifyClient = await SpotifyClient.forUser(target.userId);\n  const candidates = await spotifyClient.getPlaylistTracks(target.spotifyId);\n  return {\n    trackIds: new Set(\n      candidates.flatMap((candidate) =>\n        candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],\n      ),\n    ),\n    cacheSnapshotId: null,\n  };\n}\n\nasync function maintainTargetCacheAfterAppend(\n  target: SourcePlaylist,\n  baseSnapshotId: string | null,\n  nextSnapshotId: string | null,\n  tracks: MusicIngestionTrack[],\n): Promise<void> {\n  if (\n    !baseSnapshotId ||\n    !nextSnapshotId ||\n    target.spotifySnapshotId !== baseSnapshotId\n  ) {\n    await invalidateTargetCache(target.id, target.spotifySnapshotId);\n    return;\n  }\n\n  const patched = patchMusicSourceCacheAfterAppend(\n    target.cachedCandidates,\n    tracks.map((track) => ({\n      uri: track.uri,\n      spotifyTrackId: track.spotifyTrackId,\n      type: "MUSIC" as const,\n      title: track.title,\n      ...(track.subtitle ? { subtitle: track.subtitle } : {}),\n      durationMs: track.durationMs,\n    })),\n  );\n  if (!patched) {\n    await invalidateTargetCache(target.id, baseSnapshotId);\n    return;\n  }\n\n  await prisma.sourcePlaylist.updateMany({\n    where: { id: target.id, spotifySnapshotId: baseSnapshotId },\n    data: {\n      spotifySnapshotId: nextSnapshotId,\n      cachedCandidates: asJson(patched),\n      cacheUpdatedAt: new Date(),\n    },\n  });\n}\n\nasync function invalidateTargetCache(\n  sourcePlaylistId: string,\n  expectedSnapshotId: string | null = null,\n): Promise<void> {\n  const data = {\n    spotifySnapshotId: null,\n    cachedCandidates: Prisma.DbNull,\n    cacheUpdatedAt: null,\n  };\n  if (expectedSnapshotId) {\n    await prisma.sourcePlaylist.updateMany({\n      where: { id: sourcePlaylistId, spotifySnapshotId: expectedSnapshotId },\n      data,\n    });\n    return;\n  }\n  await prisma.sourcePlaylist.update({ where: { id: sourcePlaylistId }, data });\n}\n''',
+                  "target cache continuity helpers",
+              )
+              path.write_text(text)
+
+          # -----------------------------------------------------------------
+          # MUSIC-02: cache-backed periodic cleanup and cache continuity after
+          # exhaustive/manual cleanup.
+          # -----------------------------------------------------------------
+          path = Path("src/services/spotify/source-cleanup.ts")
+          text = path.read_text()
+          if "buildCachedMusicSourceCleanupPlan" not in text:
+              text = replace_once(
+                  text,
+                  'import { getSpotifyAccessToken } from "./token";\n',
+                  'import {\n  decodeMusicSourceCache,\n  patchMusicSourceCacheAfterRemove,\n} from "./source-cache";\nimport { getSpotifyAccessToken } from "./token";\n',
+                  "source-cleanup cache import",
+              )
+              marker = 'export function hashCleanupPlan(\n'
+              helper = '''export function buildCachedMusicSourceCleanupPlan(\n  candidates: Array<{ uri: string; spotifyTrackId?: string }>,\n  playedTrackIds: ReadonlySet<string>,\n): MusicSourceCleanupPlan {\n  return buildMusicSourceCleanupPlan(\n    candidates.map((candidate) => ({\n      uri: candidate.uri,\n      aliases:\n        typeof candidate.spotifyTrackId === "string" && candidate.spotifyTrackId\n          ? [candidate.spotifyTrackId]\n          : [],\n      isTrack: true,\n      isLocal: false,\n    })),\n    playedTrackIds,\n  );\n}\n\n'''
+              text = replace_once(text, marker, helper + marker, "cached cleanup planner")
+
+              old_success_update = '''      prisma.sourcePlaylist.update({\n        where: { id: preview.source.id },\n        data: {\n          musicCleanupLastRunAt: new Date(),\n          ...(status === MusicSourceCleanupStatus.SUCCESS &&\n          !preview.source.musicCleanupFirstCompletedAt\n            ? { musicCleanupFirstCompletedAt: new Date() }\n            : {}),\n          // The source changed on Spotify. Force the normal reader to validate\n          // and rebuild its cache on the next generation.\n          spotifySnapshotId: null,\n          cacheUpdatedAt: null,\n        },\n      }),\n'''
+              new_success_update = '''      prisma.sourcePlaylist.update({\n        where: { id: preview.source.id },\n        data: {\n          musicCleanupLastRunAt: new Date(),\n          ...(status === MusicSourceCleanupStatus.SUCCESS &&\n          !preview.source.musicCleanupFirstCompletedAt\n            ? { musicCleanupFirstCompletedAt: new Date() }\n            : {}),\n          ...(preview.source.spotifySnapshotId === current.snapshotId && snapshotAfter\n            ? (() => {\n                const patched = patchMusicSourceCacheAfterRemove(\n                  preview.source.cachedCandidates,\n                  removedUris,\n                );\n                return patched\n                  ? {\n                      spotifySnapshotId: snapshotAfter,\n                      cachedCandidates: patched as Prisma.InputJsonValue,\n                      cacheUpdatedAt: new Date(),\n                    }\n                  : { spotifySnapshotId: null, cacheUpdatedAt: null };\n              })()\n            : { spotifySnapshotId: null, cacheUpdatedAt: null }),\n        },\n      }),\n'''
+              text = replace_once(text, old_success_update, new_success_update, "manual cleanup cache continuity")
+
+              old_auto = '''export async function executeAutomaticMusicSourceCleanup(\n  userId: string,\n  sourcePlaylistId: string,\n  now = new Date(),\n): Promise<MusicSourceCleanupExecutionResult> {\n  const source = await loadManagedMusicSource(userId, sourcePlaylistId);\n  if (\n    source.musicRetentionMode !== MusicSourceRetentionMode.REMOVE_AFTER_PLAYED ||\n    !source.musicCleanupAutomationEnabled ||\n    !source.musicCleanupFirstCompletedAt\n  ) {\n    throw new MusicSourceCleanupError(\n      "A limpeza periódica não está autorizada para esta fonte.",\n    );\n  }\n\n  const preview = await createMusicSourceCleanupPreview(userId, sourcePlaylistId, now);\n  return executeMusicSourceCleanupPreview(userId, preview.previewId, now);\n}\n'''
+              new_auto = '''export async function executeAutomaticMusicSourceCleanup(\n  userId: string,\n  sourcePlaylistId: string,\n  now = new Date(),\n): Promise<MusicSourceCleanupExecutionResult> {\n  const source = await loadManagedMusicSource(userId, sourcePlaylistId);\n  if (\n    source.musicRetentionMode !== MusicSourceRetentionMode.REMOVE_AFTER_PLAYED ||\n    !source.musicCleanupAutomationEnabled ||\n    !source.musicCleanupFirstCompletedAt\n  ) {\n    throw new MusicSourceCleanupError(\n      "A limpeza periódica não está autorizada para esta fonte.",\n    );\n  }\n\n  const history = await syncRecentlyPlayed(userId, now);\n  if (!history.enabled) {\n    throw new MusicSourceCleanupHistoryRequiredError(\n      "O histórico nativo precisa permanecer ativo para executar a limpeza.",\n    );\n  }\n\n  const cachedCandidates = decodeMusicSourceCache(source.cachedCandidates);\n  if (!source.spotifySnapshotId || !cachedCandidates) {\n    throw new MusicSourceCleanupError(\n      "A limpeza automática foi adiada porque a fonte ainda não possui um cache Spotify completo e validado. Uma simulação conclusiva pode reconstruí-lo sem permitir uma varredura destrutiva por quota.",\n    );\n  }\n\n  const accessToken = await getSpotifyAccessToken(userId);\n  const [me, metadata, playedStates] = await Promise.all([\n    spotifyRequest<{ id?: string | null }>(accessToken, "/me"),\n    readPlaylistMetadata(accessToken, source.spotifyId),\n    prisma.trackListeningState.findMany({\n      where: { userId },\n      select: { spotifyTrackId: true },\n    }),\n  ]);\n\n  if (!metadata.snapshot_id || metadata.snapshot_id !== source.spotifySnapshotId) {\n    throw new MusicSourceCleanupStaleError(\n      "A limpeza automática foi adiada porque a playlist mudou fora do cache conhecido. O Sonoriza não fará uma varredura integral só para a rotina periódica.",\n    );\n  }\n  const ownerId = metadata.owner?.id ?? null;\n  if (ownerId !== me.id && metadata.collaborative !== true) {\n    throw new MusicSourceCleanupPermissionError(\n      "A conta conectada não é proprietária nem colaboradora desta playlist.",\n    );\n  }\n\n  const plan = buildCachedMusicSourceCleanupPlan(\n    cachedCandidates,\n    new Set(playedStates.map((state) => state.spotifyTrackId)),\n  );\n  const startedAt = new Date();\n  let snapshotAfter = source.spotifySnapshotId;\n  const acceptedDeleteUris: string[] = [];\n  let writeError: unknown = null;\n\n  for (const uris of chunk(plan.removableUris, MAX_DELETE_ITEMS)) {\n    try {\n      const result: { snapshot_id?: string | null } = await spotifyRequest(\n        accessToken,\n        `/playlists/${source.spotifyId}/items`,\n        {\n          method: "DELETE",\n          body: JSON.stringify({\n            items: uris.map((uri) => ({ uri })),\n            snapshot_id: snapshotAfter,\n          }),\n        },\n      );\n      if (!result.snapshot_id) {\n        throw new MusicSourceCleanupError(\n          "O Spotify aceitou a limpeza sem retornar o novo snapshot da playlist.",\n        );\n      }\n      acceptedDeleteUris.push(...uris);\n      snapshotAfter = result.snapshot_id;\n    } catch (error) {\n      writeError = error;\n      break;\n    }\n  }\n\n  const removedUris = [...acceptedDeleteUris];\n  const failedUris = plan.removableUris.filter(\n    (uri) => !acceptedDeleteUris.includes(uri),\n  );\n  const finishedAt = new Date();\n  const status = writeError\n    ? acceptedDeleteUris.length > 0\n      ? MusicSourceCleanupStatus.PARTIAL\n      : MusicSourceCleanupStatus.FAILED\n    : MusicSourceCleanupStatus.SUCCESS;\n  const patchUris = status === MusicSourceCleanupStatus.SUCCESS\n    ? plan.removableUris\n    : acceptedDeleteUris;\n  const patchedCache = patchMusicSourceCacheAfterRemove(\n    source.cachedCandidates,\n    patchUris,\n  );\n\n  await prisma.$transaction([\n    prisma.musicSourceCleanupRun.create({\n      data: {\n        userId,\n        sourcePlaylistId: source.id,\n        status,\n        snapshotBefore: source.spotifySnapshotId,\n        snapshotAfter,\n        planHash: plan.planHash,\n        examinedCount: plan.examinedCount,\n        removableTrackCount: plan.removableTrackCount,\n        removalOccurrenceCount: plan.removalOccurrenceCount,\n        keptCount: plan.keptCount,\n        plannedUris: plan.removableUris as Prisma.InputJsonValue,\n        removedUris: removedUris as Prisma.InputJsonValue,\n        failedUris: failedUris as Prisma.InputJsonValue,\n        startedAt,\n        finishedAt,\n        error: writeError\n          ? writeError instanceof Error\n            ? writeError.message\n            : String(writeError)\n          : null,\n      },\n    }),\n    prisma.sourcePlaylist.update({\n      where: { id: source.id },\n      data: {\n        musicCleanupLastRunAt: finishedAt,\n        ...(patchedCache && snapshotAfter\n          ? {\n              spotifySnapshotId: snapshotAfter,\n              cachedCandidates: patchedCache as Prisma.InputJsonValue,\n              cacheUpdatedAt: finishedAt,\n            }\n          : status === MusicSourceCleanupStatus.FAILED\n            ? {}\n            : { spotifySnapshotId: null, cacheUpdatedAt: null }),\n      },\n    }),\n  ]);\n\n  if (status === MusicSourceCleanupStatus.FAILED) throw writeError;\n\n  return {\n    runId: "automatic-cache-backed",\n    status,\n    examinedCount: plan.examinedCount,\n    plannedTrackCount: plan.removableTrackCount,\n    plannedOccurrenceCount: plan.removalOccurrenceCount,\n    removedTrackCount: removedUris.length,\n    failedTrackCount: failedUris.length,\n    snapshotAfter,\n  };\n}\n'''
+              text = replace_once(text, old_auto, new_auto, "automatic cache-backed cleanup")
+              # Return the persisted run id rather than a sentinel.
+              text = replace_once(
+                  text,
+                  '  await prisma.$transaction([\n    prisma.musicSourceCleanupRun.create({\n      data: {\n',
+                  '  const [automaticRun] = await prisma.$transaction([\n    prisma.musicSourceCleanupRun.create({\n      data: {\n',
+                  "automatic run transaction capture",
+              )
+              # The previous replacement may have matched the first transaction in the file;
+              # constrain the runId replacement to the unique sentinel so the generated code
+              # only depends on automaticRun where intended.
+              text = replace_once(
+                  text,
+                  '    runId: "automatic-cache-backed",\n',
+                  '    runId: automaticRun.id,\n',
+                  "automatic run id",
+              )
+              path.write_text(text)
+
+          # -----------------------------------------------------------------
+          # Regression coverage.
+          # -----------------------------------------------------------------
+          path = Path("src/services/spotify/source-cache.test.ts")
+          text = path.read_text()
+          if "append patch advances a valid cache" not in text:
+              text = replace_once(
+                  text,
+                  '  encodeMusicSourceCache,\n} from "./source-cache";\n',
+                  '  encodeMusicSourceCache,\n  patchMusicSourceCacheAfterAppend,\n  patchMusicSourceCacheAfterRemove,\n} from "./source-cache";\n',
+                  "source-cache test imports",
+              )
+              text += '''\n\ntest("append patch advances a valid cache without discarding the existing pool", () => {\n  const encoded = encodeMusicSourceCache(candidates, 3);\n  const appended: Candidate = {\n    uri: "spotify:track:three",\n    spotifyTrackId: "three",\n    type: "MUSIC",\n    title: "Three",\n    subtitle: "Artist",\n    durationMs: 210_000,\n  };\n  const patched = patchMusicSourceCacheAfterAppend(encoded, [appended]);\n  assert.ok(patched);\n  assert.deepEqual(decodeMusicSourceCache(patched), [...candidates, appended]);\n  assert.equal(decodeMusicSourceCacheUnavailableTrackCount(patched), 3);\n});\n\ntest("remove patch removes every cached occurrence of an accepted URI", () => {\n  const duplicateCandidates = [candidates[0], candidates[0], candidates[1]];\n  const encoded = encodeMusicSourceCache(duplicateCandidates, 2);\n  const patched = patchMusicSourceCacheAfterRemove(encoded, ["spotify:track:one"]);\n  assert.ok(patched);\n  assert.deepEqual(decodeMusicSourceCache(patched), [candidates[1]]);\n  assert.equal(decodeMusicSourceCacheUnavailableTrackCount(patched), 2);\n});\n\ntest("remove patch fails closed when the removed URI is absent from the planner cache", () => {\n  const encoded = encodeMusicSourceCache(candidates, 1);\n  assert.equal(\n    patchMusicSourceCacheAfterRemove(encoded, ["spotify:track:not-cached"]),\n    null,\n  );\n});\n'''
+              path.write_text(text)
+
+          path = Path("src/services/spotify/source-cleanup.test.ts")
+          text = path.read_text()
+          if "periodic cleanup is cache-backed" not in text:
+              text = replace_once(
+                  text,
+                  '  buildMusicSourceCleanupPlan,\n',
+                  '  buildCachedMusicSourceCleanupPlan,\n  buildMusicSourceCleanupPlan,\n',
+                  "cleanup test import",
+              )
+              text += '''\n\ntest("cached cleanup planning stays conservative and accounts for duplicate occurrences", () => {\n  const plan = buildCachedMusicSourceCleanupPlan(\n    [\n      { uri: "spotify:track:a", spotifyTrackId: "a" },\n      { uri: "spotify:track:a", spotifyTrackId: "a" },\n      { uri: "spotify:track:b", spotifyTrackId: "b" },\n    ],\n    new Set(["a"]),\n  );\n  assert.deepEqual(plan.removableUris, ["spotify:track:a"]);\n  assert.equal(plan.removalOccurrenceCount, 2);\n  assert.equal(plan.keptCount, 1);\n});\n\ntest("periodic cleanup is cache-backed and never performs a full playlist-items scan", () => {\n  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");\n  const start = source.indexOf("export async function executeAutomaticMusicSourceCleanup");\n  const end = source.indexOf("\\nasync function loadManagedMusicSource", start);\n  assert.ok(start >= 0 && end > start);\n  const automatic = source.slice(start, end);\n\n  assert.match(automatic, /decodeMusicSourceCache/);\n  assert.match(automatic, /readPlaylistMetadata/);\n  assert.match(automatic, /snapshot_id: snapshotAfter/);\n  assert.match(automatic, /patchMusicSourceCacheAfterRemove/);\n  assert.doesNotMatch(automatic, /readStablePlaylist\\(/);\n  assert.doesNotMatch(automatic, /createMusicSourceCleanupPreview\\(/);\n});\n\ntest("manual cleanup preserves cache continuity when the pre-write snapshot was proven", () => {\n  const source = readFileSync("src/services/spotify/source-cleanup.ts", "utf8");\n  assert.match(source, /preview\\.source\\.spotifySnapshotId === current\\.snapshotId/);\n  assert.match(source, /patchMusicSourceCacheAfterRemove/);\n});\n'''
+              path.write_text(text)
+
+          # MUSIC-03 structural proof lives in its existing Spotify test glob.
+          path = Path("src/services/spotify/music-ingestion-core.test.ts")
+          text = path.read_text()
+          if "MUSIC-03 managed writes preserve SPOTIFY-01 cache continuity" not in text:
+              text += '''\n\ntest("MUSIC-03 managed writes preserve SPOTIFY-01 cache continuity", () => {\n  const source = readFileSync("src/services/spotify/music-ingestion.ts", "utf8");\n  assert.match(source, /snapshot_id\\?: string \\| null/);\n  assert.match(source, /maintainTargetCacheAfterAppend/);\n  assert.match(source, /patchMusicSourceCacheAfterAppend/);\n  assert.match(source, /spotifySnapshotId: nextSnapshotId/);\n});\n'''
+              # Ensure node:fs import exists for the structural proof.
+              if 'from "node:fs"' not in text:
+                  text = text.replace(
+                      'import assert from "node:assert/strict";\n',
+                      'import assert from "node:assert/strict";\nimport { readFileSync } from "node:fs";\n',
+                      1,
+                  )
+              path.write_text(text)
+          PY
+
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npm run db:deploy
+      - run: npm run db:generate
+      - run: npm run test:planner
+      - run: npm run test:spotify
+      - run: npm run test:incremental
+      - run: npm run test:simulation
+      - run: npm run typecheck
+      - run: npm run build
+
+      - name: Commit certified implementation
+        run: |
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add src/services/spotify/source-cache.ts \
+                  src/services/spotify/source-cache.test.ts \
+                  src/services/spotify/music-ingestion.ts \
+                  src/services/spotify/music-ingestion-core.test.ts \
+                  src/services/spotify/source-cleanup.ts \
+                  src/services/spotify/source-cleanup.test.ts
+          if ! git diff --cached --quiet; then
+            git commit -m "fix: preserve Spotify source cache across managed writes"
+            git push origin HEAD:agent/spotify-01-cache-continuity
+          fi
