@@ -10,6 +10,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  getActiveSpotifyBackoff,
+  spotifyBackoffApiPayload,
+} from "@/services/spotify/backoff";
+import {
   createMusicSourceCleanupPreview,
   MusicSourceCleanupHistoryRequiredError,
 } from "@/services/spotify/source-cleanup";
@@ -213,6 +217,21 @@ export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const backoff = await getActiveSpotifyBackoff();
+  if (backoff) {
+    const payload = spotifyBackoffApiPayload(backoff);
+    return NextResponse.json(
+      {
+        error: "spotify-backoff",
+        ...payload,
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(payload.retryAfterSecondsRemaining) },
+      },
+    );
   }
 
   const body = (await request.json().catch(() => null)) as

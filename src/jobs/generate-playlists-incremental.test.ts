@@ -135,6 +135,11 @@ integrationTest(
   async (t) => {
     const user = await createFixture();
     t.after(async () => {
+      // This case deliberately replaces setTimeout with an immediate callback,
+      // so wall-clock time does not actually advance by the mocked 2 seconds.
+      // Clear only this test's persisted provider backoff before later cases;
+      // production uses the real timer, by which point the same window expires.
+      await prisma.$executeRawUnsafe('DELETE FROM "ProviderBackoff" WHERE "provider" = \'spotify\'');
       await prisma.user.delete({ where: { id: user.id } });
     });
 
@@ -391,3 +396,5 @@ integrationTest(
     }
   },
 );
+
+// Planner/unit tests continue below unchanged in this file.

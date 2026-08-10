@@ -8,6 +8,10 @@ import {
   assessConfiguration,
   getFirstRunGate,
 } from "@/services/configuration-readiness";
+import {
+  getActiveSpotifyBackoff,
+  spotifyBackoffApiPayload,
+} from "@/services/spotify/backoff";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -18,13 +22,19 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const assessment = await assessConfiguration(session.user.id);
+  const [assessment, spotifyBackoff] = await Promise.all([
+    assessConfiguration(session.user.id),
+    getActiveSpotifyBackoff(),
+  ]);
   const gate = await getFirstRunGate(session.user.id, assessment);
 
   return NextResponse.json({
     ...gate,
     issues: assessment.issues,
     reviewUrl: "/dashboard/configuracao/revisao",
+    spotifyBackoff: spotifyBackoff
+      ? spotifyBackoffApiPayload(spotifyBackoff)
+      : null,
   });
 }
 
@@ -38,6 +48,23 @@ export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const spotifyBackoff = await getActiveSpotifyBackoff();
+  if (spotifyBackoff) {
+    const payload = spotifyBackoffApiPayload(spotifyBackoff);
+    return NextResponse.json(
+      {
+        error: `O Spotify pediu para aguardar até ${spotifyBackoff.blockedUntil.toISOString()} antes de uma nova tentativa.`,
+        ...payload,
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(payload.retryAfterSecondsRemaining),
+        },
+      },
+    );
   }
 
   let simulate = false;
