@@ -62,14 +62,13 @@ export default async function HomePage() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden">
-      <div className="pointer-events-none absolute -left-28 top-28 h-72 w-72 rounded-full bg-brand-light/10 blur-3xl" />
-      <div className="pointer-events-none absolute -right-24 top-10 h-80 w-80 rounded-full bg-accent/10 blur-3xl" />
+    <main className="product-shell">
+      <div className="product-ambient" />
 
       <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-5 py-5 sm:px-8 lg:px-10">
-        <nav className="flex items-center justify-between rounded-3xl border border-white/80 bg-white/70 px-4 py-3 shadow-sm backdrop-blur-xl sm:px-5">
-          <BrandLogo compact />
-          <span className="inline-flex items-center gap-2 rounded-full bg-brand-soft px-3 py-1.5 text-xs font-bold text-brand-dark">
+        <nav className="product-panel flex items-center justify-between px-4 py-3 sm:px-5">
+          <BrandLogo compact variant="light" />
+          <span className="product-badge">
             <span className="h-2 w-2 rounded-full bg-accent" />
             Open source
           </span>
@@ -77,31 +76,31 @@ export default async function HomePage() {
 
         <section className="grid flex-1 items-center gap-12 py-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:py-20">
           <div className="max-w-2xl">
-            <span className="eyebrow">
+            <span className="inline-flex items-center gap-2 rounded-full border border-brand-400/25 bg-brand/15 px-3 py-1.5 text-xs font-black uppercase tracking-[0.16em] text-brand-400">
               <span className="h-2 w-2 rounded-full bg-accent" />
               Playlists que acompanham seu ritmo
             </span>
 
-            <h1 className="mt-6 text-5xl font-black leading-[0.98] tracking-[-0.055em] text-brand-dark sm:text-6xl lg:text-7xl">
+            <h1 className="mt-6 text-5xl font-black leading-[0.98] tracking-[-0.055em] text-ink-inverse sm:text-6xl lg:text-7xl">
               Seu tempo muda.
-              <span className="mt-2 block bg-gradient-to-r from-brand via-brand-light to-accent bg-clip-text text-transparent">
+              <span className="mt-2 block bg-gradient-to-r from-brand-400 via-brand-light to-accent bg-clip-text text-transparent">
                 Seu som acompanha.
               </span>
             </h1>
 
-            <p className="mt-7 max-w-xl text-lg leading-8 text-muted sm:text-xl">
+            <p className="mt-7 max-w-xl text-lg leading-8 text-muted-inverse sm:text-xl">
               O Sonoriza combina sua agenda, o tempo disponível e suas preferências
               para montar playlists dinâmicas de músicas e podcasts — sem trabalho
               manual a cada mudança do dia.
             </p>
 
             {session?.user ? (
-              <div className="glass-panel mt-9 flex max-w-xl flex-wrap items-center justify-between gap-4 rounded-3xl p-4 sm:p-5">
+              <div className="product-panel mt-9 flex max-w-xl flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-muted">
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-muted-inverse">
                     Sessão ativa
                   </p>
-                  <p className="mt-1 font-bold text-ink">
+                  <p className="mt-1 font-bold text-ink-inverse">
                     {session.user.email ?? session.user.name}
                   </p>
                 </div>
@@ -114,7 +113,10 @@ export default async function HomePage() {
               <section className="mt-9 space-y-4" aria-label="Entrar no Sonoriza">
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <form action={signInWithGoogle}>
-                    <button type="submit" className="secondary-button w-full sm:w-auto">
+                    <button
+                      type="submit"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-line-dark/70 bg-surface-elevated px-5 py-3 font-bold text-ink-inverse shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-surface-subtle sm:w-auto"
+                    >
                       <GoogleIcon />
                       Entrar com Google
                     </button>
@@ -126,17 +128,17 @@ export default async function HomePage() {
                     </button>
                   </form>
                 </div>
-                <p className="max-w-xl text-sm leading-6 text-muted">
+                <p className="max-w-xl text-sm leading-6 text-muted-inverse">
                   Escolha um provedor no primeiro acesso. No painel, conecte o outro
                   para entrar depois com qualquer um deles no mesmo usuário.
                 </p>
               </section>
             )}
 
-            <ul className="mt-10 grid gap-3 text-sm font-semibold text-ink sm:grid-cols-3">
+            <ul className="mt-10 grid gap-3 text-sm font-semibold text-ink-inverse sm:grid-cols-3">
               {highlights.map((highlight) => (
                 <li key={highlight} className="flex items-start gap-2.5">
-                  <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand">
+                  <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-brand-400/30 bg-brand/15 text-brand-400">
                     <UiIcon name="check" size={13} strokeWidth={2.5} />
                   </span>
                   <span>{highlight}</span>
@@ -146,18 +148,18 @@ export default async function HomePage() {
           </div>
 
           <div className="relative mx-auto w-full max-w-xl lg:max-w-none">
-            <div className="absolute -inset-5 -rotate-2 rounded-[2.5rem] bg-brand-gradient opacity-10 blur-sm" />
-            <div className="glass-panel relative overflow-hidden rounded-[2.25rem] p-5 sm:p-7">
+            <div className="absolute -inset-5 -rotate-2 rounded-[2.5rem] bg-brand-gradient opacity-20 blur-xl" />
+            <div className="product-panel relative overflow-hidden p-5 sm:p-7">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted">
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted-inverse">
                     Agora no Sonoriza
                   </p>
-                  <h2 className="mt-1 text-2xl font-black tracking-[-0.035em] text-brand-dark">
+                  <h2 className="mt-1 text-2xl font-black tracking-[-0.035em] text-ink-inverse">
                     Foco da manhã
                   </h2>
                 </div>
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+                <div className="product-icon-tile-accent">
                   <UiIcon name="music" size={23} />
                 </div>
               </div>
@@ -197,37 +199,37 @@ export default async function HomePage() {
               </div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <article className="rounded-2xl border border-line bg-white p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-[0.12em] text-muted">
+                <article className="product-card p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-bold uppercase tracking-[0.12em] text-muted-inverse">
                       Agenda
                     </span>
-                    <span className="rounded-full bg-brand-soft px-2.5 py-1 text-xs font-bold text-brand">
+                    <span className="rounded-full border border-brand-400/30 bg-brand/15 px-2.5 py-1 text-xs font-bold text-brand-400">
                       09:00–09:48
                     </span>
                   </div>
-                  <p className="mt-3 font-bold text-ink">Bloco de concentração</p>
-                  <p className="mt-1 text-sm text-muted">Duração calculada automaticamente</p>
+                  <p className="mt-3 font-bold text-ink-inverse">Bloco de concentração</p>
+                  <p className="mt-1 text-sm text-muted-inverse">Duração calculada automaticamente</p>
                 </article>
 
-                <article className="rounded-2xl border border-line bg-white p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-[0.12em] text-muted">
+                <article className="product-card p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-bold uppercase tracking-[0.12em] text-muted-inverse">
                       Mix
                     </span>
-                    <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-bold text-accent">
+                    <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-bold text-accent-400">
                       Dinâmico
                     </span>
                   </div>
-                  <p className="mt-3 font-bold text-ink">Seu conteúdo, na medida</p>
-                  <p className="mt-1 text-sm text-muted">Sem repetir entre as listas</p>
+                  <p className="mt-3 font-bold text-ink-inverse">Seu conteúdo, na medida</p>
+                  <p className="mt-1 text-sm text-muted-inverse">Sem repetir entre as listas</p>
                 </article>
               </div>
             </div>
           </div>
         </section>
 
-        <footer className="flex flex-col gap-2 border-t border-line/80 py-5 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
+        <footer className="flex flex-col gap-2 border-t border-line-dark/60 py-5 text-sm text-muted-inverse sm:flex-row sm:items-center sm:justify-between">
           <span>Sonoriza · playlists no seu tempo.</span>
           <span>Agenda, música e contexto em sintonia.</span>
         </footer>
