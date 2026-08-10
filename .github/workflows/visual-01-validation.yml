@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - visual-01-design-system
-      - fix/visual-01-official-brand-asset
 
 permissions:
   contents: read
