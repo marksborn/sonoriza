@@ -41,7 +41,18 @@ jobs:
       - run: npm run db:deploy
       - run: npm run db:generate
       - run: npm run test:planner
-      - run: npm run test:spotify
+      - name: Spotify tests
+        shell: bash
+        run: |
+          set +e
+          npm run test:spotify > /tmp/spotify-test.log 2>&1
+          status=$?
+          cat /tmp/spotify-test.log
+          if [ "$status" -ne 0 ]; then
+            detail="$(tail -n 80 /tmp/spotify-test.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
+            echo "::error file=src/services/spotify::${detail}"
+            exit "$status"
+          fi
       - run: npm run test:incremental
       - run: npm run test:simulation
       - run: npm run typecheck
