@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 
+import { assertSpotifyBackoffInactive } from "./backoff";
+
 const TOKEN_URL = "https://accounts.spotify.com/api/token";
 // Refresh a little before the real expiry to avoid mid-request 401s.
 const EXPIRY_SKEW_SECONDS = 60;
@@ -9,6 +11,11 @@ const EXPIRY_SKEW_SECONDS = 60;
  * stored refresh_token when the current one is missing or about to expire.
  */
 export async function getSpotifyAccessToken(userId: string): Promise<string> {
+  // SPOTIFY-02: every product path that reaches the Web API obtains its token
+  // here first. Respect an app-wide Retry-After before even refreshing/reading
+  // provider credentials, so a blocked action produces zero Spotify traffic.
+  await assertSpotifyBackoffInactive();
+
   const account = await prisma.account.findFirst({
     where: { userId, provider: "spotify" },
   });
