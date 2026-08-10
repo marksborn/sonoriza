@@ -123,11 +123,16 @@ export async function spotifyApiErrorFromResponse(
     retryAfterSeconds !== null &&
     retryAfterSeconds > 0
   ) {
-    await recordSpotifyBackoff({
-      reason: kind,
-      operation: input.operation,
-      retryAfterSeconds,
-    });
+    try {
+      await recordSpotifyBackoff({
+        reason: kind,
+        operation: input.operation,
+        retryAfterSeconds,
+      });
+    } catch {
+      // Never hide the provider error if observability/gating persistence is
+      // temporarily unavailable. The current run still fails safely.
+    }
   }
 
   return error;
