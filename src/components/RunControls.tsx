@@ -78,6 +78,14 @@ export function RunControls() {
     };
   }, []);
 
+  useEffect(() => {
+    const blockedUntil = gate.spotifyBackoff?.blockedUntil;
+    if (!blockedUntil) return;
+    const delay = Math.max(250, Date.parse(blockedUntil) - Date.now() + 250);
+    const timer = window.setTimeout(() => window.location.reload(), delay);
+    return () => window.clearTimeout(timer);
+  }, [gate.spotifyBackoff?.blockedUntil]);
+
   async function runReal() {
     if (gate.spotifyBackoff) return;
     setState({ status: "running" });
