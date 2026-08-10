@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { UiIcon } from "@/components/UiIcon";
+
 type CleanupSubmitButtonProps = {
   removableTrackCount: number;
 };
@@ -50,8 +52,13 @@ export function CleanupSubmitButton({
       aria-disabled={blocked}
       aria-live="polite"
       title={backoff ? `Spotify bloqueado até ${formatBackoffDate(backoff.blockedUntil)}` : undefined}
-      className="rounded-xl border border-red-200/30 bg-red-500/20 px-4 py-2.5 text-sm font-black text-red-50 transition hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+      className="inline-flex items-center justify-center gap-2 rounded-xl border border-danger/35 bg-danger-soft px-4 py-2.5 text-sm font-black text-danger transition hover:bg-danger/15 disabled:cursor-not-allowed disabled:opacity-60"
     >
+      {pending || checking ? (
+        <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-current/30 border-t-current" />
+      ) : (
+        <UiIcon name={backoff ? "warning" : "trash"} size={17} />
+      )}
       {pending
         ? `Removendo ${removableTrackCount} faixa(s)...`
         : checking
