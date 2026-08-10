@@ -6,7 +6,7 @@ A intenção é manter a interface reconhecível e previsível sem transformar o
 
 ## Princípio central
 
-> Roxo é Sonoriza. Laranja é ação e energia. Roxo profundo é o ambiente autenticado. Cores semânticas comunicam estado.
+> Roxo é Sonoriza. Laranja é ação e energia. Roxo profundo é o ambiente do produto. Branco é conteúdo. Cores semânticas comunicam estado.
 
 Marca e estado operacional não devem competir pela mesma cor.
 
@@ -32,12 +32,14 @@ Se o asset vetorial original não estiver disponível, usar o asset aprovado exi
 | `brand-900` | `#27106F` | texto escuro da marca, contraste sobre laranja |
 | `brand-600` | `#6724D9` | cor principal Sonoriza |
 | `brand-400` | `#922DF2` | destaque, brilho e gradiente |
-| `brand-soft` | `#EFE9FF` | fundos leves no tema claro |
+| `brand-soft` | `#EFE9FF` | fundo leve quando necessário |
 | `accent-600` | `#FF7200` | ação principal |
 | `accent-400` | `#FF982B` | hover/destaque claro |
 | `accent-soft` | `#FFF1E6` | fundo leve de destaque |
 
-### Tema claro
+### Base clara auxiliar
+
+A base clara permanece disponível apenas para situações pontuais que realmente exijam superfície clara. Ela não define uma segunda identidade para a aplicação.
 
 | Token | Valor |
 | --- | --- |
@@ -47,11 +49,11 @@ Se o asset vetorial original não estiver disponível, usar o asset aprovado exi
 | `muted-light` | `#71677F` |
 | `line-light` | `#E8E3EF` |
 
-### Tema escuro
+### Ambiente principal
 
 | Token | Valor | Uso |
 | --- | --- | --- |
-| `canvas-dark` | `#0B021F` | fundo principal autenticado |
+| `canvas-dark` | `#0B021F` | fundo principal do Sonoriza |
 | `surface-dark` | `#160633` | chrome/header |
 | `surface-subtle` | `#1D0B42` | cards internos |
 | `surface-elevated` | `#241052` | controles e superfícies elevadas |
@@ -59,19 +61,20 @@ Se o asset vetorial original não estiver disponível, usar o asset aprovado exi
 | `muted-inverse` | `#C7B9D9` | texto secundário no escuro |
 | `line-dark` | `#49306D` | bordas no escuro |
 
-## Temas por superfície
+## Unidade entre superfícies
 
-### Público
+Home, login, dashboard, configuração e demais superfícies próprias do Sonoriza pertencem ao mesmo ambiente visual predominantemente escuro.
 
-Home, login e onboarding usam tema predominantemente claro.
+A home pode ter composição mais editorial e promocional, enquanto o produto autenticado é mais operacional, mas ambos devem compartilhar:
 
-Objetivo: produto aberto, legível e convidativo.
+- `canvas-dark` como ambiente dominante;
+- superfícies roxas profundas;
+- texto principal claro;
+- roxo como identidade;
+- laranja reservado para ação, energia e destaques pontuais;
+- os mesmos tokens, bordas, sombras e linguagem de ícones.
 
-### Autenticado
-
-Dashboard e configuração usam tema predominantemente escuro.
-
-Objetivo: ambiente imersivo ligado a áudio, com superfícies roxas profundas e brilho controlado.
+Não criar uma versão clara da marca para separar “site” e “produto”. A passagem da home para o dashboard deve parecer continuidade do mesmo produto.
 
 Não há toggle de tema no v1.
 
@@ -193,7 +196,7 @@ Antes de considerar uma tela visualmente pronta:
 4. CTA principal tem contraste adequado;
 5. foco por teclado está visível;
 6. informação de estado não depende somente de cor;
-7. tema corresponde à superfície pública ou autenticada;
+7. preserva continuidade visual com o ambiente principal do Sonoriza;
 8. desktop e mobile preservam hierarquia e legibilidade.
 
 ## Gate de VISUAL-01
