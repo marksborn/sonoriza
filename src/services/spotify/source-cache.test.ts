@@ -5,6 +5,8 @@ import {
   decodeMusicSourceCache,
   decodeMusicSourceCacheUnavailableTrackCount,
   encodeMusicSourceCache,
+  patchMusicSourceCacheAfterAppend,
+  patchMusicSourceCacheAfterRemove,
 } from "./source-cache";
 
 const candidates: Candidate[] = [
@@ -57,4 +59,38 @@ test("encoder omits music candidates whose Spotify identity is missing", () => {
     { uri: "spotify:track:legacy", type: "MUSIC", title: "Legacy", durationMs: 1 },
   ]);
   assert.equal(encoded.candidates.length, 2);
+});
+
+
+test("append patch advances a valid cache without discarding the existing pool", () => {
+  const encoded = encodeMusicSourceCache(candidates, 3);
+  const appended: Candidate = {
+    uri: "spotify:track:three",
+    spotifyTrackId: "three",
+    type: "MUSIC",
+    title: "Three",
+    subtitle: "Artist",
+    durationMs: 210_000,
+  };
+  const patched = patchMusicSourceCacheAfterAppend(encoded, [appended]);
+  assert.ok(patched);
+  assert.deepEqual(decodeMusicSourceCache(patched), [...candidates, appended]);
+  assert.equal(decodeMusicSourceCacheUnavailableTrackCount(patched), 3);
+});
+
+test("remove patch removes every cached occurrence of an accepted URI", () => {
+  const duplicateCandidates: Candidate[] = [candidates[0]!, candidates[0]!, candidates[1]!];
+  const encoded = encodeMusicSourceCache(duplicateCandidates, 2);
+  const patched = patchMusicSourceCacheAfterRemove(encoded, ["spotify:track:one"]);
+  assert.ok(patched);
+  assert.deepEqual(decodeMusicSourceCache(patched), [candidates[1]]);
+  assert.equal(decodeMusicSourceCacheUnavailableTrackCount(patched), 2);
+});
+
+test("remove patch fails closed when the removed URI is absent from the planner cache", () => {
+  const encoded = encodeMusicSourceCache(candidates, 1);
+  assert.equal(
+    patchMusicSourceCacheAfterRemove(encoded, ["spotify:track:not-cached"]),
+    null,
+  );
 });

@@ -38,6 +38,50 @@ export function encodeMusicSourceCache(
   };
 }
 
+export function patchMusicSourceCacheAfterAppend(
+  value: unknown,
+  appendedCandidates: Candidate[],
+): MusicSourceCachePayload | null {
+  const payload = decodePayload(value);
+  if (!payload) return null;
+  if (
+    appendedCandidates.some(
+      (candidate) =>
+        candidate.type !== "MUSIC" ||
+        typeof candidate.uri !== "string" ||
+        !candidate.uri ||
+        typeof candidate.spotifyTrackId !== "string" ||
+        !candidate.spotifyTrackId,
+    )
+  ) {
+    return null;
+  }
+  return encodeMusicSourceCache(
+    [...payload.candidates, ...appendedCandidates],
+    payload.unavailableTrackCount,
+  );
+}
+
+export function patchMusicSourceCacheAfterRemove(
+  value: unknown,
+  removedUris: readonly string[],
+): MusicSourceCachePayload | null {
+  const payload = decodePayload(value);
+  if (!payload) return null;
+  const removed = new Set(removedUris.filter(Boolean));
+  if (removed.size === 0) {
+    return encodeMusicSourceCache(payload.candidates, payload.unavailableTrackCount);
+  }
+
+  const cachedUris = new Set(payload.candidates.map((candidate) => candidate.uri));
+  if ([...removed].some((uri) => !cachedUris.has(uri))) return null;
+
+  return encodeMusicSourceCache(
+    payload.candidates.filter((candidate) => !removed.has(candidate.uri)),
+    payload.unavailableTrackCount,
+  );
+}
+
 export function decodeMusicSourceCache(value: unknown): Candidate[] | null {
   return decodePayload(value)?.candidates ?? null;
 }

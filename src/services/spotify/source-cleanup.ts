@@ -15,6 +15,10 @@ import {
   spotifyTrackIdentityAliases,
   syncRecentlyPlayed,
 } from "./recently-played";
+import {
+  decodeMusicSourceCache,
+  patchMusicSourceCacheAfterRemove,
+} from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
@@ -127,6 +131,24 @@ export function buildMusicSourceCleanupPlan(
     removableUris: sortedUris,
     planHash,
   };
+}
+
+export function buildCachedMusicSourceCleanupPlan(
+  candidates: Array<{ uri: string; spotifyTrackId?: string }>,
+  playedTrackIds: ReadonlySet<string>,
+): MusicSourceCleanupPlan {
+  return buildMusicSourceCleanupPlan(
+    candidates.map((candidate) => ({
+      uri: candidate.uri,
+      aliases:
+        typeof candidate.spotifyTrackId === "string" && candidate.spotifyTrackId
+          ? [candidate.spotifyTrackId]
+          : [],
+      isTrack: true,
+      isLocal: false,
+    })),
+    playedTrackIds,
+  );
 }
 
 export function hashCleanupPlan(
@@ -377,10 +399,21 @@ export async function executeMusicSourceCleanupPreview(
           !preview.source.musicCleanupFirstCompletedAt
             ? { musicCleanupFirstCompletedAt: new Date() }
             : {}),
-          // The source changed on Spotify. Force the normal reader to validate
-          // and rebuild its cache on the next generation.
-          spotifySnapshotId: null,
-          cacheUpdatedAt: null,
+          ...(preview.source.spotifySnapshotId === current.snapshotId && snapshotAfter
+            ? (() => {
+                const patched = patchMusicSourceCacheAfterRemove(
+                  preview.source.cachedCandidates,
+                  removedUris,
+                );
+                return patched
+                  ? {
+                      spotifySnapshotId: snapshotAfter,
+                      cachedCandidates: patched as Prisma.InputJsonValue,
+                      cacheUpdatedAt: new Date(),
+                    }
+                  : { spotifySnapshotId: null, cacheUpdatedAt: null };
+              })()
+            : { spotifySnapshotId: null, cacheUpdatedAt: null }),
         },
       }),
     ]);
@@ -473,8 +506,149 @@ export async function executeAutomaticMusicSourceCleanup(
     );
   }
 
-  const preview = await createMusicSourceCleanupPreview(userId, sourcePlaylistId, now);
-  return executeMusicSourceCleanupPreview(userId, preview.previewId, now);
+  const history = await syncRecentlyPlayed(userId, now);
+  if (!history.enabled) {
+    throw new MusicSourceCleanupHistoryRequiredError(
+      "O histórico nativo precisa permanecer ativo para executar a limpeza.",
+    );
+  }
+
+  const cachedCandidates = decodeMusicSourceCache(source.cachedCandidates);
+  if (!source.spotifySnapshotId || !cachedCandidates) {
+    throw new MusicSourceCleanupError(
+      "A limpeza automática foi adiada porque a fonte ainda não possui um cache Spotify completo e validado. Uma simulação conclusiva pode reconstruí-lo sem permitir uma varredura destrutiva por quota.",
+    );
+  }
+
+  const accessToken = await getSpotifyAccessToken(userId);
+  const [me, metadata, playedStates] = await Promise.all([
+    spotifyRequest<{ id?: string | null }>(accessToken, "/me"),
+    readPlaylistMetadata(accessToken, source.spotifyId),
+    prisma.trackListeningState.findMany({
+      where: { userId },
+      select: { spotifyTrackId: true },
+    }),
+  ]);
+
+  if (!metadata.snapshot_id || metadata.snapshot_id !== source.spotifySnapshotId) {
+    throw new MusicSourceCleanupStaleError(
+      "A limpeza automática foi adiada porque a playlist mudou fora do cache conhecido. O Sonoriza não fará uma varredura integral só para a rotina periódica.",
+    );
+  }
+  const ownerId = metadata.owner?.id ?? null;
+  if (ownerId !== me.id && metadata.collaborative !== true) {
+    throw new MusicSourceCleanupPermissionError(
+      "A conta conectada não é proprietária nem colaboradora desta playlist.",
+    );
+  }
+
+  const plan = buildCachedMusicSourceCleanupPlan(
+    cachedCandidates,
+    new Set(playedStates.map((state) => state.spotifyTrackId)),
+  );
+  const startedAt = new Date();
+  let snapshotAfter = source.spotifySnapshotId;
+  const acceptedDeleteUris: string[] = [];
+  let writeError: unknown = null;
+
+  for (const uris of chunk(plan.removableUris, MAX_DELETE_ITEMS)) {
+    try {
+      const result: { snapshot_id?: string | null } = await spotifyRequest(
+        accessToken,
+        `/playlists/${source.spotifyId}/items`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            items: uris.map((uri) => ({ uri })),
+            snapshot_id: snapshotAfter,
+          }),
+        },
+      );
+      if (!result.snapshot_id) {
+        throw new MusicSourceCleanupError(
+          "O Spotify aceitou a limpeza sem retornar o novo snapshot da playlist.",
+        );
+      }
+      acceptedDeleteUris.push(...uris);
+      snapshotAfter = result.snapshot_id;
+    } catch (error) {
+      writeError = error;
+      break;
+    }
+  }
+
+  const removedUris = [...acceptedDeleteUris];
+  const failedUris = plan.removableUris.filter(
+    (uri) => !acceptedDeleteUris.includes(uri),
+  );
+  const finishedAt = new Date();
+  const status = writeError
+    ? acceptedDeleteUris.length > 0
+      ? MusicSourceCleanupStatus.PARTIAL
+      : MusicSourceCleanupStatus.FAILED
+    : MusicSourceCleanupStatus.SUCCESS;
+  const patchUris = status === MusicSourceCleanupStatus.SUCCESS
+    ? plan.removableUris
+    : acceptedDeleteUris;
+  const patchedCache = patchMusicSourceCacheAfterRemove(
+    source.cachedCandidates,
+    patchUris,
+  );
+
+  const [automaticRun] = await prisma.$transaction([
+    prisma.musicSourceCleanupRun.create({
+      data: {
+        userId,
+        sourcePlaylistId: source.id,
+        status,
+        snapshotBefore: source.spotifySnapshotId,
+        snapshotAfter,
+        planHash: plan.planHash,
+        examinedCount: plan.examinedCount,
+        removableTrackCount: plan.removableTrackCount,
+        removalOccurrenceCount: plan.removalOccurrenceCount,
+        keptCount: plan.keptCount,
+        plannedUris: plan.removableUris as Prisma.InputJsonValue,
+        removedUris: removedUris as Prisma.InputJsonValue,
+        failedUris: failedUris as Prisma.InputJsonValue,
+        startedAt,
+        finishedAt,
+        error: writeError
+          ? writeError instanceof Error
+            ? writeError.message
+            : String(writeError)
+          : null,
+      },
+    }),
+    prisma.sourcePlaylist.update({
+      where: { id: source.id },
+      data: {
+        musicCleanupLastRunAt: finishedAt,
+        ...(patchedCache && snapshotAfter
+          ? {
+              spotifySnapshotId: snapshotAfter,
+              cachedCandidates: patchedCache as Prisma.InputJsonValue,
+              cacheUpdatedAt: finishedAt,
+            }
+          : status === MusicSourceCleanupStatus.FAILED
+            ? {}
+            : { spotifySnapshotId: null, cacheUpdatedAt: null }),
+      },
+    }),
+  ]);
+
+  if (status === MusicSourceCleanupStatus.FAILED) throw writeError;
+
+  return {
+    runId: automaticRun.id,
+    status,
+    examinedCount: plan.examinedCount,
+    plannedTrackCount: plan.removableTrackCount,
+    plannedOccurrenceCount: plan.removalOccurrenceCount,
+    removedTrackCount: removedUris.length,
+    failedTrackCount: failedUris.length,
+    snapshotAfter,
+  };
 }
 
 async function loadManagedMusicSource(userId: string, sourcePlaylistId: string) {
