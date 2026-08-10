@@ -3,6 +3,7 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { RECENTLY_PLAYED_SCOPE, scopeIncludes } from "@/services/spotify/recently-played";
@@ -100,74 +101,75 @@ export default async function MusicRepeatConfigurationPage({
   const windowValue = policy?.windowValue ?? 30;
   const windowUnit = policy?.windowUnit ?? MusicRepeatWindowUnit.DAYS;
 
+  const inputClass =
+    "mt-2 w-full rounded-xl border border-line-dark/70 bg-surface-dark px-4 py-3 text-ink-inverse outline-none transition focus:border-accent-400/70 focus:ring-2 focus:ring-accent/15";
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0b021f] px-5 py-8 text-white sm:px-8 lg:px-10">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_5%,rgba(126,34,206,0.3),transparent_31rem),radial-gradient(circle_at_90%_10%,rgba(255,107,0,0.12),transparent_25rem),linear-gradient(180deg,#12032f_0%,#0b021f_55%,#090119_100%)]" />
+    <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
+      <div className="product-ambient" />
 
       <div className="relative mx-auto max-w-3xl">
         <Link
           href="/dashboard/configuracao"
-          className="inline-flex items-center gap-2 text-sm font-bold text-violet-300 transition hover:text-white"
+          className="inline-flex items-center gap-2 text-sm font-bold text-muted-inverse transition hover:text-ink-inverse"
         >
-          <span aria-hidden="true">←</span>
+          <UiIcon name="arrow-left" size={18} />
           Central de configuração
         </Link>
 
         <div className="mt-7">
-          <p className="text-xs font-black uppercase tracking-[0.17em] text-orange-400">
-            MUSIC-01
-          </p>
-          <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] sm:text-4xl">
+          <p className="text-xs font-black uppercase tracking-[0.17em] text-accent-400">MUSIC-01</p>
+          <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse sm:text-4xl">
             Evitar músicas repetidas
           </h1>
-          <p className="mt-3 text-sm leading-6 text-violet-200/75 sm:text-base">
+          <p className="mt-3 text-sm leading-6 text-muted-inverse sm:text-base">
             Use o histórico nativo do Spotify para deixar fora do planejamento as faixas tocadas dentro do período escolhido.
           </p>
         </div>
 
         {params.saved === "1" ? (
-          <div className="mt-6 rounded-2xl border border-emerald-400/25 bg-emerald-500/10 px-4 py-3 text-sm font-bold text-emerald-200">
+          <div className="status-success mt-6 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
+            <UiIcon name="check" size={17} />
             Política salva. Nenhuma playlist foi gerada ou alterada.
           </div>
         ) : null}
         {params.error === "invalid" ? (
-          <div className="mt-6 rounded-2xl border border-orange-400/30 bg-orange-500/10 px-4 py-3 text-sm font-bold text-orange-200">
+          <div className="status-warning mt-6 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
+            <UiIcon name="warning" size={17} />
             Informe um período inteiro maior que zero e escolha dias, meses ou anos.
           </div>
         ) : null}
 
-        <section className="mt-7 rounded-[1.75rem] border border-violet-400/20 bg-[linear-gradient(145deg,rgba(42,15,94,0.94),rgba(22,6,53,0.96))] p-6 shadow-[0_24px_70px_-40px_rgba(139,92,246,0.75)]">
+        <section className="product-panel mt-7 p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.15em] text-violet-400">
-                Spotify
-              </p>
-              <h2 className="mt-1 text-xl font-black">Histórico de reprodução</h2>
-              <p className="mt-2 text-sm leading-6 text-violet-200/70">
+              <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">Spotify</p>
+              <h2 className="mt-1 text-xl font-black text-ink-inverse">Histórico de reprodução</h2>
+              <p className="mt-2 text-sm leading-6 text-muted-inverse">
                 O Sonoriza consulta apenas o histórico de músicas tocadas; não modifica playlists de origem.
               </p>
             </div>
             <span
-              className={`rounded-full border px-3 py-1.5 text-xs font-black ${
-                hasRecentlyPlayedScope
-                  ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200"
-                  : "border-orange-400/30 bg-orange-500/10 text-orange-200"
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-black ${
+                hasRecentlyPlayedScope ? "status-success" : "status-warning"
               }`}
             >
-              {hasRecentlyPlayedScope ? "Permissão disponível ✓" : "Reconexão necessária"}
+              <UiIcon name={hasRecentlyPlayedScope ? "check" : "warning"} size={15} />
+              {hasRecentlyPlayedScope ? "Permissão disponível" : "Reconexão necessária"}
             </span>
           </div>
 
           {!hasRecentlyPlayedScope ? (
-            <div className="mt-5 rounded-2xl border border-orange-400/25 bg-orange-500/10 p-4">
-              <p className="text-sm leading-6 text-orange-100/90">
+            <div className="status-warning mt-5 rounded-2xl border p-4">
+              <p className="text-sm leading-6">
                 Para ativar esta regra, reconecte o Spotify e autorize a leitura de músicas tocadas recentemente.
               </p>
               <form action={reconnectSpotify} className="mt-3">
                 <button
                   type="submit"
-                  className="rounded-xl border border-orange-300/30 bg-orange-400/15 px-4 py-2.5 text-sm font-black text-orange-100 transition hover:bg-orange-400/25"
+                  className="inline-flex items-center gap-2 rounded-xl border border-warning/35 bg-warning/10 px-4 py-2.5 text-sm font-black transition hover:bg-warning/15"
                 >
+                  <UiIcon name="repeat" size={17} />
                   Reconectar Spotify
                 </button>
               </form>
@@ -175,42 +177,39 @@ export default async function MusicRepeatConfigurationPage({
           ) : null}
 
           <dl className="mt-5 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-violet-300/15 bg-black/15 p-4">
-              <dt className="text-xs font-black uppercase tracking-[0.12em] text-violet-400">Faixas conhecidas</dt>
-              <dd className="mt-2 text-lg font-black">{trackedCount}</dd>
+            <div className="product-card p-4">
+              <dt className="text-xs font-black uppercase tracking-[0.12em] text-brand-400">Faixas conhecidas</dt>
+              <dd className="mt-2 text-lg font-black text-ink-inverse">{trackedCount}</dd>
             </div>
-            <div className="rounded-2xl border border-violet-300/15 bg-black/15 p-4">
-              <dt className="text-xs font-black uppercase tracking-[0.12em] text-violet-400">Histórico conhecido desde</dt>
-              <dd className="mt-2 text-sm font-bold text-violet-100">{formatDate(policy?.historyKnownSince ?? null)}</dd>
+            <div className="product-card p-4">
+              <dt className="text-xs font-black uppercase tracking-[0.12em] text-brand-400">Histórico conhecido desde</dt>
+              <dd className="mt-2 text-sm font-bold text-ink-inverse">{formatDate(policy?.historyKnownSince ?? null)}</dd>
             </div>
-            <div className="rounded-2xl border border-violet-300/15 bg-black/15 p-4">
-              <dt className="text-xs font-black uppercase tracking-[0.12em] text-violet-400">Última sincronização</dt>
-              <dd className="mt-2 text-sm font-bold text-violet-100">{formatDate(policy?.lastSyncAt ?? null)}</dd>
+            <div className="product-card p-4">
+              <dt className="text-xs font-black uppercase tracking-[0.12em] text-brand-400">Última sincronização</dt>
+              <dd className="mt-2 text-sm font-bold text-ink-inverse">{formatDate(policy?.lastSyncAt ?? null)}</dd>
             </div>
           </dl>
         </section>
 
-        <form
-          action={savePolicy}
-          className="mt-5 rounded-[1.75rem] border border-orange-400/20 bg-[linear-gradient(145deg,rgba(62,17,116,0.96),rgba(30,8,66,0.96))] p-6"
-        >
+        <form action={savePolicy} className="product-panel mt-5 p-6">
           <label className="flex items-start gap-3">
             <input
               name="enabled"
               type="checkbox"
               defaultChecked={enabled}
-              className="mt-1 h-5 w-5 accent-orange-500"
+              className="mt-1 h-5 w-5 accent-accent"
             />
             <span>
-              <span className="block font-black">Evitar músicas tocadas recentemente</span>
-              <span className="mt-1 block text-sm leading-6 text-violet-200/70">
+              <span className="block font-black text-ink-inverse">Evitar músicas tocadas recentemente</span>
+              <span className="mt-1 block text-sm leading-6 text-muted-inverse">
                 Quando ativa, a regra vale globalmente para todas as fontes e destinos de música.
               </span>
             </span>
           </label>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-[1fr_1.4fr]">
-            <label className="text-sm font-bold text-violet-100">
+            <label className="text-sm font-bold text-ink-inverse">
               Período
               <input
                 name="windowValue"
@@ -219,16 +218,12 @@ export default async function MusicRepeatConfigurationPage({
                 step={1}
                 defaultValue={windowValue}
                 required
-                className="mt-2 w-full rounded-xl border border-violet-300/20 bg-[#10042a] px-4 py-3 text-white outline-none transition focus:border-orange-300/50"
+                className={inputClass}
               />
             </label>
-            <label className="text-sm font-bold text-violet-100">
+            <label className="text-sm font-bold text-ink-inverse">
               Unidade
-              <select
-                name="windowUnit"
-                defaultValue={windowUnit}
-                className="mt-2 w-full rounded-xl border border-violet-300/20 bg-[#10042a] px-4 py-3 text-white outline-none transition focus:border-orange-300/50"
-              >
+              <select name="windowUnit" defaultValue={windowUnit} className={inputClass}>
                 <option value={MusicRepeatWindowUnit.DAYS}>Dias</option>
                 <option value={MusicRepeatWindowUnit.MONTHS}>Meses</option>
                 <option value={MusicRepeatWindowUnit.YEARS}>Anos</option>
@@ -236,14 +231,15 @@ export default async function MusicRepeatConfigurationPage({
             </label>
           </div>
 
-          <p className="mt-4 text-xs leading-5 text-violet-300/70">
+          <p className="mt-4 text-xs leading-5 text-muted-inverse/70">
             Meses e anos seguem calendário real. Ex.: 31 de março menos 1 mês resulta no último dia válido de fevereiro.
           </p>
 
           <button
             type="submit"
-            className="mt-6 rounded-xl bg-orange-500 px-5 py-3 text-sm font-black text-white shadow-lg shadow-orange-950/30 transition hover:bg-orange-400"
+            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-black text-brand-900 shadow-action transition hover:-translate-y-0.5 hover:bg-accent-400"
           >
+            <UiIcon name="check" size={18} />
             Salvar regra de repetição
           </button>
         </form>
