@@ -102,6 +102,7 @@ type PlaylistReadResult = {
 type TargetTrackIndex = {
   trackIds: Set<string>;
   cacheSnapshotId: string | null;
+  cacheValue: unknown;
 };
 
 type PlaylistWriteResult = {
@@ -552,11 +553,12 @@ export async function syncMusicIngestionRule(
     let targetIndex: TargetTrackIndex = {
       trackIds: new Set<string>(),
       cacheSnapshotId: null,
+      cacheValue: null,
     };
     let blockedTrackIds = new Set<string>();
 
     if (collected.incoming.length > 0) {
-      targetIndex = await loadTargetTrackIds(rule.target, api);
+      targetIndex = await loadTargetTrackIds(rule.target);
       const repeat = await refreshMusicRepeatContext(userId, new Date());
       blockedTrackIds = new Set(repeat.context.blockedTrackIds);
     }
@@ -623,6 +625,7 @@ export async function syncMusicIngestionRule(
               ? writableTarget.snapshotId
               : null,
             error.snapshotId,
+            targetIndex.cacheValue,
             plan.add.slice(0, acceptedUris.length).map((item) => item.track),
           );
         }
@@ -658,6 +661,7 @@ export async function syncMusicIngestionRule(
           ? writableTarget.snapshotId
           : null,
         writeSnapshotId,
+        targetIndex.cacheValue,
         plan.add.slice(0, acceptedUris.length).map((item) => item.track),
       );
     }
@@ -765,8 +769,8 @@ export async function runManualMusicIngestion(
     }));
     const targetIndex =
       incoming.length > 0
-        ? await loadTargetTrackIds(target, api)
-        : { trackIds: new Set<string>(), cacheSnapshotId: null };
+        ? await loadTargetTrackIds(target)
+        : { trackIds: new Set<string>(), cacheSnapshotId: null, cacheValue: null };
     const repeat =
       incoming.length > 0 ? await refreshMusicRepeatContext(userId, new Date()) : null;
     const plan = planMusicIngestion(
@@ -826,6 +830,7 @@ export async function runManualMusicIngestion(
               ? writableTarget.snapshotId
               : null,
             error.snapshotId,
+            targetIndex.cacheValue,
             plan.add.slice(0, acceptedUris.length).map((item) => item.track),
           );
         }
@@ -859,6 +864,7 @@ export async function runManualMusicIngestion(
           ? writableTarget.snapshotId
           : null,
         writeSnapshotId,
+        targetIndex.cacheValue,
         plan.add.slice(0, acceptedUris.length).map((item) => item.track),
       );
     }
@@ -1050,26 +1056,30 @@ async function loadTargetInbox(userId: string, id: string): Promise<SourcePlayli
 
 async function loadTargetTrackIds(
   target: SourcePlaylist,
-  api: MusicIngestionSpotifyApi,
 ): Promise<TargetTrackIndex> {
-  const metadata = await api.getPlaylistMetadata(target.spotifyId);
-  const cached =
-    target.spotifySnapshotId === metadata.snapshotId
-      ? decodeMusicSourceCache(target.cachedCandidates)
+  const spotifyClient = await SpotifyClient.forUser(target.userId);
+  const candidates = await spotifyClient.getPlaylistTracks(target.spotifyId);
+  const refreshed = await prisma.sourcePlaylist.findUnique({
+    where: { id: target.id },
+    select: { spotifySnapshotId: true, cachedCandidates: true },
+  });
+  const refreshedCache =
+    refreshed?.spotifySnapshotId
+      ? decodeMusicSourceCache(refreshed.cachedCandidates)
       : null;
-  if (cached) {
+
+  if (refreshed?.spotifySnapshotId && refreshedCache) {
     return {
       trackIds: new Set(
-        cached.flatMap((candidate) =>
+        refreshedCache.flatMap((candidate) =>
           candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],
         ),
       ),
-      cacheSnapshotId: metadata.snapshotId,
+      cacheSnapshotId: refreshed.spotifySnapshotId,
+      cacheValue: refreshed.cachedCandidates,
     };
   }
 
-  const spotifyClient = await SpotifyClient.forUser(target.userId);
-  const candidates = await spotifyClient.getPlaylistTracks(target.spotifyId);
   return {
     trackIds: new Set(
       candidates.flatMap((candidate) =>
@@ -1077,6 +1087,7 @@ async function loadTargetTrackIds(
       ),
     ),
     cacheSnapshotId: null,
+    cacheValue: null,
   };
 }
 
@@ -1084,19 +1095,16 @@ async function maintainTargetCacheAfterAppend(
   target: SourcePlaylist,
   baseSnapshotId: string | null,
   nextSnapshotId: string | null,
+  cacheValue: unknown,
   tracks: MusicIngestionTrack[],
 ): Promise<void> {
-  if (
-    !baseSnapshotId ||
-    !nextSnapshotId ||
-    target.spotifySnapshotId !== baseSnapshotId
-  ) {
-    await invalidateTargetCache(target.id, target.spotifySnapshotId);
+  if (!baseSnapshotId || !nextSnapshotId) {
+    if (baseSnapshotId) await invalidateTargetCache(target.id, baseSnapshotId);
     return;
   }
 
   const patched = patchMusicSourceCacheAfterAppend(
-    target.cachedCandidates,
+    cacheValue,
     tracks.map((track) => ({
       uri: track.uri,
       spotifyTrackId: track.spotifyTrackId,

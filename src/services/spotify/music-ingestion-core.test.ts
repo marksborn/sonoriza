@@ -151,3 +151,11 @@ test("MUSIC-03 managed writes preserve SPOTIFY-01 cache continuity", () => {
   assert.match(source, /patchMusicSourceCacheAfterAppend/);
   assert.match(source, /spotifySnapshotId: nextSnapshotId/);
 });
+
+
+test("MUSIC-03 refreshed DB cache is carried into managed append patches", () => {
+  const source = readFileSync("src/services/spotify/music-ingestion.ts", "utf8");
+  assert.match(source, /const refreshed = await prisma\.sourcePlaylist\.findUnique/);
+  assert.match(source, /cacheValue: refreshed\.cachedCandidates/);
+  assert.match(source, /targetIndex\.cacheValue/);
+});
