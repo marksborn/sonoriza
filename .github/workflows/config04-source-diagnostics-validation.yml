@@ -1,0 +1,53 @@
+name: CONFIG-04 source diagnostics validation
+
+on:
+  push:
+    branches: [agent/config04-source-diagnostics-75]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza?schema=public
+      AUTH_SECRET: config04-ci-only
+      AUTH_GOOGLE_ID: config04-ci
+      AUTH_GOOGLE_SECRET: config04-ci
+      AUTH_SPOTIFY_ID: config04-ci
+      AUTH_SPOTIFY_SECRET: config04-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - name: Source diagnostics tests
+        run: npx tsx --test src/services/source-collection-diagnostics.test.ts src/services/simulation-presentation.test.ts
+      - name: Source integration tests
+        run: npx tsx --test src/jobs/generate-playlists-incremental.test.ts
+      - name: Planning regressions
+        run: npx tsx --test src/jobs/incremental-planning.test.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
