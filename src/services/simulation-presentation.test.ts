@@ -39,6 +39,7 @@ test("quota exceeded is presented as inconclusive without suggesting configurati
   assert.equal(view.reason, "QUOTA_EXCEEDED");
   assert.equal(view.configuredSourceCount, 3);
   assert.equal(view.readSourceCount, 1);
+  assert.equal(view.confirmedSourceCount, 1);
   assert.equal(view.unavailableSourceCount, 2);
   assert.equal(view.notAttemptedSourceCount, 0);
   assert.equal(view.countsExact, false);
@@ -83,6 +84,93 @@ test("legacy 3/1/1 summary exposes the missing source as not attempted", () => {
   assert.match(view.sourceDiagnostics[0]?.detail ?? "", /falha temporária/i);
   assert.match(view.sourceDiagnostics[0]?.detail ?? "", /episódios do programa/i);
   assert.match(view.sourceDiagnostics[0]?.detail ?? "", /HTTP 503/i);
+});
+
+test("exact source states close the counters and explain every source", () => {
+  const view = readInconclusiveSimulation({
+    inconclusive: true,
+    inconclusiveReason: "QUOTA_EXCEEDED",
+    sourceCollection: {
+      configuredSourceCount: 3,
+      readSourceCount: 1,
+      confirmedSourceCount: 1,
+      unavailableSourceCount: 1,
+      notAttemptedSourceCount: 1,
+      failures: [
+        {
+          source: "Realidades Paralelas do Guaxinim",
+          kind: "PODCAST",
+          spotifyType: "SHOW",
+          errorKind: "QUOTA_EXCEEDED",
+          status: 429,
+          reason: "QUOTA_EXCEEDED",
+          operation: "show-episodes",
+          retryAfterSeconds: null,
+        },
+      ],
+      sources: [
+        {
+          source: "Escutar",
+          kind: "MUSIC",
+          spotifyType: "PLAYLIST",
+          state: "CONFIRMED",
+          pagesRead: 1,
+          partialRead: false,
+          errorKind: null,
+          status: null,
+          reason: null,
+          operation: null,
+          retryAfterSeconds: null,
+        },
+        {
+          source: "Realidades Paralelas do Guaxinim",
+          kind: "PODCAST",
+          spotifyType: "SHOW",
+          state: "UNAVAILABLE",
+          pagesRead: 2,
+          partialRead: true,
+          errorKind: "QUOTA_EXCEEDED",
+          status: 429,
+          reason: "QUOTA_EXCEEDED",
+          operation: "show-episodes",
+          retryAfterSeconds: null,
+        },
+        {
+          source: "Seus episódios",
+          kind: "PODCAST",
+          spotifyType: "SAVED_EPISODES",
+          state: "NOT_ATTEMPTED",
+          pagesRead: 0,
+          partialRead: false,
+          errorKind: null,
+          status: null,
+          reason: null,
+          operation: null,
+          retryAfterSeconds: null,
+        },
+      ],
+    },
+  });
+
+  assert.ok(view);
+  assert.equal(view.countsExact, true);
+  assert.equal(view.confirmedSourceCount, 1);
+  assert.equal(view.unavailableSourceCount, 1);
+  assert.equal(view.notAttemptedSourceCount, 1);
+  assert.equal(view.sourceDiagnostics.length, 3);
+  assert.deepEqual(
+    view.sourceDiagnostics.map((source) => [source.source, source.state]),
+    [
+      ["Escutar", "CONFIRMED"],
+      ["Realidades Paralelas do Guaxinim", "UNAVAILABLE"],
+      ["Seus episódios", "NOT_ATTEMPTED"],
+    ],
+  );
+  assert.match(view.sourceDiagnostics[0]?.detail ?? "", /consultada sem falhas/i);
+  assert.match(view.sourceDiagnostics[1]?.detail ?? "", /lida parcialmente/i);
+  assert.match(view.sourceDiagnostics[1]?.detail ?? "", /quota disponível foi atingida/i);
+  assert.match(view.sourceDiagnostics[2]?.detail ?? "", /execução foi interrompida/i);
+  assert.deepEqual(view.unavailableSources, ["Realidades Paralelas do Guaxinim"]);
 });
 
 test("explicit not-attempted count is preferred when the collector records an exact value", () => {
