@@ -17,11 +17,14 @@ export const metadata: Metadata = {
     "músicas",
     "podcasts",
   ],
+  icons: {
+    icon: "/sonoriza-mark.webp",
+  },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#6724d9",
-  colorScheme: "light",
+  themeColor: "#0B021F",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({

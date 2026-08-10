@@ -14,7 +14,6 @@ type ConfigCardProps = {
   title: string;
   description: string;
   action: string;
-  accent?: boolean;
 };
 
 function ConfigCard({
@@ -25,17 +24,16 @@ function ConfigCard({
   title,
   description,
   action,
-  accent = false,
 }: ConfigCardProps) {
   return (
     <Link href={href} className="product-panel group p-6 transition hover:-translate-y-0.5 hover:border-brand-400/45">
       <div className="flex items-start justify-between gap-4">
-        <span className={accent ? "product-icon-tile-accent" : "product-icon-tile"}>
+        <span className="product-icon-tile">
           <UiIcon name={icon} size={22} />
         </span>
         <span className="product-badge">{badge}</span>
       </div>
-      <p className={`mt-5 text-xs font-black uppercase tracking-[0.15em] ${accent ? "text-accent-400" : "text-brand-400"}`}>
+      <p className="mt-5 text-xs font-black uppercase tracking-[0.15em] text-brand-400">
         {code}
       </p>
       <h2 className="mt-1 text-xl font-black text-ink-inverse">{title}</h2>
@@ -138,7 +136,6 @@ export default async function ConfigurationHubPage() {
             title="Fontes do Spotify"
             description="Escolha playlists de músicas e programas de podcast que alimentam o motor."
             action="Configurar fontes"
-            accent
           />
 
           <ConfigCard
@@ -169,7 +166,6 @@ export default async function ConfigurationHubPage() {
             title="Alimentação da inbox"
             description="Traga novidades, músicas curtidas e álbuns para a Escutar sem depender de IFTTT."
             action="Configurar alimentação"
-            accent
           />
 
           <ConfigCard
@@ -190,7 +186,6 @@ export default async function ConfigurationHubPage() {
             title="Revisar e testar"
             description="Confira conexões e regras, corrija pendências e simule antes da geração real."
             action="Revisar configuração"
-            accent
           />
         </div>
       </div>

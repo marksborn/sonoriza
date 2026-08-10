@@ -372,7 +372,11 @@ export default async function DashboardPage() {
                       className={`flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-black ${
                         run.status === "SUCCESS"
                           ? "bg-success-soft text-success"
-                          : "bg-warning-soft text-warning"
+                          : run.status === "FAILED"
+                            ? "bg-danger-soft text-danger"
+                            : run.status === "PARTIAL"
+                              ? "bg-warning-soft text-warning"
+                              : "bg-info-soft text-info"
                       }`}
                     >
                       {run.simulation ? "S" : "G"}
@@ -384,9 +388,33 @@ export default async function DashboardPage() {
                       <p className="text-sm text-muted-inverse">{formatRunDate(run.startedAt)}</p>
                     </div>
                   </div>
-                  <span className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${run.status === "SUCCESS" ? "status-success" : "status-warning"}`}>
-                    {run.status === "SUCCESS" ? <UiIcon name="check" size={14} /> : <UiIcon name="warning" size={14} />}
-                    {run.status}
+                  <span
+                    className={`inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold ${
+                      run.status === "SUCCESS"
+                        ? "status-success"
+                        : run.status === "FAILED"
+                          ? "status-danger"
+                          : run.status === "PARTIAL"
+                            ? "status-warning"
+                            : "status-info"
+                    }`}
+                  >
+                    {run.status === "SUCCESS" ? (
+                      <UiIcon name="check" size={14} />
+                    ) : run.status === "PENDING" || run.status === "RUNNING" ? (
+                      <UiIcon name="history" size={14} />
+                    ) : (
+                      <UiIcon name="warning" size={14} />
+                    )}
+                    {run.status === "SUCCESS"
+                      ? "SUCESSO"
+                      : run.status === "FAILED"
+                        ? "FALHA"
+                        : run.status === "PARTIAL"
+                          ? "PARCIAL"
+                          : run.status === "RUNNING"
+                            ? "EM EXECUÇÃO"
+                            : "PENDENTE"}
                   </span>
                 </li>
               ))}

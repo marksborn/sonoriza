@@ -1,6 +1,6 @@
 import Image from "next/image";
 
-const SONORIZA_MARK = "/sonoriza-mark.svg";
+const SONORIZA_MARK = "/sonoriza-mark.webp";
 
 type BrandLogoProps = {
   compact?: boolean;
