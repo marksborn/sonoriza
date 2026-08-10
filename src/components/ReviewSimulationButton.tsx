@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { UiIcon } from "@/components/UiIcon";
@@ -37,10 +37,16 @@ export function ReviewSimulationButton({
   runningLabel = "Simulando…",
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const displayedRunId = searchParams.get("run");
   const [running, setRunning] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [backoff, setBackoff] = useState<SpotifyBackoff | null>(null);
+
+  useEffect(() => {
+    setRunning(false);
+  }, [displayedRunId]);
 
   useEffect(() => {
     let active = true;
