@@ -6,7 +6,7 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
   OAuthAccountNotLinked:
     "Esta conta já está vinculada a outro usuário ou ainda não foi conectada ao seu usuário atual. Entre primeiro com um provedor já vinculado e conecte o outro pelo painel.",
   AccessDenied:
-    "O acesso foi negado pelo provedor. Revise a autorização e tente novamente.",
+    "O Sonoriza está com acesso restrito nesta fase. Este e-mail não está na lista de usuários autorizados. Peça ao administrador para liberar o seu e-mail antes de tentar novamente.",
   OAuthCallbackError:
     "Não foi possível concluir a autenticação com o provedor. Tente novamente.",
   Configuration:
