@@ -1,0 +1,45 @@
+name: AUTH-01 allowlist gate
+
+on:
+  push:
+    branches:
+      - agent/auth-01-allowlist
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_test?schema=public
+      AUTH_SECRET: test-auth-secret-for-build-only
+      AUTH_URL: http://localhost:3000
+      AUTH_GOOGLE_ID: test-google-id
+      AUTH_GOOGLE_SECRET: test-google-secret
+      AUTH_SPOTIFY_ID: test-spotify-id
+      AUTH_SPOTIFY_SECRET: test-spotify-secret
+      SONORIZA_ALLOWED_EMAILS: owner@example.com
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npm run db:deploy
+      - run: npm run db:generate
+      - run: npm run test:auth
+      - run: npm run typecheck
+      - run: npm run build
