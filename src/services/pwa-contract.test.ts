@@ -9,6 +9,17 @@ const root = process.cwd();
 const read = (relativePath: string) =>
   readFileSync(path.join(root, relativePath), "utf8");
 
+function readPngDimensions(relativePath: string) {
+  const data = readFileSync(path.join(root, relativePath));
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+  assert.deepEqual(data.subarray(0, 8), signature);
+  return {
+    width: data.readUInt32BE(16),
+    height: data.readUInt32BE(20),
+  };
+}
+
 test("PWA-01 manifest exposes the installable Sonoriza contract", () => {
   const value = manifest();
 
@@ -23,7 +34,7 @@ test("PWA-01 manifest exposes the installable Sonoriza contract", () => {
   assert.ok(
     icons.some(
       (icon) =>
-        icon.src === "/pwa-icon/192" &&
+        icon.src === "/pwa-icon-192.png" &&
         icon.sizes === "192x192" &&
         icon.type === "image/png",
     ),
@@ -31,14 +42,15 @@ test("PWA-01 manifest exposes the installable Sonoriza contract", () => {
   assert.ok(
     icons.some(
       (icon) =>
-        icon.src === "/pwa-icon/512" &&
+        icon.src === "/pwa-icon-512.png" &&
         icon.sizes === "512x512" &&
         icon.type === "image/png",
     ),
   );
   assert.ok(
     icons.some(
-      (icon) => icon.src === "/pwa-icon/512" && icon.purpose === "maskable",
+      (icon) =>
+        icon.src === "/pwa-icon-512.png" && icon.purpose === "maskable",
     ),
   );
 });
@@ -61,12 +73,19 @@ test("PWA-01 registers the worker without using the HTTP cache", () => {
   assert.match(source, /updateViaCache:\s*"none"/);
 });
 
-test("PWA-01 icon route derives raster icons from the current Sonoriza mark", () => {
-  const source = read("src/app/pwa-icon/[size]/route.tsx");
-
-  assert.match(source, /sonoriza-mark\.webp/);
-  assert.match(source, /new Set\(\[180, 192, 512\]\)/);
-  assert.match(source, /background:\s*"#0B021F"/);
+test("PWA-01 ships valid static raster install icons", () => {
+  assert.deepEqual(readPngDimensions("public/pwa-icon-180.png"), {
+    width: 180,
+    height: 180,
+  });
+  assert.deepEqual(readPngDimensions("public/pwa-icon-192.png"), {
+    width: 192,
+    height: 192,
+  });
+  assert.deepEqual(readPngDimensions("public/pwa-icon-512.png"), {
+    width: 512,
+    height: 512,
+  });
 });
 
 test("PWA-01 sends safe update headers for the service worker", () => {
