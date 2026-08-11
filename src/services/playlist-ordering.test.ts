@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   applyMusicOrder,
   createMusicOrderSeed,
-  readMusicOrderSeedsFromSummary,
+  readMusicOrderEvidenceFromSummary,
   type OrderablePlaylistItem,
 } from "./playlist-ordering";
 
@@ -74,23 +74,29 @@ test("execution seed is stable for one run/target and changes with the run", () 
   );
 });
 
-test("reads only valid RANDOMIZED target seeds from persisted run summary", () => {
+test("reads only complete RANDOMIZED seed/hash evidence from persisted run summary", () => {
   assert.deepEqual(
-    readMusicOrderSeedsFromSummary({
+    readMusicOrderEvidenceFromSummary({
       targets: [
         {
           targetPlaylistId: "car",
           musicOrderMode: "RANDOMIZED",
           musicOrderSeed: "seed-car",
+          musicOrderHash: "hash-car",
         },
         {
           targetPlaylistId: "work",
           musicOrderMode: "STANDARD",
           musicOrderSeed: "ignored",
+          musicOrderHash: "ignored",
         },
-        { targetPlaylistId: "bad", musicOrderMode: "RANDOMIZED" },
+        {
+          targetPlaylistId: "missing-hash",
+          musicOrderMode: "RANDOMIZED",
+          musicOrderSeed: "seed-only",
+        },
       ],
     }),
-    { car: "seed-car" },
+    { car: { seed: "seed-car", orderHash: "hash-car" } },
   );
 });

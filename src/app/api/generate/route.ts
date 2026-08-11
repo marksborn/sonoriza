@@ -8,7 +8,7 @@ import {
   assessConfiguration,
   getFirstRunGate,
 } from "@/services/configuration-readiness";
-import { findReusableSimulationMusicOrderSeeds } from "@/services/music-order-simulation";
+import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
 import {
   getActiveSpotifyBackoff,
   spotifyBackoffApiPayload,
@@ -103,9 +103,9 @@ export async function POST(request: Request) {
     }
   }
 
-  const musicOrderSeeds = simulate
+  const musicOrderSimulationEvidence = simulate
     ? undefined
-    : await findReusableSimulationMusicOrderSeeds(
+    : await findReusableSimulationMusicOrderEvidence(
         session.user.id,
         assessment.fingerprint,
       );
@@ -114,7 +114,7 @@ export async function POST(request: Request) {
     userId: session.user.id,
     trigger: simulate ? "SIMULATION" : "MANUAL",
     simulate,
-    musicOrderSeeds,
+    musicOrderSimulationEvidence,
   });
 
   const run = await prisma.generationRun.findFirst({

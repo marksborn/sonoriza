@@ -103,12 +103,19 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
   };
 }
 
-export function readMusicOrderSeedsFromSummary(summary: unknown): Record<string, string> {
+export type ReusableMusicOrderEvidence = {
+  seed: string;
+  orderHash: string;
+};
+
+export function readMusicOrderEvidenceFromSummary(
+  summary: unknown,
+): Record<string, ReusableMusicOrderEvidence> {
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) return {};
   const targets = (summary as Record<string, unknown>).targets;
   if (!Array.isArray(targets)) return {};
 
-  const result: Record<string, string> = {};
+  const result: Record<string, ReusableMusicOrderEvidence> = {};
   for (const entry of targets) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const target = entry as Record<string, unknown>;
@@ -116,9 +123,14 @@ export function readMusicOrderSeedsFromSummary(summary: unknown): Record<string,
       target.musicOrderMode === "RANDOMIZED" &&
       typeof target.targetPlaylistId === "string" &&
       typeof target.musicOrderSeed === "string" &&
-      target.musicOrderSeed.length > 0
+      target.musicOrderSeed.length > 0 &&
+      typeof target.musicOrderHash === "string" &&
+      target.musicOrderHash.length > 0
     ) {
-      result[target.targetPlaylistId] = target.musicOrderSeed;
+      result[target.targetPlaylistId] = {
+        seed: target.musicOrderSeed,
+        orderHash: target.musicOrderHash,
+      };
     }
   }
   return result;

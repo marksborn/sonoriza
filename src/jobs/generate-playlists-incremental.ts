@@ -13,6 +13,7 @@ import {
   applyMusicOrder,
   createMusicOrderSeed,
   type MusicOrderEvidence,
+  type ReusableMusicOrderEvidence,
 } from "@/services/playlist-ordering";
 import {
   buildSourceCollectionDiagnosticSummary,
@@ -43,8 +44,8 @@ export interface GeneratePlaylistsOptions {
   simulate?: boolean;
   /** Day used to resolve calendar-based durations. Defaults to now. */
   date?: Date;
-  /** ORDER-01: one-shot seeds reused from a current approved simulation. */
-  musicOrderSeeds?: Record<string, string>;
+  /** ORDER-01: one-shot seed/hash proof from a current approved simulation. */
+  musicOrderSimulationEvidence?: Record<string, ReusableMusicOrderEvidence>;
 }
 
 export interface GeneratePlaylistsResult {
@@ -300,24 +301,52 @@ export async function generatePlaylists(
 
     const targetByPlanId = new Map(targets.map((target) => [target.id, target]));
     const musicOrderEvidenceByTargetId = new Map<string, MusicOrderEvidence>();
+    const musicOrderPreviewViolations: Array<{
+      targetPlaylistId: string;
+      targetName: string;
+      expectedOrderHash: string;
+      actualOrderHash: string;
+    }> = [];
 
     for (const planned of plan.targets) {
       const target = targetByPlanId.get(planned.targetPlaylistId);
       if (!target) continue;
 
-      const reusedSeed = opts.musicOrderSeeds?.[target.id] ?? null;
+      const reusedEvidence = opts.musicOrderSimulationEvidence?.[target.id] ?? null;
       const seed =
         target.musicOrderMode === "RANDOMIZED"
-          ? reusedSeed ?? createMusicOrderSeed(run.id, target.id)
+          ? reusedEvidence?.seed ?? createMusicOrderSeed(run.id, target.id)
           : null;
       const ordered = applyMusicOrder(
         planned.result.items,
         target.musicOrderMode,
         seed,
-        reusedSeed ? "SIMULATION" : seed ? "RUN" : null,
+        reusedEvidence ? "SIMULATION" : seed ? "RUN" : null,
       );
       planned.result.items = ordered.items;
       musicOrderEvidenceByTargetId.set(target.id, ordered.evidence);
+
+      if (
+        !simulate &&
+        reusedEvidence &&
+        ordered.evidence.orderHash !== reusedEvidence.orderHash
+      ) {
+        musicOrderPreviewViolations.push({
+          targetPlaylistId: target.id,
+          targetName: target.name,
+          expectedOrderHash: reusedEvidence.orderHash,
+          actualOrderHash: ordered.evidence.orderHash,
+        });
+      }
+    }
+
+    if (musicOrderPreviewViolations.length > 0) {
+      summary.musicOrderPreviewViolations = musicOrderPreviewViolations;
+      const error =
+        "A geração foi bloqueada antes de alterar o Spotify porque a ordem final mudou desde a simulação aprovada. Simule novamente antes de publicar.";
+      log({ level: "ERROR", message: error, data: musicOrderPreviewViolations });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
     }
 
     const sequenceViolations = plan.targets.flatMap((planned) => {

@@ -236,10 +236,20 @@ test("ORDER-01 real entry points resolve reusable simulation seeds before genera
   const scheduled = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
 
   for (const source of [manual, scheduled]) {
-    const seedLookup = source.indexOf("findReusableSimulationMusicOrderSeeds");
+    const seedLookup = source.indexOf("findReusableSimulationMusicOrderEvidence");
     const generatorCall = source.indexOf("await generatePlaylists({");
     assert.ok(seedLookup >= 0);
     assert.ok(generatorCall > seedLookup);
-    assert.match(source, /musicOrderSeeds/);
+    assert.match(source, /musicOrderSimulationEvidence/);
   }
+});
+
+
+test("ORDER-01 blocks a real write when the approved preview hash no longer matches", () => {
+  const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const mismatchGate = source.indexOf("musicOrderPreviewViolations.length > 0");
+  const writerCreation = source.indexOf("if (!simulate) writer = await SpotifyClient.forUser(userId)");
+  assert.ok(mismatchGate >= 0);
+  assert.ok(writerCreation > mismatchGate);
+  assert.match(source, /Simule novamente antes de publicar/);
 });
