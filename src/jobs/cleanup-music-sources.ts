@@ -4,6 +4,7 @@ import {
   SpotifySourceType,
 } from "@prisma/client";
 
+import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
 import { executeAutomaticMusicSourceCleanup } from "@/services/spotify/source-cleanup";
 
@@ -19,24 +20,28 @@ export type MusicSourceCleanupJobResult = {
  * Periodic MUSIC-02 maintenance. Sources are eligible only after a first
  * manual cleanup has completed successfully and automation was explicitly
  * enabled. Existing/migrated sources therefore cannot be mutated by this job.
+ * AUTH-01 additionally excludes removed users before any Spotify mutation.
  */
 export async function runMusicSourceCleanupJob(): Promise<MusicSourceCleanupJobResult[]> {
-  const sources = await prisma.sourcePlaylist.findMany({
-    where: {
-      enabled: true,
-      kind: SourceKind.MUSIC,
-      spotifyType: SpotifySourceType.PLAYLIST,
-      musicRetentionMode: MusicSourceRetentionMode.REMOVE_AFTER_PLAYED,
-      musicCleanupAutomationEnabled: true,
-      musicCleanupFirstCompletedAt: { not: null },
-    },
-    select: {
-      id: true,
-      userId: true,
-      name: true,
-    },
-    orderBy: [{ userId: "asc" }, { name: "asc" }],
-  });
+  const sources = (
+    await prisma.sourcePlaylist.findMany({
+      where: {
+        enabled: true,
+        kind: SourceKind.MUSIC,
+        spotifyType: SpotifySourceType.PLAYLIST,
+        musicRetentionMode: MusicSourceRetentionMode.REMOVE_AFTER_PLAYED,
+        musicCleanupAutomationEnabled: true,
+        musicCleanupFirstCompletedAt: { not: null },
+      },
+      select: {
+        id: true,
+        userId: true,
+        name: true,
+        user: { select: { email: true } },
+      },
+      orderBy: [{ userId: "asc" }, { name: "asc" }],
+    })
+  ).filter((source) => isEmailAllowed(source.user.email));
 
   const results: MusicSourceCleanupJobResult[] = [];
 
