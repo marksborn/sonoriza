@@ -3,6 +3,10 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import Google from "next-auth/providers/google";
 import Spotify from "next-auth/providers/spotify";
 
+import {
+  isEmailAllowed,
+  isOAuthIdentityAllowed,
+} from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
 
 // Scopes the engine needs. Google: read the calendar to compute trip durations.
@@ -27,7 +31,7 @@ const SPOTIFY_SCOPES = [
   "playlist-modify-public",
 ].join(" ");
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+const nextAuth = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "database" },
   providers: [
@@ -58,7 +62,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    async signIn({ user, account }) {
+    async signIn({ user, account, profile }) {
+      // AUTH-01: reject before refreshing/storing any provider token. The raw
+      // provider profile must expose an allowed email and the Auth.js user must
+      // also remain allowed. Requiring both blocks a removed legacy session
+      // from being used as an account-linking bridge.
+      if (!isOAuthIdentityAllowed(user.email, profile)) return false;
+
       if (
         account &&
         user.id &&
@@ -96,3 +106,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     error: "/auth/error",
   },
 });
+
+export const { handlers, signIn, signOut } = nextAuth;
+
+/**
+ * All application code imports this wrapper instead of Auth.js' raw `auth`.
+ * Therefore an existing database session stops authorizing pages, APIs and
+ * server actions as soon as its email is removed from the runtime allowlist.
+ */
+export async function auth() {
+  const session = await nextAuth.auth();
+  if (!session?.user) return session;
+  return isEmailAllowed(session.user.email) ? session : null;
+}
