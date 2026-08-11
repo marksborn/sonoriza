@@ -253,3 +253,23 @@ test("ORDER-01 blocks a real write when the approved preview hash no longer matc
   assert.ok(writerCreation > mismatchGate);
   assert.match(source, /Simule novamente antes de publicar/);
 });
+
+
+test("MUSIC-04 diversity limits participate in the configuration fingerprint", () => {
+  const source = readFileSync("src/services/configuration-readiness.ts", "utf8");
+  const fingerprintStart = source.indexOf("const fingerprintPayload");
+  const fingerprintEnd = source.indexOf("return {", fingerprintStart);
+  const fingerprintSource = source.slice(fingerprintStart, fingerprintEnd);
+  assert.match(fingerprintSource, /maxTracksPerArtist/);
+  assert.match(fingerprintSource, /maxTracksPerAlbum/);
+});
+
+test("MUSIC-04 revalidates live diversity configuration and selected items before Spotify writer creation", () => {
+  const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const liveGate = source.indexOf("musicDiversityConfigurationChanges.length > 0");
+  const planGate = source.indexOf("musicDiversityViolations.length > 0");
+  const writerCreation = source.indexOf("if (!simulate) writer = await SpotifyClient.forUser(userId)");
+  assert.ok(liveGate >= 0);
+  assert.ok(planGate > liveGate);
+  assert.ok(writerCreation > planGate);
+});

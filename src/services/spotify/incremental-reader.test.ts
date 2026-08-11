@@ -313,7 +313,11 @@ test("music pages use the authenticated market and exclude explicitly unavailabl
     assert.equal(batch.unavailableMusicSkippedCount, 2);
     assert.equal(urls.filter((url) => url.includes("/items?")).length, 1);
     const itemsUrl = urls.find((url) => url.includes("/items?")) ?? "";
-    assert.match(itemsUrl, /market=from_token/); assert.match(itemsUrl, /is_playable/); assert.match(itemsUrl, /restrictions\(reason\)/);
+    assert.match(itemsUrl, /market=from_token/);
+    assert.match(itemsUrl, /is_playable/);
+    assert.match(itemsUrl, /restrictions\(reason\)/);
+    assert.match(itemsUrl, /artists\(id,name\)/);
+    assert.match(itemsUrl, /album\(id,name\)/);
   } finally { globalThis.fetch = originalFetch; }
 });
 

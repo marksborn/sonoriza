@@ -21,6 +21,12 @@ export interface Candidate {
   subtitle?: string;
   /** Canonical Spotify track id for MUSIC candidates (linked_from id when present). */
   spotifyTrackId?: string;
+  /** Spotify id of artists[0]; v1 diversity is intentionally based on the primary artist only. */
+  primaryArtistId?: string;
+  primaryArtistName?: string;
+  /** Canonical Spotify album id used by MUSIC-04. */
+  albumId?: string;
+  albumName?: string;
   programId?: string;
   durationMs: number;
   originalDurationMs?: number;
@@ -42,6 +48,10 @@ export interface PlaylistRules {
   sequencePattern: ContentType[];
   maxEpisodesPerProgram: number;
   maxPodcastDurationMs?: number | null;
+  /** MUSIC-04: null/undefined disables the per-primary-artist limit. */
+  maxTracksPerArtist?: number | null;
+  /** MUSIC-04: null/undefined disables the per-album limit. */
+  maxTracksPerAlbum?: number | null;
 }
 
 export interface PlannedItem extends Candidate {
@@ -73,6 +83,12 @@ export interface PlanResult {
     poolExhausted: boolean;
     podcastIdentityMissingCount: number;
     podcastDurationExceededCount: number;
+    distinctArtistCount: number;
+    distinctAlbumCount: number;
+    artistLimitRejectedCount: number;
+    albumLimitRejectedCount: number;
+    missingArtistIdentityRejectedCount: number;
+    missingAlbumIdentityRejectedCount: number;
     sequenceSlotsRequested: number;
     sequenceSlotsFilled: number;
     sequenceUnfilledSlots: number;

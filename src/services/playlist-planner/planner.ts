@@ -19,6 +19,19 @@ export interface PlanPlaylistInput {
 
 const MIX_QUALITY_TOLERANCE_POINTS = 10;
 
+type MusicDiversityState = {
+  maxTracksPerArtist: number | null;
+  maxTracksPerAlbum: number | null;
+  artistCounts: Map<string, number>;
+  albumCounts: Map<string, number>;
+  distinctArtistIds: Set<string>;
+  distinctAlbumIds: Set<string>;
+  artistLimitRejectedUris: Set<string>;
+  albumLimitRejectedUris: Set<string>;
+  missingArtistIdentityRejectedUris: Set<string>;
+  missingAlbumIdentityRejectedUris: Set<string>;
+};
+
 export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): PlanResult {
   const target = Math.max(0, rules.targetDurationMs);
   const podcastPercent = clamp(rules.podcastPercent, 0, 100);
@@ -58,6 +71,18 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
   const used = new Set<string>(reserved ?? []);
   const newlyUsed = new Set<string>();
   const programCounts = new Map<string, number>();
+  const musicDiversity: MusicDiversityState = {
+    maxTracksPerArtist: normalizeDiversityLimit(rules.maxTracksPerArtist),
+    maxTracksPerAlbum: normalizeDiversityLimit(rules.maxTracksPerAlbum),
+    artistCounts: new Map(),
+    albumCounts: new Map(),
+    distinctArtistIds: new Set(),
+    distinctAlbumIds: new Set(),
+    artistLimitRejectedUris: new Set(),
+    albumLimitRejectedUris: new Set(),
+    missingArtistIdentityRejectedUris: new Set(),
+    missingAlbumIdentityRejectedUris: new Set(),
+  };
   const items: PlannedItem[] = [];
   let musicDurationMs = 0;
   let podcastDurationMs = 0;
@@ -67,12 +92,30 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
     items.push({ ...candidate, position: items.length });
     used.add(candidate.uri);
     newlyUsed.add(candidate.uri);
+
     if (candidate.type === "PODCAST") {
       podcastDurationMs += Math.max(0, candidate.durationMs);
       const programId = candidate.programId!;
       programCounts.set(programId, (programCounts.get(programId) ?? 0) + 1);
-    } else {
-      musicDurationMs += Math.max(0, candidate.durationMs);
+      return;
+    }
+
+    musicDurationMs += Math.max(0, candidate.durationMs);
+    const artistId = normalizedIdentity(candidate.primaryArtistId);
+    const albumId = normalizedIdentity(candidate.albumId);
+    if (artistId) {
+      musicDiversity.artistCounts.set(
+        artistId,
+        (musicDiversity.artistCounts.get(artistId) ?? 0) + 1,
+      );
+      musicDiversity.distinctArtistIds.add(artistId);
+    }
+    if (albumId) {
+      musicDiversity.albumCounts.set(
+        albumId,
+        (musicDiversity.albumCounts.get(albumId) ?? 0) + 1,
+      );
+      musicDiversity.distinctAlbumIds.add(albumId);
     }
   };
 
@@ -104,6 +147,7 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
           programCounts,
           rules.maxEpisodesPerProgram,
           remainingMs,
+          musicDiversity,
         );
 
         if (!candidate) {
@@ -114,6 +158,7 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
               programCounts,
               rules.maxEpisodesPerProgram,
               Number.POSITIVE_INFINITY,
+              musicDiversity,
             ),
           );
           sequenceUnfilledSlots = 1;
@@ -140,6 +185,7 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
         programCounts,
         rules.maxEpisodesPerProgram,
         Number.POSITIVE_INFINITY,
+        musicDiversity,
       );
       const podcast = pickCandidate(
         poolByType.PODCAST,
@@ -147,6 +193,7 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
         programCounts,
         rules.maxEpisodesPerProgram,
         Number.POSITIVE_INFINITY,
+        musicDiversity,
       );
       if (!music && !podcast) break;
 
@@ -211,6 +258,14 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
       poolExhausted,
       podcastIdentityMissingCount,
       podcastDurationExceededCount,
+      distinctArtistCount: musicDiversity.distinctArtistIds.size,
+      distinctAlbumCount: musicDiversity.distinctAlbumIds.size,
+      artistLimitRejectedCount: musicDiversity.artistLimitRejectedUris.size,
+      albumLimitRejectedCount: musicDiversity.albumLimitRejectedUris.size,
+      missingArtistIdentityRejectedCount:
+        musicDiversity.missingArtistIdentityRejectedUris.size,
+      missingAlbumIdentityRejectedCount:
+        musicDiversity.missingAlbumIdentityRejectedUris.size,
       sequenceSlotsRequested,
       sequenceSlotsFilled,
       sequenceUnfilledSlots,
@@ -269,18 +324,66 @@ function pickCandidate(
   programCounts: Map<string, number>,
   maxEpisodesPerProgram: number,
   maxDurationMs: number,
+  musicDiversity: MusicDiversityState,
 ): Candidate | null {
   for (const candidate of pool) {
     if (used.has(candidate.uri)) continue;
     if (candidate.durationMs <= 0 || candidate.durationMs > maxDurationMs) continue;
+
     if (candidate.type === "PODCAST") {
       if (!candidate.programId) continue;
       const count = programCounts.get(candidate.programId) ?? 0;
       if (count >= maxEpisodesPerProgram) continue;
+      return candidate;
     }
+
+    if (!musicCandidatePassesDiversity(candidate, musicDiversity)) continue;
     return candidate;
   }
   return null;
+}
+
+function musicCandidatePassesDiversity(
+  candidate: Candidate,
+  state: MusicDiversityState,
+): boolean {
+  let valid = true;
+
+  if (state.maxTracksPerArtist !== null) {
+    const artistId = normalizedIdentity(candidate.primaryArtistId);
+    if (!artistId) {
+      state.missingArtistIdentityRejectedUris.add(candidate.uri);
+      valid = false;
+    } else if (
+      (state.artistCounts.get(artistId) ?? 0) >= state.maxTracksPerArtist
+    ) {
+      state.artistLimitRejectedUris.add(candidate.uri);
+      valid = false;
+    }
+  }
+
+  if (state.maxTracksPerAlbum !== null) {
+    const albumId = normalizedIdentity(candidate.albumId);
+    if (!albumId) {
+      state.missingAlbumIdentityRejectedUris.add(candidate.uri);
+      valid = false;
+    } else if ((state.albumCounts.get(albumId) ?? 0) >= state.maxTracksPerAlbum) {
+      state.albumLimitRejectedUris.add(candidate.uri);
+      valid = false;
+    }
+  }
+
+  return valid;
+}
+
+function normalizeDiversityLimit(value: number | null | undefined): number | null {
+  return Number.isInteger(value) && Number(value) >= 1 ? Number(value) : null;
+}
+
+function normalizedIdentity(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized ? normalized : null;
 }
 
 function clamp(value: number, min: number, max: number): number {

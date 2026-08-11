@@ -33,6 +33,8 @@ export type TargetPlaylistFormInitial = {
   podcastEpisodeMaxDurationMinutes: number;
   sequencePattern: ContentType[];
   maxEpisodesPerProgram: number;
+  maxTracksPerArtist: number | null;
+  maxTracksPerAlbum: number | null;
   destinationValue: string;
   currentSpotifyName?: string;
   destinationUnavailable?: boolean;
@@ -88,6 +90,12 @@ export function TargetPlaylistForm({
   );
   const [musicOrderMode, setMusicOrderMode] = useState<MusicOrderMode>(
     initial.musicOrderMode,
+  );
+  const [artistDiversityEnabled, setArtistDiversityEnabled] = useState(
+    initial.maxTracksPerArtist !== null,
+  );
+  const [albumDiversityEnabled, setAlbumDiversityEnabled] = useState(
+    initial.maxTracksPerAlbum !== null,
   );
   const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);
   const [podcastEpisodeMaxDurationMode, setPodcastEpisodeMaxDurationMode] =
@@ -427,6 +435,96 @@ export function TargetPlaylistForm({
             </span>
           </label>
         </div>
+      </fieldset>
+
+
+      <fieldset className={sectionClass}>
+        <legend className="px-1 text-sm font-black text-ink-inverse">
+          Diversidade das músicas
+        </legend>
+        <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
+          Limite quantas músicas do mesmo artista principal ou do mesmo álbum podem entrar neste destino. As regras são combinadas quando ambas estão ativas.
+        </p>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className={optionClass(artistDiversityEnabled)}>
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                name="limitTracksPerArtist"
+                checked={artistDiversityEnabled}
+                onChange={(event) => setArtistDiversityEnabled(event.target.checked)}
+                className="mt-1 h-4 w-4 accent-accent"
+              />
+              <span>
+                <span className="block font-black text-ink-inverse">
+                  Limitar músicas do mesmo artista
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                  Considera o artista principal informado pelo Spotify.
+                </span>
+              </span>
+            </label>
+            <label className={`mt-3 block ${fieldLabelClass}`}>
+              Máximo por artista
+              <input
+                className={inputClass}
+                type="number"
+                name="maxTracksPerArtist"
+                min={1}
+                max={50}
+                step={1}
+                required={artistDiversityEnabled}
+                disabled={!artistDiversityEnabled}
+                defaultValue={initial.maxTracksPerArtist ?? 1}
+              />
+            </label>
+          </div>
+
+          <div className={optionClass(albumDiversityEnabled)}>
+            <label className="flex cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                name="limitTracksPerAlbum"
+                checked={albumDiversityEnabled}
+                onChange={(event) => setAlbumDiversityEnabled(event.target.checked)}
+                className="mt-1 h-4 w-4 accent-accent"
+              />
+              <span>
+                <span className="block font-black text-ink-inverse">
+                  Limitar músicas do mesmo álbum
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                  Usa o ID do álbum no Spotify, não apenas o nome.
+                </span>
+              </span>
+            </label>
+            <label className={`mt-3 block ${fieldLabelClass}`}>
+              Máximo por álbum
+              <input
+                className={inputClass}
+                type="number"
+                name="maxTracksPerAlbum"
+                min={1}
+                max={50}
+                step={1}
+                required={albumDiversityEnabled}
+                disabled={!albumDiversityEnabled}
+                defaultValue={initial.maxTracksPerAlbum ?? 1}
+              />
+            </label>
+          </div>
+        </div>
+
+        {(artistDiversityEnabled || albumDiversityEnabled) && (
+          <p className="status-info mt-4 rounded-xl border p-3 text-xs font-semibold leading-5">
+            {artistDiversityEnabled && albumDiversityEnabled
+              ? "As duas regras precisam ser atendidas ao mesmo tempo. Ex.: 2 por artista + 1 por álbum permite duas músicas do mesmo artista somente se vierem de álbuns diferentes."
+              : artistDiversityEnabled
+                ? "O Sonoriza nunca ultrapassa o limite por artista para completar duração ou sequência."
+                : "O Sonoriza nunca ultrapassa o limite por álbum para completar duração ou sequência."}
+          </p>
+        )}
       </fieldset>
 
       {compositionMode === "PROPORTION" && (

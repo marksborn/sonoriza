@@ -244,7 +244,7 @@ class MusicIngestionSpotifyApi {
     const tracks: MusicIngestionTrack[] = [];
     let unavailableCount = 0;
     let next: string | null =
-      `/playlists/${encodeURIComponent(playlistId)}/items?market=from_token&limit=50&fields=next,items(item(id,uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),linked_from(id),artists(name)))`;
+      `/playlists/${encodeURIComponent(playlistId)}/items?market=from_token&limit=50&fields=next,items(item(id,uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),linked_from(id),artists(id,name),album(id,name,album_type)))`;
 
     while (next) {
       const page: SpotifyPage<{ item: SpotifyTrackResponse | null }> = await this.request(
@@ -320,7 +320,7 @@ class MusicIngestionSpotifyApi {
     tracks: MusicIngestionTrack[];
     unavailableCount: number;
   }> {
-    const album = await this.request<{ id: string; album_type?: string }>(
+    const album = await this.request<{ id: string; name?: string; album_type?: string }>(
       `/albums/${encodeURIComponent(albumId)}?market=from_token`,
     );
     const tracks: MusicIngestionTrack[] = [];
@@ -332,6 +332,7 @@ class MusicIngestionSpotifyApi {
       for (const raw of page.items ?? []) {
         const converted = toMusicIngestionTrack(raw, {
           albumId: album.id,
+          albumName: album.name,
           albumType: album.album_type ?? undefined,
         });
         if (converted.unavailable) unavailableCount += 1;
@@ -1111,6 +1112,10 @@ async function maintainTargetCacheAfterAppend(
       type: "MUSIC" as const,
       title: track.title,
       ...(track.subtitle ? { subtitle: track.subtitle } : {}),
+      ...(track.primaryArtistId ? { primaryArtistId: track.primaryArtistId } : {}),
+      ...(track.primaryArtistName ? { primaryArtistName: track.primaryArtistName } : {}),
+      ...(track.albumId ? { albumId: track.albumId } : {}),
+      ...(track.albumName ? { albumName: track.albumName } : {}),
       durationMs: track.durationMs,
     })),
   );
@@ -1152,6 +1157,7 @@ function toSavedTrackEvent(item: SavedTrackItemResponse): SavedTrackEvent | null
   if (typeof item.added_at !== "string" || !item.added_at) return null;
   const converted = toMusicIngestionTrack(item.track, {
     albumId: item.track?.album?.id,
+    albumName: item.track?.album?.name,
     albumType: item.track?.album?.album_type,
   });
   if (!converted.track) return null;
@@ -1160,7 +1166,7 @@ function toSavedTrackEvent(item: SavedTrackItemResponse): SavedTrackEvent | null
 
 function toMusicIngestionTrack(
   raw: SpotifyTrackResponse | null | undefined,
-  albumOverride: { albumId?: string; albumType?: string } = {},
+  albumOverride: { albumId?: string; albumName?: string; albumType?: string } = {},
 ): { track: MusicIngestionTrack | null; unavailable: boolean } {
   if (!raw) return { track: null, unavailable: false };
   const result = readPlayableMusicCandidate(raw);
@@ -1174,7 +1180,10 @@ function toMusicIngestionTrack(
       title: result.candidate.title,
       subtitle: result.candidate.subtitle,
       durationMs: result.candidate.durationMs,
-      albumId: albumOverride.albumId ?? raw.album?.id,
+      primaryArtistId: result.candidate.primaryArtistId,
+      primaryArtistName: result.candidate.primaryArtistName,
+      albumId: albumOverride.albumId ?? result.candidate.albumId ?? raw.album?.id,
+      albumName: albumOverride.albumName ?? result.candidate.albumName ?? raw.album?.name,
       albumType: albumOverride.albumType ?? raw.album?.album_type,
       discNumber: raw.disc_number,
       trackNumber: raw.track_number,
@@ -1242,7 +1251,7 @@ interface SpotifyTrackResponse extends SpotifyMusicTrackLike {
   id?: string | null;
   disc_number?: number;
   track_number?: number;
-  album?: { id?: string; album_type?: string } | null;
+  album?: { id?: string; name?: string; album_type?: string } | null;
 }
 
 interface SavedTrackItemResponse {
