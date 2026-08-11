@@ -5,6 +5,8 @@ import type {
 
 import { prisma } from "@/lib/prisma";
 
+import { diagnosePodcastListeningPersistenceError } from "./podcast-listening-state-diagnostics";
+
 export type PodcastListeningObservation = {
   spotifyEpisodeId: string;
   spotifyUri: string;
@@ -105,66 +107,78 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
 
     const normalized = dedupeObservations(observations);
     const ids = normalized.map((entry) => entry.spotifyEpisodeId);
-    const merged = await prisma.$transaction(async (tx) => {
-      // Serialize podcast-state observations per user before reading the current
-      // canonical rows. Locking User also protects the first observation of an
-      // episode, where there is no EpisodeListeningState row yet to lock.
-      await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT "id"
-        FROM "User"
-        WHERE "id" = ${userId}
-        FOR UPDATE
-      `;
 
-      const existing = await tx.episodeListeningState.findMany({
-        where: {
-          userId,
-          spotifyEpisodeId: { in: ids },
-        },
-      });
-      const existingById = new Map(
-        existing.map((entry) => [entry.spotifyEpisodeId, entry]),
-      );
-      const resolved = normalized.map((observation) =>
-        mergePodcastListeningState(
-          existingById.get(observation.spotifyEpisodeId) ?? null,
-          observation,
-        ),
-      );
+    try {
+      const merged = await prisma.$transaction(async (tx) => {
+        // Serialize podcast-state observations per user before reading the current
+        // canonical rows. Locking User also protects the first observation of an
+        // episode, where there is no EpisodeListeningState row yet to lock.
+        await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id"
+          FROM "User"
+          WHERE "id" = ${userId}
+          FOR UPDATE
+        `;
 
-      for (const state of resolved) {
-        await tx.episodeListeningState.upsert({
+        const existing = await tx.episodeListeningState.findMany({
           where: {
-            userId_spotifyEpisodeId: {
-              userId,
-              spotifyEpisodeId: state.spotifyEpisodeId,
-            },
-          },
-          create: {
             userId,
-            spotifyEpisodeId: state.spotifyEpisodeId,
-            spotifyUri: state.spotifyUri,
-            durationMs: state.durationMs,
-            resumePositionMs: state.resumePositionMs,
-            fullyPlayed: state.fullyPlayed,
-            status: state.status,
-            lastObservedAt: state.lastObservedAt,
-          },
-          update: {
-            spotifyUri: state.spotifyUri,
-            durationMs: state.durationMs,
-            resumePositionMs: state.resumePositionMs,
-            fullyPlayed: state.fullyPlayed,
-            status: state.status,
-            lastObservedAt: state.lastObservedAt,
+            spotifyEpisodeId: { in: ids },
           },
         });
-      }
+        const existingById = new Map(
+          existing.map((entry) => [entry.spotifyEpisodeId, entry]),
+        );
+        const resolved = normalized.map((observation) =>
+          mergePodcastListeningState(
+            existingById.get(observation.spotifyEpisodeId) ?? null,
+            observation,
+          ),
+        );
 
-      return resolved;
-    });
+        for (const state of resolved) {
+          await tx.episodeListeningState.upsert({
+            where: {
+              userId_spotifyEpisodeId: {
+                userId,
+                spotifyEpisodeId: state.spotifyEpisodeId,
+              },
+            },
+            create: {
+              userId,
+              spotifyEpisodeId: state.spotifyEpisodeId,
+              spotifyUri: state.spotifyUri,
+              durationMs: state.durationMs,
+              resumePositionMs: state.resumePositionMs,
+              fullyPlayed: state.fullyPlayed,
+              status: state.status,
+              lastObservedAt: state.lastObservedAt,
+            },
+            update: {
+              spotifyUri: state.spotifyUri,
+              durationMs: state.durationMs,
+              resumePositionMs: state.resumePositionMs,
+              fullyPlayed: state.fullyPlayed,
+              status: state.status,
+              lastObservedAt: state.lastObservedAt,
+            },
+          });
+        }
 
-    return new Map(merged.map((state) => [state.spotifyEpisodeId, state]));
+        return resolved;
+      });
+
+      return new Map(merged.map((state) => [state.spotifyEpisodeId, state]));
+    } catch (error) {
+      // Do not serialize the exception itself: Prisma messages may contain SQL,
+      // values or connection details. Stable class/code is enough to diagnose
+      // the next occurrence of #77 without leaking operational secrets.
+      console.error(
+        "PODCAST-04 canonical listening-state persistence failed",
+        diagnosePodcastListeningPersistenceError(error),
+      );
+      throw error;
+    }
   },
 };
 
