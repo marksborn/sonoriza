@@ -18,6 +18,13 @@ import {
   SpotifyClient,
   type SpotifyPlaylistSummary,
 } from "@/services/spotify";
+import {
+  dailyScheduleSlot,
+  formatScheduleTime,
+  isValidTimeZone,
+  nextScheduleLabel,
+  parseScheduleTime,
+} from "@/services/target-schedule";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
 const CREATE_NEW = "__NEW__";
@@ -123,6 +130,9 @@ async function saveTarget(formData: FormData) {
   const durationMode = String(formData.get("durationMode") ?? "").trim();
   const compositionMode = String(formData.get("compositionMode") ?? "").trim();
   const musicOrderMode = String(formData.get("musicOrderMode") ?? "STANDARD").trim();
+  const updatePolicy = String(formData.get("updatePolicy") ?? "MANUAL").trim();
+  const dailyScheduleTime = String(formData.get("dailyScheduleTime") ?? "").trim();
+  const scheduleTimezone = String(formData.get("scheduleTimezone") ?? "").trim();
   const emptyCalendarBehavior = String(
     formData.get("emptyCalendarBehavior") ?? "CLEAR",
   ).trim();
@@ -164,6 +174,21 @@ async function saveTarget(formData: FormData) {
       ? musicOrderMode
       : null;
   if (!normalizedMusicOrderMode) fail("invalid");
+  const normalizedUpdatePolicy =
+    updatePolicy === "MANUAL" ||
+    updatePolicy === "KEEP_FILLED" ||
+    updatePolicy === "REBUILD_DAILY"
+      ? updatePolicy
+      : null;
+  if (!normalizedUpdatePolicy) fail("schedule");
+  const dailyScheduleMinutes =
+    normalizedUpdatePolicy === "MANUAL" ? null : parseScheduleTime(dailyScheduleTime);
+  if (
+    normalizedUpdatePolicy !== "MANUAL" &&
+    (dailyScheduleMinutes === null || !isValidTimeZone(scheduleTimezone))
+  ) {
+    fail("schedule");
+  }
   if (!sequencePattern || podcastPercent === null || maxEpisodesPerProgram === null) {
     fail("invalid");
   }
@@ -320,6 +345,10 @@ async function saveTarget(formData: FormData) {
     maxEpisodesPerProgram: maxEpisodesPerProgram!,
     maxTracksPerArtist,
     maxTracksPerAlbum,
+    updatePolicy: normalizedUpdatePolicy,
+    dailyScheduleMinutes,
+    scheduleTimezone:
+      normalizedUpdatePolicy === "MANUAL" ? null : scheduleTimezone,
   } as const;
 
   if (existingTarget) {
@@ -476,6 +505,65 @@ function musicDiversityLabel(target: {
     : "diversidade sem limite";
 }
 
+function schedulePresentation(
+  target: {
+    id: string;
+    updatePolicy: "MANUAL" | "KEEP_FILLED" | "REBUILD_DAILY";
+    dailyScheduleMinutes: number | null;
+    scheduleTimezone: string | null;
+  },
+  latest: {
+    status: string;
+    scheduledLocalDate: string;
+    finishedAt: Date | null;
+    preservedCount: number;
+    removedCount: number;
+    addedCount: number;
+    reason: string | null;
+  } | null,
+): { policy: string; audit: string | null } {
+  if (target.updatePolicy === "MANUAL") {
+    return { policy: "atualização manual", audit: null };
+  }
+  const label =
+    target.updatePolicy === "KEEP_FILLED"
+      ? "manter completa"
+      : "refazer diariamente";
+  const minutes = target.dailyScheduleMinutes;
+  const timeZone = target.scheduleTimezone ?? "";
+  if (minutes === null || !isValidTimeZone(timeZone)) {
+    return { policy: `${label} · agenda inválida`, audit: null };
+  }
+  const now = new Date();
+  const slot = dailyScheduleSlot(target.id, minutes, timeZone, now);
+  const completedToday = Boolean(
+    latest &&
+      latest.scheduledLocalDate === slot.localDate &&
+      ["SUCCESS", "NOOP", "PARTIAL"].includes(latest.status),
+  );
+  const next = nextScheduleLabel(minutes, timeZone, now, completedToday);
+  if (!latest) {
+    return {
+      policy: `${label} às ${formatScheduleTime(minutes)}`,
+      audit: `Ainda sem execução automática · próxima: ${next}`,
+    };
+  }
+  const finished = latest.finishedAt
+    ? new Intl.DateTimeFormat("pt-BR", {
+        timeZone,
+        dateStyle: "short",
+        timeStyle: "short",
+      }).format(latest.finishedAt)
+    : "em andamento";
+  const movement = `preservados ${latest.preservedCount} · removidos ${latest.removedCount} · adicionados ${latest.addedCount}`;
+  return {
+    policy: `${label} às ${formatScheduleTime(minutes)}`,
+    audit: `Última automática: ${latest.status} em ${finished} · ${movement}${
+      latest.reason ? ` · ${latest.reason}` : ""
+    } · próxima: ${next}`,
+  };
+}
+
 export default async function DestinationsPage({ searchParams }: DestinationsPageProps) {
   const session = await auth();
   if (!session?.user?.id) redirect("/");
@@ -491,6 +579,12 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
     prisma.targetPlaylist.findMany({
       where: { userId },
       orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      include: {
+        targetScheduleRuns: {
+          orderBy: { startedAt: "desc" },
+          take: 1,
+        },
+      },
     }),
     prisma.calendarSelection.findMany({
       where: { userId, selected: true, usedForDuration: true },
@@ -548,7 +642,9 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
           ? "Informe uma duração fixa entre 1 minuto e 24 horas."
           : params.error === "episode-duration"
             ? "Revise a duração máxima por episódio. O limite fixo deve ficar entre 1 minuto e 24 horas, e o maior evento só pode ser usado em destinos baseados no calendário."
-            : params.error === "source-conflict"
+            : params.error === "schedule"
+              ? "Revise a política automática, o horário diário e o fuso horário do destino."
+              : params.error === "source-conflict"
               ? "Essa playlist já é uma fonte de conteúdo. Escolha outro destino para evitar que a geração apague a própria fonte."
               : params.error === "target-conflict"
                 ? "Essa playlist do Spotify já está ligada a outro destino do Sonoriza."
@@ -733,6 +829,9 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   maxEpisodesPerProgram: 1,
                   maxTracksPerArtist: null,
                   maxTracksPerAlbum: null,
+                  updatePolicy: "MANUAL",
+                  dailyScheduleTime: "04:30",
+                  scheduleTimezone: "",
                   destinationValue: CREATE_NEW,
                 }}
               />
@@ -778,6 +877,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                     !playlistNameById.has(target.spotifyPlaylistId),
                 );
                 const sequencePattern = parseSequencePattern(target.sequencePattern);
+                const latestSchedule = target.targetScheduleRuns[0] ?? null;
+                const schedule = schedulePresentation(target, latestSchedule);
 
                 return (
                   <article
@@ -828,7 +929,13 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               : "ordem padrão"
                           }`}
                           {` · ${musicDiversityLabel(target)}`}
+                          {` · ${schedule.policy}`}
                         </p>
+                        {schedule.audit && (
+                          <p className="mt-1 text-xs text-muted-inverse/65">
+                            {schedule.audit}
+                          </p>
+                        )}
                         <p className="mt-1 text-xs text-muted-inverse/65">
                           {target.spotifyPlaylistId
                             ? currentSpotifyName
@@ -913,6 +1020,12 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             maxEpisodesPerProgram: target.maxEpisodesPerProgram,
                             maxTracksPerArtist: target.maxTracksPerArtist,
                             maxTracksPerAlbum: target.maxTracksPerAlbum,
+                            updatePolicy: target.updatePolicy,
+                            dailyScheduleTime:
+                              target.dailyScheduleMinutes === null
+                                ? "04:30"
+                                : formatScheduleTime(target.dailyScheduleMinutes),
+                            scheduleTimezone: target.scheduleTimezone ?? "",
                             destinationValue: target.spotifyPlaylistId
                               ? KEEP_CURRENT
                               : CREATE_NEW,

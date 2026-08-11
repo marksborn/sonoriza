@@ -36,6 +36,8 @@ export interface Candidate {
   releaseDatePrecision?: string;
   sourceSpotifyType?: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";
   sourceSpotifyId?: string;
+  /** SCHEDULE-01: explicit replay policy of the source that selected a podcast. */
+  sourceIncludePlayed?: boolean;
 }
 
 export interface PlaylistRules {

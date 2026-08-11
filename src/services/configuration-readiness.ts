@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { prisma } from "@/lib/prisma";
+import { isValidTimeZone } from "@/services/target-schedule";
 
 type SequenceEntry = "MUSIC" | "PODCAST";
 type MusicRepeatUnit = "DAYS" | "MONTHS" | "YEARS";
@@ -67,6 +68,9 @@ export type ConfigurationAssessment = {
     maxEpisodesPerProgram: number;
     maxTracksPerArtist: number | null;
     maxTracksPerAlbum: number | null;
+    updatePolicy: "MANUAL" | "KEEP_FILLED" | "REBUILD_DAILY";
+    dailyScheduleMinutes: number | null;
+    scheduleTimezone: string | null;
   }>;
   issues: ConfigurationIssue[];
   fingerprint: string;
@@ -161,6 +165,9 @@ export async function assessConfiguration(
           maxEpisodesPerProgram: true,
           maxTracksPerArtist: true,
           maxTracksPerAlbum: true,
+          updatePolicy: true,
+          dailyScheduleMinutes: true,
+          scheduleTimezone: true,
         },
       }),
       prisma.musicPlaybackPolicy.findUnique({
@@ -225,6 +232,9 @@ export async function assessConfiguration(
     maxEpisodesPerProgram: target.maxEpisodesPerProgram,
     maxTracksPerArtist: target.maxTracksPerArtist,
     maxTracksPerAlbum: target.maxTracksPerAlbum,
+    updatePolicy: target.updatePolicy,
+    dailyScheduleMinutes: target.dailyScheduleMinutes,
+    scheduleTimezone: target.scheduleTimezone,
   }));
 
   const issues: ConfigurationIssue[] = [];
@@ -445,6 +455,31 @@ export async function assessConfiguration(
       });
     }
 
+    if (rawTarget.updatePolicy !== "MANUAL") {
+      if (
+        rawTarget.dailyScheduleMinutes === null ||
+        !Number.isInteger(rawTarget.dailyScheduleMinutes) ||
+        rawTarget.dailyScheduleMinutes < 0 ||
+        rawTarget.dailyScheduleMinutes > 1439
+      ) {
+        pushIssue({
+          code: `TARGET_SCHEDULE_REQUIRED:${rawTarget.id}`,
+          message: `${label}: informe um horário diário válido para a atualização automática.`,
+          href: "/dashboard/configuracao/destinos",
+        });
+      }
+      if (
+        !rawTarget.scheduleTimezone?.trim() ||
+        !isValidTimeZone(rawTarget.scheduleTimezone)
+      ) {
+        pushIssue({
+          code: `TARGET_SCHEDULE_TIMEZONE_INVALID:${rawTarget.id}`,
+          message: `${label}: informe um fuso horário IANA válido para a atualização automática.`,
+          href: "/dashboard/configuracao/destinos",
+        });
+      }
+    }
+
     if (!rawTarget.spotifyPlaylistId) {
       pushIssue({
         code: `TARGET_PLAYLIST_REQUIRED:${rawTarget.id}`,
@@ -530,6 +565,11 @@ export async function assessConfiguration(
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,
       maxTracksPerArtist: target.maxTracksPerArtist,
       maxTracksPerAlbum: target.maxTracksPerAlbum,
+      updatePolicy: target.updatePolicy,
+      dailyScheduleMinutes:
+        target.updatePolicy === "MANUAL" ? null : target.dailyScheduleMinutes,
+      scheduleTimezone:
+        target.updatePolicy === "MANUAL" ? null : target.scheduleTimezone,
     })),
   };
 

@@ -1,5 +1,5 @@
 import { planPlaylist, type PlannerPools } from "./planner";
-import type { PlanResult, PlaylistRules } from "./types";
+import type { Candidate, PlanResult, PlaylistRules } from "./types";
 
 export interface RunTarget {
   targetPlaylistId: string;
@@ -13,6 +13,9 @@ export interface PlanRunInput {
   /** Candidate pools shared by every target (built from the user's sources). */
   pools: PlannerPools;
   targets: RunTarget[];
+  /** SCHEDULE-01 valid remote items keyed by target id. */
+  preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
+  initialReserved?: Iterable<string>;
 }
 
 export interface PlanRunTargetResult {
@@ -33,13 +36,23 @@ export interface PlanRunResult {
  * Pure function: no Spotify, no database. The orchestration layer builds the
  * pools and persists / applies the returned plans.
  */
-export function planRun({ pools, targets }: PlanRunInput): PlanRunResult {
+export function planRun({
+  pools,
+  targets,
+  preservedByTargetId,
+  initialReserved,
+}: PlanRunInput): PlanRunResult {
   const ordered = [...targets].sort((a, b) => a.priority - b.priority);
-  const reserved = new Set<string>();
+  const reserved = new Set<string>(initialReserved ?? []);
   const results: PlanRunTargetResult[] = [];
 
   for (const target of ordered) {
-    const result = planPlaylist({ rules: target.rules, pools, reserved });
+    const result = planPlaylist({
+      rules: target.rules,
+      pools,
+      reserved,
+      preserved: preservedByTargetId?.get(target.targetPlaylistId),
+    });
     for (const uri of result.usedUris) reserved.add(uri);
     results.push({
       targetPlaylistId: target.targetPlaylistId,

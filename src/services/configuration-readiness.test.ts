@@ -273,3 +273,50 @@ test("MUSIC-04 revalidates live diversity configuration and selected items befor
   assert.ok(planGate > liveGate);
   assert.ok(writerCreation > planGate);
 });
+
+
+test("SCHEDULE-01 policy, local time and timezone participate in configuration fingerprint", () => {
+  const source = readFileSync("src/services/configuration-readiness.ts", "utf8");
+  const fingerprintStart = source.indexOf("const fingerprintPayload");
+  const fingerprintEnd = source.indexOf("return {", fingerprintStart);
+  const fingerprintSource = source.slice(fingerprintStart, fingerprintEnd);
+  assert.match(fingerprintSource, /updatePolicy/);
+  assert.match(fingerprintSource, /dailyScheduleMinutes/);
+  assert.match(fingerprintSource, /scheduleTimezone/);
+});
+
+test("SCHEDULE-01 scheduler excludes MANUAL targets and uses auditable daily slots", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+  assert.match(source, /updatePolicy:\s*\{\s*not:\s*"MANUAL"/);
+  assert.match(source, /dailyScheduleSlot/);
+  assert.match(source, /targetScheduleRun/);
+  assert.match(source, /scheduleKey/);
+});
+
+test("SCHEDULE-01 KEEP_FILLED revalidates target snapshot before any incremental mutation", () => {
+  const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const preflight = source.indexOf("keepFilledSnapshotViolations");
+  const append = source.indexOf("appendPlaylistItems");
+  const remove = source.indexOf("removePlaylistItems");
+  assert.ok(preflight >= 0);
+  assert.ok(append > preflight);
+  assert.ok(remove > preflight);
+});
+
+
+test("SCHEDULE-01 reserves live URIs from enabled destinations outside the due batch", () => {
+  const scheduler = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+  const generator = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  assert.match(scheduler, /outsideTargets/);
+  assert.match(scheduler, /getTargetPlaylistState/);
+  assert.match(scheduler, /reservedUris/);
+  assert.match(generator, /initialReserved:\s*opts\.reservedUris/);
+});
+
+test("SCHEDULE-01 daily claim is concurrency-safe and successful slots are idempotent", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+  assert.match(source, /\["SUCCESS", "NOOP", "PARTIAL"\]\.includes/);
+  assert.match(source, /createMany\(/);
+  assert.match(source, /skipDuplicates:\s*true/);
+  assert.match(source, /updateMany\(/);
+});

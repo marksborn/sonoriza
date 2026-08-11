@@ -642,3 +642,45 @@ test("#37 rejection counters stay deterministic when the planner scans the same 
   assert.equal(result.stats.artistLimitRejectedCount, 1);
   assert.equal(result.stats.albumLimitRejectedCount, 1);
 });
+
+
+test("#58 KEEP_FILLED starts from preserved valid content and fills only the deficit", () => {
+  const preserved = music("preserved", 180_000);
+  const pools = {
+    music: [music("new-1", 180_000), music("new-2", 180_000)],
+    podcasts: [],
+  };
+  const result = planPlaylist({
+    rules: {
+      targetDurationMs: 540_000,
+      compositionMode: "PROPORTION",
+      podcastPercent: 0,
+      sequencePattern: ["MUSIC"],
+      maxEpisodesPerProgram: 1,
+    },
+    pools,
+    preserved: [preserved],
+  });
+  assert.equal(result.items[0]?.uri, preserved.uri);
+  assert.equal(result.items.length, 3);
+  assert.equal(result.stats.totalDurationMs, 540_000);
+  assert.equal(result.items.filter((item) => item.uri === preserved.uri).length, 1);
+});
+
+test("#58 KEEP_FILLED sequence resumes from the slot after the preserved prefix", () => {
+  const preservedMusic = music("preserved-sequence", 180_000);
+  const nextPodcast = podcast("next-podcast", "program-next", 180_000);
+  const result = planPlaylist({
+    rules: {
+      targetDurationMs: 360_000,
+      compositionMode: "SEQUENCE",
+      podcastPercent: 50,
+      sequencePattern: ["MUSIC", "PODCAST"],
+      maxEpisodesPerProgram: 1,
+    },
+    pools: { music: [], podcasts: [nextPodcast] },
+    preserved: [preservedMusic],
+  });
+  assert.deepEqual(result.items.map((item) => item.type), ["MUSIC", "PODCAST"]);
+  assert.equal(result.items[0]?.uri, preservedMusic.uri);
+});

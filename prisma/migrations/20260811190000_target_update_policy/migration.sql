@@ -60,3 +60,7 @@ ALTER TABLE "TargetScheduleRun"
 ALTER TABLE "TargetScheduleRun"
   ADD CONSTRAINT "TargetScheduleRun_targetPlaylistId_fkey"
   FOREIGN KEY ("targetPlaylistId") REFERENCES "TargetPlaylist"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "TargetScheduleRun"
+  ADD CONSTRAINT "TargetScheduleRun_generationRunId_fkey"
+  FOREIGN KEY ("generationRunId") REFERENCES "GenerationRun"("id") ON DELETE SET NULL ON UPDATE CASCADE;

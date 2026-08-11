@@ -3,6 +3,8 @@ export {
   type PodcastCandidateBatch,
   type SpotifyPlaylistSummary,
   type SpotifyShowSummary,
+  type SpotifyTargetPlaylistContentItem,
+  type SpotifyTargetPlaylistState,
 } from "./client";
 export {
   inferSpotifyOperation,
