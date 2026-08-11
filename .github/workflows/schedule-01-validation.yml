@@ -16,7 +16,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16
@@ -75,6 +75,7 @@ jobs:
             [ -f "$file" ] || return 0
             local output
             if ! output="$(python "$file" 2>&1)"; then
+              output="$(printf '%s' "$output" | tail -c 9000)"
               output="${output//$'\n'/'%0A'}"
               echo "::error title=SCHEDULE-01 patch failed::$output"
               exit 1
@@ -94,17 +95,28 @@ jobs:
       - name: Apply migrations on disposable PostgreSQL
         run: npx prisma migrate deploy
 
-      - name: SCHEDULE-01 core tests
-        run: npx tsx --test src/services/target-schedule.test.ts src/services/keep-filled-core.test.ts
-
-      - name: Planner regressions
-        run: npm run test:planner
-
-      - name: Incremental regressions
-        run: npm run test:incremental
-
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Full regression gate
+        shell: bash
+        run: |
+          run_checked() {
+            local title="$1"
+            shift
+            local output
+            if ! output="$("$@" 2>&1)"; then
+              output="$(printf '%s' "$output" | tail -c 9000)"
+              output="${output//$'\n'/'%0A'}"
+              echo "::error title=$title::$output"
+              exit 1
+            fi
+            echo "$output"
+          }
+          run_checked "SCHEDULE-01 core" npx tsx --test src/services/target-schedule.test.ts src/services/keep-filled-core.test.ts
+          run_checked "Planner regressions" npm run test:planner
+          run_checked "Spotify regressions" npm run test:spotify
+          run_checked "Incremental regressions" npm run test:incremental
+          run_checked "Simulation regressions" npm run test:simulation
+          run_checked "Typecheck" npm run typecheck
+          run_checked "Production build" npm run build
 
       - name: Commit validated product changes
         run: |
