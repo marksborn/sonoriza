@@ -1,5 +1,6 @@
 import { MusicIngestionTrigger } from "@prisma/client";
 
+import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
 import { syncMusicIngestionRuleSerialized } from "@/services/spotify/music-ingestion-serialized";
 
@@ -15,14 +16,21 @@ export type MusicIngestionJobResult = {
 /**
  * Periodic MUSIC-03 ingestion. The migration creates no rules and new rules are
  * disabled until their explicit activation path has established state, so this
- * job cannot silently import historical content after deploy.
+ * job cannot silently import historical content after deploy. AUTH-01 filters
+ * removed users before any Spotify call.
  */
 export async function runMusicIngestionJob(): Promise<MusicIngestionJobResult[]> {
-  const rules = await prisma.musicIngestionRule.findMany({
-    where: { enabled: true },
-    select: { id: true, userId: true },
-    orderBy: [{ userId: "asc" }, { createdAt: "asc" }],
-  });
+  const rules = (
+    await prisma.musicIngestionRule.findMany({
+      where: { enabled: true },
+      select: {
+        id: true,
+        userId: true,
+        user: { select: { email: true } },
+      },
+      orderBy: [{ userId: "asc" }, { createdAt: "asc" }],
+    })
+  ).filter((rule) => isEmailAllowed(rule.user.email));
 
   const results: MusicIngestionJobResult[] = [];
   for (const rule of rules) {

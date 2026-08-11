@@ -1,3 +1,4 @@
+import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
 import {
   assessConfiguration,
@@ -7,22 +8,24 @@ import {
 import { generatePlaylists } from "./generate-playlists";
 
 /**
- * Runs the daily generation for every user that has at least one enabled
- * target playlist. Invoked by the server cron via POST /api/cron/generate.
+ * Runs the daily generation for every allowed user that has at least one
+ * enabled target playlist. Invoked by the server cron via POST /api/cron/generate.
  *
  * Users are processed sequentially to stay well within Spotify/Google rate
  * limits; failures are isolated so one user cannot block the others.
  * Scheduled real generation is subject to the same current-configuration
- * readiness gate as a manual real run.
+ * readiness gate as a manual real run and to AUTH-01 before provider access.
  */
 export async function runScheduledGeneration(): Promise<{
   processed: number;
   results: { userId: string; runId: string; status: string }[];
 }> {
-  const users = await prisma.user.findMany({
-    where: { targetPlaylists: { some: { enabled: true } } },
-    select: { id: true },
-  });
+  const users = (
+    await prisma.user.findMany({
+      where: { targetPlaylists: { some: { enabled: true } } },
+      select: { id: true, email: true },
+    })
+  ).filter((user) => isEmailAllowed(user.email));
 
   const results: { userId: string; runId: string; status: string }[] = [];
 
