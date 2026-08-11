@@ -5,7 +5,7 @@ A PWA-01 torna o Sonoriza instalável em navegadores compatíveis sem alterar au
 ## O que foi adicionado
 
 - `src/app/manifest.ts`: Web App Manifest servido pelo App Router;
-- `/pwa-icon/180`, `/pwa-icon/192` e `/pwa-icon/512`: PNGs gerados a partir da marca atual do Sonoriza sobre o fundo oficial escuro;
+- `public/pwa-icon-180.png`, `public/pwa-icon-192.png` e `public/pwa-icon-512.png`: ícones rasterizados a partir da marca atual do Sonoriza sobre o fundo oficial escuro;
 - `public/sw.js`: service worker mínimo para a base PWA;
 - `PwaServiceWorker`: registro do worker somente em produção;
 - headers específicos para atualização segura do service worker;
@@ -17,11 +17,11 @@ A PWA-01 **não implementa cache offline**. O service worker não possui `fetch`
 
 Isso é intencional: o Sonoriza trabalha com sessão e estado operacional mutável. Um cache offline genérico poderia apresentar configuração, autenticação ou resultados de playlist obsoletos.
 
-Assets estáticos continuam sendo cacheados normalmente pelo navegador/Next.js. O próprio `sw.js` é servido com `no-cache, no-store, must-revalidate` e registrado com `updateViaCache: "none"`.
+Assets estáticos continuam sendo servidos normalmente pelo navegador/Next.js. O próprio `sw.js` é servido com `no-cache, no-store, must-revalidate` e registrado com `updateViaCache: "none"`.
 
 ## Instalação
 
-Produção já usa HTTPS, requisito para instalação PWA fora de `localhost`.
+Produção já usa HTTPS.
 
 - Chrome/Edge/Android: use a opção de instalar/adicionar o Sonoriza oferecida pelo navegador;
 - iOS/iPadOS: use Compartilhar → Adicionar à Tela de Início;
@@ -37,13 +37,13 @@ Além de `typecheck` e `build`, execute:
 npx tsx --test src/services/pwa-contract.test.ts
 ```
 
-Em ambiente servido, confirme:
+Em ambiente servido, confirme com GET:
 
 ```bash
-curl -I https://sonoriza.itsoft.com.br/sw.js
-curl -I https://sonoriza.itsoft.com.br/manifest.webmanifest
-curl -I https://sonoriza.itsoft.com.br/pwa-icon/192
-curl -I https://sonoriza.itsoft.com.br/pwa-icon/512
+curl -D - -o /tmp/sw.js https://sonoriza.itsoft.com.br/sw.js
+curl https://sonoriza.itsoft.com.br/manifest.webmanifest
+curl -o /tmp/pwa-icon-192.png https://sonoriza.itsoft.com.br/pwa-icon-192.png
+curl -o /tmp/pwa-icon-512.png https://sonoriza.itsoft.com.br/pwa-icon-512.png
 ```
 
 Esperado:
