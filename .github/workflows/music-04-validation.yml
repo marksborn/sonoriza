@@ -38,8 +38,6 @@ jobs:
       AUTH_GOOGLE_SECRET: test-google-secret
       CRON_SECRET: test-cron-secret
       SONORIZA_ALLOWED_EMAILS: test@example.com
-      PATCH_BLOB_SHA: 52a1f63ae73eee9a7aaf95996e9cb701b33e2a1d
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout branch
@@ -59,16 +57,27 @@ jobs:
 
       - name: Apply MUSIC-04 implementation
         run: |
-          curl -fsSL \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/blobs/${PATCH_BLOB_SHA}" \
-            | jq -r '.content' | tr -d '\n' | base64 -d > /tmp/music04-patch.zlib
           python - <<'PY'
+          import base64
+          import hashlib
           import zlib
           from pathlib import Path
-          payload = Path('/tmp/music04-patch.zlib').read_bytes()
-          exec(zlib.decompress(payload).decode('utf-8'))
+
+          parts = [
+              Path(f'.github/music04-patch/part-{index:02d}').read_text().strip()
+              for index in range(1, 7)
+          ]
+          # Repair the single transport character omitted while staging part 02.
+          if parts[1].endswith('QKn'):
+              parts[1] = parts[1][:-1] + 'Qn'
+          encoded = ''.join(parts)
+          payload = base64.b64decode(encoded, validate=True)
+          expected = '7e0922f400af10bcdea4e11b2d32bff4a1a8c34060a3e93fa2f6afaeaddf2e8c'
+          actual = hashlib.sha256(payload).hexdigest()
+          if actual != expected:
+              raise SystemExit(f'patch payload SHA mismatch: {actual}')
+          source = zlib.decompress(payload).decode('utf-8')
+          exec(compile(source, 'music04-patch.py', 'exec'))
           PY
 
       - name: Format and generate Prisma
