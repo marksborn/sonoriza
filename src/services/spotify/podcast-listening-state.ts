@@ -5,7 +5,10 @@ import type {
 
 import { prisma } from "@/lib/prisma";
 
-import { diagnosePodcastListeningPersistenceError } from "./podcast-listening-state-diagnostics";
+import {
+  asPodcastLocalProcessingError,
+  diagnosePodcastListeningPersistenceError,
+} from "./podcast-listening-state-diagnostics";
 
 export type PodcastListeningObservation = {
   spotifyEpisodeId: string;
@@ -170,14 +173,14 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
 
       return new Map(merged.map((state) => [state.spotifyEpisodeId, state]));
     } catch (error) {
-      // Do not serialize the exception itself: Prisma messages may contain SQL,
-      // values or connection details. Stable class/code is enough to diagnose
-      // the next occurrence of #77 without leaking operational secrets.
+      const diagnostic = diagnosePodcastListeningPersistenceError(error);
+      // Best-effort runtime log. The typed error below is the authoritative
+      // diagnostic path because PM2/stdout delivery is not guaranteed.
       console.error(
         "PODCAST-04 canonical listening-state persistence failed",
-        diagnosePodcastListeningPersistenceError(error),
+        diagnostic,
       );
-      throw error;
+      throw asPodcastLocalProcessingError("OBSERVE_STATE", error);
     }
   },
 };
