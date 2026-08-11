@@ -53,5 +53,10 @@ replace_once(
       maxEpisodesPerProgram: 1,
     },''',
 )
+replace_once(
+    "src/services/playlist-planner/planner.test.ts",
+    '  const nextPodcast = podcast("next-podcast", 180_000, "program-next");',
+    '  const nextPodcast = podcast("next-podcast", "program-next", 180_000);',
+)
 
 print("SCHEDULE-01 stage5 patch applied")
