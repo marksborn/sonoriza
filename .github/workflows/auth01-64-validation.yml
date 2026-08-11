@@ -1,0 +1,37 @@
+name: AUTH-01 issue 64 validation
+
+on:
+  push:
+    branches: [agent/auth01-email-allowlist-64]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://sonoriza:sonoriza@127.0.0.1:5432/sonoriza?schema=public
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: auth01-ci-secret
+      AUTH_GOOGLE_ID: auth01-google-id
+      AUTH_GOOGLE_SECRET: auth01-google-secret
+      AUTH_SPOTIFY_ID: auth01-spotify-id
+      AUTH_SPOTIFY_SECRET: auth01-spotify-secret
+      CRON_SECRET: auth01-cron-secret
+      SONORIZA_ALLOWED_EMAILS: owner@example.com,tester@example.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: AUTH-01 policy tests
+        run: npx tsx --test src/lib/email-allowlist.test.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
