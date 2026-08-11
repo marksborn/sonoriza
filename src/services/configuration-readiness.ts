@@ -59,6 +59,7 @@ export type ConfigurationAssessment = {
     calendarEventFilterMode: "ALL" | "MARKER";
     calendarEventMarker: string | null;
     compositionMode: "PROPORTION" | "SEQUENCE";
+    musicOrderMode: "STANDARD" | "RANDOMIZED";
     podcastPercent: number;
     podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";
     podcastEpisodeMaxDurationSeconds: number | null;
@@ -150,6 +151,7 @@ export async function assessConfiguration(
           calendarEventFilterMode: true,
           calendarEventMarker: true,
           compositionMode: true,
+          musicOrderMode: true,
           podcastPercent: true,
           podcastEpisodeMaxDurationMode: true,
           podcastEpisodeMaxDurationSeconds: true,
@@ -211,6 +213,7 @@ export async function assessConfiguration(
     calendarEventFilterMode: target.calendarEventFilterMode,
     calendarEventMarker: target.calendarEventMarker,
     compositionMode: target.compositionMode,
+    musicOrderMode: target.musicOrderMode,
     podcastPercent: target.podcastPercent,
     podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,
     podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,
@@ -486,6 +489,7 @@ export async function assessConfiguration(
       calendarEventFilterMode: target.calendarEventFilterMode,
       calendarEventMarker: target.calendarEventMarker,
       compositionMode: target.compositionMode,
+      musicOrderMode: target.musicOrderMode,
       podcastPercent:
         target.compositionMode === "PROPORTION" ? target.podcastPercent : null,
       podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,

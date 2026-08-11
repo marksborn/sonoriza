@@ -83,7 +83,7 @@ model VerificationToken {
 
 model CalendarSelection {
   id               String   @id @default(cuid())
-  userId            String
+  userId           String
   googleCalendarId String
   summary          String?
   selected         Boolean  @default(true)
@@ -154,10 +154,10 @@ model SourcePlaylist {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user                User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cleanupRuns         MusicSourceCleanupRun[]
-  ingestionRulesTarget MusicIngestionRule[]   @relation("MusicIngestionTarget")
-  ingestionRunsTarget  MusicIngestionRun[]    @relation("MusicIngestionRunTarget")
+  user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cleanupRuns          MusicSourceCleanupRun[]
+  ingestionRulesTarget MusicIngestionRule[]    @relation("MusicIngestionTarget")
+  ingestionRunsTarget  MusicIngestionRun[]     @relation("MusicIngestionRunTarget")
 
   @@unique([userId, spotifyType, spotifyId])
   @@index([userId, kind])
@@ -243,8 +243,8 @@ model MusicIngestionRule {
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
-  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  target SourcePlaylist @relation("MusicIngestionTarget", fields: [targetSourcePlaylistId], references: [id], onDelete: Cascade)
+  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target SourcePlaylist      @relation("MusicIngestionTarget", fields: [targetSourcePlaylistId], references: [id], onDelete: Cascade)
   runs   MusicIngestionRun[]
 
   @@index([userId, enabled])
@@ -380,6 +380,11 @@ enum CompositionMode {
   SEQUENCE
 }
 
+enum MusicOrderMode {
+  STANDARD
+  RANDOMIZED
+}
+
 model TargetPlaylist {
   id                               String                        @id @default(cuid())
   userId                           String
@@ -388,6 +393,7 @@ model TargetPlaylist {
   enabled                          Boolean                       @default(true)
   priority                         Int                           @default(0)
   compositionMode                  CompositionMode               @default(PROPORTION)
+  musicOrderMode                   MusicOrderMode                @default(STANDARD)
   durationMode                     DurationMode                  @default(FIXED)
   fixedDurationSeconds             Int?
   emptyCalendarBehavior            EmptyCalendarBehavior         @default(CLEAR)
@@ -398,8 +404,8 @@ model TargetPlaylist {
   podcastEpisodeMaxDurationSeconds Int?
   sequencePattern                  Json
   maxEpisodesPerProgram            Int                           @default(1)
-  createdAt                        DateTime                       @default(now())
-  updatedAt                        DateTime                       @updatedAt
+  createdAt                        DateTime                      @default(now())
+  updatedAt                        DateTime                      @updatedAt
 
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   generationItems GenerationItem[]

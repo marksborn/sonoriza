@@ -4,6 +4,7 @@ import {
   assessConfiguration,
   getFirstRunGate,
 } from "@/services/configuration-readiness";
+import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
 
 import { generatePlaylists } from "./generate-playlists";
 
@@ -43,9 +44,15 @@ export async function runScheduledGeneration(): Promise<{
         continue;
       }
 
+      const musicOrderSimulationEvidence =
+        await findReusableSimulationMusicOrderEvidence(
+          user.id,
+          assessment.fingerprint,
+        );
       const { runId, status } = await generatePlaylists({
         userId: user.id,
         trigger: "SCHEDULED",
+        musicOrderSimulationEvidence,
       });
       results.push({ userId: user.id, runId, status });
     } catch (err) {

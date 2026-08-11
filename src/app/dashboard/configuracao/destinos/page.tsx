@@ -122,6 +122,7 @@ async function saveTarget(formData: FormData) {
   const destination = String(formData.get("destination") ?? "").trim();
   const durationMode = String(formData.get("durationMode") ?? "").trim();
   const compositionMode = String(formData.get("compositionMode") ?? "").trim();
+  const musicOrderMode = String(formData.get("musicOrderMode") ?? "STANDARD").trim();
   const emptyCalendarBehavior = String(
     formData.get("emptyCalendarBehavior") ?? "CLEAR",
   ).trim();
@@ -150,6 +151,11 @@ async function saveTarget(formData: FormData) {
       ? compositionMode
       : null;
   if (!normalizedCompositionMode) fail("invalid");
+  const normalizedMusicOrderMode =
+    musicOrderMode === "STANDARD" || musicOrderMode === "RANDOMIZED"
+      ? musicOrderMode
+      : null;
+  if (!normalizedMusicOrderMode) fail("invalid");
   if (!sequencePattern || podcastPercent === null || maxEpisodesPerProgram === null) {
     fail("invalid");
   }
@@ -278,6 +284,7 @@ async function saveTarget(formData: FormData) {
     spotifyPlaylistId,
     enabled,
     compositionMode: normalizedCompositionMode,
+    musicOrderMode: normalizedMusicOrderMode,
     durationMode,
     fixedDurationSeconds:
       durationMode === "FIXED" ? fixedDurationMinutes! * 60 : null,
@@ -685,6 +692,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   calendarEventFilterMode: "ALL",
                   calendarEventMarker: "",
                   compositionMode: "PROPORTION",
+                  musicOrderMode: "STANDARD",
                   podcastPercent: 60,
                   podcastEpisodeMaxDurationMode: "NONE",
                   podcastEpisodeMaxDurationMinutes: 45,
@@ -779,6 +787,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               )}`
                             : ""}
                           {` · ${podcastEpisodeMaxDurationLabel(target)}`}
+                          {` · músicas: ${
+                            target.musicOrderMode === "RANDOMIZED"
+                              ? "ordem randomizada"
+                              : "ordem padrão"
+                          }`}
                         </p>
                         <p className="mt-1 text-xs text-muted-inverse/65">
                           {target.spotifyPlaylistId
@@ -850,6 +863,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             calendarEventFilterMode: target.calendarEventFilterMode,
                             calendarEventMarker: target.calendarEventMarker ?? "",
                             compositionMode: target.compositionMode,
+                            musicOrderMode: target.musicOrderMode,
                             podcastPercent: target.podcastPercent,
                             podcastEpisodeMaxDurationMode:
                               target.podcastEpisodeMaxDurationMode,
