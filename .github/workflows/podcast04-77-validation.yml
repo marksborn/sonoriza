@@ -1,0 +1,55 @@
+name: PODCAST-04 issue 77 validation
+
+on:
+  push:
+    branches: [agent/podcast04-local-state-failure-77]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza?schema=public
+      AUTH_SECRET: podcast04-77-ci-only
+      AUTH_GOOGLE_ID: podcast04-77-ci
+      AUTH_GOOGLE_SECRET: podcast04-77-ci
+      AUTH_SPOTIFY_ID: podcast04-77-ci
+      AUTH_SPOTIFY_SECRET: podcast04-77-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - name: Safe diagnostics tests
+        run: npx tsx --test src/services/spotify/podcast-listening-state-diagnostics.test.ts src/services/simulation-local-podcast-failure.test.ts src/services/simulation-presentation.test.ts
+      - name: Podcast state unit tests
+        run: npx tsx --test src/services/spotify/podcast-listening-state.test.ts
+      - name: Podcast state PostgreSQL serialization test
+        env:
+          PODCAST_LISTENING_STATE_DB_TEST: "1"
+        run: npx tsx --test src/services/spotify/podcast-listening-state.integration.test.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
