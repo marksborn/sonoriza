@@ -11,6 +11,20 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sonoriza
+          POSTGRES_PASSWORD: sonoriza
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonoriza -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://sonoriza:sonoriza@127.0.0.1:5432/sonoriza?schema=public
       AUTH_URL: http://localhost:3000
@@ -29,6 +43,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      - run: npx prisma migrate deploy
       - name: AUTH-01 policy tests
         run: npx tsx --test src/lib/email-allowlist.test.ts
       - name: Typecheck
