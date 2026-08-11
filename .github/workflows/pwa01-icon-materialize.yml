@@ -1,0 +1,46 @@
+name: PWA-01 icon materialize
+
+on:
+  push:
+    branches:
+      - agent/pwa-01-installable-app-85
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: ${{ !contains(github.event.head_commit.message || '', '[pwa-icons]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate raster install icons
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          command -v convert >/dev/null
+          for size in 180 192 512; do
+            mark_w=$(( size * 58 / 100 ))
+            mark_h=$(( size * 64 / 100 ))
+            convert -size "${size}x${size}" xc:'#0B021F' \
+              \( public/sonoriza-mark.webp -resize "${mark_w}x${mark_h}" \) \
+              -gravity center -composite "public/pwa-icon-${size}.png"
+            file "public/pwa-icon-${size}.png" | grep -F "PNG image data, ${size} x ${size}"
+          done
+      - name: Commit generated icons
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/pwa-icon-180.png public/pwa-icon-192.png public/pwa-icon-512.png
+          if git diff --cached --quiet; then
+            echo 'Icons already materialized.'
+            exit 0
+          fi
+          git commit -m 'chore: materialize PWA install icons [pwa-icons]'
+          git push origin HEAD:agent/pwa-01-installable-app-85
