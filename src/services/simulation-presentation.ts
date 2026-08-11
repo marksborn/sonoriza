@@ -1,7 +1,19 @@
+import {
+  readPodcastLocalProcessingReason,
+  type PodcastLocalProcessingDiagnostic,
+} from "@/services/spotify/podcast-listening-state-diagnostics";
+
 export type SimulationInconclusiveReason =
   | "QUOTA_EXCEEDED"
   | "RATE_LIMITED"
   | "SOURCE_UNAVAILABLE";
+
+type SourceErrorKind =
+  | "QUOTA_EXCEEDED"
+  | "RATE_LIMITED"
+  | "HTTP_ERROR"
+  | "SOURCE_READ_FAILED"
+  | "LOCAL_PROCESSING_ERROR";
 
 export type InconclusiveSourceDiagnostic = {
   source: string;
@@ -163,6 +175,10 @@ function readSourceStatusDiagnostic(
   const status = nonNegativeNullableInteger(source.status);
   const operation = safeOperation(source.operation);
   const retryAfterSeconds = nonNegativeNullableInteger(source.retryAfterSeconds);
+  const localDiagnostic =
+    errorKind === "LOCAL_PROCESSING_ERROR"
+      ? readPodcastLocalProcessingReason(source.reason)
+      : null;
   const postProviderLocalFailure = isPostProviderLocalPodcastFailure(
     source,
     pagesRead,
@@ -188,10 +204,11 @@ function readSourceStatusDiagnostic(
         operation,
         retryAfterSeconds,
         postProviderLocalFailure,
+        localDiagnostic,
       ),
     pagesRead,
     partialRead,
-    httpStatus: status,
+    httpStatus: status && status > 0 ? status : null,
     operation,
     retryAfterSeconds,
   };
@@ -202,38 +219,51 @@ function readFailureDiagnostic(failure: UnknownRecord): InconclusiveSourceDiagno
   const status = nonNegativeNullableInteger(failure.status);
   const operation = safeOperation(failure.operation);
   const retryAfterSeconds = nonNegativeNullableInteger(failure.retryAfterSeconds);
+  const localDiagnostic =
+    errorKind === "LOCAL_PROCESSING_ERROR"
+      ? readPodcastLocalProcessingReason(failure.reason)
+      : null;
 
   return {
     source: safeSourceLabel(failure),
     state: "UNAVAILABLE",
     stateLabel: "Indisponível",
-    detail: failureDetail(errorKind, status, operation, retryAfterSeconds, false),
+    detail: failureDetail(
+      errorKind,
+      status,
+      operation,
+      retryAfterSeconds,
+      false,
+      localDiagnostic,
+    ),
     pagesRead: 0,
     partialRead: false,
-    httpStatus: status,
+    httpStatus: status && status > 0 ? status : null,
     operation,
     retryAfterSeconds,
   };
 }
 
-function safeErrorKind(
-  value: unknown,
-): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "HTTP_ERROR" | "SOURCE_READ_FAILED" {
+function safeErrorKind(value: unknown): SourceErrorKind {
   return value === "QUOTA_EXCEEDED" ||
     value === "RATE_LIMITED" ||
     value === "HTTP_ERROR" ||
-    value === "SOURCE_READ_FAILED"
+    value === "SOURCE_READ_FAILED" ||
+    value === "LOCAL_PROCESSING_ERROR"
     ? value
     : "SOURCE_READ_FAILED";
 }
 
 function failureDetail(
-  errorKind: "QUOTA_EXCEEDED" | "RATE_LIMITED" | "HTTP_ERROR" | "SOURCE_READ_FAILED",
+  errorKind: SourceErrorKind,
   status: number | null,
   operation: string | null,
   retryAfterSeconds: number | null,
   postProviderLocalFailure: boolean,
+  localDiagnostic: PodcastLocalProcessingDiagnostic | null,
 ): string {
+  if (localDiagnostic) return localFailureDetail(localDiagnostic);
+
   const during = operation ? ` durante ${operationLabel(operation)}` : "";
 
   if (errorKind === "QUOTA_EXCEEDED") {
@@ -275,10 +305,21 @@ function failureDetail(
   return `A leitura da fonte não pôde ser concluída${during}. O Sonoriza interrompeu a coleta para não avaliar a configuração com dados incompletos.`;
 }
 
+function localFailureDetail(diagnostic: PodcastLocalProcessingDiagnostic): string {
+  const phase =
+    diagnostic.phase === "NORMALIZE_EPISODES"
+      ? "normalização dos episódios recebidos"
+      : diagnostic.phase === "OBSERVE_STATE"
+        ? "persistência e consolidação do estado de escuta"
+        : "montagem dos candidatos de podcast";
+  const code = diagnostic.errorCode ? ` / ${diagnostic.errorCode}` : "";
+  return `O Spotify entregou os dados, mas o Sonoriza falhou durante a ${phase}. Diagnóstico técnico seguro: ${diagnostic.phase} · ${diagnostic.errorName}${code}. A execução foi interrompida antes de validar o plano com estado incompleto.`;
+}
+
 function isPostProviderLocalPodcastFailure(
   source: UnknownRecord,
   pagesRead: number,
-  errorKind: "QUOTA_EXCEEDED" | "RATE_LIMITED" | "HTTP_ERROR" | "SOURCE_READ_FAILED",
+  errorKind: SourceErrorKind,
   operation: string | null,
   callsByOperation: UnknownRecord | null,
 ): boolean {
@@ -389,7 +430,10 @@ function safeOperation(value: unknown): string | null {
     value === "saved-shows" ||
     value === "current-user" ||
     value === "playlist-write" ||
-    value === "spotify-api"
+    value === "spotify-api" ||
+    value === "normalize-episodes" ||
+    value === "observe-state" ||
+    value === "build-candidates"
   ) {
     return value;
   }
@@ -406,6 +450,9 @@ function operationLabel(operation: string): string {
   if (operation === "saved-shows") return "a leitura dos programas salvos";
   if (operation === "current-user") return "a confirmação da conta Spotify";
   if (operation === "playlist-write") return "uma operação de playlist";
+  if (operation === "normalize-episodes") return "a normalização local dos episódios";
+  if (operation === "observe-state") return "a persistência local do estado de escuta";
+  if (operation === "build-candidates") return "a montagem local dos candidatos";
   return "a chamada à API do Spotify";
 }
 

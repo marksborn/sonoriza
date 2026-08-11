@@ -3,7 +3,8 @@ import { recordSpotifyBackoff } from "./backoff";
 export type SpotifyApiErrorKind =
   | "RATE_LIMITED"
   | "QUOTA_EXCEEDED"
-  | "HTTP_ERROR";
+  | "HTTP_ERROR"
+  | "LOCAL_PROCESSING_ERROR";
 
 export type SpotifyOperation =
   | "playlist-items"
@@ -15,7 +16,10 @@ export type SpotifyOperation =
   | "saved-shows"
   | "current-user"
   | "playlist-write"
-  | "spotify-api";
+  | "spotify-api"
+  | "normalize-episodes"
+  | "observe-state"
+  | "build-candidates";
 
 export interface SpotifySourceReadMetrics {
   pagesRead: number;

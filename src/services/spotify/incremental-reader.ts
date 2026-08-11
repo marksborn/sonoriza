@@ -15,6 +15,7 @@ import {
   type SpotifySourceReadMetrics,
 } from "./errors";
 import { readPlayableMusicCandidate } from "./music-availability";
+import { asPodcastLocalProcessingError } from "./podcast-listening-state-diagnostics";
 import {
   prismaPodcastListeningStateStore,
   spotifyEpisodeIdFromUri,
@@ -624,115 +625,130 @@ function createPodcastCollector(
     },
     async result(): Promise<Omit<IncrementalSourceBatch, "done">> {
       const observedAt = new Date();
-      const observations: PodcastListeningObservation[] = [];
+      let observations: PodcastListeningObservation[];
 
-      for (const episode of episodes) {
-        const spotifyEpisodeId =
-          episode.id?.trim() || spotifyEpisodeIdFromUri(episode.uri);
-        if (!spotifyEpisodeId) continue;
-        const originalDurationMs = Math.max(0, episode.duration_ms ?? 0);
-        const resumePoint = episode.resume_point ?? null;
-        observations.push({
-          spotifyEpisodeId,
-          spotifyUri: episode.uri,
-          durationMs: originalDurationMs,
-          resumePositionMs: resumePoint
-            ? clamp(resumePoint.resume_position_ms ?? 0, 0, originalDurationMs)
-            : null,
-          fullyPlayed: resumePoint ? resumePoint.fully_played === true : null,
-          observedAt,
-        });
+      try {
+        observations = [];
+        for (const episode of episodes) {
+          const spotifyEpisodeId =
+            episode.id?.trim() || spotifyEpisodeIdFromUri(episode.uri);
+          if (!spotifyEpisodeId) continue;
+          const originalDurationMs = Math.max(0, episode.duration_ms ?? 0);
+          const resumePoint = episode.resume_point ?? null;
+          observations.push({
+            spotifyEpisodeId,
+            spotifyUri: episode.uri,
+            durationMs: originalDurationMs,
+            resumePositionMs: resumePoint
+              ? clamp(resumePoint.resume_position_ms ?? 0, 0, originalDurationMs)
+              : null,
+            fullyPlayed: resumePoint ? resumePoint.fully_played === true : null,
+            observedAt,
+          });
+        }
+      } catch (error) {
+        throw asPodcastLocalProcessingError("NORMALIZE_EPISODES", error);
       }
 
-      const canonicalStates = await options.stateStore.observe(
-        options.userId,
-        observations,
-      );
-      const candidates: Candidate[] = [];
-      let playbackPositionMissingCount = 0;
-      let fullyPlayedSkippedCount = 0;
-      let genericPodcastSuppressedCount = 0;
-      let podcastNotStartedCount = 0;
-      let podcastInProgressCount = 0;
-      let podcastCompletedCount = 0;
-
-      for (const episode of episodes) {
-        const spotifyEpisodeId =
-          episode.id?.trim() || spotifyEpisodeIdFromUri(episode.uri);
-        if (!spotifyEpisodeId) continue;
-        const state = canonicalStates.get(spotifyEpisodeId);
-        if (!state) continue;
-
-        const programId = episode.show?.id ?? fallbackProgramId;
-        if (
-          programId &&
-          options.sourceSpotifyType !== "SHOW" &&
-          options.suppressedProgramIds?.has(programId)
-        ) {
-          genericPodcastSuppressedCount += 1;
-          continue;
-        }
-
-        const resumePoint = episode.resume_point ?? null;
-        if (!resumePoint) playbackPositionMissingCount += 1;
-
-        if (state.status === "NOT_STARTED") podcastNotStartedCount += 1;
-        else if (state.status === "IN_PROGRESS") podcastInProgressCount += 1;
-        else podcastCompletedCount += 1;
-
-        if (state.status === "COMPLETED" && !includePlayed) {
-          fullyPlayedSkippedCount += 1;
-          continue;
-        }
-
-        const originalDurationMs = Math.max(0, episode.duration_ms ?? state.durationMs);
-        const currentReplayResumePositionMs =
-          state.status === "COMPLETED" &&
-          includePlayed &&
-          resumePoint?.fully_played === false &&
-          (resumePoint.resume_position_ms ?? 0) > 0
-            ? clamp(resumePoint.resume_position_ms, 0, originalDurationMs)
-            : null;
-        const resumePositionMs =
-          currentReplayResumePositionMs ??
-          clamp(state.resumePositionMs, 0, originalDurationMs);
-        const durationMs =
-          state.status === "COMPLETED"
-            ? currentReplayResumePositionMs === null
-              ? originalDurationMs
-              : Math.max(0, originalDurationMs - currentReplayResumePositionMs)
-            : Math.max(0, originalDurationMs - resumePositionMs);
-        if (durationMs <= 0) continue;
-
-        candidates.push({
-          uri: episode.uri,
-          type: "PODCAST",
-          title: episode.name,
-          subtitle: episode.show?.name,
-          programId,
-          durationMs,
-          originalDurationMs,
-          resumePositionMs,
-          playbackPositionKnown:
-            Boolean(resumePoint) ||
-            state.status !== "NOT_STARTED" ||
-            state.resumePositionMs > 0,
-          releaseDate: episode.release_date,
-          releaseDatePrecision: episode.release_date_precision,
-          sourceSpotifyType: options.sourceSpotifyType,
-          sourceSpotifyId: options.sourceSpotifyId,
-        });
+      let canonicalStates: Awaited<ReturnType<PodcastListeningStateStore["observe"]>>;
+      try {
+        canonicalStates = await options.stateStore.observe(
+          options.userId,
+          observations,
+        );
+      } catch (error) {
+        throw asPodcastLocalProcessingError("OBSERVE_STATE", error);
       }
 
-      return {
-        candidates,
-        playbackPositionMissingCount,
-        fullyPlayedSkippedCount,
-        genericPodcastSuppressedCount,
-        podcastNotStartedCount,
-        podcastInProgressCount,
-        podcastCompletedCount,
-      };
+      try {
+        const candidates: Candidate[] = [];
+        let playbackPositionMissingCount = 0;
+        let fullyPlayedSkippedCount = 0;
+        let genericPodcastSuppressedCount = 0;
+        let podcastNotStartedCount = 0;
+        let podcastInProgressCount = 0;
+        let podcastCompletedCount = 0;
+
+        for (const episode of episodes) {
+          const spotifyEpisodeId =
+            episode.id?.trim() || spotifyEpisodeIdFromUri(episode.uri);
+          if (!spotifyEpisodeId) continue;
+          const state = canonicalStates.get(spotifyEpisodeId);
+          if (!state) continue;
+
+          const programId = episode.show?.id ?? fallbackProgramId;
+          if (
+            programId &&
+            options.sourceSpotifyType !== "SHOW" &&
+            options.suppressedProgramIds?.has(programId)
+          ) {
+            genericPodcastSuppressedCount += 1;
+            continue;
+          }
+
+          const resumePoint = episode.resume_point ?? null;
+          if (!resumePoint) playbackPositionMissingCount += 1;
+
+          if (state.status === "NOT_STARTED") podcastNotStartedCount += 1;
+          else if (state.status === "IN_PROGRESS") podcastInProgressCount += 1;
+          else podcastCompletedCount += 1;
+
+          if (state.status === "COMPLETED" && !includePlayed) {
+            fullyPlayedSkippedCount += 1;
+            continue;
+          }
+
+          const originalDurationMs = Math.max(0, episode.duration_ms ?? state.durationMs);
+          const currentReplayResumePositionMs =
+            state.status === "COMPLETED" &&
+            includePlayed &&
+            resumePoint?.fully_played === false &&
+            (resumePoint.resume_position_ms ?? 0) > 0
+              ? clamp(resumePoint.resume_position_ms, 0, originalDurationMs)
+              : null;
+          const resumePositionMs =
+            currentReplayResumePositionMs ??
+            clamp(state.resumePositionMs, 0, originalDurationMs);
+          const durationMs =
+            state.status === "COMPLETED"
+              ? currentReplayResumePositionMs === null
+                ? originalDurationMs
+                : Math.max(0, originalDurationMs - currentReplayResumePositionMs)
+              : Math.max(0, originalDurationMs - resumePositionMs);
+          if (durationMs <= 0) continue;
+
+          candidates.push({
+            uri: episode.uri,
+            type: "PODCAST",
+            title: episode.name,
+            subtitle: episode.show?.name,
+            programId,
+            durationMs,
+            originalDurationMs,
+            resumePositionMs,
+            playbackPositionKnown:
+              Boolean(resumePoint) ||
+              state.status !== "NOT_STARTED" ||
+              state.resumePositionMs > 0,
+            releaseDate: episode.release_date,
+            releaseDatePrecision: episode.release_date_precision,
+            sourceSpotifyType: options.sourceSpotifyType,
+            sourceSpotifyId: options.sourceSpotifyId,
+          });
+        }
+
+        return {
+          candidates,
+          playbackPositionMissingCount,
+          fullyPlayedSkippedCount,
+          genericPodcastSuppressedCount,
+          podcastNotStartedCount,
+          podcastInProgressCount,
+          podcastCompletedCount,
+        };
+      } catch (error) {
+        throw asPodcastLocalProcessingError("BUILD_CANDIDATES", error);
+      }
     },
   };
 }
