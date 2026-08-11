@@ -67,7 +67,6 @@ jobs:
               Path(f'.github/music04-patch/part-{index:02d}').read_text().strip()
               for index in range(1, 7)
           ]
-          # Repair the single transport character omitted while staging part 02.
           if parts[1].endswith('QKn'):
               parts[1] = parts[1][:-1] + 'Qn'
           encoded = ''.join(parts)
@@ -78,6 +77,20 @@ jobs:
               raise SystemExit(f'patch payload SHA mismatch: {actual}')
           source = zlib.decompress(payload).decode('utf-8')
           exec(compile(source, 'music04-patch.py', 'exec'))
+          PY
+
+      - name: Align cache integration fixture with MUSIC-04 candidate shape
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/services/spotify/client.integration.test.ts')
+          text = path.read_text()
+          old = '''      title,\n      subtitle: "Artist",\n      durationMs: 180_000,'''
+          new = '''      title,\n      subtitle: "Artist",\n      primaryArtistName: "Artist",\n      durationMs: 180_000,'''
+          if text.count(old) != 1:
+              raise SystemExit('expected cachedTrack fixture shape not found exactly once')
+          path.write_text(text.replace(old, new, 1))
           PY
 
       - name: Format and generate Prisma
