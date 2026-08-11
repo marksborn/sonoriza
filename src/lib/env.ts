@@ -9,6 +9,7 @@ const schema = z.object({
 
   AUTH_URL: z.string().url().optional(),
   AUTH_SECRET: z.string().min(1),
+  SONORIZA_ALLOWED_EMAILS: z.string().optional(),
 
   AUTH_SPOTIFY_ID: z.string().min(1),
   AUTH_SPOTIFY_SECRET: z.string().min(1),
