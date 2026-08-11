@@ -9,6 +9,7 @@ on:
       - .github/schedule58-stage1.py
       - .github/schedule58-stage2.py
       - .github/schedule58-stage3.py
+      - .github/schedule58-stage4.py
 
 permissions:
   contents: write
@@ -61,15 +62,6 @@ jobs:
       - name: Apply SCHEDULE-01 staged patches
         shell: bash
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('.github/schedule58-stage1.py')
-          text = p.read_text()
-          old = '    "}({ sources, targets, onBatch, onRound }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {",'
-          new = '    ">({ sources, targets, onBatch, onRound }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {",'
-          if old in text:
-              p.write_text(text.replace(old, new, 1))
-          PY
           apply_patch() {
             local file="$1"
             [ -f "$file" ] || return 0
@@ -85,6 +77,7 @@ jobs:
           apply_patch .github/schedule58-stage1.py
           apply_patch .github/schedule58-stage2.py
           apply_patch .github/schedule58-stage3.py
+          apply_patch .github/schedule58-stage4.py
 
       - name: Format and generate Prisma
         run: |
