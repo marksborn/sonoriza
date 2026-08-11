@@ -266,7 +266,14 @@ replace_once(
       });''',
 )
 
-T = Path("src/services/configuration-readiness.test.ts")
+TEST = "src/services/configuration-readiness.test.ts"
+replace_once(
+    TEST,
+    'const preflight = source.indexOf("keepFilledSnapshotViolations");',
+    'const preflight = source.indexOf("scheduledTargetSnapshotViolations");',
+)
+
+T = Path(TEST)
 T.write_text(
     T.read_text()
     + r'''
