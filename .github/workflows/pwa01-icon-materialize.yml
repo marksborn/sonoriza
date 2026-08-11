@@ -15,21 +15,55 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
       - name: Generate raster install icons
         shell: bash
         run: |
           set -Eeuo pipefail
-          command -v ffmpeg >/dev/null
+          npm install --no-save --package-lock=false sharp@0.34.3
           mkdir -p /tmp/pwa-icons
-          for size in 180 192 512; do
-            mark_w=$(( size * 58 / 100 ))
-            mark_h=$(( size * 64 / 100 ))
-            ffmpeg -hide_banner -loglevel error -y \
-              -i public/sonoriza-mark.webp \
-              -vf "scale=${mark_w}:${mark_h}:force_original_aspect_ratio=decrease,pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=0x0B021F" \
-              -frames:v 1 "/tmp/pwa-icons/pwa-icon-${size}.png"
-            file "/tmp/pwa-icons/pwa-icon-${size}.png" | grep -F "PNG image data, ${size} x ${size}"
-          done
+          node - <<'NODE'
+          const sharp = require('sharp')
+          const path = require('node:path')
+
+          async function main() {
+            for (const size of [180, 192, 512]) {
+              const mark = await sharp('public/sonoriza-mark.webp')
+                .resize({
+                  width: Math.round(size * 0.58),
+                  height: Math.round(size * 0.64),
+                  fit: 'inside',
+                  withoutEnlargement: false,
+                })
+                .png()
+                .toBuffer()
+
+              const output = path.join('/tmp/pwa-icons', `pwa-icon-${size}.png`)
+              await sharp({
+                create: {
+                  width: size,
+                  height: size,
+                  channels: 4,
+                  background: '#0B021F',
+                },
+              })
+                .composite([{ input: mark, gravity: 'center' }])
+                .png()
+                .toFile(output)
+            }
+          }
+
+          main().catch((error) => {
+            console.error(error)
+            process.exit(1)
+          })
+          NODE
+          file /tmp/pwa-icons/pwa-icon-180.png | grep -F 'PNG image data, 180 x 180'
+          file /tmp/pwa-icons/pwa-icon-192.png | grep -F 'PNG image data, 192 x 192'
+          file /tmp/pwa-icons/pwa-icon-512.png | grep -F 'PNG image data, 512 x 512'
       - uses: actions/upload-artifact@v4
         with:
           name: pwa-icons
