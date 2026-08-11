@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element -- ImageResponse needs a raw img element for the embedded brand asset. */
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
