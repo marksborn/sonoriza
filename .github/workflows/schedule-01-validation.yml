@@ -6,12 +6,7 @@ on:
       - agent/schedule-01-recurring-target-policies-58
     paths:
       - .github/workflows/schedule-01-validation.yml
-      - .github/schedule58-stage1.py
-      - .github/schedule58-stage2.py
-      - .github/schedule58-stage3.py
-      - .github/schedule58-stage4.py
-      - .github/schedule58-stage5.py
-      - .github/schedule58-stage6.py
+      - .github/schedule58-stage7.py
 
 permissions:
   contents: write
@@ -61,27 +56,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Apply SCHEDULE-01 staged patches
+      - name: Apply final SCHEDULE-01 hardening
         shell: bash
         run: |
-          apply_patch() {
-            local file="$1"
-            [ -f "$file" ] || return 0
-            local output
-            if ! output="$(python "$file" 2>&1)"; then
-              output="$(printf '%s' "$output" | tail -c 9000)"
-              output="${output//$'\n'/'%0A'}"
-              echo "::error title=SCHEDULE-01 patch failed::$output"
-              exit 1
-            fi
-            echo "$output"
+          output="$(python .github/schedule58-stage7.py 2>&1)" || {
+            output="$(printf '%s' "$output" | tail -c 9000)"
+            output="${output//$'\n'/'%0A'}"
+            echo "::error title=SCHEDULE-01 hardening patch failed::$output"
+            exit 1
           }
-          apply_patch .github/schedule58-stage1.py
-          apply_patch .github/schedule58-stage2.py
-          apply_patch .github/schedule58-stage3.py
-          apply_patch .github/schedule58-stage4.py
-          apply_patch .github/schedule58-stage5.py
-          apply_patch .github/schedule58-stage6.py
+          echo "$output"
 
       - name: Format and generate Prisma
         run: |
@@ -124,6 +108,6 @@ jobs:
             echo "No product changes to commit"
           else
             git diff --cached --stat
-            git commit -m "feat: SCHEDULE-01 — recurring target policies (#58)"
+            git commit -m "fix: harden SCHEDULE-01 snapshot safety (#58)"
             git push origin HEAD:agent/schedule-01-recurring-target-policies-58
           fi
