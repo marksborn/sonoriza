@@ -57,18 +57,42 @@ jobs:
           set -Eeuo pipefail
           npm start >/tmp/sonoriza-pwa.log 2>&1 &
           APP_PID=$!
+
           cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo '===== next start log ====='
+              cat /tmp/sonoriza-pwa.log || true
+            fi
             kill "$APP_PID" 2>/dev/null || true
             wait "$APP_PID" 2>/dev/null || true
+            return "$status"
           }
           trap cleanup EXIT
 
+          READY=0
           for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3000/manifest.webmanifest >/tmp/manifest.webmanifest; then
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo 'next start terminated before becoming ready'
+              cat /tmp/sonoriza-pwa.log || true
+              exit 1
+            fi
+
+            CODE="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/manifest.webmanifest 2>/dev/null || true)"
+            if [ "$CODE" = "200" ]; then
+              READY=1
               break
             fi
             sleep 1
           done
+
+          if [ "$READY" -ne 1 ]; then
+            echo 'manifest did not become ready within 30 seconds'
+            cat /tmp/sonoriza-pwa.log || true
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:3000/manifest.webmanifest >/tmp/manifest.webmanifest
 
           node - <<'NODE'
           const fs = require('node:fs')
