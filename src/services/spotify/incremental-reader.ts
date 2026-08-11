@@ -460,11 +460,7 @@ export class SpotifyIncrementalReader {
           sourceSpotifyId: source.spotifyId,
           suppressedProgramIds: this.authoritativePodcastProgramIds,
         });
-        for (const item of page.items) {
-          const episode = item.item;
-          if (!episode || episode.is_local || episode.type !== "episode") continue;
-          collector.add(episode);
-        }
+        ingestPodcastPage(collector, page.items, "item");
         return { ...(await collector.result()), done };
       },
     };
@@ -502,7 +498,7 @@ export class SpotifyIncrementalReader {
           metrics.pagesRead += 1;
           nextUrl = page.next ? stripBase(page.next) : null;
           done = nextUrl === null;
-          for (const episode of page.items) collector.add(episode);
+          ingestPodcastPage(collector, page.items);
           return { ...(await collector.result()), done };
         }
 
@@ -511,7 +507,7 @@ export class SpotifyIncrementalReader {
           const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
           metrics.pagesRead += 1;
           nextUrl = page.next ? stripBase(page.next) : null;
-          for (const episode of page.items) collector.add(episode);
+          ingestPodcastPage(collector, page.items);
         }
         done = true;
         const result = await collector.result();
@@ -555,9 +551,7 @@ export class SpotifyIncrementalReader {
           sourceSpotifyId: source.spotifyId,
           suppressedProgramIds: this.authoritativePodcastProgramIds,
         });
-        for (const item of page.items) {
-          if (item?.episode) collector.add(item.episode);
-        }
+        ingestPodcastPage(collector, page.items, "episode");
         return { ...(await collector.result()), done };
       },
     };
@@ -574,7 +568,6 @@ interface PlaylistItem {
 }
 
 interface PlaylistContentResponse extends EpisodeResponse {
-  is_local?: boolean;
   artists?: { name: string }[];
 }
 
@@ -588,6 +581,7 @@ interface EpisodeResponse {
   name: string;
   duration_ms: number;
   type: string;
+  is_local?: boolean;
   is_playable?: boolean;
   restrictions?: { reason?: string | null } | null;
   show?: {
@@ -618,9 +612,9 @@ function createPodcastCollector(
   const episodes: EpisodeResponse[] = [];
 
   return {
-    add(episode: EpisodeResponse) {
-      if (!episode.uri || !episode.name || episode.type !== "episode") return;
-      if (episode.is_playable === false) return;
+    add(episode: unknown) {
+      if (!isEpisodeResponse(episode)) return;
+      if (episode.is_local === true || episode.is_playable === false) return;
       episodes.push(episode);
     },
     async result(): Promise<Omit<IncrementalSourceBatch, "done">> {
@@ -751,6 +745,46 @@ function createPodcastCollector(
       }
     },
   };
+}
+
+function ingestPodcastPage(
+  collector: { add(episode: unknown): void },
+  items: unknown,
+  nestedKey?: "item" | "episode",
+): void {
+  try {
+    if (!Array.isArray(items)) {
+      throw new TypeError("Podcast page items must be an array");
+    }
+
+    for (const item of items) {
+      collector.add(nestedKey ? readNestedEpisode(item, nestedKey) : item);
+    }
+  } catch (error) {
+    throw asPodcastLocalProcessingError("NORMALIZE_EPISODES", error);
+  }
+}
+
+function readNestedEpisode(
+  value: unknown,
+  key: "item" | "episode",
+): unknown {
+  if (!value || typeof value !== "object") return null;
+  return (value as Record<string, unknown>)[key];
+}
+
+function isEpisodeResponse(value: unknown): value is EpisodeResponse {
+  if (!value || typeof value !== "object") return false;
+  const episode = value as Partial<EpisodeResponse>;
+  return (
+    typeof episode.uri === "string" &&
+    episode.uri.trim().length > 0 &&
+    typeof episode.name === "string" &&
+    episode.name.trim().length > 0 &&
+    episode.type === "episode" &&
+    typeof episode.duration_ms === "number" &&
+    Number.isFinite(episode.duration_ms)
+  );
 }
 
 function stripBase(url: string): string {
