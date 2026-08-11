@@ -29,6 +29,11 @@ replace_once(
     "          details: targetSummary ?? undefined,",
     "          details: targetSummary\n            ? (targetSummary as Prisma.InputJsonValue)\n            : undefined,",
 )
+replace_once(
+    "src/jobs/scheduled-generation.ts",
+    "  data: Prisma.TargetScheduleRunUpdateInput = {},",
+    "  data: Prisma.TargetScheduleRunUncheckedUpdateInput = {},",
+)
 
 # The existing test helper rules() takes positional arguments; keep the new
 # SCHEDULE-01 tests explicit so they test planner semantics, not helper syntax.
