@@ -37,6 +37,7 @@ model User {
   musicSourceCleanupRuns MusicSourceCleanupRun[]
   musicIngestionRules    MusicIngestionRule[]
   musicIngestionRuns     MusicIngestionRun[]
+  targetScheduleRuns     TargetScheduleRun[]
 }
 
 model Account {
@@ -385,6 +386,21 @@ enum MusicOrderMode {
   RANDOMIZED
 }
 
+enum TargetUpdatePolicy {
+  MANUAL
+  KEEP_FILLED
+  REBUILD_DAILY
+}
+
+enum TargetScheduleRunStatus {
+  RUNNING
+  SUCCESS
+  NOOP
+  BLOCKED
+  PARTIAL
+  FAILED
+}
+
 model TargetPlaylist {
   id                               String                        @id @default(cuid())
   userId                           String
@@ -406,11 +422,15 @@ model TargetPlaylist {
   maxEpisodesPerProgram            Int                           @default(1)
   maxTracksPerArtist               Int?
   maxTracksPerAlbum                Int?
+  updatePolicy                     TargetUpdatePolicy            @default(MANUAL)
+  dailyScheduleMinutes             Int?
+  scheduleTimezone                 String?
   createdAt                        DateTime                      @default(now())
   updatedAt                        DateTime                      @updatedAt
 
-  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  generationItems GenerationItem[]
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generationItems    GenerationItem[]
+  targetScheduleRuns TargetScheduleRun[]
 
   @@index([userId, priority])
 }
@@ -450,9 +470,10 @@ model GenerationRun {
   error      String?    @db.Text
   summary    Json?
 
-  user  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  logs  GenerationLog[]
-  items GenerationItem[]
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs         GenerationLog[]
+  items        GenerationItem[]
+  scheduleRuns TargetScheduleRun[]
 
   @@index([userId, startedAt])
 }
@@ -476,20 +497,66 @@ enum ContentType {
 }
 
 model GenerationItem {
-  id               String      @id @default(cuid())
-  runId            String
-  targetPlaylistId String
-  position         Int
-  contentType      ContentType
-  spotifyUri       String
-  title            String?
-  subtitle         String?
-  programId        String?
-  durationMs       Int         @default(0)
+  id                  String             @id @default(cuid())
+  runId               String
+  targetPlaylistId    String
+  position            Int
+  contentType         ContentType
+  spotifyUri          String
+  title               String?
+  subtitle            String?
+  programId           String?
+  durationMs          Int                @default(0)
+  spotifyTrackId      String?
+  primaryArtistId     String?
+  albumId             String?
+  originalDurationMs  Int?
+  resumePositionMs    Int?
+  sourceSpotifyType   SpotifySourceType?
+  sourceSpotifyId     String?
+  sourceIncludePlayed Boolean?
 
   run    GenerationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   target TargetPlaylist @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)
 
   @@index([runId])
   @@index([targetPlaylistId])
+}
+
+// ---------------------------------------------------------------------------
+// SCHEDULE-01 — auditable recurring target maintenance.
+// ---------------------------------------------------------------------------
+
+model TargetScheduleRun {
+  id                    String                  @id @default(cuid())
+  userId                String
+  targetPlaylistId      String
+  scheduleKey           String                  @unique
+  scheduledLocalDate    String
+  scheduledForMinutes   Int
+  scheduleTimezone      String
+  policy                TargetUpdatePolicy
+  status                TargetScheduleRunStatus @default(RUNNING)
+  attempt               Int                     @default(1)
+  generationRunId       String?
+  targetDurationMs      Int?
+  validDurationBeforeMs Int?
+  removedDurationMs     Int                     @default(0)
+  addedDurationMs       Int                     @default(0)
+  preservedCount        Int                     @default(0)
+  removedCount          Int                     @default(0)
+  addedCount            Int                     @default(0)
+  snapshotBefore        String?
+  snapshotAfter         String?
+  reason                String?                 @db.Text
+  details               Json?
+  startedAt             DateTime                @default(now())
+  finishedAt            DateTime?
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target        TargetPlaylist @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)
+  generationRun GenerationRun? @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+
+  @@index([userId, startedAt])
+  @@index([targetPlaylistId, startedAt])
 }

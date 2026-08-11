@@ -66,21 +66,31 @@ Point the CloudPanel site's reverse proxy at `http://127.0.0.1:3000`.
 
 ## 4. Scheduled generation (server cron)
 
-The daily run is an authenticated HTTP call. Add a crontab entry (adjust the
-time to your timezone):
+SCHEDULE-01 turns the server cron into a **dispatcher**, not the authority for a
+single global generation time. Each target owns its policy (`MANUAL`,
+`KEEP_FILLED` or `REBUILD_DAILY`), daily local time and IANA timezone. Run the
+dispatcher frequently enough to pick up due slots:
 
 ```cron
-# Every day at 04:30 — regenerate all allowed users' playlists
-30 4 * * * curl -fsS -X POST https://<host>/api/cron/generate \
+# Every 5 minutes — dispatch only due automatic targets
+*/5 * * * * curl -fsS -X POST https://<host>/api/cron/generate \
   -H "Authorization: Bearer <CRON_SECRET>" >> /home/<user>/logs/sonoriza-cron.log 2>&1
 ```
 
-`<CRON_SECRET>` must match the value in `.env`. Alternatively, run the engine
-directly as a Node process:
+`<CRON_SECRET>` must match the value in `.env`. A unique target/local-date audit
+slot makes successful/no-op maintenance idempotent: repeated dispatcher calls do
+not run the same daily slot twice. A missed exact minute remains due later on the
+same local day. `MANUAL` targets are ignored by this endpoint.
 
-```cron
-30 4 * * * cd /path/to/sonoriza && npm run generate:run -- --user <userId> >> ... 2>&1
-```
+`KEEP_FILLED` reads the current target under a stable Spotify snapshot, preserves
+valid content, fills only the deficit and prefers append/remove mutations. It
+falls back to a full replacement only when an incremental URI mutation would be
+ambiguous. `REBUILD_DAILY` uses the normal generation pipeline and the same
+current simulation/fingerprint/quality gate as a manual real run.
+
+The direct `npm run generate:run` command remains a manual operator tool; it is
+not a replacement for the SCHEDULE-01 dispatcher because it does not claim daily
+per-target schedule slots.
 
 ## 5. Updating
 

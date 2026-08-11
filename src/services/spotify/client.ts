@@ -11,6 +11,7 @@ import {
   type SpotifySourceReadMetrics,
 } from "./errors";
 import { readPlayableMusicCandidate } from "./music-availability";
+import { spotifyEpisodeIdFromUri } from "./podcast-listening-state";
 import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
 
@@ -39,6 +40,26 @@ export interface PodcastCandidateBatch {
   playbackPositionMissingCount: number;
   fullyPlayedSkippedCount: number;
 }
+
+export type SpotifyTargetPlaylistContentItem = {
+  position: number;
+  uri: string | null;
+  type: "MUSIC" | "PODCAST" | null;
+  title?: string;
+  subtitle?: string;
+  musicCandidate?: Candidate | null;
+  spotifyEpisodeId?: string | null;
+  programId?: string | null;
+  originalDurationMs?: number;
+  providerResumePositionMs?: number | null;
+  providerFullyPlayed?: boolean | null;
+  removableByUri: boolean;
+};
+
+export type SpotifyTargetPlaylistState = {
+  snapshotId: string;
+  items: SpotifyTargetPlaylistContentItem[];
+};
 
 /**
  * Thin Spotify Web API client scoped to a single user. It transparently
@@ -448,6 +469,83 @@ export class SpotifyClient {
     return collector.result();
   }
 
+  /**
+   * Reads the current mixed contents of a target playlist under one stable
+   * snapshot. SCHEDULE-01 never treats a playlist that changed mid-read as a
+   * complete source of truth.
+   */
+  async getTargetPlaylistState(playlistId: string): Promise<SpotifyTargetPlaylistState> {
+    const snapshotBefore = await this.getPlaylistSnapshotId(playlistId);
+    const items: SpotifyTargetPlaylistContentItem[] = [];
+    let position = 0;
+    let url: string | null =
+      `/playlists/${playlistId}/items?market=from_token&additional_types=track,episode&limit=50&fields=next,items(item(id,uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),linked_from(id),artists(id,name),album(id,name),show(id,name),resume_point(fully_played,resume_position_ms)))`;
+
+    while (url) {
+      const page: SpotifyPage<PlaylistItem> = await this.request(url);
+      for (const wrapper of page.items) {
+        const item = wrapper.item;
+        if (!item) {
+          items.push({ position, uri: null, type: null, removableByUri: false });
+          position += 1;
+          continue;
+        }
+
+        const uri = typeof item.uri === "string" && item.uri ? item.uri : null;
+        if (item.type === "track") {
+          const playable = readPlayableMusicCandidate(item);
+          items.push({
+            position,
+            uri,
+            type: "MUSIC",
+            title: item.name,
+            subtitle: playable.candidate?.subtitle,
+            musicCandidate: playable.candidate,
+            originalDurationMs: Math.max(0, item.duration_ms ?? 0),
+            removableByUri: Boolean(uri),
+          });
+        } else if (item.type === "episode") {
+          items.push({
+            position,
+            uri,
+            type: "PODCAST",
+            title: item.name,
+            subtitle: item.show?.name,
+            spotifyEpisodeId:
+              item.id?.trim() || (uri ? spotifyEpisodeIdFromUri(uri) : null),
+            programId: item.show?.id?.trim() || null,
+            originalDurationMs: Math.max(0, item.duration_ms ?? 0),
+            providerResumePositionMs:
+              item.resume_point?.resume_position_ms == null
+                ? null
+                : Math.max(0, item.resume_point.resume_position_ms),
+            providerFullyPlayed: item.resume_point?.fully_played ?? null,
+            removableByUri: Boolean(uri),
+          });
+        } else {
+          items.push({
+            position,
+            uri,
+            type: null,
+            title: item.name,
+            originalDurationMs: Math.max(0, item.duration_ms ?? 0),
+            removableByUri: Boolean(uri),
+          });
+        }
+        position += 1;
+      }
+      url = page.next ? stripBase(page.next) : null;
+    }
+
+    const snapshotAfter = await this.getPlaylistSnapshotId(playlistId);
+    if (snapshotAfter !== snapshotBefore) {
+      throw new Error(
+        `Spotify playlist ${playlistId} changed while its target contents were being read`,
+      );
+    }
+    return { snapshotId: snapshotAfter, items };
+  }
+
   async getCurrentUserId(): Promise<string> {
     const me = await this.request<{ id: string }>("/me");
     return me.id;
@@ -467,19 +565,69 @@ export class SpotifyClient {
    * caps each request at 100 items, so the first call replaces and subsequent
    * calls append.
    */
-  async replacePlaylistItems(playlistId: string, uris: string[]): Promise<void> {
+  async replacePlaylistItems(playlistId: string, uris: string[]): Promise<string | null> {
     const chunks = chunk(uris, 100);
-    // First chunk (or an empty array) replaces everything.
-    await this.request(`/playlists/${playlistId}/items`, {
-      method: "PUT",
-      body: JSON.stringify({ uris: chunks[0] ?? [] }),
-    });
+    const first = await this.request<{ snapshot_id?: string }>(
+      `/playlists/${playlistId}/items`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ uris: chunks[0] ?? [] }),
+      },
+    );
+    let snapshot = first.snapshot_id ?? null;
     for (const extra of chunks.slice(1)) {
-      await this.request(`/playlists/${playlistId}/items`, {
-        method: "POST",
-        body: JSON.stringify({ uris: extra }),
-      });
+      const result: { snapshot_id?: string } = await this.request<{ snapshot_id?: string }>(
+        `/playlists/${playlistId}/items`,
+        {
+          method: "POST",
+          body: JSON.stringify({ uris: extra }),
+        },
+      );
+      snapshot = result.snapshot_id ?? snapshot;
     }
+    return snapshot;
+  }
+
+  /** Appends only the new deficit items; never reorders existing content. */
+  async appendPlaylistItems(playlistId: string, uris: string[]): Promise<string | null> {
+    let snapshot: string | null = null;
+    for (const values of chunk(uris, 100)) {
+      const result: { snapshot_id?: string } = await this.request<{ snapshot_id?: string }>(
+        `/playlists/${playlistId}/items`,
+        {
+          method: "POST",
+          body: JSON.stringify({ uris: values }),
+        },
+      );
+      snapshot = result.snapshot_id ?? snapshot;
+    }
+    return snapshot;
+  }
+
+  /**
+   * Removes occurrences by URI under Spotify's snapshot contract. This is used
+   * only when KEEP_FILLED proved that each URI is unambiguous in the live target.
+   */
+  async removePlaylistItems(
+    playlistId: string,
+    uris: string[],
+    snapshotId: string,
+  ): Promise<string | null> {
+    let snapshot: string | null = snapshotId;
+    for (const values of chunk([...new Set(uris)], 100)) {
+      const result: { snapshot_id?: string } = await this.request<{ snapshot_id?: string }>(
+        `/playlists/${playlistId}/items`,
+        {
+          method: "DELETE",
+          body: JSON.stringify({
+            items: values.map((uri) => ({ uri })),
+            snapshot_id: snapshot,
+          }),
+        },
+      );
+      snapshot = result.snapshot_id ?? snapshot;
+    }
+    return snapshot;
   }
 }
 
@@ -515,7 +663,9 @@ interface PlaylistItem {
 
 interface PlaylistContentResponse extends EpisodeResponse {
   is_local?: boolean;
-  artists?: { name: string }[];
+  linked_from?: { id?: string | null } | null;
+  artists?: Array<{ id?: string | null; name?: string | null }>;
+  album?: { id?: string | null; name?: string | null } | null;
 }
 
 interface SavedEpisodeResponse {
@@ -523,6 +673,7 @@ interface SavedEpisodeResponse {
 }
 
 interface EpisodeResponse {
+  id?: string;
   uri: string;
   name: string;
   duration_ms: number;

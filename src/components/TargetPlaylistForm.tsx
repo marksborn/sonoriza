@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { UiIcon } from "@/components/UiIcon";
 
 type ContentType = "MUSIC" | "PODCAST";
 type CompositionMode = "PROPORTION" | "SEQUENCE";
 type MusicOrderMode = "STANDARD" | "RANDOMIZED";
+type TargetUpdatePolicy = "MANUAL" | "KEEP_FILLED" | "REBUILD_DAILY";
 type DurationMode = "FIXED" | "CALENDAR";
 type EmptyCalendarBehavior = "CLEAR" | "KEEP" | "SKIP";
 type CalendarEventFilterMode = "ALL" | "MARKER";
@@ -35,6 +36,9 @@ export type TargetPlaylistFormInitial = {
   maxEpisodesPerProgram: number;
   maxTracksPerArtist: number | null;
   maxTracksPerAlbum: number | null;
+  updatePolicy: TargetUpdatePolicy;
+  dailyScheduleTime: string;
+  scheduleTimezone: string;
   destinationValue: string;
   currentSpotifyName?: string;
   destinationUnavailable?: boolean;
@@ -97,6 +101,10 @@ export function TargetPlaylistForm({
   const [albumDiversityEnabled, setAlbumDiversityEnabled] = useState(
     initial.maxTracksPerAlbum !== null,
   );
+  const [updatePolicy, setUpdatePolicy] = useState<TargetUpdatePolicy>(
+    initial.updatePolicy,
+  );
+  const [scheduleTimezone, setScheduleTimezone] = useState(initial.scheduleTimezone);
   const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);
   const [podcastEpisodeMaxDurationMode, setPodcastEpisodeMaxDurationMode] =
     useState<PodcastEpisodeMaxDurationMode>(initial.podcastEpisodeMaxDurationMode);
@@ -106,6 +114,12 @@ export function TargetPlaylistForm({
 
   const musicPercent = 100 - podcastPercent;
   const idPrefix = initial.id ?? "new-target";
+
+  useEffect(() => {
+    if (updatePolicy === "MANUAL" || scheduleTimezone) return;
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (detected) setScheduleTimezone(detected);
+  }, [scheduleTimezone, updatePolicy]);
 
   function moveSequence(index: number, direction: -1 | 1) {
     const nextIndex = index + direction;
@@ -201,6 +215,79 @@ export function TargetPlaylistForm({
           </span>
         </span>
       </label>
+
+      <fieldset className={sectionClass}>
+        <legend className="px-1 text-sm font-black text-ink-inverse">
+          Atualização automática
+        </legend>
+        <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
+          A política é por destino. Salvar esta tela nunca executa a playlist imediatamente.
+        </p>
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          {(
+            [
+              ["MANUAL", "Somente manual", "Só muda quando você iniciar uma geração."],
+              [
+                "KEEP_FILLED",
+                "Manter playlist completa",
+                "Preserva o que ainda vale, remove o que deixou de valer e completa apenas o déficit.",
+              ],
+              [
+                "REBUILD_DAILY",
+                "Refazer diariamente",
+                "Planeja do zero e substitui a playlist somente depois dos gates de segurança.",
+              ],
+            ] as const
+          ).map(([value, title, description]) => (
+            <label key={value} className={optionClass(updatePolicy === value)}>
+              <input
+                type="radio"
+                name="updatePolicy"
+                value={value}
+                checked={updatePolicy === value}
+                onChange={() => setUpdatePolicy(value)}
+                className="sr-only"
+              />
+              <span className="block font-black text-ink-inverse">{title}</span>
+              <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                {description}
+              </span>
+            </label>
+          ))}
+        </div>
+
+        {updatePolicy !== "MANUAL" && (
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <label className={fieldLabelClass}>
+              Horário diário
+              <input
+                className={inputClass}
+                type="time"
+                name="dailyScheduleTime"
+                required
+                defaultValue={initial.dailyScheduleTime || "04:30"}
+              />
+              <span className={helperClass}>
+                Se o dispatcher perder o minuto exato, o Sonoriza ainda executa o slot pendente no mesmo dia.
+              </span>
+            </label>
+            <label className={fieldLabelClass}>
+              Fuso horário
+              <input
+                className={inputClass}
+                name="scheduleTimezone"
+                required
+                value={scheduleTimezone}
+                onChange={(event) => setScheduleTimezone(event.target.value)}
+                placeholder="America/Sao_Paulo"
+              />
+              <span className={helperClass}>
+                Use um fuso IANA. O navegador preenche automaticamente quando possível.
+              </span>
+            </label>
+          </div>
+        )}
+      </fieldset>
 
       <fieldset>
         <legend className="text-sm font-black text-ink-inverse">Como definir a duração?</legend>

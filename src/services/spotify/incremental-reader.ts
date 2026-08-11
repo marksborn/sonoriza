@@ -728,6 +728,7 @@ function createPodcastCollector(
             releaseDatePrecision: episode.release_date_precision,
             sourceSpotifyType: options.sourceSpotifyType,
             sourceSpotifyId: options.sourceSpotifyId,
+            sourceIncludePlayed: includePlayed,
           });
         }
 

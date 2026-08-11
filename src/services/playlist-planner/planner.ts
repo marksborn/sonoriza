@@ -15,6 +15,8 @@ export interface PlanPlaylistInput {
   rules: PlaylistRules;
   pools: PlannerPools;
   reserved?: Iterable<string>;
+  /** SCHEDULE-01: valid items already present in this target, in remote order. */
+  preserved?: Candidate[];
 }
 
 const MIX_QUALITY_TOLERANCE_POINTS = 10;
@@ -32,7 +34,7 @@ type MusicDiversityState = {
   missingAlbumIdentityRejectedUris: Set<string>;
 };
 
-export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): PlanResult {
+export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylistInput): PlanResult {
   const target = Math.max(0, rules.targetDurationMs);
   const podcastPercent = clamp(rules.podcastPercent, 0, 100);
   const maxPodcastDurationMs =
@@ -119,6 +121,11 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
     }
   };
 
+  for (const candidate of preserved ?? []) {
+    if (used.has(candidate.uri) || candidate.durationMs <= 0) continue;
+    place(candidate);
+  }
+
   let sequenceSlotsRequested = 0;
   let sequenceSlotsFilled = 0;
   let sequenceUnfilledSlots = 0;
@@ -134,7 +141,10 @@ export function planPlaylist({ rules, pools, reserved }: PlanPlaylistInput): Pla
       sequenceStopReason = "INVALID_PATTERN";
     } else {
       sequenceQualityPassed = true;
-      let patternIndex = 0;
+      let patternIndex = items.length % pattern.length;
+      sequenceSlotsRequested = items.length;
+      sequenceSlotsFilled = items.length;
+      completedCycles = Math.floor(items.length / pattern.length);
 
       while (totalDuration() < target) {
         const remainingMs = target - totalDuration();

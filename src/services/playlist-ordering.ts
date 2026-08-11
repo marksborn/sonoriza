@@ -30,7 +30,7 @@ function rankingKey(seed: string, item: OrderablePlaylistItem, originalIndex: nu
     .digest("hex");
 }
 
-function finalOrderHash(items: OrderablePlaylistItem[]) {
+export function playlistOrderHash(items: OrderablePlaylistItem[]) {
   return createHash("sha256")
     .update(items.map((item) => `${item.position}:${item.type}:${item.uri}`).join("\n"))
     .digest("hex");
@@ -57,7 +57,7 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
         seedSource: null,
         changed: false,
         musicCount: result.filter((item) => item.type === "MUSIC").length,
-        orderHash: finalOrderHash(result),
+        orderHash: playlistOrderHash(result),
       },
     };
   }
@@ -98,7 +98,7 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
       seedSource,
       changed: originalMusicUris.some((uri, index) => finalMusicUris[index] !== uri),
       musicCount: originalMusic.length,
-      orderHash: finalOrderHash(result),
+      orderHash: playlistOrderHash(result),
     },
   };
 }

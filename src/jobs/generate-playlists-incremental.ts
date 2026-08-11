@@ -7,11 +7,14 @@ import {
 } from "@/services/google-calendar";
 import {
   parseSequencePattern,
+  type Candidate,
   type RunTarget,
 } from "@/services/playlist-planner";
+import type { KeepFilledTargetPatch } from "@/services/keep-filled-maintenance";
 import {
   applyMusicOrder,
   createMusicOrderSeed,
+  playlistOrderHash,
   type MusicOrderEvidence,
   type ReusableMusicOrderEvidence,
 } from "@/services/playlist-ordering";
@@ -46,6 +49,23 @@ export interface GeneratePlaylistsOptions {
   date?: Date;
   /** ORDER-01: one-shot seed/hash proof from a current approved simulation. */
   musicOrderSimulationEvidence?: Record<string, ReusableMusicOrderEvidence>;
+  /** SCHEDULE-01: optional subset; omitted keeps manual generation behavior unchanged. */
+  targetPlaylistIds?: string[];
+  /** SCHEDULE-01: canonical valid remote prefix by target. */
+  preservedByTargetId?: Record<string, Candidate[]>;
+  /** SCHEDULE-01: minimal remote patch proof for KEEP_FILLED targets. */
+  keepFilledByTargetId?: Record<string, KeepFilledTargetPatch>;
+  /** SCHEDULE-01 audit label per scoped target. */
+  scheduledPolicyByTargetId?: Record<string, "KEEP_FILLED" | "REBUILD_DAILY">;
+  /** SCHEDULE-01: live URIs owned by enabled targets outside this scoped batch. */
+  reservedUris?: string[];
+  /** Snapshots proving the external reservation set is still current pre-write. */
+  reservedTargetSnapshots?: Record<string, string>;
+  /** Stable current state captured before a scheduled full rebuild. */
+  rebuildByTargetId?: Record<
+    string,
+    { snapshotBefore: string; currentCount: number; currentDurationMs: number }
+  >;
 }
 
 export interface GeneratePlaylistsResult {
@@ -59,7 +79,7 @@ type LogLine = {
   data?: unknown;
 };
 
-type ResolvedTargetDuration = {
+export type ResolvedTargetDuration = {
   durationMs: number;
   calendar: CalendarDurationResult | null;
   podcastEpisodeMaxDurationMs: number | null;
@@ -87,8 +107,13 @@ export async function generatePlaylists(
 
   const logs: LogLine[] = [];
   const log = (line: LogLine) => logs.push(line);
+  const targetScope = opts.targetPlaylistIds
+    ? [...new Set(opts.targetPlaylistIds.filter(Boolean))]
+    : null;
   const summary: Record<string, unknown> = {
     simulate,
+    targetScope,
+    scheduledPolicies: opts.scheduledPolicyByTargetId ?? null,
     targets: [] as unknown[],
     qualityPassed: false,
     collectionComplete: false,
@@ -102,9 +127,18 @@ export async function generatePlaylists(
     // Resolve target demand before reading Spotify. This lets the collector skip
     // source kinds that no active target actually needs.
     const targets = await prisma.targetPlaylist.findMany({
-      where: { userId, enabled: true },
+      where: {
+        userId,
+        enabled: true,
+        ...(targetScope ? { id: { in: targetScope } } : {}),
+      },
       orderBy: { priority: "asc" },
     });
+    if (targetScope && targets.length !== targetScope.length) {
+      throw new Error(
+        "Um ou mais destinos agendados foram desabilitados ou removidos antes do planejamento.",
+      );
+    }
     const durationCalendarIds = (
       await prisma.calendarSelection.findMany({
         where: { userId, selected: true, usedForDuration: true },
@@ -211,6 +245,10 @@ export async function generatePlaylists(
     const incremental = await collectIncrementally({
       sources: sourceCursors,
       targets: runTargets,
+      preservedByTargetId: new Map(
+        Object.entries(opts.preservedByTargetId ?? {}),
+      ),
+      initialReserved: opts.reservedUris ?? [],
       onBatch(source, batch) {
         musicUnavailableSkippedCount += batch.unavailableMusicSkippedCount ?? 0;
         genericPodcastSuppressedCount += batch.genericPodcastSuppressedCount ?? 0;
@@ -312,21 +350,47 @@ export async function generatePlaylists(
       const target = targetByPlanId.get(planned.targetPlaylistId);
       if (!target) continue;
 
-      const reusedEvidence = opts.musicOrderSimulationEvidence?.[target.id] ?? null;
+      const keepFilled = opts.keepFilledByTargetId?.[target.id] ?? null;
+      const reusedEvidence = keepFilled
+        ? null
+        : opts.musicOrderSimulationEvidence?.[target.id] ?? null;
       const seed =
         target.musicOrderMode === "RANDOMIZED"
           ? reusedEvidence?.seed ?? createMusicOrderSeed(run.id, target.id)
           : null;
+      const preservedUris = new Set(keepFilled?.preservedUris ?? []);
+      const preservedPrefix: typeof planned.result.items = [];
+      const orderableSuffix: typeof planned.result.items = [];
+      let suffixStarted = false;
+      for (const item of planned.result.items) {
+        if (!suffixStarted && preservedUris.has(item.uri)) {
+          preservedPrefix.push(item);
+        } else {
+          suffixStarted = true;
+          orderableSuffix.push(item);
+        }
+      }
       const ordered = applyMusicOrder(
-        planned.result.items,
+        keepFilled ? orderableSuffix : planned.result.items,
         target.musicOrderMode,
         seed,
         reusedEvidence ? "SIMULATION" : seed ? "RUN" : null,
       );
-      planned.result.items = ordered.items;
+      if (keepFilled) {
+        planned.result.items = [...preservedPrefix, ...ordered.items].map(
+          (item, position) => ({ ...item, position }),
+        );
+        ordered.evidence.orderHash = playlistOrderHash(planned.result.items);
+        ordered.evidence.musicCount = planned.result.items.filter(
+          (item) => item.type === "MUSIC",
+        ).length;
+      } else {
+        planned.result.items = ordered.items;
+      }
       musicOrderEvidenceByTargetId.set(target.id, ordered.evidence);
 
       if (
+        !keepFilled &&
         !simulate &&
         reusedEvidence &&
         ordered.evidence.orderHash !== reusedEvidence.orderHash
@@ -435,7 +499,11 @@ export async function generatePlaylists(
 
     if (!simulate) {
       const liveTargets = await prisma.targetPlaylist.findMany({
-        where: { userId, enabled: true },
+        where: {
+          userId,
+          enabled: true,
+          ...(targetScope ? { id: { in: targetScope } } : {}),
+        },
         select: {
           id: true,
           name: true,
@@ -520,6 +588,70 @@ export async function generatePlaylists(
 
     if (!simulate) writer = await SpotifyClient.forUser(userId);
 
+    if (!simulate && writer) {
+      const reservationSnapshotViolations: Array<{
+        spotifyPlaylistId: string;
+        expected: string;
+        actual: string;
+      }> = [];
+      for (const [spotifyPlaylistId, expected] of Object.entries(
+        opts.reservedTargetSnapshots ?? {},
+      )) {
+        const actual = await writer.getPlaylistSnapshotId(spotifyPlaylistId);
+        if (actual !== expected) {
+          reservationSnapshotViolations.push({ spotifyPlaylistId, expected, actual });
+        }
+      }
+      if (reservationSnapshotViolations.length > 0) {
+        summary.externalReservationSnapshotViolations =
+          reservationSnapshotViolations;
+        const error =
+          "A geração agendada foi bloqueada antes de alterar o Spotify porque outro destino mudou depois de reservar sua exclusividade.";
+        log({ level: "ERROR", message: error, data: reservationSnapshotViolations });
+        await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+
+      const snapshotViolations: Array<{
+        targetPlaylistId: string;
+        targetName: string;
+        expected: string;
+        actual: string | null;
+      }> = [];
+      for (const target of targets) {
+        const patch = opts.keepFilledByTargetId?.[target.id];
+        const rebuild = opts.rebuildByTargetId?.[target.id];
+        const expected = patch?.snapshotBefore ?? rebuild?.snapshotBefore ?? null;
+        if (!expected) continue;
+        if (!target.spotifyPlaylistId) {
+          snapshotViolations.push({
+            targetPlaylistId: target.id,
+            targetName: target.name,
+            expected,
+            actual: null,
+          });
+          continue;
+        }
+        const actual = await writer.getPlaylistSnapshotId(target.spotifyPlaylistId);
+        if (actual !== expected) {
+          snapshotViolations.push({
+            targetPlaylistId: target.id,
+            targetName: target.name,
+            expected,
+            actual,
+          });
+        }
+      }
+      if (snapshotViolations.length > 0) {
+        summary.scheduledTargetSnapshotViolations = snapshotViolations;
+        const error =
+          "A manutenção foi bloqueada antes de alterar o Spotify porque um destino mudou depois da leitura canônica. Tente novamente no próximo ciclo.";
+        log({ level: "ERROR", message: error, data: snapshotViolations });
+        await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+    }
+
     const targetById = new Map(targets.map((target) => [target.id, target]));
     let anyFailed = false;
 
@@ -543,6 +675,8 @@ export async function generatePlaylists(
         musicOrderChanged: musicOrderEvidence?.changed ?? false,
         maxTracksPerArtist: target.maxTracksPerArtist,
         maxTracksPerAlbum: target.maxTracksPerAlbum,
+        scheduledPolicy: opts.scheduledPolicyByTargetId?.[target.id] ?? null,
+        targetDurationMs: resolvedDuration?.durationMs ?? 0,
         sequencePattern: parseSequencePattern(target.sequencePattern),
         ...stats,
         totalMinutes: Math.round(stats.totalDurationMs / 60_000),
@@ -570,11 +704,105 @@ export async function generatePlaylists(
       try {
         if (!simulate) {
           const playlistId = await ensureSpotifyPlaylist(writer!, target);
-          await writer!.replacePlaylistItems(
-            playlistId,
-            items.map((item) => item.uri),
-          );
-          targetSummary.applied = true;
+          const patch = opts.keepFilledByTargetId?.[target.id] ?? null;
+          if (!patch) {
+            const rebuild = opts.rebuildByTargetId?.[target.id] ?? null;
+            if (rebuild) {
+              const currentSnapshot = await writer!.getPlaylistSnapshotId(playlistId);
+              if (currentSnapshot !== rebuild.snapshotBefore) {
+                throw new Error(
+                  `Target "${target.name}" changed after its final rebuild preflight`,
+                );
+              }
+            }
+            const snapshotAfter = await writer!.replacePlaylistItems(
+              playlistId,
+              items.map((item) => item.uri),
+            );
+            targetSummary.applied = true;
+            targetSummary.snapshotAfter = snapshotAfter;
+            if (rebuild) {
+              targetSummary.snapshotBefore = rebuild.snapshotBefore;
+              targetSummary.validDurationBeforeMs = null;
+              targetSummary.removedDurationMs = rebuild.currentDurationMs;
+              targetSummary.addedDurationMs = stats.totalDurationMs;
+              targetSummary.preservedCount = 0;
+              targetSummary.removedCount = rebuild.currentCount;
+              targetSummary.addedCount = items.length;
+              targetSummary.maintenanceNoop = false;
+            }
+          } else {
+            const currentSnapshot = await writer!.getPlaylistSnapshotId(playlistId);
+            if (currentSnapshot !== patch.snapshotBefore) {
+              throw new Error(
+                `Target "${target.name}" changed after its final maintenance preflight`,
+              );
+            }
+
+            const finalUris = items.map((item) => item.uri);
+            const finalUriSet = new Set(finalUris);
+            const preservedUriSet = new Set(patch.preservedUris);
+            const addedItems = items.filter((item) => !preservedUriSet.has(item.uri));
+            const addedUris = addedItems.map((item) => item.uri);
+            const addedUriSet = new Set(addedUris);
+            const droppedPreservedUris = patch.preservedUris.filter(
+              (uri) => !finalUriSet.has(uri),
+            );
+            const effectiveRemoveUris = [
+              ...new Set([...patch.removeUris, ...droppedPreservedUris]),
+            ];
+            const forceReplace =
+              patch.forceReplace ||
+              effectiveRemoveUris.some((uri) => addedUriSet.has(uri));
+            const preservedCandidates = opts.preservedByTargetId?.[target.id] ?? [];
+            const droppedDurationMs = preservedCandidates
+              .filter((item) => droppedPreservedUris.includes(item.uri))
+              .reduce((sum, item) => sum + Math.max(0, item.durationMs), 0);
+            const addedDurationMs = addedItems.reduce(
+              (sum, item) => sum + Math.max(0, item.durationMs),
+              0,
+            );
+
+            let snapshotAfter: string | null = currentSnapshot;
+            let applied = false;
+            if (forceReplace) {
+              snapshotAfter = await writer!.replacePlaylistItems(playlistId, finalUris);
+              applied = true;
+            } else {
+              if (addedUris.length > 0) {
+                snapshotAfter =
+                  (await writer!.appendPlaylistItems(playlistId, addedUris)) ??
+                  snapshotAfter;
+                applied = true;
+              }
+              if (effectiveRemoveUris.length > 0) {
+                snapshotAfter =
+                  (await writer!.removePlaylistItems(
+                    playlistId,
+                    effectiveRemoveUris,
+                    snapshotAfter ?? currentSnapshot,
+                  )) ?? snapshotAfter;
+                applied = true;
+              }
+            }
+
+            targetSummary.applied = applied;
+            targetSummary.maintenanceNoop = !applied;
+            targetSummary.targetDurationMs = patch.targetDurationMs;
+            targetSummary.validDurationBeforeMs = patch.validDurationBeforeMs;
+            targetSummary.removedDurationMs =
+              patch.removedDurationMs + droppedDurationMs;
+            targetSummary.addedDurationMs = addedDurationMs;
+            targetSummary.preservedCount = items.length - addedItems.length;
+            targetSummary.removedCount =
+              patch.removedCount + droppedPreservedUris.length;
+            targetSummary.addedCount = addedItems.length;
+            targetSummary.unknownReplayPolicyCount = patch.unknownReplayPolicyCount;
+            targetSummary.snapshotBefore = patch.snapshotBefore;
+            targetSummary.snapshotAfter = snapshotAfter;
+            targetSummary.minimalPatch = !forceReplace;
+            targetSummary.droppedPreservedCount = droppedPreservedUris.length;
+          }
         } else {
           targetSummary.applied = false;
         }
@@ -590,6 +818,14 @@ export async function generatePlaylists(
             subtitle: item.subtitle,
             programId: item.programId,
             durationMs: item.durationMs,
+            spotifyTrackId: item.spotifyTrackId,
+            primaryArtistId: item.primaryArtistId,
+            albumId: item.albumId,
+            originalDurationMs: item.originalDurationMs,
+            resumePositionMs: item.resumePositionMs,
+            sourceSpotifyType: item.sourceSpotifyType,
+            sourceSpotifyId: item.sourceSpotifyId,
+            sourceIncludePlayed: item.sourceIncludePlayed,
           })),
         });
 
@@ -708,7 +944,7 @@ function sourceFailureFromCursor(
   };
 }
 
-async function resolveTargetDuration(
+export async function resolveTargetDuration(
   userId: string,
   target: TargetPlaylist,
   durationCalendarIds: string[],
