@@ -16,6 +16,7 @@ type PageProps = {
 };
 
 type SimulationTargetSummary = {
+  targetPlaylistId: string | null;
   name: string;
   planned: number | null;
   totalMinutes: number | null;
@@ -29,6 +30,11 @@ type SimulationTargetSummary = {
   podcastEpisodeMaxDurationMinutes: number | null;
   podcastDurationExceededCount: number | null;
   compositionMode: "PROPORTION" | "SEQUENCE" | null;
+  musicOrderMode: "STANDARD" | "RANDOMIZED" | null;
+  musicOrderSeed: string | null;
+  musicOrderSeedSource: "RUN" | "SIMULATION" | null;
+  musicOrderHash: string | null;
+  musicOrderChanged: boolean | null;
   compositionQualityPassed: boolean | null;
   sequencePattern: Array<"MUSIC" | "PODCAST">;
   sequenceSlotsRequested: number | null;
@@ -73,6 +79,8 @@ function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
 
     return [
       {
+        targetPlaylistId:
+          typeof value.targetPlaylistId === "string" ? value.targetPlaylistId : null,
         name: value.name,
         planned: numberValue(value.planned),
         totalMinutes: numberValue(value.totalMinutes),
@@ -100,6 +108,19 @@ function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
           value.compositionMode === "PROPORTION" || value.compositionMode === "SEQUENCE"
             ? value.compositionMode
             : null,
+        musicOrderMode:
+          value.musicOrderMode === "STANDARD" || value.musicOrderMode === "RANDOMIZED"
+            ? value.musicOrderMode
+            : null,
+        musicOrderSeed:
+          typeof value.musicOrderSeed === "string" ? value.musicOrderSeed : null,
+        musicOrderSeedSource:
+          value.musicOrderSeedSource === "RUN" || value.musicOrderSeedSource === "SIMULATION"
+            ? value.musicOrderSeedSource
+            : null,
+        musicOrderHash:
+          typeof value.musicOrderHash === "string" ? value.musicOrderHash : null,
+        musicOrderChanged: booleanValue(value.musicOrderChanged),
         compositionQualityPassed: booleanValue(value.compositionQualityPassed),
         sequencePattern: Array.isArray(value.sequencePattern)
           ? value.sequencePattern.filter(
@@ -232,11 +253,33 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
             orderBy: { createdAt: "asc" },
             select: { level: true, message: true },
           },
+          items: {
+            orderBy: { position: "asc" },
+            select: {
+              targetPlaylistId: true,
+              position: true,
+              contentType: true,
+              title: true,
+            },
+          },
         },
       })
     : null;
 
   const simulatedTargets = readSimulationTargets(simulation?.summary);
+  const simulatedOrderByTargetId = new Map<
+    string,
+    Array<{ position: number; type: "MUSIC" | "PODCAST"; title: string }>
+  >();
+  for (const item of simulation?.items ?? []) {
+    const current = simulatedOrderByTargetId.get(item.targetPlaylistId) ?? [];
+    current.push({
+      position: item.position,
+      type: item.contentType,
+      title: item.title ?? "Item sem título",
+    });
+    simulatedOrderByTargetId.set(item.targetPlaylistId, current);
+  }
   const skippedTargets = readSkipped(simulation?.summary);
   const simulationQualityPassed = readQualityPassed(simulation?.summary);
   const musicUnavailableSkippedCount = readMusicUnavailableSkippedCount(
@@ -530,6 +573,11 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                         }% música`
                       : " · Por sequência"}
                     {` · ${configuredPodcastDurationLabel(target)}`}
+                    {` · músicas: ${
+                      target.musicOrderMode === "RANDOMIZED"
+                        ? "ordem randomizada"
+                        : "ordem padrão"
+                    }`}
                   </p>
                   {target.compositionMode === "SEQUENCE" && (
                     <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-inverse">
@@ -763,6 +811,37 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                               ? ` · ${target.podcastCount} podcasts`
                               : ""}
                           </p>
+                          {target.musicOrderMode === "RANDOMIZED" && (
+                            <div className="status-info mt-3 rounded-xl border p-3 text-xs leading-5">
+                              <p className="font-black">Músicas randomizadas nesta simulação</p>
+                              <p className="mt-1 opacity-80">
+                                Seed: <code>{target.musicOrderSeed ?? "indisponível"}</code>
+                                {target.musicOrderChanged === false
+                                  ? " · a ordem coincidiu com a original nesta execução"
+                                  : ""}
+                              </p>
+                              {target.targetPlaylistId &&
+                                (simulatedOrderByTargetId.get(target.targetPlaylistId)?.length ?? 0) > 0 && (
+                                  <details className="mt-2">
+                                    <summary className="cursor-pointer font-black">
+                                      Ver ordem simulada ({simulatedOrderByTargetId.get(target.targetPlaylistId)!.length} itens)
+                                    </summary>
+                                    <ol className="mt-2 space-y-1">
+                                      {simulatedOrderByTargetId.get(target.targetPlaylistId)!.map((item) => (
+                                        <li key={`${item.position}-${item.type}-${item.title}`}>
+                                          {item.position + 1}. {item.type === "MUSIC" ? "M" : "P"} · {item.title}
+                                        </li>
+                                      ))}
+                                    </ol>
+                                    {target.musicOrderHash && (
+                                      <p className="mt-2 opacity-65">
+                                        Hash da ordem: <code>{target.musicOrderHash}</code>
+                                      </p>
+                                    )}
+                                  </details>
+                                )}
+                            </div>
+                          )}
                           {target.calendarDurationMinutes !== null && (
                             <p className="mt-2 text-xs font-semibold leading-5 opacity-70">
                               {target.calendarEventCount ?? 0} eventos considerados

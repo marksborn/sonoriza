@@ -218,6 +218,28 @@ test("CONFIG-04 green CTA is derived from the same realRunAllowed authority", ()
 
   assert.match(
     source,
-    /simulation\.status === "SUCCESS" && gate\.realRunAllowed/,
+    /simulation\.status === "SUCCESS"\s*&&\s*gate\.realRunAllowed/,
   );
+});
+
+
+test("ORDER-01 music ordering policy participates in configuration fingerprint", () => {
+  const source = readFileSync("src/services/configuration-readiness.ts", "utf8");
+  const fingerprintStart = source.indexOf("const fingerprintPayload");
+  const fingerprintEnd = source.indexOf("return {", fingerprintStart);
+  const fingerprintSource = source.slice(fingerprintStart, fingerprintEnd);
+  assert.match(fingerprintSource, /musicOrderMode/);
+});
+
+test("ORDER-01 real entry points resolve reusable simulation seeds before generation", () => {
+  const manual = readFileSync("src/app/api/generate/route.ts", "utf8");
+  const scheduled = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+
+  for (const source of [manual, scheduled]) {
+    const seedLookup = source.indexOf("findReusableSimulationMusicOrderSeeds");
+    const generatorCall = source.indexOf("await generatePlaylists({");
+    assert.ok(seedLookup >= 0);
+    assert.ok(generatorCall > seedLookup);
+    assert.match(source, /musicOrderSeeds/);
+  }
 });

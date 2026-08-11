@@ -6,6 +6,7 @@ import { UiIcon } from "@/components/UiIcon";
 
 type ContentType = "MUSIC" | "PODCAST";
 type CompositionMode = "PROPORTION" | "SEQUENCE";
+type MusicOrderMode = "STANDARD" | "RANDOMIZED";
 type DurationMode = "FIXED" | "CALENDAR";
 type EmptyCalendarBehavior = "CLEAR" | "KEEP" | "SKIP";
 type CalendarEventFilterMode = "ALL" | "MARKER";
@@ -26,6 +27,7 @@ export type TargetPlaylistFormInitial = {
   calendarEventFilterMode: CalendarEventFilterMode;
   calendarEventMarker: string;
   compositionMode: CompositionMode;
+  musicOrderMode: MusicOrderMode;
   podcastPercent: number;
   podcastEpisodeMaxDurationMode: PodcastEpisodeMaxDurationMode;
   podcastEpisodeMaxDurationMinutes: number;
@@ -83,6 +85,9 @@ export function TargetPlaylistForm({
     useState<CalendarEventFilterMode>(initial.calendarEventFilterMode);
   const [compositionMode, setCompositionMode] = useState<CompositionMode>(
     initial.compositionMode,
+  );
+  const [musicOrderMode, setMusicOrderMode] = useState<MusicOrderMode>(
+    initial.musicOrderMode,
   );
   const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);
   const [podcastEpisodeMaxDurationMode, setPodcastEpisodeMaxDurationMode] =
@@ -380,6 +385,45 @@ export function TargetPlaylistForm({
             <span className="block font-black text-ink-inverse">Por sequência</span>
             <span className="mt-1 block text-xs leading-5 text-muted-inverse/70">
               Repita uma ordem fixa. O percentual final será consequência da duração real dos itens, não uma segunda regra.
+            </span>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset className={sectionClass}>
+        <legend className="px-1 text-sm font-black text-ink-inverse">
+          Ordem das músicas
+        </legend>
+        <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
+          A seleção continua a mesma. Esta opção muda apenas qual música ocupa cada slot de música; podcasts e a sequência de tipos não são alterados.
+        </p>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className={optionClass(musicOrderMode === "STANDARD")}>
+            <input
+              type="radio"
+              name="musicOrderMode"
+              value="STANDARD"
+              checked={musicOrderMode === "STANDARD"}
+              onChange={() => setMusicOrderMode("STANDARD")}
+              className="sr-only"
+            />
+            <span className="block font-black text-ink-inverse">Ordem padrão</span>
+            <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+              Mantém a ordem musical produzida pelo planner.
+            </span>
+          </label>
+          <label className={optionClass(musicOrderMode === "RANDOMIZED")}>
+            <input
+              type="radio"
+              name="musicOrderMode"
+              value="RANDOMIZED"
+              checked={musicOrderMode === "RANDOMIZED"}
+              onChange={() => setMusicOrderMode("RANDOMIZED")}
+              className="sr-only"
+            />
+            <span className="block font-black text-ink-inverse">Randomizar músicas</span>
+            <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+              Cada execução recebe um seed auditável e pode produzir uma nova ordem, sem depender do Shuffle do Spotify.
             </span>
           </label>
         </div>

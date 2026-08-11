@@ -10,6 +10,11 @@ import {
   type RunTarget,
 } from "@/services/playlist-planner";
 import {
+  applyMusicOrder,
+  createMusicOrderSeed,
+  type MusicOrderEvidence,
+} from "@/services/playlist-ordering";
+import {
   buildSourceCollectionDiagnosticSummary,
   safeConfiguredSourceLabel,
   type SourceCollectionFailureRecord,
@@ -38,6 +43,8 @@ export interface GeneratePlaylistsOptions {
   simulate?: boolean;
   /** Day used to resolve calendar-based durations. Defaults to now. */
   date?: Date;
+  /** ORDER-01: one-shot seeds reused from a current approved simulation. */
+  musicOrderSeeds?: Record<string, string>;
 }
 
 export interface GeneratePlaylistsResult {
@@ -292,6 +299,27 @@ export async function generatePlaylists(
     }
 
     const targetByPlanId = new Map(targets.map((target) => [target.id, target]));
+    const musicOrderEvidenceByTargetId = new Map<string, MusicOrderEvidence>();
+
+    for (const planned of plan.targets) {
+      const target = targetByPlanId.get(planned.targetPlaylistId);
+      if (!target) continue;
+
+      const reusedSeed = opts.musicOrderSeeds?.[target.id] ?? null;
+      const seed =
+        target.musicOrderMode === "RANDOMIZED"
+          ? reusedSeed ?? createMusicOrderSeed(run.id, target.id)
+          : null;
+      const ordered = applyMusicOrder(
+        planned.result.items,
+        target.musicOrderMode,
+        seed,
+        reusedSeed ? "SIMULATION" : seed ? "RUN" : null,
+      );
+      planned.result.items = ordered.items;
+      musicOrderEvidenceByTargetId.set(target.id, ordered.evidence);
+    }
+
     const sequenceViolations = plan.targets.flatMap((planned) => {
       const target = targetByPlanId.get(planned.targetPlaylistId);
       if (!target || target.compositionMode !== "SEQUENCE") return [];
@@ -387,10 +415,17 @@ export async function generatePlaylists(
       const calendar = resolvedDuration?.calendar ?? null;
       const podcastEpisodeMaxDurationMs =
         resolvedDuration?.podcastEpisodeMaxDurationMs ?? null;
+      const musicOrderEvidence = musicOrderEvidenceByTargetId.get(target.id) ?? null;
 
       const targetSummary: Record<string, unknown> = {
+        targetPlaylistId: target.id,
         name: target.name,
         planned: items.length,
+        musicOrderMode: target.musicOrderMode,
+        musicOrderSeed: musicOrderEvidence?.seed ?? null,
+        musicOrderSeedSource: musicOrderEvidence?.seedSource ?? null,
+        musicOrderHash: musicOrderEvidence?.orderHash ?? null,
+        musicOrderChanged: musicOrderEvidence?.changed ?? false,
         sequencePattern: parseSequencePattern(target.sequencePattern),
         ...stats,
         totalMinutes: Math.round(stats.totalDurationMs / 60_000),
