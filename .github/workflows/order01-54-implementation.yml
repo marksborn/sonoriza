@@ -63,7 +63,9 @@ jobs:
 
       - name: Apply ORDER-01 patch
         if: ${{ steps.guard.outputs.skip != 'true' }}
-        run: python3 .github/scripts/order01-54-apply.py
+        run: |
+          python3 .github/scripts/order01-54-apply.py
+          python3 .github/scripts/order01-54-test-fix.py
 
       - name: Format and generate Prisma
         if: ${{ steps.guard.outputs.skip != 'true' }}
