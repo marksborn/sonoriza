@@ -41,6 +41,8 @@ export function readInconclusiveSimulation(
   if (!root || root.inconclusive !== true) return null;
 
   const sourceCollection = asRecord(root.sourceCollection);
+  const spotifyApi = asRecord(root.spotifyApi);
+  const callsByOperation = asRecord(spotifyApi?.callsByOperation);
   const failures = Array.isArray(sourceCollection?.failures)
     ? sourceCollection.failures.flatMap((entry) => {
         const value = asRecord(entry);
@@ -85,7 +87,9 @@ export function readInconclusiveSimulation(
         : Math.max(0, configuredSourceCount - readSourceCount - unavailableSourceCount);
 
   const sourceDiagnostics = exactStatusesAvailable
-    ? sourceStatuses.map((source) => readSourceStatusDiagnostic(source))
+    ? sourceStatuses.map((source) =>
+        readSourceStatusDiagnostic(source, callsByOperation),
+      )
     : failures.map((failure) => readFailureDiagnostic(failure));
 
   return {
@@ -110,7 +114,10 @@ export function readInconclusiveSimulation(
   };
 }
 
-function readSourceStatusDiagnostic(source: UnknownRecord): InconclusiveSourceDiagnostic {
+function readSourceStatusDiagnostic(
+  source: UnknownRecord,
+  callsByOperation: UnknownRecord | null,
+): InconclusiveSourceDiagnostic {
   const state =
     source.state === "CONFIRMED" ||
     source.state === "UNAVAILABLE" ||
@@ -156,6 +163,13 @@ function readSourceStatusDiagnostic(source: UnknownRecord): InconclusiveSourceDi
   const status = nonNegativeNullableInteger(source.status);
   const operation = safeOperation(source.operation);
   const retryAfterSeconds = nonNegativeNullableInteger(source.retryAfterSeconds);
+  const postProviderLocalFailure = isPostProviderLocalPodcastFailure(
+    source,
+    pagesRead,
+    errorKind,
+    operation,
+    callsByOperation,
+  );
   const partialPrefix = partialRead
     ? pagesRead > 0
       ? `A fonte chegou a ser lida parcialmente (${pagesRead} ${pagesRead === 1 ? "página" : "páginas"}) antes da falha. `
@@ -168,7 +182,13 @@ function readSourceStatusDiagnostic(source: UnknownRecord): InconclusiveSourceDi
     stateLabel: "Indisponível",
     detail:
       partialPrefix +
-      failureDetail(errorKind, status, operation, retryAfterSeconds),
+      failureDetail(
+        errorKind,
+        status,
+        operation,
+        retryAfterSeconds,
+        postProviderLocalFailure,
+      ),
     pagesRead,
     partialRead,
     httpStatus: status,
@@ -187,7 +207,7 @@ function readFailureDiagnostic(failure: UnknownRecord): InconclusiveSourceDiagno
     source: safeSourceLabel(failure),
     state: "UNAVAILABLE",
     stateLabel: "Indisponível",
-    detail: failureDetail(errorKind, status, operation, retryAfterSeconds),
+    detail: failureDetail(errorKind, status, operation, retryAfterSeconds, false),
     pagesRead: 0,
     partialRead: false,
     httpStatus: status,
@@ -212,6 +232,7 @@ function failureDetail(
   status: number | null,
   operation: string | null,
   retryAfterSeconds: number | null,
+  postProviderLocalFailure: boolean,
 ): string {
   const during = operation ? ` durante ${operationLabel(operation)}` : "";
 
@@ -247,7 +268,47 @@ function failureDetail(
     }
   }
 
+  if (postProviderLocalFailure) {
+    return "O Spotify entregou a página solicitada, mas o Sonoriza falhou depois da resposta, durante o processamento local dos episódios. A execução foi interrompida para não validar o plano com estado de escuta incompleto.";
+  }
+
   return `A leitura da fonte não pôde ser concluída${during}. O Sonoriza interrompeu a coleta para não avaliar a configuração com dados incompletos.`;
+}
+
+function isPostProviderLocalPodcastFailure(
+  source: UnknownRecord,
+  pagesRead: number,
+  errorKind: "QUOTA_EXCEEDED" | "RATE_LIMITED" | "HTTP_ERROR" | "SOURCE_READ_FAILED",
+  operation: string | null,
+  callsByOperation: UnknownRecord | null,
+): boolean {
+  if (
+    errorKind !== "SOURCE_READ_FAILED" ||
+    operation !== null ||
+    pagesRead <= 0 ||
+    source.kind !== "PODCAST" ||
+    !callsByOperation
+  ) {
+    return false;
+  }
+
+  const providerOperation =
+    source.spotifyType === "SHOW"
+      ? "show-episodes"
+      : source.spotifyType === "SAVED_EPISODES"
+        ? "saved-episodes"
+        : source.spotifyType === "PLAYLIST"
+          ? "playlist-items"
+          : null;
+  if (!providerOperation) return false;
+
+  const providerCalls = finiteNumber(callsByOperation[providerOperation]);
+  if (providerCalls === null) return false;
+
+  // Request metrics are incremented before fetch. Equal call/page counts mean
+  // no additional provider request was even attempted after the pages already
+  // received, so a generic failure happened on the local post-response path.
+  return Math.max(0, Math.trunc(providerCalls)) === pagesRead;
 }
 
 function readReason(
@@ -284,7 +345,7 @@ function reasonMessage(reason: SimulationInconclusiveReason): string {
   if (reason === "RATE_LIMITED") {
     return "O Spotify continuou limitando a leitura mesmo após a tentativa controlada de retry. O Sonoriza não avaliou o planner com um pool parcial.";
   }
-  return "O Spotify não permitiu ler todas as fontes necessárias. O Sonoriza tratou a coleta como incompleta e não usou os dados parciais para julgar a configuração.";
+  return "Não foi possível concluir a leitura e o processamento de todas as fontes necessárias. O Sonoriza tratou a coleta como incompleta e não usou os dados parciais para julgar a configuração.";
 }
 
 function retryHint(
