@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def replace_once(path: str, old: str, new: str) -> None:
@@ -19,18 +20,23 @@ replace_once(
   initialReserved?: Iterable<string>;
 }''',
 )
-replace_once(
-    "src/services/playlist-planner/plan-run.ts",
-    '''export function planRun({ pools, targets, preservedByTargetId }: PlanRunInput): PlanRunResult {
-  const reserved = new Set<string>();''',
-    '''export function planRun({
+p = Path("src/services/playlist-planner/plan-run.ts")
+text = p.read_text()
+pattern = re.compile(
+    r"export function planRun\(\{\s*pools,\s*targets,\s*preservedByTargetId,?\s*\}: PlanRunInput\): PlanRunResult \{\s*const reserved = new Set<string>\(\);",
+    re.MULTILINE,
+)
+replacement = '''export function planRun({
   pools,
   targets,
   preservedByTargetId,
   initialReserved,
 }: PlanRunInput): PlanRunResult {
-  const reserved = new Set<string>(initialReserved ?? []);''',
-)
+  const reserved = new Set<string>(initialReserved ?? []);'''
+text, count = pattern.subn(replacement, text, count=1)
+if count != 1:
+    raise SystemExit("src/services/playlist-planner/plan-run.ts: formatted planRun signature not found")
+p.write_text(text)
 
 replace_once(
     "src/jobs/incremental-planning.ts",
@@ -50,6 +56,9 @@ replace_once(
 )
 p = Path("src/jobs/incremental-planning.ts")
 text = p.read_text()
+occurrences = text.count("planRun({ pools, targets, preservedByTargetId })")
+if occurrences < 1:
+    raise SystemExit("src/jobs/incremental-planning.ts: planRun calls not found")
 text = text.replace(
     "planRun({ pools, targets, preservedByTargetId })",
     "planRun({ pools, targets, preservedByTargetId, initialReserved })",
@@ -79,22 +88,8 @@ replace_once(
       onBatch(source, batch) {''',
 )
 
-# Never infer replay policy for a completed legacy/manual episode. Preserve it
-# in the pure analysis, then block the whole maintenance before mutation.
-replace_once(
-    "src/services/keep-filled-maintenance.ts",
-    '''  if (
-    target.durationMode === "CALENDAR" &&
-    resolved.durationMs <= 0 &&
-    target.emptyCalendarBehavior === "CLEAR"
-  ) {''',
-    '''  if (
-    target.durationMode === "CALENDAR" &&
-    resolved.durationMs <= 0 &&
-    target.emptyCalendarBehavior === "CLEAR"
-  ) {''',
-)
-# Insert the unknown-replay fail-close after explicit CLEAR handling block.
+# Never infer replay policy for a completed legacy/manual episode. The pure core
+# reports uncertainty; orchestration fails closed before any mutation.
 replace_once(
     "src/services/keep-filled-maintenance.ts",
     '''      skipReason: null,
@@ -136,7 +131,6 @@ replace_once(
     '''      const targetPlaylistIds = executable.map((entry) => entry.target.id);
       const generated = await generatePlaylists({''',
     '''      const targetPlaylistIds = executable.map((entry) => entry.target.id);
-      const dueTargetIds = new Set(targetPlaylistIds);
       const outsideTargets = await prisma.targetPlaylist.findMany({
         where: {
           userId: user.id,
@@ -151,7 +145,7 @@ replace_once(
       if (outsideTargets.length > 0) {
         const spotify = await SpotifyClient.forUser(user.id);
         for (const outside of outsideTargets) {
-          if (dueTargetIds.has(outside.id) || !outside.spotifyPlaylistId) continue;
+          if (!outside.spotifyPlaylistId) continue;
           const state = await spotify.getTargetPlaylistState(outside.spotifyPlaylistId);
           for (const item of state.items) {
             if (item.uri) reservedUris.add(item.uri);
@@ -256,9 +250,6 @@ new_claim = '''  const existing = await prisma.targetScheduleRun.findUnique({
     where: { scheduleKey: slot.scheduleKey },
   });'''
 replace_once(SG, old_claim, new_claim)
-
-# The lookup after an atomic claim is logically non-null; the caller already
-# treats null as not claimed, so the return type remains accurate.
 
 # Regression contracts for external exclusivity and atomic daily claim.
 T = Path("src/services/configuration-readiness.test.ts")
