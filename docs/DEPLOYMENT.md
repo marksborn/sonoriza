@@ -25,6 +25,35 @@ npm run db:deploy   # prisma migrate deploy
 
 Fill the corresponding values in `.env` (see `.env.example`).
 
+### Restricted beta access (AUTH-01)
+
+Production must define `SONORIZA_ALLOWED_EMAILS` **before starting/restarting
+with AUTH-01 code**. The value accepts comma and/or line separated emails and is
+normalized with `trim + lowercase`.
+
+```env
+SONORIZA_ALLOWED_EMAILS="owner@example.com,tester@example.com"
+```
+
+Production is fail-closed: an absent or empty allowlist authorizes nobody. The
+gate applies to Google/Spotify sign-in and linking, existing product sessions,
+protected application APIs, and scheduled jobs that would otherwise consume
+Google/Spotify resources.
+
+Safe rollout order:
+
+1. confirm the canonical email of the current owner account;
+2. add that email to `SONORIZA_ALLOWED_EMAILS` in production `.env`;
+3. deploy/build/restart the AUTH-01 code;
+4. prove the owner can sign in and open protected pages;
+5. prove a non-listed email receives `AccessDenied`;
+6. add/remove a tester only by changing `.env` and restarting the app — no code
+   change or migration is required.
+
+Never deploy AUTH-01 code first and plan to configure the allowlist later: the
+intended production behavior in that state is to deny all user access and skip
+all per-user scheduled provider work.
+
 ## 3. Build & start with PM2
 
 ```bash
@@ -41,7 +70,7 @@ The daily run is an authenticated HTTP call. Add a crontab entry (adjust the
 time to your timezone):
 
 ```cron
-# Every day at 04:30 — regenerate all users' playlists
+# Every day at 04:30 — regenerate all allowed users' playlists
 30 4 * * * curl -fsS -X POST https://<host>/api/cron/generate \
   -H "Authorization: Bearer <CRON_SECRET>" >> /home/<user>/logs/sonoriza-cron.log 2>&1
 ```
