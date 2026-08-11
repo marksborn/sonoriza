@@ -23,7 +23,7 @@ replace_once(
 p = Path("src/services/playlist-planner/plan-run.ts")
 text = p.read_text()
 pattern = re.compile(
-    r"export function planRun\(\{\s*pools,\s*targets,\s*preservedByTargetId,?\s*\}: PlanRunInput\): PlanRunResult \{\s*const reserved = new Set<string>\(\);",
+    r"export function planRun\(\{\s*pools,\s*targets,\s*preservedByTargetId,?\s*\}: PlanRunInput\): PlanRunResult \{",
     re.MULTILINE,
 )
 replacement = '''export function planRun({
@@ -31,11 +31,17 @@ replacement = '''export function planRun({
   targets,
   preservedByTargetId,
   initialReserved,
-}: PlanRunInput): PlanRunResult {
-  const reserved = new Set<string>(initialReserved ?? []);'''
+}: PlanRunInput): PlanRunResult {'''
 text, count = pattern.subn(replacement, text, count=1)
 if count != 1:
     raise SystemExit("src/services/playlist-planner/plan-run.ts: formatted planRun signature not found")
+if text.count("  const reserved = new Set<string>();") != 1:
+    raise SystemExit("src/services/playlist-planner/plan-run.ts: reserved set anchor not found")
+text = text.replace(
+    "  const reserved = new Set<string>();",
+    "  const reserved = new Set<string>(initialReserved ?? []);",
+    1,
+)
 p.write_text(text)
 
 replace_once(
@@ -115,7 +121,6 @@ replace_once(
 )
 
 SG = "src/jobs/scheduled-generation.ts"
-# Import Spotify client for external live reservations.
 replace_once(
     SG,
     '''import type { Candidate } from "@/services/playlist-planner";
@@ -125,7 +130,6 @@ import { SpotifyClient } from "@/services/spotify";
 import {''',
 )
 
-# Build reservations from every enabled destination outside the due batch.
 replace_once(
     SG,
     '''      const targetPlaylistIds = executable.map((entry) => entry.target.id);
@@ -165,8 +169,6 @@ replace_once(
       });''',
 )
 
-# Atomic claim: unique daily key + compare-and-swap retry prevents two cron
-# requests from executing the same target/day concurrently.
 old_claim = '''  const existing = await prisma.targetScheduleRun.findUnique({
     where: { scheduleKey: slot.scheduleKey },
   });
@@ -251,7 +253,6 @@ new_claim = '''  const existing = await prisma.targetScheduleRun.findUnique({
   });'''
 replace_once(SG, old_claim, new_claim)
 
-# Regression contracts for external exclusivity and atomic daily claim.
 T = Path("src/services/configuration-readiness.test.ts")
 T.write_text(
     T.read_text()
