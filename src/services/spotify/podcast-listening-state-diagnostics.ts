@@ -81,7 +81,7 @@ export function readPodcastLocalProcessingReason(
   value: unknown,
 ): PodcastLocalProcessingDiagnostic | null {
   if (typeof value !== "string") return null;
-  const [marker, phase, errorName, rawCode, ...rest] = value.split("|");
+  const [marker, phase, rawErrorName, rawCode, ...rest] = value.split("|");
   if (marker !== "LOCAL" || rest.length > 0) return null;
   if (
     phase !== "NORMALIZE_EPISODES" &&
@@ -90,10 +90,15 @@ export function readPodcastLocalProcessingReason(
   ) {
     return null;
   }
-  if (!/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(errorName ?? "")) return null;
+  if (
+    typeof rawErrorName !== "string" ||
+    !/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(rawErrorName)
+  ) {
+    return null;
+  }
   const errorCode = rawCode === "NO_CODE" ? null : safeStandaloneCode(rawCode);
   if (rawCode !== "NO_CODE" && errorCode === null) return null;
-  return { phase, errorName, errorCode };
+  return { phase, errorName: rawErrorName, errorCode };
 }
 
 /**
