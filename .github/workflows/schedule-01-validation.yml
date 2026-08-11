@@ -10,6 +10,7 @@ on:
       - .github/schedule58-stage2.py
       - .github/schedule58-stage3.py
       - .github/schedule58-stage4.py
+      - .github/schedule58-stage5.py
 
 permissions:
   contents: write
@@ -78,6 +79,7 @@ jobs:
           apply_patch .github/schedule58-stage2.py
           apply_patch .github/schedule58-stage3.py
           apply_patch .github/schedule58-stage4.py
+          apply_patch .github/schedule58-stage5.py
 
       - name: Format and generate Prisma
         run: |
