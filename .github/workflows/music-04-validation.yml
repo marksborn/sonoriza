@@ -1,1 +1,108 @@
-PLACEHOLDER
+name: MUSIC-04 validation
+
+on:
+  push:
+    branches:
+      - agent/music-04-diversity-37
+    paths:
+      - .github/workflows/music-04-validation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza
+      AUTH_SECRET: music-04-validation-secret
+      AUTH_SPOTIFY_ID: test-spotify-id
+      AUTH_SPOTIFY_SECRET: test-spotify-secret
+      AUTH_GOOGLE_ID: test-google-id
+      AUTH_GOOGLE_SECRET: test-google-secret
+      CRON_SECRET: test-cron-secret
+      SONORIZA_ALLOWED_EMAILS: test@example.com
+      PATCH_BLOB_SHA: 52a1f63ae73eee9a7aaf95996e9cb701b33e2a1d
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/music-04-diversity-37
+          fetch-depth: 0
+
+      - name: Setup Node 24.19.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply MUSIC-04 implementation
+        run: |
+          curl -fsSL \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/blobs/${PATCH_BLOB_SHA}" \
+            | jq -r '.content' | tr -d '\n' | base64 -d > /tmp/music04-patch.zlib
+          python - <<'PY'
+          import zlib
+          from pathlib import Path
+          payload = Path('/tmp/music04-patch.zlib').read_bytes()
+          exec(zlib.decompress(payload).decode('utf-8'))
+          PY
+
+      - name: Format and generate Prisma
+        run: |
+          npx prisma format
+          npx prisma validate
+          npx prisma generate
+
+      - name: Apply migrations on disposable PostgreSQL
+        run: npx prisma migrate deploy
+
+      - name: Planner regressions
+        run: npm run test:planner
+
+      - name: Spotify regressions
+        run: npm run test:spotify
+
+      - name: Incremental and MUSIC-01 regressions
+        run: npm run test:incremental
+
+      - name: Simulation and fingerprint regressions
+        run: npm run test:simulation
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
+      - name: Commit validated product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add prisma src
+          git diff --cached --stat
+          git commit -m "feat: MUSIC-04 — diversidade por artista e álbum (#37)"
+          git push origin HEAD:agent/music-04-diversity-37
