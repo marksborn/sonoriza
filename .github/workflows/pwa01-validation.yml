@@ -108,10 +108,11 @@ jobs:
 
           CURL=(curl --retry 5 --retry-delay 1 --retry-all-errors -fsS)
 
-          "${CURL[@]}" -I "$BASE_URL/sw.js" >/tmp/sw.headers
+          "${CURL[@]}" -D /tmp/sw.headers -o /tmp/sw.js "$BASE_URL/sw.js"
           grep -Eqi '^content-type: application/javascript' /tmp/sw.headers
           grep -Eqi '^cache-control: no-cache, no-store, must-revalidate' /tmp/sw.headers
           grep -Eqi '^service-worker-allowed: /' /tmp/sw.headers
+          grep -F 'SONORIZA_SW_VERSION' /tmp/sw.js
 
           "${CURL[@]}" "$BASE_URL/pwa-icon/180" -o /tmp/icon-180.png
           "${CURL[@]}" "$BASE_URL/pwa-icon/192" -o /tmp/icon-192.png
@@ -120,5 +121,5 @@ jobs:
           file /tmp/icon-192.png | grep -F 'PNG image data, 192 x 192'
           file /tmp/icon-512.png | grep -F 'PNG image data, 512 x 512'
 
-          INVALID_CODE="$(curl --retry 5 --retry-delay 1 --retry-all-errors -sS -o /dev/null -w '%{http_code}' "$BASE_URL/pwa-icon/123")"
+          INVALID_CODE="$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL/pwa-icon/123")"
           test "$INVALID_CODE" = "404"
