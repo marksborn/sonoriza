@@ -109,13 +109,39 @@ export async function runScheduledGeneration(
         string,
         "KEEP_FILLED" | "REBUILD_DAILY"
       > = {};
+      const rebuildByTargetId: Record<
+        string,
+        { snapshotBefore: string; currentCount: number; currentDurationMs: number }
+      > = {};
+      let maintenanceSpotify: SpotifyClient | null = null;
 
       for (const entry of claimed) {
         scheduledPolicyByTargetId[entry.target.id] = entry.target.updatePolicy as
           | "KEEP_FILLED"
           | "REBUILD_DAILY";
         if (entry.target.updatePolicy !== "KEEP_FILLED") {
-          executable.push(entry);
+          try {
+            if (!entry.target.spotifyPlaylistId) {
+              throw new Error(`Target "${entry.target.name}" has no Spotify playlist`);
+            }
+            maintenanceSpotify ??= await SpotifyClient.forUser(user.id);
+            const before = await maintenanceSpotify.getTargetPlaylistState(
+              entry.target.spotifyPlaylistId,
+            );
+            rebuildByTargetId[entry.target.id] = {
+              snapshotBefore: before.snapshotId,
+              currentCount: before.items.length,
+              currentDurationMs: before.items.reduce(
+                (sum, item) => sum + Math.max(0, item.originalDurationMs ?? 0),
+                0,
+              ),
+            };
+            executable.push(entry);
+          } catch (error) {
+            const reason = errorMessage(error);
+            await finishOne(entry.audit.id, "BLOCKED", reason, now);
+            results.push(result(entry, "", `blocked: ${reason}`));
+          }
           continue;
         }
         try {
@@ -163,11 +189,15 @@ export async function runScheduledGeneration(
         select: { id: true, spotifyPlaylistId: true },
       });
       const reservedUris = new Set<string>();
+      const reservedTargetSnapshots: Record<string, string> = {};
       if (outsideTargets.length > 0) {
-        const spotify = await SpotifyClient.forUser(user.id);
+        maintenanceSpotify ??= await SpotifyClient.forUser(user.id);
         for (const outside of outsideTargets) {
           if (!outside.spotifyPlaylistId) continue;
-          const state = await spotify.getTargetPlaylistState(outside.spotifyPlaylistId);
+          const state = await maintenanceSpotify.getTargetPlaylistState(
+            outside.spotifyPlaylistId,
+          );
+          reservedTargetSnapshots[outside.spotifyPlaylistId] = state.snapshotId;
           for (const item of state.items) {
             if (item.uri) reservedUris.add(item.uri);
           }
@@ -182,6 +212,8 @@ export async function runScheduledGeneration(
         scheduledPolicyByTargetId,
         musicOrderSimulationEvidence,
         reservedUris: [...reservedUris],
+        reservedTargetSnapshots,
+        rebuildByTargetId,
       });
       const generation = await prisma.generationRun.findUnique({
         where: { id: generated.runId },

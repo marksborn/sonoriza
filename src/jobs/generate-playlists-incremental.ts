@@ -59,6 +59,13 @@ export interface GeneratePlaylistsOptions {
   scheduledPolicyByTargetId?: Record<string, "KEEP_FILLED" | "REBUILD_DAILY">;
   /** SCHEDULE-01: live URIs owned by enabled targets outside this scoped batch. */
   reservedUris?: string[];
+  /** Snapshots proving the external reservation set is still current pre-write. */
+  reservedTargetSnapshots?: Record<string, string>;
+  /** Stable current state captured before a scheduled full rebuild. */
+  rebuildByTargetId?: Record<
+    string,
+    { snapshotBefore: string; currentCount: number; currentDurationMs: number }
+  >;
 }
 
 export interface GeneratePlaylistsResult {
@@ -582,6 +589,29 @@ export async function generatePlaylists(
     if (!simulate) writer = await SpotifyClient.forUser(userId);
 
     if (!simulate && writer) {
+      const reservationSnapshotViolations: Array<{
+        spotifyPlaylistId: string;
+        expected: string;
+        actual: string;
+      }> = [];
+      for (const [spotifyPlaylistId, expected] of Object.entries(
+        opts.reservedTargetSnapshots ?? {},
+      )) {
+        const actual = await writer.getPlaylistSnapshotId(spotifyPlaylistId);
+        if (actual !== expected) {
+          reservationSnapshotViolations.push({ spotifyPlaylistId, expected, actual });
+        }
+      }
+      if (reservationSnapshotViolations.length > 0) {
+        summary.externalReservationSnapshotViolations =
+          reservationSnapshotViolations;
+        const error =
+          "A geração agendada foi bloqueada antes de alterar o Spotify porque outro destino mudou depois de reservar sua exclusividade.";
+        log({ level: "ERROR", message: error, data: reservationSnapshotViolations });
+        await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+
       const snapshotViolations: Array<{
         targetPlaylistId: string;
         targetName: string;
@@ -590,30 +620,32 @@ export async function generatePlaylists(
       }> = [];
       for (const target of targets) {
         const patch = opts.keepFilledByTargetId?.[target.id];
-        if (!patch) continue;
+        const rebuild = opts.rebuildByTargetId?.[target.id];
+        const expected = patch?.snapshotBefore ?? rebuild?.snapshotBefore ?? null;
+        if (!expected) continue;
         if (!target.spotifyPlaylistId) {
           snapshotViolations.push({
             targetPlaylistId: target.id,
             targetName: target.name,
-            expected: patch.snapshotBefore,
+            expected,
             actual: null,
           });
           continue;
         }
         const actual = await writer.getPlaylistSnapshotId(target.spotifyPlaylistId);
-        if (actual !== patch.snapshotBefore) {
+        if (actual !== expected) {
           snapshotViolations.push({
             targetPlaylistId: target.id,
             targetName: target.name,
-            expected: patch.snapshotBefore,
+            expected,
             actual,
           });
         }
       }
       if (snapshotViolations.length > 0) {
-        summary.keepFilledSnapshotViolations = snapshotViolations;
+        summary.scheduledTargetSnapshotViolations = snapshotViolations;
         const error =
-          "A manutenção foi bloqueada antes de alterar o Spotify porque a playlist mudou depois da leitura canônica. Tente novamente no próximo ciclo.";
+          "A manutenção foi bloqueada antes de alterar o Spotify porque um destino mudou depois da leitura canônica. Tente novamente no próximo ciclo.";
         log({ level: "ERROR", message: error, data: snapshotViolations });
         await finalizeRun(run.id, "FAILED", logs, summary, error);
         return { runId: run.id, status: "FAILED" };
@@ -644,6 +676,7 @@ export async function generatePlaylists(
         maxTracksPerArtist: target.maxTracksPerArtist,
         maxTracksPerAlbum: target.maxTracksPerAlbum,
         scheduledPolicy: opts.scheduledPolicyByTargetId?.[target.id] ?? null,
+        targetDurationMs: resolvedDuration?.durationMs ?? 0,
         sequencePattern: parseSequencePattern(target.sequencePattern),
         ...stats,
         totalMinutes: Math.round(stats.totalDurationMs / 60_000),
@@ -673,12 +706,31 @@ export async function generatePlaylists(
           const playlistId = await ensureSpotifyPlaylist(writer!, target);
           const patch = opts.keepFilledByTargetId?.[target.id] ?? null;
           if (!patch) {
+            const rebuild = opts.rebuildByTargetId?.[target.id] ?? null;
+            if (rebuild) {
+              const currentSnapshot = await writer!.getPlaylistSnapshotId(playlistId);
+              if (currentSnapshot !== rebuild.snapshotBefore) {
+                throw new Error(
+                  `Target "${target.name}" changed after its final rebuild preflight`,
+                );
+              }
+            }
             const snapshotAfter = await writer!.replacePlaylistItems(
               playlistId,
               items.map((item) => item.uri),
             );
             targetSummary.applied = true;
             targetSummary.snapshotAfter = snapshotAfter;
+            if (rebuild) {
+              targetSummary.snapshotBefore = rebuild.snapshotBefore;
+              targetSummary.validDurationBeforeMs = null;
+              targetSummary.removedDurationMs = rebuild.currentDurationMs;
+              targetSummary.addedDurationMs = stats.totalDurationMs;
+              targetSummary.preservedCount = 0;
+              targetSummary.removedCount = rebuild.currentCount;
+              targetSummary.addedCount = items.length;
+              targetSummary.maintenanceNoop = false;
+            }
           } else {
             const currentSnapshot = await writer!.getPlaylistSnapshotId(playlistId);
             if (currentSnapshot !== patch.snapshotBefore) {

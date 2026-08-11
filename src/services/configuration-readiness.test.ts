@@ -295,7 +295,7 @@ test("SCHEDULE-01 scheduler excludes MANUAL targets and uses auditable daily slo
 
 test("SCHEDULE-01 KEEP_FILLED revalidates target snapshot before any incremental mutation", () => {
   const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
-  const preflight = source.indexOf("keepFilledSnapshotViolations");
+  const preflight = source.indexOf("scheduledTargetSnapshotViolations");
   const append = source.indexOf("appendPlaylistItems");
   const remove = source.indexOf("removePlaylistItems");
   assert.ok(preflight >= 0);
@@ -319,4 +319,17 @@ test("SCHEDULE-01 daily claim is concurrency-safe and successful slots are idemp
   assert.match(source, /createMany\(/);
   assert.match(source, /skipDuplicates:\s*true/);
   assert.match(source, /updateMany\(/);
+});
+
+
+test("SCHEDULE-01 revalidates external reservation and rebuild snapshots before writes", () => {
+  const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const writer = source.indexOf("if (!simulate) writer = await SpotifyClient.forUser(userId)");
+  const externalCheck = source.indexOf("externalReservationSnapshotViolations");
+  const replace = source.indexOf("replacePlaylistItems", externalCheck);
+  assert.ok(writer >= 0);
+  assert.ok(externalCheck > writer);
+  assert.ok(replace > externalCheck);
+  assert.match(source, /rebuildByTargetId/);
+  assert.match(source, /reservedTargetSnapshots/);
 });
