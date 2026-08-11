@@ -59,10 +59,22 @@ jobs:
         run: npm ci
 
       - name: Apply SCHEDULE-01 staged patches
+        shell: bash
         run: |
-          python .github/schedule58-stage1.py
-          if [ -f .github/schedule58-stage2.py ]; then python .github/schedule58-stage2.py; fi
-          if [ -f .github/schedule58-stage3.py ]; then python .github/schedule58-stage3.py; fi
+          apply_patch() {
+            local file="$1"
+            [ -f "$file" ] || return 0
+            local output
+            if ! output="$(python "$file" 2>&1)"; then
+              output="${output//$'\n'/'%0A'}"
+              echo "::error title=SCHEDULE-01 patch failed::$output"
+              exit 1
+            fi
+            echo "$output"
+          }
+          apply_patch .github/schedule58-stage1.py
+          apply_patch .github/schedule58-stage2.py
+          apply_patch .github/schedule58-stage3.py
 
       - name: Format and generate Prisma
         run: |
