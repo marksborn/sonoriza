@@ -10,7 +10,8 @@ export type SpotifyMusicTrackLike = {
   is_playable?: boolean;
   restrictions?: { reason?: string | null } | null;
   linked_from?: { id?: string | null } | null;
-  artists?: Array<{ name?: string | null }> | null;
+  artists?: Array<{ id?: string | null; name?: string | null }> | null;
+  album?: { id?: string | null; name?: string | null } | null;
 };
 
 export type PlayableMusicCandidateResult = {
@@ -41,12 +42,19 @@ export function canonicalSpotifyTrackId(
   return null;
 }
 
+function clean(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
 export function readPlayableMusicCandidate(
   track: SpotifyMusicTrackLike | null | undefined,
 ): PlayableMusicCandidateResult {
   if (!track || track.type !== "track" || track.is_local) {
     return { candidate: null, unavailable: false, restrictionReason: null };
   }
+
   const restrictionReason =
     typeof track.restrictions?.reason === "string" && track.restrictions.reason.trim()
       ? track.restrictions.reason.trim()
@@ -54,6 +62,7 @@ export function readPlayableMusicCandidate(
   if (track.is_playable === false || track.restrictions != null) {
     return { candidate: null, unavailable: true, restrictionReason };
   }
+
   if (
     typeof track.uri !== "string" || !track.uri ||
     typeof track.name !== "string" || !track.name ||
@@ -62,12 +71,20 @@ export function readPlayableMusicCandidate(
   ) {
     return { candidate: null, unavailable: false, restrictionReason: null };
   }
+
   const artistNames = (track.artists ?? [])
-    .flatMap((artist) =>
-      typeof artist.name === "string" && artist.name.trim() ? [artist.name.trim()] : [],
-    )
+    .flatMap((artist) => {
+      const name = clean(artist.name);
+      return name ? [name] : [];
+    })
     .join(", ");
+  const primaryArtist = track.artists?.[0] ?? null;
+  const primaryArtistId = clean(primaryArtist?.id);
+  const primaryArtistName = clean(primaryArtist?.name);
+  const albumId = clean(track.album?.id);
+  const albumName = clean(track.album?.name);
   const spotifyTrackId = canonicalSpotifyTrackId(track);
+
   return {
     candidate: {
       uri: track.uri,
@@ -75,6 +92,10 @@ export function readPlayableMusicCandidate(
       title: track.name,
       ...(artistNames ? { subtitle: artistNames } : {}),
       ...(spotifyTrackId ? { spotifyTrackId } : {}),
+      ...(primaryArtistId ? { primaryArtistId } : {}),
+      ...(primaryArtistName ? { primaryArtistName } : {}),
+      ...(albumId ? { albumId } : {}),
+      ...(albumName ? { albumName } : {}),
       durationMs: track.duration_ms,
     },
     unavailable: false,

@@ -248,7 +248,7 @@ export class SpotifyIncrementalReader {
     const itemsPath = (offset: number): string =>
       `/playlists/${source.spotifyId}/items?market=from_token&limit=50${
         offset > 0 ? `&offset=${offset}` : ""
-      }&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),artists(name)))`;
+      }&fields=next,items(item(id,uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),linked_from(id),artists(id,name),album(id,name)))`;
 
     const nextOffsetFrom = (next: string | null): number | null => {
       if (!next) return null;

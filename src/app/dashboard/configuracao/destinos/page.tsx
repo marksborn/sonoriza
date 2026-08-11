@@ -141,6 +141,14 @@ async function saveTarget(formData: FormData) {
     1,
     50,
   );
+  const artistDiversityEnabled = formData.get("limitTracksPerArtist") === "on";
+  const albumDiversityEnabled = formData.get("limitTracksPerAlbum") === "on";
+  const maxTracksPerArtist = artistDiversityEnabled
+    ? integerBetween(formData.get("maxTracksPerArtist"), 1, 50)
+    : null;
+  const maxTracksPerAlbum = albumDiversityEnabled
+    ? integerBetween(formData.get("maxTracksPerAlbum"), 1, 50)
+    : null;
   const sequencePattern = readSequence(formData.get("sequencePattern"));
   const enabled = formData.get("enabled") === "on";
 
@@ -157,6 +165,12 @@ async function saveTarget(formData: FormData) {
       : null;
   if (!normalizedMusicOrderMode) fail("invalid");
   if (!sequencePattern || podcastPercent === null || maxEpisodesPerProgram === null) {
+    fail("invalid");
+  }
+  if (
+    (artistDiversityEnabled && maxTracksPerArtist === null) ||
+    (albumDiversityEnabled && maxTracksPerAlbum === null)
+  ) {
     fail("invalid");
   }
 
@@ -304,6 +318,8 @@ async function saveTarget(formData: FormData) {
         : null,
     sequencePattern,
     maxEpisodesPerProgram: maxEpisodesPerProgram!,
+    maxTracksPerArtist,
+    maxTracksPerAlbum,
   } as const;
 
   if (existingTarget) {
@@ -441,6 +457,23 @@ function podcastEpisodeMaxDurationLabel(target: {
     )} min`;
   }
   return "sem limite de duração por podcast";
+}
+
+
+function musicDiversityLabel(target: {
+  maxTracksPerArtist: number | null;
+  maxTracksPerAlbum: number | null;
+}) {
+  const rules: string[] = [];
+  if (target.maxTracksPerArtist !== null) {
+    rules.push(`até ${target.maxTracksPerArtist} por artista`);
+  }
+  if (target.maxTracksPerAlbum !== null) {
+    rules.push(`até ${target.maxTracksPerAlbum} por álbum`);
+  }
+  return rules.length > 0
+    ? `diversidade: ${rules.join(" + ")}`
+    : "diversidade sem limite";
 }
 
 export default async function DestinationsPage({ searchParams }: DestinationsPageProps) {
@@ -698,6 +731,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   podcastEpisodeMaxDurationMinutes: 45,
                   sequencePattern: ["MUSIC", "PODCAST", "MUSIC", "MUSIC", "PODCAST"],
                   maxEpisodesPerProgram: 1,
+                  maxTracksPerArtist: null,
+                  maxTracksPerAlbum: null,
                   destinationValue: CREATE_NEW,
                 }}
               />
@@ -792,6 +827,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               ? "ordem randomizada"
                               : "ordem padrão"
                           }`}
+                          {` · ${musicDiversityLabel(target)}`}
                         </p>
                         <p className="mt-1 text-xs text-muted-inverse/65">
                           {target.spotifyPlaylistId
@@ -875,6 +911,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             ),
                             sequencePattern,
                             maxEpisodesPerProgram: target.maxEpisodesPerProgram,
+                            maxTracksPerArtist: target.maxTracksPerArtist,
+                            maxTracksPerAlbum: target.maxTracksPerAlbum,
                             destinationValue: target.spotifyPlaylistId
                               ? KEEP_CURRENT
                               : CREATE_NEW,

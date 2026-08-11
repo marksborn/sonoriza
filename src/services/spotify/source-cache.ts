@@ -1,16 +1,23 @@
 import type { Candidate } from "@/services/playlist-planner";
 
-// v3 adds canonical Spotify track identity so MUSIC-01 can never be bypassed
-// by a snapshot cache produced before playback-history filtering existed.
-const MUSIC_SOURCE_CACHE_VERSION = 3;
-const PARTIAL_MUSIC_SOURCE_CACHE_VERSION = 4;
+// v5 adds stable primary-artist and album identities required by MUSIC-04.
+// Older complete/partial caches are deliberately invalidated so an active
+// diversity rule can never rely on names or missing legacy metadata.
+const MUSIC_SOURCE_CACHE_VERSION = 5;
+const PARTIAL_MUSIC_SOURCE_CACHE_VERSION = 6;
+
 type CachedMusicCandidate = {
   uri: string;
   spotifyTrackId: string;
   title: string;
   subtitle: string | null;
+  primaryArtistId: string | null;
+  primaryArtistName: string | null;
+  albumId: string | null;
+  albumName: string | null;
   durationMs: number;
 };
+
 type MusicSourceCachePayload = {
   version: typeof MUSIC_SOURCE_CACHE_VERSION;
   unavailableTrackCount: number;
@@ -34,6 +41,10 @@ export function encodeMusicSourceCache(
         spotifyTrackId: candidate.spotifyTrackId,
         title: candidate.title,
         subtitle: candidate.subtitle ?? null,
+        primaryArtistId: candidate.primaryArtistId ?? null,
+        primaryArtistName: candidate.primaryArtistName ?? null,
+        albumId: candidate.albumId ?? null,
+        albumName: candidate.albumName ?? null,
         durationMs: candidate.durationMs,
       })),
   };
@@ -106,7 +117,11 @@ export function patchMusicSourceCacheAfterAppend(
         typeof candidate.uri !== "string" ||
         !candidate.uri ||
         typeof candidate.spotifyTrackId !== "string" ||
-        !candidate.spotifyTrackId,
+        !candidate.spotifyTrackId ||
+        typeof candidate.primaryArtistId !== "string" ||
+        !candidate.primaryArtistId ||
+        typeof candidate.albumId !== "string" ||
+        !candidate.albumId,
     )
   ) {
     return null;
@@ -145,15 +160,28 @@ export function decodeMusicSourceCacheUnavailableTrackCount(value: unknown): num
   return decodePayload(value)?.unavailableTrackCount ?? null;
 }
 
-function decodePayload(value: unknown): { candidates: Candidate[]; unavailableTrackCount: number } | null {
+function optionalString(value: unknown): value is string | null | undefined {
+  return value === null || value === undefined || typeof value === "string";
+}
+
+function decodePayload(
+  value: unknown,
+): { candidates: Candidate[]; unavailableTrackCount: number } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const payload = value as Record<string, unknown>;
-  if (payload.version !== MUSIC_SOURCE_CACHE_VERSION || !Array.isArray(payload.candidates)) return null;
+  if (
+    payload.version !== MUSIC_SOURCE_CACHE_VERSION ||
+    !Array.isArray(payload.candidates)
+  ) {
+    return null;
+  }
   if (
     typeof payload.unavailableTrackCount !== "number" ||
     !Number.isFinite(payload.unavailableTrackCount) ||
     payload.unavailableTrackCount < 0
-  ) return null;
+  ) {
+    return null;
+  }
 
   const candidates: Candidate[] = [];
   for (const item of payload.candidates) {
@@ -161,20 +189,46 @@ function decodePayload(value: unknown): { candidates: Candidate[]; unavailableTr
     const candidate = item as Record<string, unknown>;
     if (
       typeof candidate.uri !== "string" ||
-      typeof candidate.spotifyTrackId !== "string" || !candidate.spotifyTrackId ||
+      typeof candidate.spotifyTrackId !== "string" ||
+      !candidate.spotifyTrackId ||
       typeof candidate.title !== "string" ||
       typeof candidate.durationMs !== "number" ||
-      !Number.isFinite(candidate.durationMs) || candidate.durationMs < 0 ||
-      !(candidate.subtitle === null || candidate.subtitle === undefined || typeof candidate.subtitle === "string")
-    ) return null;
+      !Number.isFinite(candidate.durationMs) ||
+      candidate.durationMs < 0 ||
+      !optionalString(candidate.subtitle) ||
+      !optionalString(candidate.primaryArtistId) ||
+      !optionalString(candidate.primaryArtistName) ||
+      !optionalString(candidate.albumId) ||
+      !optionalString(candidate.albumName)
+    ) {
+      return null;
+    }
+
     candidates.push({
       uri: candidate.uri,
       spotifyTrackId: candidate.spotifyTrackId,
       type: "MUSIC",
       title: candidate.title,
-      ...(typeof candidate.subtitle === "string" ? { subtitle: candidate.subtitle } : {}),
+      ...(typeof candidate.subtitle === "string"
+        ? { subtitle: candidate.subtitle }
+        : {}),
+      ...(typeof candidate.primaryArtistId === "string" && candidate.primaryArtistId
+        ? { primaryArtistId: candidate.primaryArtistId }
+        : {}),
+      ...(typeof candidate.primaryArtistName === "string" && candidate.primaryArtistName
+        ? { primaryArtistName: candidate.primaryArtistName }
+        : {}),
+      ...(typeof candidate.albumId === "string" && candidate.albumId
+        ? { albumId: candidate.albumId }
+        : {}),
+      ...(typeof candidate.albumName === "string" && candidate.albumName
+        ? { albumName: candidate.albumName }
+        : {}),
       durationMs: candidate.durationMs,
     });
   }
-  return { candidates, unavailableTrackCount: Math.trunc(payload.unavailableTrackCount) };
+  return {
+    candidates,
+    unavailableTrackCount: Math.trunc(payload.unavailableTrackCount),
+  };
 }

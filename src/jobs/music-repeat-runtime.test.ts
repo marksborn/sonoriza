@@ -145,3 +145,49 @@ test("real-run revalidation is positioned before Spotify writer creation", () =>
   const writerCreation = generator.indexOf("if (!simulate) writer = await SpotifyClient.forUser(userId)");
   assert.ok(collectCall >= 0 && writerCreation > collectCall);
 });
+
+
+test("#37 cooldown rejection happens before diversity counters are consumed", async () => {
+  const recent = {
+    ...candidate("recent", "MUSIC", 300_000),
+    primaryArtistId: "artist-a",
+    albumId: "album-recent",
+  };
+  const eligible = {
+    ...candidate("eligible", "MUSIC", 300_000),
+    primaryArtistId: "artist-a",
+    albumId: "album-eligible",
+  };
+  const music = source("music", "MUSIC", [
+    { candidates: [recent], done: false },
+    { candidates: [eligible], done: true },
+  ]);
+  const runtime = state(["recent"]);
+  const diversityTarget: RunTarget = {
+    targetPlaylistId: "target",
+    name: "Target",
+    priority: 0,
+    rules: {
+      targetDurationMs: 300_000,
+      compositionMode: "SEQUENCE",
+      podcastPercent: 0,
+      sequencePattern: ["MUSIC"],
+      maxEpisodesPerProgram: 10,
+      maxTracksPerArtist: 1,
+      maxTracksPerAlbum: null,
+    },
+  };
+
+  const result = await runWithMusicRepeatState(runtime, () =>
+    collectIncrementally({ sources: [music], targets: [diversityTarget] }),
+  );
+
+  assert.equal(result.qualityFailures.length, 0);
+  assert.equal(music.calls, 2);
+  assert.deepEqual(
+    result.plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
+    ["eligible"],
+  );
+  assert.equal(result.plan.targets[0]?.result.stats.artistLimitRejectedCount, 0);
+  assert.equal(runtime.recentlyPlayedSkippedCount, 1);
+});

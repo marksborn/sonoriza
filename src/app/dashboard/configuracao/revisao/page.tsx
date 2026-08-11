@@ -35,6 +35,14 @@ type SimulationTargetSummary = {
   musicOrderSeedSource: "RUN" | "SIMULATION" | null;
   musicOrderHash: string | null;
   musicOrderChanged: boolean | null;
+  maxTracksPerArtist: number | null;
+  maxTracksPerAlbum: number | null;
+  distinctArtistCount: number | null;
+  distinctAlbumCount: number | null;
+  artistLimitRejectedCount: number | null;
+  albumLimitRejectedCount: number | null;
+  missingArtistIdentityRejectedCount: number | null;
+  missingAlbumIdentityRejectedCount: number | null;
   compositionQualityPassed: boolean | null;
   sequencePattern: Array<"MUSIC" | "PODCAST">;
   sequenceSlotsRequested: number | null;
@@ -121,6 +129,18 @@ function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
         musicOrderHash:
           typeof value.musicOrderHash === "string" ? value.musicOrderHash : null,
         musicOrderChanged: booleanValue(value.musicOrderChanged),
+        maxTracksPerArtist: numberValue(value.maxTracksPerArtist),
+        maxTracksPerAlbum: numberValue(value.maxTracksPerAlbum),
+        distinctArtistCount: numberValue(value.distinctArtistCount),
+        distinctAlbumCount: numberValue(value.distinctAlbumCount),
+        artistLimitRejectedCount: numberValue(value.artistLimitRejectedCount),
+        albumLimitRejectedCount: numberValue(value.albumLimitRejectedCount),
+        missingArtistIdentityRejectedCount: numberValue(
+          value.missingArtistIdentityRejectedCount,
+        ),
+        missingAlbumIdentityRejectedCount: numberValue(
+          value.missingAlbumIdentityRejectedCount,
+        ),
         compositionQualityPassed: booleanValue(value.compositionQualityPassed),
         sequencePattern: Array.isArray(value.sequencePattern)
           ? value.sequencePattern.filter(
@@ -212,6 +232,21 @@ function configuredPodcastDurationLabel(target: {
     )} min`;
   }
   return "sem máximo de duração por episódio";
+}
+
+
+function configuredMusicDiversityLabel(target: {
+  maxTracksPerArtist: number | null;
+  maxTracksPerAlbum: number | null;
+}) {
+  const parts: string[] = [];
+  if (target.maxTracksPerArtist !== null) {
+    parts.push(`até ${target.maxTracksPerArtist} por artista`);
+  }
+  if (target.maxTracksPerAlbum !== null) {
+    parts.push(`até ${target.maxTracksPerAlbum} por álbum`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : "sem limite por artista/álbum";
 }
 
 function minutesFromMs(ms: number | null) {
@@ -578,6 +613,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                         ? "ordem randomizada"
                         : "ordem padrão"
                     }`}
+                    {` · diversidade: ${configuredMusicDiversityLabel(target)}`}
                   </p>
                   {target.compositionMode === "SEQUENCE" && (
                     <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-inverse">
@@ -840,6 +876,39 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                                     )}
                                   </details>
                                 )}
+                            </div>
+                          )}
+
+                          {(target.maxTracksPerArtist !== null ||
+                            target.maxTracksPerAlbum !== null) && (
+                            <div className="status-info mt-3 rounded-xl border p-3 text-xs leading-5">
+                              <p className="font-black">
+                                Diversidade musical: {configuredMusicDiversityLabel(target)}
+                              </p>
+                              <p className="mt-1 opacity-80">
+                                {target.distinctArtistCount ?? 0} artistas distintos ·{" "}
+                                {target.distinctAlbumCount ?? 0} álbuns distintos
+                              </p>
+                              {(target.artistLimitRejectedCount ?? 0) > 0 && (
+                                <p className="mt-1 text-warning">
+                                  {target.artistLimitRejectedCount} candidatas ignoradas pelo limite de artista.
+                                </p>
+                              )}
+                              {(target.albumLimitRejectedCount ?? 0) > 0 && (
+                                <p className="mt-1 text-warning">
+                                  {target.albumLimitRejectedCount} candidatas ignoradas pelo limite de álbum.
+                                </p>
+                              )}
+                              {(target.missingArtistIdentityRejectedCount ?? 0) > 0 && (
+                                <p className="mt-1 text-warning">
+                                  {target.missingArtistIdentityRejectedCount} candidatas sem ID de artista principal foram descartadas com segurança.
+                                </p>
+                              )}
+                              {(target.missingAlbumIdentityRejectedCount ?? 0) > 0 && (
+                                <p className="mt-1 text-warning">
+                                  {target.missingAlbumIdentityRejectedCount} candidatas sem ID de álbum foram descartadas com segurança.
+                                </p>
+                              )}
                             </div>
                           )}
                           {target.calendarDurationMinutes !== null && (

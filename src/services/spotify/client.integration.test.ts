@@ -33,6 +33,7 @@ function cachedTrack(uri: string, title: string): Candidate[] {
       type: "MUSIC",
       title,
       subtitle: "Artist",
+      primaryArtistName: "Artist",
       durationMs: 180_000,
     },
   ];

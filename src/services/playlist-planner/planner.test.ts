@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { planPlaylist } from "./planner";
+import { planRun } from "./plan-run";
 import type { Candidate, PlaylistRules } from "./types";
 
 function podcast(
@@ -345,4 +346,299 @@ test("#31 SEQUENCE preserves #27 duration eligibility and #29 program cap", () =
   assert.deepEqual(result.items.map((item) => item.uri), ["a1", "b1"]);
   assert.equal(result.stats.podcastDurationExceededCount, 1);
   assert.equal(result.stats.completedCycles, 1);
+});
+
+
+function diverseMusic(
+  uri: string,
+  primaryArtistId: string | undefined,
+  albumId: string | undefined,
+  durationMs = 60_000,
+  names: { artist?: string; album?: string } = {},
+): Candidate {
+  return {
+    uri,
+    type: "MUSIC",
+    title: uri,
+    spotifyTrackId: uri.replace(/^spotify:track:/, ""),
+    ...(primaryArtistId ? { primaryArtistId } : {}),
+    ...(albumId ? { albumId } : {}),
+    ...(names.artist ? { primaryArtistName: names.artist } : {}),
+    ...(names.album ? { albumName: names.album } : {}),
+    durationMs,
+  };
+}
+
+function diversityRules(
+  targetDurationMs: number,
+  maxTracksPerArtist: number | null = null,
+  maxTracksPerAlbum: number | null = null,
+): PlaylistRules {
+  return {
+    targetDurationMs,
+    compositionMode: "SEQUENCE",
+    podcastPercent: 0,
+    sequencePattern: ["MUSIC"],
+    maxEpisodesPerProgram: 10,
+    maxTracksPerArtist,
+    maxTracksPerAlbum,
+  };
+}
+
+test("#37 no diversity rules preserves current music selection behavior", () => {
+  const result = planPlaylist({
+    rules: diversityRules(120_000),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-a"),
+        diverseMusic("spotify:track:a2", "artist-a", "album-a"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.equal(result.items.length, 2);
+  assert.equal(result.stats.artistLimitRejectedCount, 0);
+  assert.equal(result.stats.albumLimitRejectedCount, 0);
+});
+
+test("#37 one track per primary artist never repeats that artist", () => {
+  const result = planPlaylist({
+    rules: diversityRules(120_000, 1, null),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-a1"),
+        diverseMusic("spotify:track:a2", "artist-a", "album-a2"),
+        diverseMusic("spotify:track:b1", "artist-b", "album-b1"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.uri), [
+    "spotify:track:a1",
+    "spotify:track:b1",
+  ]);
+  assert.equal(result.stats.distinctArtistCount, 2);
+  assert.equal(result.stats.artistLimitRejectedCount, 1);
+});
+
+test("#37 two tracks per artist reject the third even when it is from another album", () => {
+  const result = planPlaylist({
+    rules: diversityRules(180_000, 2, null),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-a1"),
+        diverseMusic("spotify:track:a2", "artist-a", "album-a2"),
+        diverseMusic("spotify:track:a3", "artist-a", "album-a3"),
+        diverseMusic("spotify:track:b1", "artist-b", "album-b1"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.uri), [
+    "spotify:track:a1",
+    "spotify:track:a2",
+    "spotify:track:b1",
+  ]);
+  assert.equal(result.stats.artistLimitRejectedCount, 1);
+});
+
+test("#37 one track per album rejects the second track from the same album", () => {
+  const result = planPlaylist({
+    rules: diversityRules(120_000, null, 1),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-x"),
+        diverseMusic("spotify:track:b1", "artist-b", "album-x"),
+        diverseMusic("spotify:track:c1", "artist-c", "album-y"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.uri), [
+    "spotify:track:a1",
+    "spotify:track:c1",
+  ]);
+  assert.equal(result.stats.distinctAlbumCount, 2);
+  assert.equal(result.stats.albumLimitRejectedCount, 1);
+});
+
+test("#37 combined 2-per-artist plus 1-per-album permits the same artist from different albums", () => {
+  const result = planPlaylist({
+    rules: diversityRules(120_000, 2, 1),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-x"),
+        diverseMusic("spotify:track:a2-same-album", "artist-a", "album-x"),
+        diverseMusic("spotify:track:a3", "artist-a", "album-y"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.uri), [
+    "spotify:track:a1",
+    "spotify:track:a3",
+  ]);
+  assert.equal(result.stats.albumLimitRejectedCount, 1);
+  assert.equal(result.stats.artistLimitRejectedCount, 0);
+});
+
+test("#37 album and artist limits are independent and can reject the same scan deterministically", () => {
+  const albumFirst = planPlaylist({
+    rules: diversityRules(120_000, 2, 1),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-x"),
+        diverseMusic("spotify:track:a2", "artist-a", "album-x"),
+        diverseMusic("spotify:track:a3", "artist-a", "album-y"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.equal(albumFirst.stats.albumLimitRejectedCount, 1);
+
+  const artistFirst = planPlaylist({
+    rules: diversityRules(120_000, 1, 5),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-x"),
+        diverseMusic("spotify:track:a2", "artist-a", "album-y"),
+        diverseMusic("spotify:track:b1", "artist-b", "album-z"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.equal(artistFirst.stats.artistLimitRejectedCount, 1);
+  assert.equal(artistFirst.stats.albumLimitRejectedCount, 0);
+});
+
+test("#37 same artist/album names with different Spotify ids are not grouped by text", () => {
+  const result = planPlaylist({
+    rules: diversityRules(120_000, 1, 1),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a", "artist-id-a", "album-id-a", 60_000, {
+          artist: "Same Name",
+          album: "Same Album",
+        }),
+        diverseMusic("spotify:track:b", "artist-id-b", "album-id-b", 60_000, {
+          artist: "Same Name",
+          album: "Same Album",
+        }),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.equal(result.items.length, 2);
+  assert.equal(result.stats.distinctArtistCount, 2);
+  assert.equal(result.stats.distinctAlbumCount, 2);
+});
+
+test("#37 missing Spotify identity is rejected safely when the corresponding rule is active", () => {
+  const result = planPlaylist({
+    rules: diversityRules(60_000, 1, 1),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:no-artist", undefined, "album-a"),
+        diverseMusic("spotify:track:no-album", "artist-b", undefined),
+        diverseMusic("spotify:track:valid", "artist-c", "album-c"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.uri), ["spotify:track:valid"]);
+  assert.equal(result.stats.missingArtistIdentityRejectedCount, 1);
+  assert.equal(result.stats.missingAlbumIdentityRejectedCount, 1);
+});
+
+test("#37 a URI reserved by a higher-priority target does not consume artist/album quota in the next target", () => {
+  const pools = {
+    music: [
+      diverseMusic("spotify:track:reserved", "artist-a", "album-a"),
+      diverseMusic("spotify:track:available", "artist-a", "album-b"),
+    ],
+    podcasts: [],
+  };
+  const result = planRun({
+    pools,
+    targets: [
+      {
+        targetPlaylistId: "first",
+        name: "First",
+        priority: 0,
+        rules: diversityRules(60_000, null, null),
+      },
+      {
+        targetPlaylistId: "second",
+        name: "Second",
+        priority: 1,
+        rules: diversityRules(60_000, 1, 1),
+      },
+    ],
+  });
+  assert.deepEqual(
+    result.targets[1]?.result.items.map((item) => item.uri),
+    ["spotify:track:available"],
+  );
+  assert.equal(result.targets[1]?.result.stats.artistLimitRejectedCount, 0);
+});
+
+test("#37 SEQUENCE does not break the slot type to bypass music diversity", () => {
+  const result = planPlaylist({
+    rules: {
+      ...diversityRules(180_000, 1, null),
+      sequencePattern: ["MUSIC", "MUSIC", "PODCAST"],
+      podcastPercent: 50,
+    },
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-a1"),
+        diverseMusic("spotify:track:a2", "artist-a", "album-a2"),
+      ],
+      podcasts: [podcast("spotify:episode:p1", "show-p")],
+    },
+  });
+  assert.deepEqual(result.items.map((item) => item.type), ["MUSIC"]);
+  assert.equal(result.stats.sequenceStopReason, "NO_CANDIDATE_FOR_SLOT");
+  assert.equal(result.stats.artistLimitRejectedCount, 1);
+});
+
+test("#37 PROPORTION exposes shortfall when diversity exhausts eligible music", () => {
+  const result = planPlaylist({
+    rules: {
+      targetDurationMs: 120_000,
+      compositionMode: "PROPORTION",
+      podcastPercent: 0,
+      sequencePattern: ["MUSIC"],
+      maxEpisodesPerProgram: 10,
+      maxTracksPerArtist: 1,
+      maxTracksPerAlbum: null,
+    },
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-a1"),
+        diverseMusic("spotify:track:a2", "artist-a", "album-a2"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.equal(result.items.length, 1);
+  assert.equal(result.stats.poolExhausted, true);
+  assert.equal(result.stats.musicShortfallMs, 60_000);
+  assert.equal(result.stats.artistLimitRejectedCount, 1);
+  assert.equal(result.stats.compositionQualityPassed, false);
+});
+
+test("#37 rejection counters stay deterministic when the planner scans the same blocked candidate repeatedly", () => {
+  const result = planPlaylist({
+    rules: diversityRules(180_000, 1, 1),
+    pools: {
+      music: [
+        diverseMusic("spotify:track:a1", "artist-a", "album-a"),
+        diverseMusic("spotify:track:a2", "artist-a", "album-a"),
+      ],
+      podcasts: [],
+    },
+  });
+  assert.equal(result.stats.artistLimitRejectedCount, 1);
+  assert.equal(result.stats.albumLimitRejectedCount, 1);
 });

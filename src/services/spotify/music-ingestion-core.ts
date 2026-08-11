@@ -4,7 +4,10 @@ export type MusicIngestionTrack = {
   title: string;
   subtitle?: string;
   durationMs: number;
+  primaryArtistId?: string;
+  primaryArtistName?: string;
   albumId?: string;
+  albumName?: string;
   albumType?: string;
   discNumber?: number;
   trackNumber?: number;

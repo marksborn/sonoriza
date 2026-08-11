@@ -65,6 +65,8 @@ export type ConfigurationAssessment = {
     podcastEpisodeMaxDurationSeconds: number | null;
     sequence: SequenceEntry[];
     maxEpisodesPerProgram: number;
+    maxTracksPerArtist: number | null;
+    maxTracksPerAlbum: number | null;
   }>;
   issues: ConfigurationIssue[];
   fingerprint: string;
@@ -157,6 +159,8 @@ export async function assessConfiguration(
           podcastEpisodeMaxDurationSeconds: true,
           sequencePattern: true,
           maxEpisodesPerProgram: true,
+          maxTracksPerArtist: true,
+          maxTracksPerAlbum: true,
         },
       }),
       prisma.musicPlaybackPolicy.findUnique({
@@ -219,6 +223,8 @@ export async function assessConfiguration(
     podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,
     sequence: parseSequence(target.sequencePattern),
     maxEpisodesPerProgram: target.maxEpisodesPerProgram,
+    maxTracksPerArtist: target.maxTracksPerArtist,
+    maxTracksPerAlbum: target.maxTracksPerAlbum,
   }));
 
   const issues: ConfigurationIssue[] = [];
@@ -413,6 +419,32 @@ export async function assessConfiguration(
       });
     }
 
+    if (
+      rawTarget.maxTracksPerArtist !== null &&
+      (!Number.isInteger(rawTarget.maxTracksPerArtist) ||
+        rawTarget.maxTracksPerArtist < 1 ||
+        rawTarget.maxTracksPerArtist > 50)
+    ) {
+      pushIssue({
+        code: `INVALID_MUSIC_ARTIST_DIVERSITY:${rawTarget.id}`,
+        message: `${label}: configure o limite por artista entre 1 e 50 músicas.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+    }
+
+    if (
+      rawTarget.maxTracksPerAlbum !== null &&
+      (!Number.isInteger(rawTarget.maxTracksPerAlbum) ||
+        rawTarget.maxTracksPerAlbum < 1 ||
+        rawTarget.maxTracksPerAlbum > 50)
+    ) {
+      pushIssue({
+        code: `INVALID_MUSIC_ALBUM_DIVERSITY:${rawTarget.id}`,
+        message: `${label}: configure o limite por álbum entre 1 e 50 músicas.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+    }
+
     if (!rawTarget.spotifyPlaylistId) {
       pushIssue({
         code: `TARGET_PLAYLIST_REQUIRED:${rawTarget.id}`,
@@ -496,6 +528,8 @@ export async function assessConfiguration(
       podcastEpisodeMaxDurationSeconds: target.podcastEpisodeMaxDurationSeconds,
       sequence: target.compositionMode === "SEQUENCE" ? target.sequence : null,
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,
+      maxTracksPerArtist: target.maxTracksPerArtist,
+      maxTracksPerAlbum: target.maxTracksPerAlbum,
     })),
   };
 

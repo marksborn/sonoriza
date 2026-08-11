@@ -335,7 +335,7 @@ export class SpotifyClient {
     const candidates: Candidate[] = [];
     let unavailableTrackCount = 0;
     let url: string | null =
-      `/playlists/${playlistId}/items?market=from_token&limit=50&fields=next,items(item(uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),artists(name)))`;
+      `/playlists/${playlistId}/items?market=from_token&limit=50&fields=next,items(item(id,uri,name,duration_ms,is_local,type,is_playable,restrictions(reason),linked_from(id),artists(id,name),album(id,name)))`;
 
     while (url) {
       const page: SpotifyPage<PlaylistItem> = await this.request(url);

@@ -432,6 +432,92 @@ export async function generatePlaylists(
       return { runId: run.id, status: "FAILED" };
     }
 
+
+    if (!simulate) {
+      const liveTargets = await prisma.targetPlaylist.findMany({
+        where: { userId, enabled: true },
+        select: {
+          id: true,
+          name: true,
+          maxTracksPerArtist: true,
+          maxTracksPerAlbum: true,
+        },
+      });
+      const originalTargetById = new Map(targets.map((target) => [target.id, target]));
+      const liveTargetById = new Map(liveTargets.map((target) => [target.id, target]));
+      const musicDiversityConfigurationChanges: Array<{
+        targetPlaylistId: string;
+        targetName: string;
+        reason: string;
+      }> = [];
+
+      for (const target of targets) {
+        const live = liveTargetById.get(target.id);
+        if (!live) {
+          musicDiversityConfigurationChanges.push({
+            targetPlaylistId: target.id,
+            targetName: target.name,
+            reason: "TARGET_DISABLED_OR_REMOVED",
+          });
+          continue;
+        }
+        if (
+          live.maxTracksPerArtist !== target.maxTracksPerArtist ||
+          live.maxTracksPerAlbum !== target.maxTracksPerAlbum
+        ) {
+          musicDiversityConfigurationChanges.push({
+            targetPlaylistId: target.id,
+            targetName: target.name,
+            reason: "DIVERSITY_LIMIT_CHANGED",
+          });
+        }
+      }
+      for (const live of liveTargets) {
+        if (!originalTargetById.has(live.id)) {
+          musicDiversityConfigurationChanges.push({
+            targetPlaylistId: live.id,
+            targetName: live.name,
+            reason: "TARGET_ENABLED_DURING_RUN",
+          });
+        }
+      }
+
+      if (musicDiversityConfigurationChanges.length > 0) {
+        summary.musicDiversityConfigurationChanges =
+          musicDiversityConfigurationChanges;
+        const error =
+          "A geração foi bloqueada antes de alterar o Spotify porque a configuração de diversidade mudou desde o início do planejamento. Simule novamente antes de publicar.";
+        log({
+          level: "ERROR",
+          message: error,
+          data: musicDiversityConfigurationChanges,
+        });
+        await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+
+      const musicDiversityViolations = plan.targets.flatMap((planned) => {
+        const live = liveTargetById.get(planned.targetPlaylistId);
+        if (!live) return [];
+        return validatePlannedMusicDiversity(
+          planned.targetPlaylistId,
+          planned.name,
+          planned.result.items,
+          live.maxTracksPerArtist,
+          live.maxTracksPerAlbum,
+        );
+      });
+
+      if (musicDiversityViolations.length > 0) {
+        summary.musicDiversityViolations = musicDiversityViolations;
+        const error =
+          "A geração foi bloqueada antes de alterar o Spotify porque o plano final violou a diversidade configurada. Simule novamente antes de publicar.";
+        log({ level: "ERROR", message: error, data: musicDiversityViolations });
+        await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+    }
+
     if (!simulate) writer = await SpotifyClient.forUser(userId);
 
     const targetById = new Map(targets.map((target) => [target.id, target]));
@@ -455,6 +541,8 @@ export async function generatePlaylists(
         musicOrderSeedSource: musicOrderEvidence?.seedSource ?? null,
         musicOrderHash: musicOrderEvidence?.orderHash ?? null,
         musicOrderChanged: musicOrderEvidence?.changed ?? false,
+        maxTracksPerArtist: target.maxTracksPerArtist,
+        maxTracksPerAlbum: target.maxTracksPerAlbum,
         sequencePattern: parseSequencePattern(target.sequencePattern),
         ...stats,
         totalMinutes: Math.round(stats.totalDurationMs / 60_000),
@@ -746,8 +834,98 @@ function toRunTarget(
       sequencePattern,
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,
       maxPodcastDurationMs,
+      maxTracksPerArtist: target.maxTracksPerArtist,
+      maxTracksPerAlbum: target.maxTracksPerAlbum,
     },
   };
+}
+
+
+type MusicDiversityViolation = {
+  targetPlaylistId: string;
+  targetName: string;
+  uri: string;
+  rule: "MISSING_ARTIST_ID" | "MISSING_ALBUM_ID" | "ARTIST_LIMIT" | "ALBUM_LIMIT";
+  identity: string | null;
+  limit: number | null;
+};
+
+function validatePlannedMusicDiversity(
+  targetPlaylistId: string,
+  targetName: string,
+  items: Array<{
+    type: "MUSIC" | "PODCAST";
+    uri: string;
+    primaryArtistId?: string;
+    albumId?: string;
+  }>,
+  maxTracksPerArtist: number | null,
+  maxTracksPerAlbum: number | null,
+): MusicDiversityViolation[] {
+  const artistCounts = new Map<string, number>();
+  const albumCounts = new Map<string, number>();
+  const violations: MusicDiversityViolation[] = [];
+
+  for (const item of items) {
+    if (item.type !== "MUSIC") continue;
+
+    const artistId = item.primaryArtistId?.trim() || null;
+    const albumId = item.albumId?.trim() || null;
+
+    if (maxTracksPerArtist !== null) {
+      if (!artistId) {
+        violations.push({
+          targetPlaylistId,
+          targetName,
+          uri: item.uri,
+          rule: "MISSING_ARTIST_ID",
+          identity: null,
+          limit: maxTracksPerArtist,
+        });
+      } else {
+        const next = (artistCounts.get(artistId) ?? 0) + 1;
+        artistCounts.set(artistId, next);
+        if (next > maxTracksPerArtist) {
+          violations.push({
+            targetPlaylistId,
+            targetName,
+            uri: item.uri,
+            rule: "ARTIST_LIMIT",
+            identity: artistId,
+            limit: maxTracksPerArtist,
+          });
+        }
+      }
+    }
+
+    if (maxTracksPerAlbum !== null) {
+      if (!albumId) {
+        violations.push({
+          targetPlaylistId,
+          targetName,
+          uri: item.uri,
+          rule: "MISSING_ALBUM_ID",
+          identity: null,
+          limit: maxTracksPerAlbum,
+        });
+      } else {
+        const next = (albumCounts.get(albumId) ?? 0) + 1;
+        albumCounts.set(albumId, next);
+        if (next > maxTracksPerAlbum) {
+          violations.push({
+            targetPlaylistId,
+            targetName,
+            uri: item.uri,
+            rule: "ALBUM_LIMIT",
+            identity: albumId,
+            limit: maxTracksPerAlbum,
+          });
+        }
+      }
+    }
+  }
+
+  return violations;
 }
 
 async function ensureSpotifyPlaylist(
@@ -836,6 +1014,10 @@ function qualityReason(stats: {
   musicShortfallMs: number;
   poolExhausted: boolean;
   mixDeviationPoints: number;
+  artistLimitRejectedCount: number;
+  albumLimitRejectedCount: number;
+  missingArtistIdentityRejectedCount: number;
+  missingAlbumIdentityRejectedCount: number;
 }): string {
   if (stats.compositionMode === "SEQUENCE") {
     if (stats.sequenceQualityPassed === false) {
@@ -847,7 +1029,14 @@ function qualityReason(stats: {
     return "a sequência configurada foi preservada";
   }
   if (stats.poolExhausted) {
-    return "as fontes elegíveis terminaram antes de preencher a duração planejada";
+    const diversityRejected =
+      stats.artistLimitRejectedCount +
+      stats.albumLimitRejectedCount +
+      stats.missingArtistIdentityRejectedCount +
+      stats.missingAlbumIdentityRejectedCount;
+    return diversityRejected > 0
+      ? `o pool elegível terminou antes de preencher a duração após ${diversityRejected} rejeições de diversidade musical`
+      : "as fontes elegíveis terminaram antes de preencher a duração planejada";
   }
   if (stats.podcastShortfallMs > 0) {
     return `a meta de ${stats.requestedPodcastPercent}% de podcast ficou em ${stats.actualPodcastPercent}% após aplicar fontes, duração máxima e limites por programa`;

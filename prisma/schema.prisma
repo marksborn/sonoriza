@@ -404,6 +404,8 @@ model TargetPlaylist {
   podcastEpisodeMaxDurationSeconds Int?
   sequencePattern                  Json
   maxEpisodesPerProgram            Int                           @default(1)
+  maxTracksPerArtist               Int?
+  maxTracksPerAlbum                Int?
   createdAt                        DateTime                      @default(now())
   updatedAt                        DateTime                      @updatedAt
 
