@@ -1,0 +1,99 @@
+name: SCHEDULE-01 validation
+
+on:
+  push:
+    branches:
+      - agent/schedule-01-recurring-target-policies-58
+    paths:
+      - .github/workflows/schedule-01-validation.yml
+      - .github/schedule58-stage1.py
+      - .github/schedule58-stage2.py
+      - .github/schedule58-stage3.py
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza
+      AUTH_SECRET: schedule-01-validation-secret
+      AUTH_SPOTIFY_ID: test-spotify-id
+      AUTH_SPOTIFY_SECRET: test-spotify-secret
+      AUTH_GOOGLE_ID: test-google-id
+      AUTH_GOOGLE_SECRET: test-google-secret
+      CRON_SECRET: test-cron-secret
+      SONORIZA_ALLOWED_EMAILS: test@example.com
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/schedule-01-recurring-target-policies-58
+          fetch-depth: 0
+
+      - name: Setup Node 24.19.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply SCHEDULE-01 staged patches
+        run: |
+          python .github/schedule58-stage1.py
+          if [ -f .github/schedule58-stage2.py ]; then python .github/schedule58-stage2.py; fi
+          if [ -f .github/schedule58-stage3.py ]; then python .github/schedule58-stage3.py; fi
+
+      - name: Format and generate Prisma
+        run: |
+          npx prisma format
+          npx prisma validate
+          npx prisma generate
+
+      - name: Apply migrations on disposable PostgreSQL
+        run: npx prisma migrate deploy
+
+      - name: SCHEDULE-01 core tests
+        run: npx tsx --test src/services/target-schedule.test.ts src/services/keep-filled-core.test.ts
+
+      - name: Planner regressions
+        run: npm run test:planner
+
+      - name: Incremental regressions
+        run: npm run test:incremental
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Commit validated product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add prisma src docs || true
+          if git diff --cached --quiet; then
+            echo "No product changes to commit"
+          else
+            git diff --cached --stat
+            git commit -m "feat: SCHEDULE-01 — recurring target policies (#58)"
+            git push origin HEAD:agent/schedule-01-recurring-target-policies-58
+          fi
