@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 
+import { PwaServiceWorker } from "@/components/PwaServiceWorker";
+
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,6 +12,7 @@ export const metadata: Metadata = {
   description:
     "Playlists dinâmicas de músicas e podcasts moldadas pela sua agenda, duração e contexto.",
   applicationName: "Sonoriza",
+  manifest: "/manifest.webmanifest",
   keywords: [
     "playlists dinâmicas",
     "Spotify",
@@ -18,7 +21,16 @@ export const metadata: Metadata = {
     "podcasts",
   ],
   icons: {
-    icon: "/sonoriza-mark.webp",
+    icon: [
+      { url: "/pwa-icon/192", sizes: "192x192", type: "image/png" },
+      { url: "/pwa-icon/512", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/pwa-icon/180", sizes: "180x180", type: "image/png" }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Sonoriza",
+    statusBarStyle: "black-translucent",
   },
 };
 
@@ -34,7 +46,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body>
+        <PwaServiceWorker />
+        {children}
+      </body>
     </html>
   );
 }
