@@ -1,0 +1,700 @@
+name: ORDER-01 issue 54 implementation
+
+on:
+  push:
+    branches: [agent/order01-randomize-music-54]
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sonoriza
+          POSTGRES_PASSWORD: sonoriza
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonoriza -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sonoriza:sonoriza@127.0.0.1:5432/sonoriza?schema=public
+      AUTH_URL: http://localhost:3000
+      AUTH_SECRET: order01-ci-secret
+      AUTH_GOOGLE_ID: order01-google-id
+      AUTH_GOOGLE_SECRET: order01-google-secret
+      AUTH_SPOTIFY_ID: order01-spotify-id
+      AUTH_SPOTIFY_SECRET: order01-spotify-secret
+      CRON_SECRET: order01-cron-secret
+      SONORIZA_ALLOWED_EMAILS: owner@example.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Stop recursive implementation run
+        id: guard
+        shell: bash
+        run: |
+          if [[ "$(git log -1 --pretty=%s)" == "feat: implement ORDER-01 #54" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.guard.outputs.skip != 'true'
+        run: npm ci
+
+      - name: Apply ORDER-01 implementation
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}\n--- needle ---\n{old}")
+              p.write_text(text.replace(old, new, 1))
+
+          # Prisma model + safe default for all existing destinations.
+          replace_once(
+              "prisma/schema.prisma",
+              '''enum CompositionMode {
+            PROPORTION
+            SEQUENCE
+          }
+
+          model TargetPlaylist {''',
+              '''enum CompositionMode {
+            PROPORTION
+            SEQUENCE
+          }
+
+          enum MusicOrderMode {
+            STANDARD
+            RANDOMIZED
+          }
+
+          model TargetPlaylist {''',
+          )
+          replace_once(
+              "prisma/schema.prisma",
+              '''  compositionMode                  CompositionMode               @default(PROPORTION)
+            durationMode                     DurationMode                  @default(FIXED)''',
+              '''  compositionMode                  CompositionMode               @default(PROPORTION)
+            musicOrderMode                   MusicOrderMode                @default(STANDARD)
+            durationMode                     DurationMode                  @default(FIXED)''',
+          )
+
+          migration = Path("prisma/migrations/20260811145000_music_order_mode/migration.sql")
+          migration.parent.mkdir(parents=True, exist_ok=True)
+          migration.write_text('''-- ORDER-01: explicit per-destination music ordering policy.\nCREATE TYPE "MusicOrderMode" AS ENUM ('STANDARD', 'RANDOMIZED');\n\nALTER TABLE "TargetPlaylist"\nADD COLUMN "musicOrderMode" "MusicOrderMode" NOT NULL DEFAULT 'STANDARD';\n''')
+
+          # Pure deterministic ordering transformation. It never changes the selected set
+          # and never moves a MUSIC item into a PODCAST slot (or vice versa).
+          Path("src/services/playlist-ordering.ts").write_text(r'''import { createHash } from "node:crypto";
+
+export type MusicOrderMode = "STANDARD" | "RANDOMIZED";
+
+export type OrderablePlaylistItem = {
+  uri: string;
+  type: "MUSIC" | "PODCAST";
+  position: number;
+};
+
+export type MusicOrderEvidence = {
+  mode: MusicOrderMode;
+  seed: string | null;
+  changed: boolean;
+  musicCount: number;
+  orderHash: string;
+};
+
+export function createMusicOrderSeed(runId: string, targetPlaylistId: string): string {
+  return createHash("sha256")
+    .update(`ORDER-01\0${runId}\0${targetPlaylistId}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function rankingKey(seed: string, item: OrderablePlaylistItem, originalIndex: number) {
+  return createHash("sha256")
+    .update(`${seed}\0${originalIndex}\0${item.uri}`)
+    .digest("hex");
+}
+
+function finalOrderHash(items: OrderablePlaylistItem[]) {
+  return createHash("sha256")
+    .update(items.map((item) => `${item.position}:${item.type}:${item.uri}`).join("\n"))
+    .digest("hex");
+}
+
+/**
+ * ORDER-01 runs strictly after selection. RANDOMIZED shuffles only the MUSIC
+ * identities among the slots that are already MUSIC slots. Podcast positions,
+ * the type pattern, selected URI set and total duration are therefore untouched.
+ */
+export function applyMusicOrder<T extends OrderablePlaylistItem>(
+  items: T[],
+  mode: MusicOrderMode,
+  seed: string | null,
+): { items: T[]; evidence: MusicOrderEvidence } {
+  if (mode === "STANDARD") {
+    const result = items.map((item) => ({ ...item })) as T[];
+    return {
+      items: result,
+      evidence: {
+        mode,
+        seed: null,
+        changed: false,
+        musicCount: result.filter((item) => item.type === "MUSIC").length,
+        orderHash: finalOrderHash(result),
+      },
+    };
+  }
+
+  if (!seed) throw new Error("RANDOMIZED music order requires a seed");
+
+  const originalMusic = items.filter((item) => item.type === "MUSIC");
+  const rankedMusic = originalMusic
+    .map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      key: rankingKey(seed, item, originalIndex),
+    }))
+    .sort((left, right) =>
+      left.key === right.key
+        ? left.originalIndex - right.originalIndex
+        : left.key.localeCompare(right.key),
+    )
+    .map((entry) => entry.item);
+
+  let musicIndex = 0;
+  const result = items.map((slot) => {
+    if (slot.type !== "MUSIC") return { ...slot } as T;
+    const selected = rankedMusic[musicIndex++]!;
+    return { ...selected, position: slot.position } as T;
+  });
+
+  const originalMusicUris = originalMusic.map((item) => item.uri);
+  const finalMusicUris = result
+    .filter((item) => item.type === "MUSIC")
+    .map((item) => item.uri);
+
+  return {
+    items: result,
+    evidence: {
+      mode,
+      seed,
+      changed: originalMusicUris.some((uri, index) => finalMusicUris[index] !== uri),
+      musicCount: originalMusic.length,
+      orderHash: finalOrderHash(result),
+    },
+  };
+}
+''')
+
+          Path("src/services/playlist-ordering.test.ts").write_text(r'''import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  applyMusicOrder,
+  createMusicOrderSeed,
+  type OrderablePlaylistItem,
+} from "./playlist-ordering";
+
+function fixture(): OrderablePlaylistItem[] {
+  return [
+    { position: 0, type: "MUSIC", uri: "spotify:track:A" },
+    { position: 1, type: "MUSIC", uri: "spotify:track:B" },
+    { position: 2, type: "PODCAST", uri: "spotify:episode:P1" },
+    { position: 3, type: "MUSIC", uri: "spotify:track:C" },
+    { position: 4, type: "MUSIC", uri: "spotify:track:D" },
+    { position: 5, type: "PODCAST", uri: "spotify:episode:P2" },
+    { position: 6, type: "MUSIC", uri: "spotify:track:E" },
+  ];
+}
+
+function uris(items: OrderablePlaylistItem[]) {
+  return items.map((item) => item.uri);
+}
+
+test("STANDARD preserves the exact planned order", () => {
+  const input = fixture();
+  const ordered = applyMusicOrder(input, "STANDARD", null);
+  assert.deepEqual(uris(ordered.items), uris(input));
+  assert.equal(ordered.evidence.seed, null);
+  assert.equal(ordered.evidence.changed, false);
+});
+
+test("RANDOMIZED is deterministic for the same seed", () => {
+  const first = applyMusicOrder(fixture(), "RANDOMIZED", "seed-a");
+  const second = applyMusicOrder(fixture(), "RANDOMIZED", "seed-a");
+  assert.deepEqual(uris(first.items), uris(second.items));
+  assert.equal(first.evidence.orderHash, second.evidence.orderHash);
+});
+
+test("RANDOMIZED changes only music identities, preserving podcast slots and selected set", () => {
+  const input = fixture();
+  const ordered = applyMusicOrder(input, "RANDOMIZED", "seed-a");
+
+  assert.deepEqual(
+    ordered.items.map((item) => item.type),
+    input.map((item) => item.type),
+  );
+  assert.equal(ordered.items[2]?.uri, "spotify:episode:P1");
+  assert.equal(ordered.items[5]?.uri, "spotify:episode:P2");
+  assert.deepEqual([...uris(ordered.items)].sort(), [...uris(input)].sort());
+  assert.deepEqual(
+    ordered.items.map((item) => item.position),
+    input.map((item) => item.position),
+  );
+  assert.equal(ordered.evidence.changed, true);
+});
+
+test("different seeds can produce different music order", () => {
+  const first = applyMusicOrder(fixture(), "RANDOMIZED", "seed-a");
+  const second = applyMusicOrder(fixture(), "RANDOMIZED", "seed-b");
+  assert.notDeepEqual(uris(first.items), uris(second.items));
+});
+
+test("execution seed is stable for one run/target and changes with the run", () => {
+  assert.equal(
+    createMusicOrderSeed("run-a", "target-1"),
+    createMusicOrderSeed("run-a", "target-1"),
+  );
+  assert.notEqual(
+    createMusicOrderSeed("run-a", "target-1"),
+    createMusicOrderSeed("run-b", "target-1"),
+  );
+});
+''')
+
+          # CONFIG-03 client form.
+          replace_once(
+              "src/components/TargetPlaylistForm.tsx",
+              'type CompositionMode = "PROPORTION" | "SEQUENCE";\n',
+              'type CompositionMode = "PROPORTION" | "SEQUENCE";\ntype MusicOrderMode = "STANDARD" | "RANDOMIZED";\n',
+          )
+          replace_once(
+              "src/components/TargetPlaylistForm.tsx",
+              '''  compositionMode: CompositionMode;
+            podcastPercent: number;''',
+              '''  compositionMode: CompositionMode;
+            musicOrderMode: MusicOrderMode;
+            podcastPercent: number;''',
+          )
+          replace_once(
+              "src/components/TargetPlaylistForm.tsx",
+              '''  const [compositionMode, setCompositionMode] = useState<CompositionMode>(
+              initial.compositionMode,
+            );
+            const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);''',
+              '''  const [compositionMode, setCompositionMode] = useState<CompositionMode>(
+              initial.compositionMode,
+            );
+            const [musicOrderMode, setMusicOrderMode] = useState<MusicOrderMode>(
+              initial.musicOrderMode,
+            );
+            const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);''',
+          )
+          replace_once(
+              "src/components/TargetPlaylistForm.tsx",
+              '''      </fieldset>
+
+            {compositionMode === "PROPORTION" && (
+              <div className={sectionClass}>''',
+              '''      </fieldset>
+
+            <fieldset className={sectionClass}>
+              <legend className="px-1 text-sm font-black text-ink-inverse">
+                Ordem das músicas
+              </legend>
+              <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
+                A seleção continua a mesma. Esta opção muda apenas qual música ocupa cada slot de música; podcasts e a sequência de tipos não são alterados.
+              </p>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className={optionClass(musicOrderMode === "STANDARD")}>
+                  <input
+                    type="radio"
+                    name="musicOrderMode"
+                    value="STANDARD"
+                    checked={musicOrderMode === "STANDARD"}
+                    onChange={() => setMusicOrderMode("STANDARD")}
+                    className="sr-only"
+                  />
+                  <span className="block font-black text-ink-inverse">Ordem padrão</span>
+                  <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                    Mantém a ordem musical produzida pelo planner.
+                  </span>
+                </label>
+                <label className={optionClass(musicOrderMode === "RANDOMIZED")}>
+                  <input
+                    type="radio"
+                    name="musicOrderMode"
+                    value="RANDOMIZED"
+                    checked={musicOrderMode === "RANDOMIZED"}
+                    onChange={() => setMusicOrderMode("RANDOMIZED")}
+                    className="sr-only"
+                  />
+                  <span className="block font-black text-ink-inverse">Randomizar músicas</span>
+                  <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                    Cada execução recebe um seed auditável e pode produzir uma nova ordem, sem depender do Shuffle do Spotify.
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+
+            {compositionMode === "PROPORTION" && (
+              <div className={sectionClass}>''',
+          )
+
+          # CONFIG-03 server action and rendering.
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '''  const compositionMode = String(formData.get("compositionMode") ?? "").trim();
+            const emptyCalendarBehavior = String(''',
+              '''  const compositionMode = String(formData.get("compositionMode") ?? "").trim();
+            const musicOrderMode = String(formData.get("musicOrderMode") ?? "STANDARD").trim();
+            const emptyCalendarBehavior = String(''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '''  if (!normalizedCompositionMode) fail("invalid");
+            if (!sequencePattern || podcastPercent === null || maxEpisodesPerProgram === null) {''',
+              '''  if (!normalizedCompositionMode) fail("invalid");
+            const normalizedMusicOrderMode =
+              musicOrderMode === "STANDARD" || musicOrderMode === "RANDOMIZED"
+                ? musicOrderMode
+                : null;
+            if (!normalizedMusicOrderMode) fail("invalid");
+            if (!sequencePattern || podcastPercent === null || maxEpisodesPerProgram === null) {''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '''    enabled,
+                compositionMode: normalizedCompositionMode,
+                durationMode,''',
+              '''    enabled,
+                compositionMode: normalizedCompositionMode,
+                musicOrderMode: normalizedMusicOrderMode,
+                durationMode,''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '''                  compositionMode: "PROPORTION",
+                        podcastPercent: 60,''',
+              '''                  compositionMode: "PROPORTION",
+                        musicOrderMode: "STANDARD",
+                        podcastPercent: 60,''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '''                            compositionMode: target.compositionMode,
+                                podcastPercent: target.podcastPercent,''',
+              '''                            compositionMode: target.compositionMode,
+                                musicOrderMode: target.musicOrderMode,
+                                podcastPercent: target.podcastPercent,''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/destinos/page.tsx",
+              '''                          {` · ${podcastEpisodeMaxDurationLabel(target)}`}
+                                </p>''',
+              '''                          {` · ${podcastEpisodeMaxDurationLabel(target)}`}
+                                  {` · músicas: ${
+                                    target.musicOrderMode === "RANDOMIZED"
+                                      ? "ordem randomizada"
+                                      : "ordem padrão"
+                                  }`}
+                                </p>''',
+          )
+
+          # CONFIG-04 assessment + fingerprint.
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              '''    compositionMode: "PROPORTION" | "SEQUENCE";
+                podcastPercent: number;''',
+              '''    compositionMode: "PROPORTION" | "SEQUENCE";
+                musicOrderMode: "STANDARD" | "RANDOMIZED";
+                podcastPercent: number;''',
+          )
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              '''          compositionMode: true,
+                    podcastPercent: true,''',
+              '''          compositionMode: true,
+                    musicOrderMode: true,
+                    podcastPercent: true,''',
+          )
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              '''    compositionMode: target.compositionMode,
+                podcastPercent: target.podcastPercent,''',
+              '''    compositionMode: target.compositionMode,
+                musicOrderMode: target.musicOrderMode,
+                podcastPercent: target.podcastPercent,''',
+          )
+          replace_once(
+              "src/services/configuration-readiness.ts",
+              '''      podcastPercent:
+                    target.compositionMode === "PROPORTION" ? target.podcastPercent : null,''',
+              '''      musicOrderMode: target.musicOrderMode,
+                  podcastPercent:
+                    target.compositionMode === "PROPORTION" ? target.podcastPercent : null,''',
+          )
+
+          # Generator: transform only after selection/quality, before all write defenses.
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              '''import {
+            parseSequencePattern,
+            type RunTarget,
+          } from "@/services/playlist-planner";
+          import {''',
+              '''import {
+            parseSequencePattern,
+            type RunTarget,
+          } from "@/services/playlist-planner";
+          import {
+            applyMusicOrder,
+            createMusicOrderSeed,
+          } from "@/services/playlist-ordering";
+          import {''',
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              '''    const targetByPlanId = new Map(targets.map((target) => [target.id, target]));
+              const sequenceViolations = plan.targets.flatMap((planned) => {''',
+              '''    const targetByPlanId = new Map(targets.map((target) => [target.id, target]));
+              const musicOrderEvidenceByTargetId = new Map<
+                string,
+                ReturnType<typeof applyMusicOrder>["evidence"]
+              >();
+
+              for (const planned of plan.targets) {
+                const target = targetByPlanId.get(planned.targetPlaylistId);
+                if (!target) continue;
+                const seed =
+                  target.musicOrderMode === "RANDOMIZED"
+                    ? createMusicOrderSeed(run.id, target.id)
+                    : null;
+                const ordered = applyMusicOrder(
+                  planned.result.items,
+                  target.musicOrderMode,
+                  seed,
+                );
+                planned.result.items = ordered.items;
+                musicOrderEvidenceByTargetId.set(target.id, ordered.evidence);
+              }
+
+              const sequenceViolations = plan.targets.flatMap((planned) => {''',
+          )
+          replace_once(
+              "src/jobs/generate-playlists-incremental.ts",
+              '''      const podcastEpisodeMaxDurationMs =
+                resolvedDuration?.podcastEpisodeMaxDurationMs ?? null;
+
+              const targetSummary: Record<string, unknown> = {
+                name: target.name,
+                planned: items.length,''',
+              '''      const podcastEpisodeMaxDurationMs =
+                resolvedDuration?.podcastEpisodeMaxDurationMs ?? null;
+              const musicOrderEvidence = musicOrderEvidenceByTargetId.get(target.id) ?? null;
+
+              const targetSummary: Record<string, unknown> = {
+                name: target.name,
+                planned: items.length,
+                musicOrderMode: target.musicOrderMode,
+                musicOrderSeed: musicOrderEvidence?.seed ?? null,
+                musicOrderHash: musicOrderEvidence?.orderHash ?? null,
+                musicOrderChanged: musicOrderEvidence?.changed ?? false,
+                musicOrderPreview: items.map((item) => ({
+                  position: item.position,
+                  type: item.type,
+                  title: item.title,
+                })),''',
+          )
+
+          # CONFIG-04 simulation parser and presentation.
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '''  compositionMode: "PROPORTION" | "SEQUENCE" | null;
+            compositionQualityPassed: boolean | null;''',
+              '''  compositionMode: "PROPORTION" | "SEQUENCE" | null;
+            musicOrderMode: "STANDARD" | "RANDOMIZED" | null;
+            musicOrderSeed: string | null;
+            musicOrderHash: string | null;
+            musicOrderChanged: boolean | null;
+            musicOrderPreview: Array<{
+              position: number;
+              type: "MUSIC" | "PODCAST";
+              title: string;
+            }>;
+            compositionQualityPassed: boolean | null;''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '''function booleanValue(value: unknown): boolean | null {
+            return typeof value === "boolean" ? value : null;
+          }
+
+          function readSimulationTargets''',
+              '''function booleanValue(value: unknown): boolean | null {
+            return typeof value === "boolean" ? value : null;
+          }
+
+          function readMusicOrderPreview(value: unknown): SimulationTargetSummary["musicOrderPreview"] {
+            if (!Array.isArray(value)) return [];
+            return value.flatMap((entry) => {
+              if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+              const item = entry as Record<string, unknown>;
+              const position = numberValue(item.position);
+              if (
+                position === null ||
+                (item.type !== "MUSIC" && item.type !== "PODCAST") ||
+                typeof item.title !== "string"
+              ) {
+                return [];
+              }
+              return [{ position, type: item.type, title: item.title }];
+            });
+          }
+
+          function readSimulationTargets''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '''        compositionMode:
+                  value.compositionMode === "PROPORTION" || value.compositionMode === "SEQUENCE"
+                    ? value.compositionMode
+                    : null,
+                compositionQualityPassed:''',
+              '''        compositionMode:
+                  value.compositionMode === "PROPORTION" || value.compositionMode === "SEQUENCE"
+                    ? value.compositionMode
+                    : null,
+                musicOrderMode:
+                  value.musicOrderMode === "STANDARD" || value.musicOrderMode === "RANDOMIZED"
+                    ? value.musicOrderMode
+                    : null,
+                musicOrderSeed:
+                  typeof value.musicOrderSeed === "string" ? value.musicOrderSeed : null,
+                musicOrderHash:
+                  typeof value.musicOrderHash === "string" ? value.musicOrderHash : null,
+                musicOrderChanged: booleanValue(value.musicOrderChanged),
+                musicOrderPreview: readMusicOrderPreview(value.musicOrderPreview),
+                compositionQualityPassed:''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '''                    {` · ${configuredPodcastDurationLabel(target)}`}
+                              </p>''',
+              '''                    {` · ${configuredPodcastDurationLabel(target)}`}
+                                {` · músicas: ${
+                                  target.musicOrderMode === "RANDOMIZED"
+                                    ? "ordem randomizada"
+                                    : "ordem padrão"
+                                }`}
+                              </p>''',
+          )
+          replace_once(
+              "src/app/dashboard/configuracao/revisao/page.tsx",
+              '''                          {target.calendarDurationMinutes !== null && (
+                                <p className="mt-2 text-xs font-semibold leading-5 opacity-70">''',
+              '''                          {target.musicOrderMode === "RANDOMIZED" && (
+                                <div className="status-info mt-3 rounded-xl border p-3 text-xs leading-5">
+                                  <p className="font-black">
+                                    Músicas randomizadas nesta simulação
+                                  </p>
+                                  <p className="mt-1 opacity-80">
+                                    Seed: <code>{target.musicOrderSeed ?? "indisponível"}</code>
+                                    {target.musicOrderChanged === false
+                                      ? " · a ordem coincidiu com a original nesta execução"
+                                      : ""}
+                                  </p>
+                                  {target.musicOrderPreview.length > 0 && (
+                                    <details className="mt-2">
+                                      <summary className="cursor-pointer font-black">
+                                        Ver ordem simulada ({target.musicOrderPreview.length} itens)
+                                      </summary>
+                                      <ol className="mt-2 space-y-1 pl-5">
+                                        {target.musicOrderPreview.map((item) => (
+                                          <li key={`${item.position}-${item.type}-${item.title}`}>
+                                            {item.position + 1}. {item.type === "MUSIC" ? "M" : "P"} · {item.title}
+                                          </li>
+                                        ))}
+                                      </ol>
+                                      {target.musicOrderHash && (
+                                        <p className="mt-2 opacity-65">
+                                          Hash da ordem: <code>{target.musicOrderHash}</code>
+                                        </p>
+                                      )}
+                                    </details>
+                                  )}
+                                </div>
+                              )}
+                          {target.calendarDurationMinutes !== null && (
+                                <p className="mt-2 text-xs font-semibold leading-5 opacity-70">''',
+          )
+          PY
+
+      - name: Format Prisma schema
+        if: steps.guard.outputs.skip != 'true'
+        run: npx prisma format
+
+      - name: Generate Prisma client
+        if: steps.guard.outputs.skip != 'true'
+        run: npx prisma generate
+
+      - name: Apply migrations to disposable PostgreSQL
+        if: steps.guard.outputs.skip != 'true'
+        run: npx prisma migrate deploy
+
+      - name: ORDER-01 ordering regressions
+        if: steps.guard.outputs.skip != 'true'
+        run: npx tsx --test src/services/playlist-ordering.test.ts
+
+      - name: Planner and configuration regressions
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        run: |
+          npx tsx --test src/services/playlist-planner/*.test.ts
+          npx tsx --test src/services/configuration-readiness.test.ts
+
+      - name: Typecheck
+        if: steps.guard.outputs.skip != 'true'
+        run: npm run typecheck
+
+      - name: Build
+        if: steps.guard.outputs.skip != 'true'
+        run: npm run build
+
+      - name: Commit validated implementation
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        run: |
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add prisma src
+          git diff --cached --check
+          git commit -m "feat: implement ORDER-01 #54"
+          git push origin HEAD:agent/order01-randomize-music-54
