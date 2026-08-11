@@ -51,3 +51,47 @@ jobs:
         run: npx tsx --test src/services/pwa-contract.test.ts
       - run: npm run typecheck
       - run: npm run build
+      - name: PWA-01 HTTP smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npm start >/tmp/sonoriza-pwa.log 2>&1 &
+          APP_PID=$!
+          cleanup() {
+            kill "$APP_PID" 2>/dev/null || true
+            wait "$APP_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/manifest.webmanifest >/tmp/manifest.webmanifest; then
+              break
+            fi
+            sleep 1
+          done
+
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const manifest = JSON.parse(fs.readFileSync('/tmp/manifest.webmanifest', 'utf8'))
+          if (manifest.display !== 'standalone') throw new Error('manifest display')
+          if (manifest.start_url !== '/dashboard') throw new Error('manifest start_url')
+          const icons = manifest.icons ?? []
+          if (!icons.some((icon) => icon.sizes === '192x192')) throw new Error('missing 192 icon')
+          if (!icons.some((icon) => icon.sizes === '512x512')) throw new Error('missing 512 icon')
+          if (!icons.some((icon) => String(icon.purpose ?? '').includes('maskable'))) throw new Error('missing maskable icon')
+          NODE
+
+          curl -fsSI http://127.0.0.1:3000/sw.js >/tmp/sw.headers
+          grep -Eqi '^content-type: application/javascript' /tmp/sw.headers
+          grep -Eqi '^cache-control: no-cache, no-store, must-revalidate' /tmp/sw.headers
+          grep -Eqi '^service-worker-allowed: /' /tmp/sw.headers
+
+          curl -fsS http://127.0.0.1:3000/pwa-icon/180 -o /tmp/icon-180.png
+          curl -fsS http://127.0.0.1:3000/pwa-icon/192 -o /tmp/icon-192.png
+          curl -fsS http://127.0.0.1:3000/pwa-icon/512 -o /tmp/icon-512.png
+          file /tmp/icon-180.png | grep -F 'PNG image data, 180 x 180'
+          file /tmp/icon-192.png | grep -F 'PNG image data, 192 x 192'
+          file /tmp/icon-512.png | grep -F 'PNG image data, 512 x 512'
+
+          INVALID_CODE="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/pwa-icon/123)"
+          test "$INVALID_CODE" = "404"
