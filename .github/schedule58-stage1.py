@@ -31,7 +31,7 @@ replace_once(
 replace_once(
     "prisma/schema.prisma",
     "  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)\n  generationItems GenerationItem[]",
-    "  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)\n  generationItems  GenerationItem[]\n  targetScheduleRuns TargetScheduleRun[]",
+    "  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)\n  generationItems    GenerationItem[]\n  targetScheduleRuns TargetScheduleRun[]",
 )
 
 replace_once(
@@ -43,7 +43,7 @@ replace_once(
 replace_once(
     "prisma/schema.prisma",
     "  programId        String?\n  durationMs       Int         @default(0)\n\n  run    GenerationRun  @relation",
-    "  programId          String?\n  durationMs         Int               @default(0)\n  spotifyTrackId     String?\n  primaryArtistId    String?\n  albumId            String?\n  originalDurationMs Int?\n  resumePositionMs   Int?\n  sourceSpotifyType  SpotifySourceType?\n  sourceSpotifyId    String?\n  sourceIncludePlayed Boolean?\n\n  run    GenerationRun  @relation",
+    "  programId           String?\n  durationMs          Int                @default(0)\n  spotifyTrackId      String?\n  primaryArtistId     String?\n  albumId             String?\n  originalDurationMs  Int?\n  resumePositionMs    Int?\n  sourceSpotifyType   SpotifySourceType?\n  sourceSpotifyId     String?\n  sourceIncludePlayed Boolean?\n\n  run    GenerationRun  @relation",
 )
 
 schema = Path("prisma/schema.prisma")
@@ -56,34 +56,34 @@ schema.write_text(
 // ---------------------------------------------------------------------------
 
 model TargetScheduleRun {
-  id                     String                  @id @default(cuid())
-  userId                 String
-  targetPlaylistId       String
-  scheduleKey            String                  @unique
-  scheduledLocalDate     String
-  scheduledForMinutes    Int
-  scheduleTimezone       String
-  policy                 TargetUpdatePolicy
-  status                 TargetScheduleRunStatus @default(RUNNING)
-  attempt                Int                     @default(1)
-  generationRunId        String?
-  targetDurationMs       Int?
-  validDurationBeforeMs  Int?
-  removedDurationMs      Int                     @default(0)
-  addedDurationMs        Int                     @default(0)
-  preservedCount         Int                     @default(0)
-  removedCount           Int                     @default(0)
-  addedCount             Int                     @default(0)
-  snapshotBefore         String?
-  snapshotAfter          String?
-  reason                 String?                 @db.Text
-  details                Json?
-  startedAt              DateTime                @default(now())
-  finishedAt             DateTime?
+  id                    String                  @id @default(cuid())
+  userId                String
+  targetPlaylistId      String
+  scheduleKey           String                  @unique
+  scheduledLocalDate    String
+  scheduledForMinutes   Int
+  scheduleTimezone      String
+  policy                TargetUpdatePolicy
+  status                TargetScheduleRunStatus @default(RUNNING)
+  attempt               Int                     @default(1)
+  generationRunId       String?
+  targetDurationMs      Int?
+  validDurationBeforeMs Int?
+  removedDurationMs     Int                     @default(0)
+  addedDurationMs       Int                     @default(0)
+  preservedCount        Int                     @default(0)
+  removedCount          Int                     @default(0)
+  addedCount            Int                     @default(0)
+  snapshotBefore        String?
+  snapshotAfter         String?
+  reason                String?                 @db.Text
+  details               Json?
+  startedAt             DateTime                @default(now())
+  finishedAt            DateTime?
 
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  target        TargetPlaylist  @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)
-  generationRun GenerationRun?  @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target        TargetPlaylist @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)
+  generationRun GenerationRun? @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
 
   @@index([userId, startedAt])
   @@index([targetPlaylistId, startedAt])
@@ -174,15 +174,14 @@ replace_once(
 )
 replace_once(
     "src/jobs/incremental-planning.ts",
-    "}({ sources, targets, onBatch, onRound }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {",
-    "}({\n  sources,\n  targets,\n  preservedByTargetId,\n  onBatch,\n  onRound,\n}: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {",
+    ">({ sources, targets, onBatch, onRound }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {",
+    ">({\n  sources,\n  targets,\n  preservedByTargetId,\n  onBatch,\n  onRound,\n}: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {",
 )
 replace_once(
     "src/jobs/incremental-planning.ts",
     "  let plan = planRun({ pools, targets });",
     "  let plan = planRun({ pools, targets, preservedByTargetId });",
 )
-# This exact replan occurs once later in the function.
 replace_once(
     "src/jobs/incremental-planning.ts",
     "    plan = planRun({ pools, targets });",
