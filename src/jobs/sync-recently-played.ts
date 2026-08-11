@@ -1,3 +1,4 @@
+import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
 import { syncRecentlyPlayed } from "@/services/spotify/recently-played";
 
@@ -17,13 +18,20 @@ export type RecentPlaybackSyncJobResult = {
 /**
  * Periodic MUSIC-01 maintenance. It reads Spotify Recently Played and updates
  * only the Sonoriza database; it never creates or modifies Spotify playlists.
+ * AUTH-01 is applied before provider access so removed users stop consuming
+ * Spotify quota in background jobs as well as interactive routes.
  */
 export async function runRecentlyPlayedSync(): Promise<RecentPlaybackSyncJobResult> {
-  const policies = await prisma.musicPlaybackPolicy.findMany({
-    where: { enabled: true },
-    select: { userId: true },
-    orderBy: { userId: "asc" },
-  });
+  const policies = (
+    await prisma.musicPlaybackPolicy.findMany({
+      where: { enabled: true },
+      select: {
+        userId: true,
+        user: { select: { email: true } },
+      },
+      orderBy: { userId: "asc" },
+    })
+  ).filter((policy) => isEmailAllowed(policy.user.email));
 
   const results: RecentPlaybackSyncJobResult["results"] = [];
   for (const policy of policies) {
