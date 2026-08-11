@@ -24,6 +24,11 @@ replace_once(
     "Object.entries(reusable).filter(([targetId]) => rebuildIds.has(targetId))",
     "Object.entries(reusable ?? {}).filter(([targetId]) => rebuildIds.has(targetId))",
 )
+replace_once(
+    "src/jobs/scheduled-generation.ts",
+    "          details: targetSummary ?? undefined,",
+    "          details: targetSummary\n            ? (targetSummary as Prisma.InputJsonValue)\n            : undefined,",
+)
 
 # The existing test helper rules() takes positional arguments; keep the new
 # SCHEDULE-01 tests explicit so they test planner semantics, not helper syntax.
