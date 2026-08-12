@@ -81,6 +81,8 @@ function state(blocked: string[]): MusicRepeatRunState {
       enabled: true,
       eventsRead: 1,
       identitiesUpdated: 1,
+      listeningEventsInserted: 1,
+      listeningEventsDuplicateCount: 0,
       historyKnownSince: new Date("2026-07-01T00:00:00.000Z"),
       lastSyncAt: new Date("2026-08-08T00:00:00.000Z"),
     },
