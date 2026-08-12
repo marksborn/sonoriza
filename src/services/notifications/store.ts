@@ -286,7 +286,7 @@ export class PrismaNotificationDeliveryStore implements NotificationDeliveryStor
     return this.claimRow(id, now);
   }
 
-  async suppressDelivery(id: string, reason: string, _now: Date): Promise<void> {
+  async suppressDelivery(id: string, reason: string): Promise<void> {
     await prisma.pushDelivery.updateMany({
       where: { id, status: { in: ["PENDING", "FAILED"] } },
       data: { status: "SUPPRESSED", nextAttemptAt: null, lastError: reason },
@@ -346,7 +346,7 @@ export class PrismaNotificationDeliveryStore implements NotificationDeliveryStor
 
     const payload = parsePayload(current.payload);
     if (!payload) {
-      await this.suppressDelivery(current.id, "Payload de push inválido", now);
+      await this.suppressDelivery(current.id, "Payload de push inválido");
       return null;
     }
 
