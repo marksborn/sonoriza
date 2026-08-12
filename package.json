@@ -17,6 +17,7 @@
     "test:spotify": "tsx --test src/services/spotify/*.test.ts",
     "test:incremental": "tsx --test src/jobs/*.test.ts",
     "test:simulation": "tsx --test src/services/simulation-presentation.test.ts src/services/configuration-readiness.test.ts",
+    "test:lastfm": "tsx --test src/services/lastfm/*.test.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
