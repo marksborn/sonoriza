@@ -61,20 +61,28 @@ export async function runMusicSourceCleanupJob(): Promise<MusicSourceCleanupJobR
         removedTrackCount: result.removedTrackCount,
       });
     } catch (error) {
-      const failedAudit = await prisma.musicSourceCleanupRun.findFirst({
-        where: {
-          userId: source.userId,
-          sourcePlaylistId: source.id,
-          startedAt: { gte: attemptStartedAt },
-          finishedAt: { not: null },
-          status: { in: ["FAILED", "PARTIAL", "SUCCESS"] },
-        },
-        orderBy: { startedAt: "desc" },
-        select: { id: true },
-      });
-      if (failedAudit) {
-        await dispatchMusicCleanupRunNotificationSafely(failedAudit.id);
+      // Finding the optional failed audit exists only to send a push. Even a
+      // database/read problem in this secondary path must not replace the
+      // cleanup result that was already determined above.
+      try {
+        const failedAudit = await prisma.musicSourceCleanupRun.findFirst({
+          where: {
+            userId: source.userId,
+            sourcePlaylistId: source.id,
+            startedAt: { gte: attemptStartedAt },
+            finishedAt: { not: null },
+            status: { in: ["FAILED", "PARTIAL", "SUCCESS"] },
+          },
+          orderBy: { startedAt: "desc" },
+          select: { id: true },
+        });
+        if (failedAudit) {
+          await dispatchMusicCleanupRunNotificationSafely(failedAudit.id);
+        }
+      } catch {
+        // Notification lookup/delivery is intentionally best-effort.
       }
+
       results.push({
         sourcePlaylistId: source.id,
         sourceName: source.name,
