@@ -13,7 +13,7 @@ export type ImportLastFmHistoryOptions = {
   maxPages?: number;
   /** Resume an existing run; otherwise the latest PARTIAL/RUNNING run is reused. */
   runId?: string;
-  /** Deterministic upper boundary for tests/controlled execution. */
+  /** Explicit upper boundary for tests/controlled execution. */
   to?: Date;
 };
 
@@ -23,6 +23,7 @@ export type ImportLastFmHistoryResult = {
   completed: boolean;
   nextPage: number;
   totalPages: number | null;
+  lastFmHistoryUntil: Date;
   profilePlayCount: number | null;
   acceptedEvents: number;
   insertedEvents: number;
@@ -36,6 +37,11 @@ export type ImportLastFmHistoryResult = {
  * database operation fails, the checkpoint does not advance and the same page
  * can safely be retried. `skipDuplicates` is backed by the source-event unique
  * key, so retries/restarts are idempotent.
+ *
+ * Last.fm is a historical backfill source, not a second continuous truth. A
+ * new run stops before the earliest Spotify HISTORY-01 event already stored for
+ * the user. This creates a deterministic handoff boundary and prevents one
+ * Spotify playback that was also scrobbled by Last.fm from being counted twice.
  */
 export async function importLastFmHistory(
   options: ImportLastFmHistoryOptions,
@@ -64,7 +70,7 @@ export async function importLastFmHistory(
       maxPages: options.maxPages,
       async onPage(page) {
         const eventRows = page.events.map((event) => toEventRow(options.userId, event));
-        const inserted = await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx) => {
           const created = eventRows.length
             ? await tx.trackListeningEvent.createMany({
                 data: eventRows,
@@ -93,9 +99,7 @@ export async function importLastFmHistory(
               error: null,
             },
           });
-          return created.count;
         });
-        void inserted;
       },
     });
 
@@ -126,6 +130,7 @@ export async function importLastFmHistory(
       completed: result.completed,
       nextPage: run.nextPage,
       totalPages: run.totalPages,
+      lastFmHistoryUntil: run.to,
       profilePlayCount: run.profilePlayCount,
       acceptedEvents: run.acceptedEvents,
       insertedEvents: run.insertedEvents,
@@ -172,12 +177,28 @@ async function resolveRun(input: {
   });
   if (resumable) return reactivate(resumable);
 
+  const now = input.to ?? new Date();
+  const earliestSpotifyEvent = input.to
+    ? null
+    : await prisma.trackListeningEvent.findFirst({
+        where: {
+          userId: input.userId,
+          source: "SPOTIFY_RECENTLY_PLAYED",
+        },
+        orderBy: { playedAt: "asc" },
+        select: { playedAt: true },
+      });
+  const handoffAt =
+    earliestSpotifyEvent && earliestSpotifyEvent.playedAt < now
+      ? earliestSpotifyEvent.playedAt
+      : now;
+
   return prisma.lastFmBackfillRun.create({
     data: {
       userId: input.userId,
       username: input.username,
       status: "RUNNING",
-      to: input.to ?? new Date(),
+      to: handoffAt,
     },
   });
 }
