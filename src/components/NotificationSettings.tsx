@@ -65,7 +65,7 @@ export function NotificationSettings({
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
+          applicationServerKey: urlBase64ToArrayBuffer(publicKey),
         });
       }
 
@@ -74,7 +74,7 @@ export function NotificationSettings({
         await subscription.unsubscribe();
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
+          applicationServerKey: urlBase64ToArrayBuffer(publicKey),
         });
         response = await persistSubscription(subscription);
       }
@@ -335,11 +335,12 @@ async function persistSubscription(subscription: PushSubscription): Promise<Resp
   });
 }
 
-function urlBase64ToUint8Array(value: string): Uint8Array {
+function urlBase64ToArrayBuffer(value: string): ArrayBuffer {
   const padding = "=".repeat((4 - (value.length % 4)) % 4);
   const normalized = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
   const raw = window.atob(normalized);
-  const output = new Uint8Array(raw.length);
+  const buffer = new ArrayBuffer(raw.length);
+  const output = new Uint8Array(buffer);
   for (let i = 0; i < raw.length; i += 1) output[i] = raw.charCodeAt(i);
-  return output;
+  return buffer;
 }
