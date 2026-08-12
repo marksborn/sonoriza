@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 const LASTFM_API = "https://ws.audioscrobbler.com/2.0/";
+const DEFAULT_USER_AGENT = "Sonoriza/0.1 HISTORY-01 (github.com/marksborn/sonoriza)";
 export const LASTFM_RECENT_TRACKS_MAX_LIMIT = 200;
 
 export type LastFmImage = {
@@ -124,6 +125,7 @@ export type LastFmClientOptions = {
   apiKey: string;
   fetchImpl?: typeof fetch;
   apiUrl?: string;
+  userAgent?: string;
 };
 
 /**
@@ -136,13 +138,17 @@ export class LastFmClient {
   private readonly apiKey: string;
   private readonly fetchImpl: typeof fetch;
   private readonly apiUrl: string;
+  private readonly userAgent: string;
 
   constructor(options: LastFmClientOptions) {
     const apiKey = options.apiKey.trim();
     if (!apiKey) throw new Error("Last.fm API key is required");
+    const userAgent = (options.userAgent ?? DEFAULT_USER_AGENT).trim();
+    if (!userAgent) throw new Error("Last.fm User-Agent is required");
     this.apiKey = apiKey;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.apiUrl = options.apiUrl ?? LASTFM_API;
+    this.userAgent = userAgent;
   }
 
   async getUserInfo(username: string): Promise<LastFmUserProfile> {
@@ -285,7 +291,10 @@ export class LastFmClient {
 
     const response = await this.fetchImpl(url, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        "User-Agent": this.userAgent,
+      },
     });
     const text = await response.text();
     let payload: unknown = null;
