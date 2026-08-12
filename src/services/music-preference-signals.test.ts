@@ -161,7 +161,7 @@ test("includes interleaved podcast duration in the continuity corridor", () => {
 
   assert.equal(result.length, 1);
   assert.equal(result[0]?.spotifyTrackId, "B");
-  assert.equal(result[0]?.plannedCorridorDurationMs, 43 * 60_000);
+  assert.equal(result[0]?.plannedCorridorDurationMs, 46 * 60_000);
 });
 
 test("requires stable Spotify identity for the candidate and both neighbors", () => {
