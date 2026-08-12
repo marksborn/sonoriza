@@ -41,10 +41,10 @@ export type ImportLastFmHistoryResult = {
  * key, so retries/restarts are idempotent.
  *
  * Last.fm is a historical backfill source, not a second continuous truth. A
- * new run stops strictly before the earliest Spotify HISTORY-01 event already
- * stored for the user. Because Last.fm range boundaries have second precision,
- * the automatic handoff ends at the previous whole second, preventing the
- * transition play from being counted by both sources.
+ * new run stops strictly before the automatic Spotify handoff boundary. Since
+ * Last.fm range boundaries have whole-second precision, automatic cutoffs are
+ * always the previous whole second. This prevents both sources from claiming a
+ * playback that falls inside the same transition second.
  *
  * Provider pages are intentionally spaced one second apart. HISTORY-01 is a
  * resumable import, not latency-sensitive user interaction; favoring provider
@@ -185,21 +185,18 @@ async function resolveRun(input: {
   });
   if (resumable) return reactivate(resumable);
 
-  const now = input.to ?? new Date();
-  const earliestSpotifyEvent = input.to
-    ? null
-    : await prisma.trackListeningEvent.findFirst({
-        where: {
-          userId: input.userId,
-          source: "SPOTIFY_RECENTLY_PLAYED",
-        },
-        orderBy: { playedAt: "asc" },
-        select: { playedAt: true },
-      });
-  const handoffAt =
-    earliestSpotifyEvent && earliestSpotifyEvent.playedAt <= now
-      ? lastFmSecondBefore(earliestSpotifyEvent.playedAt)
-      : now;
+  let handoffAt = input.to ?? null;
+  if (!handoffAt) {
+    const earliestSpotifyEvent = await prisma.trackListeningEvent.findFirst({
+      where: {
+        userId: input.userId,
+        source: "SPOTIFY_RECENTLY_PLAYED",
+      },
+      orderBy: { playedAt: "asc" },
+      select: { playedAt: true },
+    });
+    handoffAt = lastFmSecondBefore(earliestSpotifyEvent?.playedAt ?? new Date());
+  }
 
   return prisma.lastFmBackfillRun.create({
     data: {
