@@ -16,6 +16,7 @@ function spotifyPage(playedAt: string) {
     items: [
       {
         played_at: playedAt,
+        context: { type: "playlist", uri: "spotify:playlist:history-test" },
         track: {
           id: "replacement-id",
           uri: "spotify:track:replacement-id",
@@ -24,7 +25,9 @@ function spotifyPage(playedAt: string) {
           duration_ms: 180_000,
           is_local: false,
           linked_from: { id: "original-id" },
-          artists: [{ name: "Artist" }],
+          artists: [{ id: "artist-id", name: "Artist" }],
+          album: { id: "album-id", name: "Album" },
+          external_ids: { isrc: "BRABC1234567" },
         },
       },
     ],
@@ -34,7 +37,7 @@ function spotifyPage(playedAt: string) {
 }
 
 integrationTest(
-  "repeated feed is idempotent and a newer reproduction advances lastPlayedAt for all relinking aliases",
+  "repeated feed is idempotent and a newer reproduction advances state while adding one immutable event",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const user = await prisma.user.create({
@@ -83,6 +86,8 @@ integrationTest(
         new Date("2026-08-08T12:01:00.000Z"),
       );
       assert.equal(first.eventsRead, 1);
+      assert.equal(first.listeningEventsInserted, 1);
+      assert.equal(first.listeningEventsDuplicateCount, 0);
 
       const firstStates = await prisma.trackListeningState.findMany({
         where: { userId: user.id },
@@ -96,16 +101,41 @@ integrationTest(
         ],
       );
 
-      // Exact same provider event must not create additional history rows.
-      await syncRecentlyPlayed(user.id, new Date("2026-08-08T12:02:00.000Z"));
+      const firstEvents = await prisma.trackListeningEvent.findMany({
+        where: { userId: user.id },
+      });
+      assert.equal(firstEvents.length, 1);
+      assert.equal(firstEvents[0]?.spotifyTrackId, "original-id");
+      assert.equal(firstEvents[0]?.trackName, "Track");
+      assert.equal(firstEvents[0]?.artistName, "Artist");
+      assert.equal(firstEvents[0]?.albumName, "Album");
+      assert.equal(firstEvents[0]?.isrc, "BRABC1234567");
+      assert.equal(firstEvents[0]?.contextUri, "spotify:playlist:history-test");
+      assert.equal(firstEvents[0]?.source, "SPOTIFY_RECENTLY_PLAYED");
+
+      // Exact same provider event must not create additional state/history rows.
+      const repeated = await syncRecentlyPlayed(
+        user.id,
+        new Date("2026-08-08T12:02:00.000Z"),
+      );
+      assert.equal(repeated.listeningEventsInserted, 0);
+      assert.equal(repeated.listeningEventsDuplicateCount, 1);
       assert.equal(
         await prisma.trackListeningState.count({ where: { userId: user.id } }),
         2,
       );
+      assert.equal(
+        await prisma.trackListeningEvent.count({ where: { userId: user.id } }),
+        1,
+      );
 
-      // A later playback restarts cooldown by monotonically advancing both aliases.
+      // A later playback restarts cooldown and is a second historical event.
       playedAt = "2026-08-08T13:00:00.000Z";
-      await syncRecentlyPlayed(user.id, new Date("2026-08-08T13:01:00.000Z"));
+      const later = await syncRecentlyPlayed(
+        user.id,
+        new Date("2026-08-08T13:01:00.000Z"),
+      );
+      assert.equal(later.listeningEventsInserted, 1);
       const finalStates = await prisma.trackListeningState.findMany({
         where: { userId: user.id },
         orderBy: { spotifyTrackId: "asc" },
@@ -116,6 +146,10 @@ integrationTest(
           ["original-id", "2026-08-08T13:00:00.000Z"],
           ["replacement-id", "2026-08-08T13:00:00.000Z"],
         ],
+      );
+      assert.equal(
+        await prisma.trackListeningEvent.count({ where: { userId: user.id } }),
+        2,
       );
       assert.equal(calls, 3);
     } finally {
