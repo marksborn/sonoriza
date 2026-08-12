@@ -164,6 +164,8 @@ function musicRepeatSummary(state: MusicRepeatRunState): Record<string, unknown>
       listeningEventsInserted: state.initialSync.listeningEventsInserted,
       listeningEventsDuplicateCount:
         state.initialSync.listeningEventsDuplicateCount,
+      listeningEventsSuppressedByHandoff:
+        state.initialSync.listeningEventsSuppressedByHandoff,
       lastSyncAt: state.initialSync.lastSyncAt?.toISOString() ?? null,
     },
     preWriteRevalidated: state.preWriteRevalidated,
@@ -176,6 +178,8 @@ function musicRepeatSummary(state: MusicRepeatRunState): Record<string, unknown>
           listeningEventsInserted: state.preWriteSync.listeningEventsInserted,
           listeningEventsDuplicateCount:
             state.preWriteSync.listeningEventsDuplicateCount,
+          listeningEventsSuppressedByHandoff:
+            state.preWriteSync.listeningEventsSuppressedByHandoff,
           lastSyncAt: state.preWriteSync.lastSyncAt?.toISOString() ?? null,
         }
       : null,
