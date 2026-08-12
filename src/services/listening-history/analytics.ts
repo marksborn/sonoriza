@@ -28,13 +28,20 @@ export type TrackListeningStatsInput = {
   spotifyTrackId?: string | null;
   trackName: string;
   artistName: string;
+  albumName?: string | null;
 };
 
 export type TrackListeningStats = {
+  identityBasis: "SPOTIFY_ID" | "UNRESOLVED_NAME";
   playCount: number;
   firstPlayedAt: Date | null;
   lastPlayedAt: Date | null;
   sources: ListeningSourceCount[];
+  unresolvedHistoricalCandidates: {
+    count: number;
+    firstPlayedAt: Date | null;
+    lastPlayedAt: Date | null;
+  };
 };
 
 export async function getListeningHistorySummary(
@@ -82,32 +89,62 @@ export async function getListeningHistorySummary(
 }
 
 /**
- * Counts one logical track across the non-overlapping HISTORY-01 sources.
+ * Counts a track without promoting fuzzy identity to canonical identity.
  *
- * Spotify ID is preferred when present. The normalized human-readable name
- * fallback lets unmatched Last.fm history contribute before a dedicated
- * identity-reconciliation pass attaches Spotify identities to old scrobbles.
+ * When a Spotify id is known, `playCount` includes only rows explicitly linked
+ * to that id. Unreconciled Last.fm rows with matching human-readable metadata
+ * are reported separately as candidates until an identity-reconciliation pass
+ * proves they refer to the same recording/version.
+ *
+ * When no Spotify id exists yet, name-based rows can still be inspected, but
+ * the result explicitly reports `identityBasis=UNRESOLVED_NAME`.
  */
 export async function getTrackListeningStats(
   userId: string,
   input: TrackListeningStatsInput,
 ): Promise<TrackListeningStats> {
-  const where = trackWhere(userId, input);
-  const [aggregate, sources] = await Promise.all([
+  const trackName = requiredText(input.trackName, "trackName");
+  const artistName = requiredText(input.artistName, "artistName");
+  const albumName = input.albumName?.trim() || null;
+  const spotifyTrackId = input.spotifyTrackId?.trim() || null;
+  const unresolvedWhere = unresolvedNameWhere({
+    userId,
+    trackName,
+    artistName,
+    albumName,
+  });
+  const canonicalWhere: Prisma.TrackListeningEventWhereInput = spotifyTrackId
+    ? { userId, spotifyTrackId }
+    : unresolvedWhere;
+
+  const [aggregate, sources, unresolvedAggregate] = await Promise.all([
     prisma.trackListeningEvent.aggregate({
-      where,
+      where: canonicalWhere,
       _count: { _all: true },
       _min: { playedAt: true },
       _max: { playedAt: true },
     }),
     prisma.trackListeningEvent.groupBy({
       by: ["source"],
-      where,
+      where: canonicalWhere,
       _count: { _all: true },
     }),
+    spotifyTrackId
+      ? prisma.trackListeningEvent.aggregate({
+          where: unresolvedWhere,
+          _count: { _all: true },
+          _min: { playedAt: true },
+          _max: { playedAt: true },
+        })
+      : Promise.resolve({
+          _count: { _all: 0 },
+          _min: { playedAt: null as Date | null },
+          _max: { playedAt: null as Date | null },
+        }),
   ]);
 
   return {
+    identityBasis: spotifyTrackId ? "SPOTIFY_ID" : "UNRESOLVED_NAME",
     playCount: aggregate._count._all,
     firstPlayedAt: aggregate._min.playedAt,
     lastPlayedAt: aggregate._max.playedAt,
@@ -115,29 +152,33 @@ export async function getTrackListeningStats(
       source: entry.source,
       count: entry._count._all,
     })),
+    unresolvedHistoricalCandidates: {
+      count: unresolvedAggregate._count._all,
+      firstPlayedAt: unresolvedAggregate._min.playedAt,
+      lastPlayedAt: unresolvedAggregate._max.playedAt,
+    },
   };
 }
 
-function trackWhere(
-  userId: string,
-  input: TrackListeningStatsInput,
-): Prisma.TrackListeningEventWhereInput {
-  const trackName = input.trackName.trim();
-  const artistName = input.artistName.trim();
-  if (!trackName || !artistName) {
-    throw new Error("trackName and artistName are required for listening stats");
-  }
-  const spotifyTrackId = input.spotifyTrackId?.trim() || null;
-
-  const nameMatch: Prisma.TrackListeningEventWhereInput = {
-    trackName: { equals: trackName, mode: "insensitive" },
-    artistName: { equals: artistName, mode: "insensitive" },
-  };
-
+function unresolvedNameWhere(input: {
+  userId: string;
+  trackName: string;
+  artistName: string;
+  albumName: string | null;
+}): Prisma.TrackListeningEventWhereInput {
   return {
-    userId,
-    OR: spotifyTrackId
-      ? [{ spotifyTrackId }, nameMatch]
-      : [nameMatch],
+    userId: input.userId,
+    spotifyTrackId: null,
+    trackName: { equals: input.trackName, mode: "insensitive" },
+    artistName: { equals: input.artistName, mode: "insensitive" },
+    ...(input.albumName
+      ? { albumName: { equals: input.albumName, mode: "insensitive" } }
+      : {}),
   };
+}
+
+function requiredText(value: string, name: string): string {
+  const cleaned = value.trim();
+  if (!cleaned) throw new Error(`${name} is required for listening stats`);
+  return cleaned;
 }
