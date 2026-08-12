@@ -38,6 +38,8 @@ export type LastFmBackfillOptions = {
   from?: Date | null;
   checkpoint?: LastFmBackfillCheckpoint | null;
   maxPages?: number;
+  /** Delay between provider pages. Orchestration sets a conservative default. */
+  pageDelayMs?: number;
   onPage: (page: LastFmBackfillPage) => Promise<void> | void;
 };
 
@@ -56,6 +58,10 @@ export async function scanLastFmBackfill(
   if (!username) throw new Error("Last.fm username is required");
   const maxPages = options.maxPages ?? Number.POSITIVE_INFINITY;
   if (!(maxPages > 0)) throw new Error("maxPages must be positive");
+  const pageDelayMs = options.pageDelayMs ?? 0;
+  if (!Number.isFinite(pageDelayMs) || pageDelayMs < 0) {
+    throw new Error("pageDelayMs must be a non-negative finite number");
+  }
 
   const profile = await options.client.getUserInfo(username);
   let checkpoint = options.checkpoint
@@ -71,6 +77,10 @@ export async function scanLastFmBackfill(
     pagesProcessed < maxPages &&
     (checkpoint.totalPages === null || checkpoint.nextPage <= checkpoint.totalPages)
   ) {
+    if (pagesProcessed > 0 && pageDelayMs > 0) {
+      await sleep(pageDelayMs);
+    }
+
     const before = cloneCheckpoint(checkpoint);
     const page = await options.client.getRecentTracksPage({
       username: checkpoint.username,
@@ -163,4 +173,8 @@ function cloneCheckpoint(
     from: checkpoint.from ? new Date(checkpoint.from) : null,
     to: new Date(checkpoint.to),
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
