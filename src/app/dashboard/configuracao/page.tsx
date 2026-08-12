@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { UiIcon, type UiIconName } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { countActivePushSubscriptions } from "@/services/notifications";
 
 type ConfigCardProps = {
   href: string;
@@ -57,6 +58,7 @@ export default async function ConfigurationHubPage() {
     musicPolicy,
     cleanupInboxCount,
     ingestionRuleCount,
+    notificationDeviceCount,
   ] = await Promise.all([
     prisma.calendarSelection.count({
       where: { userId: session.user.id, selected: true },
@@ -80,6 +82,7 @@ export default async function ConfigurationHubPage() {
     prisma.musicIngestionRule.count({
       where: { userId: session.user.id, enabled: true },
     }),
+    countActivePushSubscriptions(session.user.id),
   ]);
 
   const musicPolicyLabel = musicPolicy?.enabled
@@ -176,6 +179,16 @@ export default async function ConfigurationHubPage() {
             title="Destinos e regras"
             description="Escolha as playlists gerenciadas, duração, mistura, sequência e ordem de geração."
             action="Configurar destinos"
+          />
+
+          <ConfigCard
+            href="/dashboard/configuracao/notificacoes"
+            icon="bell"
+            badge={`${notificationDeviceCount} dispositivos`}
+            code="NOTIFY-01"
+            title="Notificações"
+            description="Receba no PWA o resultado das gerações, manutenções, limpezas e bloqueios."
+            action="Configurar notificações"
           />
 
           <ConfigCard

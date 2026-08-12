@@ -6,6 +6,7 @@ import {
 
 import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
+import { dispatchMusicCleanupRunNotificationSafely } from "@/services/notifications";
 import { executeAutomaticMusicSourceCleanup } from "@/services/spotify/source-cleanup";
 
 export type MusicSourceCleanupJobResult = {
@@ -46,11 +47,13 @@ export async function runMusicSourceCleanupJob(): Promise<MusicSourceCleanupJobR
   const results: MusicSourceCleanupJobResult[] = [];
 
   for (const source of sources) {
+    const attemptStartedAt = new Date();
     try {
       const result = await executeAutomaticMusicSourceCleanup(
         source.userId,
         source.id,
       );
+      await dispatchMusicCleanupRunNotificationSafely(result.runId);
       results.push({
         sourcePlaylistId: source.id,
         sourceName: source.name,
@@ -58,6 +61,20 @@ export async function runMusicSourceCleanupJob(): Promise<MusicSourceCleanupJobR
         removedTrackCount: result.removedTrackCount,
       });
     } catch (error) {
+      const failedAudit = await prisma.musicSourceCleanupRun.findFirst({
+        where: {
+          userId: source.userId,
+          sourcePlaylistId: source.id,
+          startedAt: { gte: attemptStartedAt },
+          finishedAt: { not: null },
+          status: { in: ["FAILED", "PARTIAL", "SUCCESS"] },
+        },
+        orderBy: { startedAt: "desc" },
+        select: { id: true },
+      });
+      if (failedAudit) {
+        await dispatchMusicCleanupRunNotificationSafely(failedAudit.id);
+      }
       results.push({
         sourcePlaylistId: source.id,
         sourceName: source.name,

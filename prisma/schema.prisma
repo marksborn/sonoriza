@@ -38,6 +38,9 @@ model User {
   musicIngestionRules    MusicIngestionRule[]
   musicIngestionRuns     MusicIngestionRun[]
   targetScheduleRuns     TargetScheduleRun[]
+  notificationPreference NotificationPreference?
+  pushSubscriptions      PushSubscription[]
+  pushDeliveries         PushDelivery[]
 }
 
 model Account {
@@ -559,4 +562,81 @@ model TargetScheduleRun {
 
   @@index([userId, startedAt])
   @@index([targetPlaylistId, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// NOTIFY-01 — Web Push subscriptions, preferences and idempotent delivery.
+// ---------------------------------------------------------------------------
+
+enum NotificationCategory {
+  GENERATION
+  CLEANUP
+  ERROR
+  NOOP
+}
+
+enum PushDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  STALE
+  SUPPRESSED
+}
+
+model NotificationPreference {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  generationEnabled Boolean  @default(true)
+  cleanupEnabled    Boolean  @default(true)
+  errorEnabled      Boolean  @default(true)
+  noopEnabled       Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PushSubscription {
+  id                String    @id @default(cuid())
+  userId            String
+  endpointHash      String    @unique
+  endpoint          String    @db.Text
+  p256dh            String    @db.Text
+  auth              String    @db.Text
+  expirationTime    DateTime?
+  enabled           Boolean   @default(true)
+  lastSuccessAt     DateTime?
+  lastFailureAt     DateTime?
+  lastFailureStatus Int?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries PushDelivery[]
+
+  @@index([userId, enabled])
+}
+
+model PushDelivery {
+  id             String               @id @default(cuid())
+  userId         String
+  subscriptionId String
+  eventKey       String
+  category       NotificationCategory
+  payload        Json
+  status         PushDeliveryStatus   @default(PENDING)
+  attemptCount   Int                  @default(0)
+  lastAttemptAt  DateTime?
+  nextAttemptAt  DateTime?
+  sentAt         DateTime?
+  lastError      String?              @db.Text
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription PushSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, eventKey])
+  @@index([status, nextAttemptAt])
+  @@index([userId, createdAt])
 }

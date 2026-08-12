@@ -9,6 +9,7 @@ import {
   getFirstRunGate,
 } from "@/services/configuration-readiness";
 import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
+import { dispatchGenerationRunNotificationSafely } from "@/services/notifications";
 import {
   getActiveSpotifyBackoff,
   spotifyBackoffApiPayload,
@@ -144,6 +145,10 @@ export async function POST(request: Request) {
       } as Prisma.InputJsonValue,
     },
   });
+
+  if (!simulate) {
+    await dispatchGenerationRunNotificationSafely(result.runId);
+  }
 
   return NextResponse.json(result);
 }
