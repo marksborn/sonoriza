@@ -17,6 +17,12 @@ const schema = z.object({
   AUTH_GOOGLE_ID: z.string().min(1),
   AUTH_GOOGLE_SECRET: z.string().min(1),
 
+  // HISTORY-01: Last.fm is an optional read-only historical source. The
+  // endpoints used for backfill require an API key but no authenticated user
+  // session or API secret.
+  LASTFM_API_KEY: z.string().min(1).optional(),
+  LASTFM_USERNAME: z.string().min(1).optional(),
+
   CRON_SECRET: z.string().min(1),
 
   WEB_PUSH_VAPID_PUBLIC_KEY: z.string().min(1).optional(),
