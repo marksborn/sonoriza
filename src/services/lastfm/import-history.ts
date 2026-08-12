@@ -41,14 +41,14 @@ export type ImportLastFmHistoryResult = {
  * key, so retries/restarts are idempotent.
  *
  * Last.fm is a historical backfill source, not a second continuous truth. A
- * new run stops before the earliest Spotify HISTORY-01 event already stored for
- * the user. This creates a deterministic handoff boundary and prevents one
- * Spotify playback that was also scrobbled by Last.fm from being counted twice.
+ * new run stops strictly before the earliest Spotify HISTORY-01 event already
+ * stored for the user. Because Last.fm range boundaries have second precision,
+ * the automatic handoff ends at the previous whole second, preventing the
+ * transition play from being counted by both sources.
  *
  * Provider pages are intentionally spaced one second apart. HISTORY-01 is a
- * resumable background-style import, not latency-sensitive user interaction;
- * favoring provider health is more important than finishing a long backfill as
- * fast as possible.
+ * resumable import, not latency-sensitive user interaction; favoring provider
+ * health is more important than finishing a long backfill as fast as possible.
  */
 export async function importLastFmHistory(
   options: ImportLastFmHistoryOptions,
@@ -197,8 +197,8 @@ async function resolveRun(input: {
         select: { playedAt: true },
       });
   const handoffAt =
-    earliestSpotifyEvent && earliestSpotifyEvent.playedAt < now
-      ? earliestSpotifyEvent.playedAt
+    earliestSpotifyEvent && earliestSpotifyEvent.playedAt <= now
+      ? lastFmSecondBefore(earliestSpotifyEvent.playedAt)
       : now;
 
   return prisma.lastFmBackfillRun.create({
@@ -263,4 +263,9 @@ function toEventRow(
       loved: event.loved,
     } as Prisma.InputJsonValue,
   };
+}
+
+function lastFmSecondBefore(date: Date): Date {
+  const wholeSecond = Math.floor(date.getTime() / 1000) * 1000;
+  return new Date(wholeSecond - 1000);
 }
