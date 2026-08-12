@@ -15,6 +15,7 @@ integrationTest(
       data: { email: `lastfm-history-${suffix}@example.test` },
     });
     const spotifyHandoff = new Date("2026-08-12T20:00:00.000Z");
+    const expectedLastFmUntil = new Date("2026-08-12T19:59:59.000Z");
     await prisma.trackListeningEvent.create({
       data: {
         userId: user.id,
@@ -87,11 +88,14 @@ integrationTest(
       assert.equal(result.status, "SUCCESS");
       assert.equal(result.insertedEvents, 1);
       assert.equal(result.duplicateEvents, 0);
-      assert.equal(result.lastFmHistoryUntil.toISOString(), spotifyHandoff.toISOString());
+      assert.equal(
+        result.lastFmHistoryUntil.toISOString(),
+        expectedLastFmUntil.toISOString(),
+      );
       assert.equal(recentRequests.length, 1);
       assert.equal(
         recentRequests[0]?.searchParams.get("to"),
-        String(Math.floor(spotifyHandoff.getTime() / 1000)),
+        String(Math.floor(expectedLastFmUntil.getTime() / 1000)),
       );
 
       const events = await prisma.trackListeningEvent.findMany({
