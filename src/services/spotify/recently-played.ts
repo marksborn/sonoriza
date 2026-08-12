@@ -47,6 +47,7 @@ export type RecentlyPlayedSyncResult = {
   identitiesUpdated: number;
   listeningEventsInserted: number;
   listeningEventsDuplicateCount: number;
+  listeningEventsSuppressedByHandoff: number;
   historyKnownSince: Date | null;
   lastSyncAt: Date | null;
 };
@@ -184,6 +185,11 @@ export function filterMusicCandidatesForRepeat(
  * Synchronizes Spotify's Recently Played feed into both HISTORY-01's immutable
  * event stream and MUSIC-01's minimal `lastPlayedAt` projection. It never
  * writes to Spotify and is idempotent at both layers.
+ *
+ * If a Last.fm backfill exists, its frozen `to` timestamp is the source-handoff
+ * boundary. Spotify observations at/before that boundary still update MUSIC-01
+ * cooldown state, but do not enter the immutable play-event stream; those plays
+ * belong to Last.fm's historical side of the non-overlapping timeline.
  */
 export async function syncRecentlyPlayed(
   userId: string,
@@ -200,6 +206,7 @@ export async function syncRecentlyPlayed(
       identitiesUpdated: 0,
       listeningEventsInserted: 0,
       listeningEventsDuplicateCount: 0,
+      listeningEventsSuppressedByHandoff: 0,
       historyKnownSince: policy?.historyKnownSince ?? null,
       lastSyncAt: policy?.lastSyncAt ?? null,
     };
@@ -306,7 +313,12 @@ export async function syncRecentlyPlayed(
   });
   if (operations.length > 0) await prisma.$transaction(operations);
 
-  const eventRows = [...listeningEvents.values()].map((event) => ({
+  const lastFmHandoff = await prisma.lastFmBackfillRun.findFirst({
+    where: { userId },
+    orderBy: { startedAt: "desc" },
+    select: { to: true },
+  });
+  const candidateEventRows = [...listeningEvents.values()].map((event) => ({
     userId,
     spotifyTrackId: event.spotifyTrackId,
     spotifyUri: event.spotifyUri,
@@ -322,6 +334,11 @@ export async function syncRecentlyPlayed(
     contextType: event.contextType,
     contextUri: event.contextUri,
   }));
+  const eventRows = lastFmHandoff
+    ? candidateEventRows.filter((event) => event.playedAt > lastFmHandoff.to)
+    : candidateEventRows;
+  const listeningEventsSuppressedByHandoff =
+    candidateEventRows.length - eventRows.length;
   const eventWrite = eventRows.length
     ? await prisma.trackListeningEvent.createMany({
         data: eventRows,
@@ -349,6 +366,7 @@ export async function syncRecentlyPlayed(
     identitiesUpdated: operations.length,
     listeningEventsInserted: eventWrite.count,
     listeningEventsDuplicateCount,
+    listeningEventsSuppressedByHandoff,
     historyKnownSince,
     lastSyncAt: syncStartedAt,
   };
