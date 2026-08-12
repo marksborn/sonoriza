@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { scanLastFmBackfill, type LastFmBackfillCheckpoint } from "./backfill";
 import { LastFmClient, type LastFmListeningEventInput } from "./client";
 
+const LASTFM_BACKFILL_PAGE_DELAY_MS = 1_000;
+
 export type ImportLastFmHistoryOptions = {
   userId: string;
   username: string;
@@ -42,6 +44,11 @@ export type ImportLastFmHistoryResult = {
  * new run stops before the earliest Spotify HISTORY-01 event already stored for
  * the user. This creates a deterministic handoff boundary and prevents one
  * Spotify playback that was also scrobbled by Last.fm from being counted twice.
+ *
+ * Provider pages are intentionally spaced one second apart. HISTORY-01 is a
+ * resumable background-style import, not latency-sensitive user interaction;
+ * favoring provider health is more important than finishing a long backfill as
+ * fast as possible.
  */
 export async function importLastFmHistory(
   options: ImportLastFmHistoryOptions,
@@ -68,6 +75,7 @@ export async function importLastFmHistory(
       username: run.username,
       checkpoint: toCheckpoint(run),
       maxPages: options.maxPages,
+      pageDelayMs: LASTFM_BACKFILL_PAGE_DELAY_MS,
       async onPage(page) {
         const eventRows = page.events.map((event) => toEventRow(options.userId, event));
         await prisma.$transaction(async (tx) => {
