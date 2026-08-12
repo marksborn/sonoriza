@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { runScheduledGeneration } from "@/jobs/scheduled-generation";
+import { retryDuePushDeliveries } from "@/services/notifications";
 import {
   getActiveSpotifyBackoff,
   spotifyBackoffApiPayload,
@@ -24,6 +25,11 @@ export async function POST(request: Request) {
   if (!secret || authHeader !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Push retries are independent from Spotify. Run them on the same dispatcher
+  // cadence before checking Spotify backoff, while preserving the existing
+  // response contract and generation semantics.
+  await retryDuePushDeliveries();
 
   const backoff = await getActiveSpotifyBackoff();
   if (backoff) {
