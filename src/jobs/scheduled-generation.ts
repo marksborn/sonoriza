@@ -7,6 +7,7 @@ import type {
 
 import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
+import { dispatchTargetScheduleRunNotificationSafely } from "@/services/notifications";
 import {
   assessConfiguration,
   getFirstRunGate,
@@ -355,6 +356,7 @@ async function finishMany(
     where: { id: { in: ids }, status: "RUNNING" },
     data: { status, reason, finishedAt },
   });
+  await Promise.all(ids.map((id) => dispatchTargetScheduleRunNotificationSafely(id)));
 }
 
 async function finishOne(
@@ -373,6 +375,7 @@ async function finishOne(
       ...data,
     },
   });
+  await dispatchTargetScheduleRunNotificationSafely(id);
 }
 
 function result(

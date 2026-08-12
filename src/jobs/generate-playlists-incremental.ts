@@ -679,6 +679,14 @@ export async function generatePlaylists(
         targetDurationMs: resolvedDuration?.durationMs ?? 0,
         sequencePattern: parseSequencePattern(target.sequencePattern),
         ...stats,
+        musicCount: items.filter((item) => item.type === "MUSIC").length,
+        podcastCount: items.filter((item) => item.type === "PODCAST").length,
+        musicDurationMs: items
+          .filter((item) => item.type === "MUSIC")
+          .reduce((sum, item) => sum + Math.max(0, item.durationMs), 0),
+        podcastDurationMs: items
+          .filter((item) => item.type === "PODCAST")
+          .reduce((sum, item) => sum + Math.max(0, item.durationMs), 0),
         totalMinutes: Math.round(stats.totalDurationMs / 60_000),
         qualityReason: stats.compositionQualityPassed ? null : qualityReason(stats),
         podcastEpisodeMaxDurationMode: target.podcastEpisodeMaxDurationMode,
@@ -729,6 +737,18 @@ export async function generatePlaylists(
               targetSummary.preservedCount = 0;
               targetSummary.removedCount = rebuild.currentCount;
               targetSummary.addedCount = items.length;
+              targetSummary.addedMusicCount = items.filter(
+                (item) => item.type === "MUSIC",
+              ).length;
+              targetSummary.addedPodcastCount = items.filter(
+                (item) => item.type === "PODCAST",
+              ).length;
+              targetSummary.addedMusicDurationMs = items
+                .filter((item) => item.type === "MUSIC")
+                .reduce((sum, item) => sum + Math.max(0, item.durationMs), 0);
+              targetSummary.addedPodcastDurationMs = items
+                .filter((item) => item.type === "PODCAST")
+                .reduce((sum, item) => sum + Math.max(0, item.durationMs), 0);
               targetSummary.maintenanceNoop = false;
             }
           } else {
@@ -797,6 +817,18 @@ export async function generatePlaylists(
             targetSummary.removedCount =
               patch.removedCount + droppedPreservedUris.length;
             targetSummary.addedCount = addedItems.length;
+            targetSummary.addedMusicCount = addedItems.filter(
+              (item) => item.type === "MUSIC",
+            ).length;
+            targetSummary.addedPodcastCount = addedItems.filter(
+              (item) => item.type === "PODCAST",
+            ).length;
+            targetSummary.addedMusicDurationMs = addedItems
+              .filter((item) => item.type === "MUSIC")
+              .reduce((sum, item) => sum + Math.max(0, item.durationMs), 0);
+            targetSummary.addedPodcastDurationMs = addedItems
+              .filter((item) => item.type === "PODCAST")
+              .reduce((sum, item) => sum + Math.max(0, item.durationMs), 0);
             targetSummary.unknownReplayPolicyCount = patch.unknownReplayPolicyCount;
             targetSummary.snapshotBefore = patch.snapshotBefore;
             targetSummary.snapshotAfter = snapshotAfter;
