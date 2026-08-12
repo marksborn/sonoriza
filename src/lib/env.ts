@@ -18,6 +18,17 @@ const schema = z.object({
   AUTH_GOOGLE_SECRET: z.string().min(1),
 
   CRON_SECRET: z.string().min(1),
+
+  WEB_PUSH_VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  WEB_PUSH_VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  WEB_PUSH_VAPID_SUBJECT: z
+    .string()
+    .min(1)
+    .refine(
+      (value) => value.startsWith("mailto:") || value.startsWith("https://"),
+      "Use mailto: ou https:// para o subject VAPID",
+    )
+    .optional(),
 });
 
 // During `next build` the OAuth/cron secrets are not required, so we only hard-
