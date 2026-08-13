@@ -335,9 +335,6 @@ export function mapRecentTrackToListeningEvent(
       playedAt,
       trackName,
       artistName,
-      albumName,
-      trackMbid,
-      artistMbid,
     }),
     playedAt,
     trackName,
@@ -351,19 +348,21 @@ export function mapRecentTrackToListeningEvent(
   };
 }
 
+/**
+ * Last.fm does not expose a stable scrobble id. Use only fields intrinsic to
+ * the playback occurrence: provider timestamp + normalized artist/track names.
+ * Album and MBIDs are deliberately excluded because Last.fm can enrich or
+ * correct those metadata later; enrichment must not create a second play.
+ */
 export function lastFmSourceEventKey(input: {
   playedAt: Date;
   trackName: string;
   artistName: string;
-  albumName?: string | null;
-  trackMbid?: string | null;
-  artistMbid?: string | null;
 }): string {
   const identity = [
     input.playedAt.toISOString(),
-    normalize(input.artistMbid || input.artistName),
-    normalize(input.trackMbid || input.trackName),
-    normalize(input.albumName ?? ""),
+    normalize(input.artistName),
+    normalize(input.trackName),
   ].join("\0");
   return `lastfm:${createHash("sha256").update(identity).digest("hex")}`;
 }
