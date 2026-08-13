@@ -57,7 +57,7 @@ async function createHistoryUser(suffix: string) {
 }
 
 integrationTest(
-  "Spotify updates cooldown before an established Last.fm handoff but only persists play events after it",
+  "Spotify suppresses plays before an established Last.fm handoff and owns the exact boundary onward",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const user = await createHistoryUser(suffix);
@@ -107,13 +107,13 @@ integrationTest(
         "2026-08-12T12:00:00.000Z",
       );
 
-      playedAt = "2026-08-12T13:00:00.000Z";
-      const after = await syncRecentlyPlayed(
+      playedAt = handoff.toISOString();
+      const atBoundary = await syncRecentlyPlayed(
         user.id,
-        new Date("2026-08-12T13:05:00.000Z"),
+        new Date("2026-08-12T12:35:00.000Z"),
       );
-      assert.equal(after.listeningEventsInserted, 1);
-      assert.equal(after.listeningEventsSuppressedByHandoff, 0);
+      assert.equal(atBoundary.listeningEventsInserted, 1);
+      assert.equal(atBoundary.listeningEventsSuppressedByHandoff, 0);
       assert.equal(
         await prisma.trackListeningEvent.count({ where: { userId: user.id } }),
         1,
