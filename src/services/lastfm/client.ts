@@ -206,7 +206,7 @@ export class LastFmClient {
     let invalidCount = 0;
 
     for (const track of tracks) {
-      if (track["@attr"]?.nowplaying === "true" && !track.date?.uts) {
+      if (track["@attr"]?.nowplaying === "true") {
         nowPlayingCount += 1;
         continue;
       }
