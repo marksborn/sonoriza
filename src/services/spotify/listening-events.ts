@@ -53,7 +53,6 @@ export function mapSpotifyRecentlyPlayedEvent(input: {
     sourceEventKey: spotifyRecentlyPlayedEventKey({
       spotifyTrackId,
       playedAt: input.playedAt,
-      contextUri: clean(input.context?.uri),
     }),
     spotifyTrackId,
     spotifyUri: clean(input.track.uri),
@@ -69,15 +68,19 @@ export function mapSpotifyRecentlyPlayedEvent(input: {
   };
 }
 
+/**
+ * Spotify Recently Played has no separate event id, so playback identity is the
+ * canonical track id at the provider timestamp. Context is intentionally not
+ * part of the key: the same provider event may later be returned with richer or
+ * missing context metadata and must remain idempotent.
+ */
 export function spotifyRecentlyPlayedEventKey(input: {
   spotifyTrackId: string;
   playedAt: Date;
-  contextUri?: string | null;
 }): string {
   const payload = [
     input.playedAt.toISOString(),
     input.spotifyTrackId.trim(),
-    input.contextUri?.trim() ?? "",
   ].join("\0");
   return `spotify:${createHash("sha256").update(payload).digest("hex")}`;
 }
