@@ -186,10 +186,12 @@ export function filterMusicCandidatesForRepeat(
  * event stream and MUSIC-01's minimal `lastPlayedAt` projection. It never
  * writes to Spotify and is idempotent at both layers.
  *
- * If a Last.fm backfill exists, its frozen `to` timestamp is the source-handoff
- * boundary. Spotify observations at/before that boundary still update MUSIC-01
- * cooldown state, but do not enter the immutable play-event stream; those plays
- * belong to Last.fm's historical side of the non-overlapping timeline.
+ * If a Last.fm backfill has actually persisted historical coverage, its frozen
+ * `to` timestamp is the source-handoff boundary. Spotify observations at/before
+ * that boundary still update MUSIC-01 cooldown state, but do not enter the
+ * immutable play-event stream; those plays belong to Last.fm's historical side
+ * of the non-overlapping timeline. A failed run that never persisted a page is
+ * deliberately ignored and cannot suppress Spotify history.
  */
 export async function syncRecentlyPlayed(
   userId: string,
@@ -314,7 +316,10 @@ export async function syncRecentlyPlayed(
   if (operations.length > 0) await prisma.$transaction(operations);
 
   const lastFmHandoff = await prisma.lastFmBackfillRun.findFirst({
-    where: { userId },
+    where: {
+      userId,
+      acceptedEvents: { gt: 0 },
+    },
     orderBy: { startedAt: "desc" },
     select: { to: true },
   });
