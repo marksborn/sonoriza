@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { withLastFmTransientRetry } from "@/services/lastfm/backfill";
 import { LastFmClient } from "@/services/lastfm/client";
 import { importLastFmHistory } from "@/services/lastfm/import-history";
 
@@ -16,9 +17,13 @@ async function main() {
   if (!username) throw new Error("Configure LASTFM_USERNAME before running HISTORY-01");
 
   const client = new LastFmClient({ apiKey });
-  const profile = await client.getUserInfo(username);
-  const recent = await client.getRecentTracksPage({ username, limit: 10 });
-  const top = await client.getTopTracksPage({ username, limit: 10, period: "overall" });
+  const profile = await withLastFmTransientRetry(() => client.getUserInfo(username));
+  const recent = await withLastFmTransientRetry(() =>
+    client.getRecentTracksPage({ username, limit: 10 }),
+  );
+  const top = await withLastFmTransientRetry(() =>
+    client.getTopTracksPage({ username, limit: 10, period: "overall" }),
+  );
 
   console.log("========== HISTORY-01 — LAST.FM PREFLIGHT ==========");
   console.log(`Username:             ${profile.username}`);
