@@ -5,6 +5,9 @@ import {
   type LastFmUserProfile,
 } from "./client";
 
+const LASTFM_TRANSIENT_MAX_ATTEMPTS = 3;
+const LASTFM_TRANSIENT_RETRY_BASE_DELAY_MS = 1_000;
+
 export type LastFmBackfillCheckpoint = {
   username: string;
   from: Date | null;
@@ -50,6 +53,10 @@ export type LastFmBackfillOptions = {
  * recent tracks newest-first; without a frozen upper bound, new scrobbles could
  * move page boundaries during a multi-page import. The caller persists the
  * returned checkpoint after each successful `onPage`, making the scan resumable.
+ *
+ * Provider errors 8/11/16 and HTTP 5xx are treated as transient. Each individual
+ * read gets at most three attempts with a small linear backoff. Configuration,
+ * authentication and rate-limit errors fail immediately.
  */
 export async function scanLastFmBackfill(
   options: LastFmBackfillOptions,
@@ -63,7 +70,9 @@ export async function scanLastFmBackfill(
     throw new Error("pageDelayMs must be a non-negative finite number");
   }
 
-  const profile = await options.client.getUserInfo(username);
+  const profile = await withLastFmTransientRetry(() =>
+    options.client.getUserInfo(username),
+  );
   let checkpoint = options.checkpoint
     ? validateCheckpoint(options.checkpoint, username)
     : initialCheckpoint({
@@ -82,13 +91,15 @@ export async function scanLastFmBackfill(
     }
 
     const before = cloneCheckpoint(checkpoint);
-    const page = await options.client.getRecentTracksPage({
-      username: checkpoint.username,
-      page: checkpoint.nextPage,
-      limit: LASTFM_RECENT_TRACKS_MAX_LIMIT,
-      from: checkpoint.from ?? undefined,
-      to: checkpoint.to,
-    });
+    const page = await withLastFmTransientRetry(() =>
+      options.client.getRecentTracksPage({
+        username: checkpoint.username,
+        page: checkpoint.nextPage,
+        limit: LASTFM_RECENT_TRACKS_MAX_LIMIT,
+        from: checkpoint.from ?? undefined,
+        to: checkpoint.to,
+      }),
+    );
 
     const totalPages = checkpoint.totalPages ?? page.totalPages;
     const scannedProviderRows =
@@ -144,6 +155,42 @@ export function initialCheckpoint(input: {
     nowPlayingSkipped: 0,
     invalidSkipped: 0,
   };
+}
+
+export async function withLastFmTransientRetry<T>(
+  operation: () => Promise<T>,
+  options?: { maxAttempts?: number; baseDelayMs?: number },
+): Promise<T> {
+  const maxAttempts = options?.maxAttempts ?? LASTFM_TRANSIENT_MAX_ATTEMPTS;
+  const baseDelayMs =
+    options?.baseDelayMs ?? LASTFM_TRANSIENT_RETRY_BASE_DELAY_MS;
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error("Last.fm retry maxAttempts must be a positive integer");
+  }
+  if (!Number.isFinite(baseDelayMs) || baseDelayMs < 0) {
+    throw new Error("Last.fm retry baseDelayMs must be non-negative");
+  }
+
+  let attempt = 1;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt >= maxAttempts || !isTransientLastFmFailure(error)) {
+        throw error;
+      }
+      await sleep(baseDelayMs * attempt);
+      attempt += 1;
+    }
+  }
+}
+
+export function isTransientLastFmFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    /^Last\.fm API error (8|11|16):/.test(error.message) ||
+    /^Last\.fm request failed with HTTP 5\d\d$/.test(error.message)
+  );
 }
 
 function validateCheckpoint(
