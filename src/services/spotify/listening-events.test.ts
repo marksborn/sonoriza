@@ -40,16 +40,37 @@ test("maps Spotify Recently Played metadata into an individual history event", (
   assert.match(event.sourceEventKey, /^spotify:[a-f0-9]{64}$/);
 });
 
-test("Spotify event key is deterministic for the same provider event", () => {
-  const input = {
+test("Spotify event key is deterministic and independent of context metadata", () => {
+  const playedAt = new Date("2026-08-12T20:00:00.000Z");
+  const expected = spotifyRecentlyPlayedEventKey({
     spotifyTrackId: "track-1",
-    playedAt: new Date("2026-08-12T20:00:00.000Z"),
-    contextUri: "spotify:playlist:car",
-  };
-  assert.equal(
-    spotifyRecentlyPlayedEventKey(input),
-    spotifyRecentlyPlayedEventKey(input),
-  );
+    playedAt,
+  });
+
+  const withContext = mapSpotifyRecentlyPlayedEvent({
+    playedAt,
+    context: { type: "playlist", uri: "spotify:playlist:car" },
+    track: {
+      id: "track-1",
+      uri: "spotify:track:track-1",
+      name: "Track",
+      artists: [{ name: "Artist" }],
+    },
+  });
+  const withoutContext = mapSpotifyRecentlyPlayedEvent({
+    playedAt,
+    track: {
+      id: "track-1",
+      uri: "spotify:track:track-1",
+      name: "Track",
+      artists: [{ name: "Artist" }],
+    },
+  });
+
+  assert.ok(withContext);
+  assert.ok(withoutContext);
+  assert.equal(withContext.sourceEventKey, expected);
+  assert.equal(withoutContext.sourceEventKey, expected);
 });
 
 test("rejects event rows without stable track identity or human-readable metadata", () => {
