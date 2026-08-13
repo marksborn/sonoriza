@@ -25,6 +25,7 @@ import {
 } from "@/services/target-schedule";
 
 import { generatePlaylists } from "./generate-playlists";
+import { runIsolated } from "./isolated-execution";
 
 const RETRY_AFTER_MS = 30 * 60 * 1000;
 
@@ -170,82 +171,101 @@ export async function runScheduledGeneration(
         user.id,
         assessment.fingerprint,
       );
-      const rebuildIds = new Set(
-        executable
-          .filter((entry) => entry.target.updatePolicy === "REBUILD_DAILY")
-          .map((entry) => entry.target.id),
-      );
-      const musicOrderSimulationEvidence = Object.fromEntries(
-        Object.entries(reusable ?? {}).filter(([targetId]) => rebuildIds.has(targetId)),
-      );
-      const targetPlaylistIds = executable.map((entry) => entry.target.id);
-      const outsideTargets = await prisma.targetPlaylist.findMany({
-        where: {
-          userId: user.id,
-          enabled: true,
-          id: { notIn: targetPlaylistIds },
-          spotifyPlaylistId: { not: null },
-        },
-        orderBy: { priority: "asc" },
-        select: { id: true, spotifyPlaylistId: true },
-      });
-      const reservedUris = new Set<string>();
-      const reservedTargetSnapshots: Record<string, string> = {};
-      if (outsideTargets.length > 0) {
-        maintenanceSpotify ??= await SpotifyClient.forUser(user.id);
-        for (const outside of outsideTargets) {
-          if (!outside.spotifyPlaylistId) continue;
-          const state = await maintenanceSpotify.getTargetPlaylistState(
-            outside.spotifyPlaylistId,
-          );
-          reservedTargetSnapshots[outside.spotifyPlaylistId] = state.snapshotId;
-          for (const item of state.items) {
-            if (item.uri) reservedUris.add(item.uri);
-          }
-        }
-      }
-      const generated = await generatePlaylists({
-        userId: user.id,
-        trigger: "SCHEDULED",
-        targetPlaylistIds,
-        preservedByTargetId,
-        keepFilledByTargetId,
-        scheduledPolicyByTargetId,
-        musicOrderSimulationEvidence,
-        reservedUris: [...reservedUris],
-        reservedTargetSnapshots,
-        rebuildByTargetId,
-      });
-      const generation = await prisma.generationRun.findUnique({
-        where: { id: generated.runId },
-        select: { status: true, error: true, summary: true },
-      });
-      const targetSummaries = readTargetSummaries(generation?.summary);
 
-      for (const entry of executable) {
-        const targetSummary = targetSummaries.get(entry.target.id) ?? null;
-        const status = scheduleStatus(generated.status, targetSummary);
-        const reason =
-          typeof targetSummary?.error === "string"
-            ? targetSummary.error
-            : generation?.error ?? null;
-        await finishOne(entry.audit.id, status, reason, new Date(), {
-          generationRunId: generated.runId,
-          targetDurationMs: numberOrNull(targetSummary?.targetDurationMs),
-          validDurationBeforeMs: numberOrNull(targetSummary?.validDurationBeforeMs),
-          removedDurationMs: numberOrZero(targetSummary?.removedDurationMs),
-          addedDurationMs: numberOrZero(targetSummary?.addedDurationMs),
-          preservedCount: numberOrZero(targetSummary?.preservedCount),
-          removedCount: numberOrZero(targetSummary?.removedCount),
-          addedCount: numberOrZero(targetSummary?.addedCount),
-          snapshotBefore: stringOrNull(targetSummary?.snapshotBefore),
-          snapshotAfter: stringOrNull(targetSummary?.snapshotAfter),
-          details: targetSummary
-            ? (targetSummary as Prisma.InputJsonValue)
-            : undefined,
-        });
-        results.push(result(entry, generated.runId, status));
-      }
+      // SCHEDULE-02: every claimed target gets its own GenerationRun.
+      // A retry can coincide with another target's slot without allowing one
+      // target's deterministic failure to abort the other. Exclusivity is
+      // preserved by reserving every other enabled target from live Spotify
+      // state immediately before each isolated run.
+      await runIsolated(
+        executable,
+        async (entry) => {
+          const targetId = entry.target.id;
+          const outsideTargets = await prisma.targetPlaylist.findMany({
+            where: {
+              userId: user.id,
+              enabled: true,
+              id: { notIn: [targetId] },
+              spotifyPlaylistId: { not: null },
+            },
+            orderBy: { priority: "asc" },
+            select: { id: true, spotifyPlaylistId: true },
+          });
+          const reservedUris = new Set<string>();
+          const reservedTargetSnapshots: Record<string, string> = {};
+          if (outsideTargets.length > 0) {
+            maintenanceSpotify ??= await SpotifyClient.forUser(user.id);
+            for (const outside of outsideTargets) {
+              if (!outside.spotifyPlaylistId) continue;
+              const state = await maintenanceSpotify.getTargetPlaylistState(
+                outside.spotifyPlaylistId,
+              );
+              reservedTargetSnapshots[outside.spotifyPlaylistId] = state.snapshotId;
+              for (const item of state.items) {
+                if (item.uri) reservedUris.add(item.uri);
+              }
+            }
+          }
+
+          const musicOrderSimulationEvidence =
+            entry.target.updatePolicy === "REBUILD_DAILY" && reusable?.[targetId]
+              ? { [targetId]: reusable[targetId] }
+              : {};
+          const generated = await generatePlaylists({
+            userId: user.id,
+            trigger: "SCHEDULED",
+            targetPlaylistIds: [targetId],
+            preservedByTargetId: preservedByTargetId[targetId]
+              ? { [targetId]: preservedByTargetId[targetId] }
+              : {},
+            keepFilledByTargetId: keepFilledByTargetId[targetId]
+              ? { [targetId]: keepFilledByTargetId[targetId] }
+              : {},
+            scheduledPolicyByTargetId: {
+              [targetId]: scheduledPolicyByTargetId[targetId]!,
+            },
+            musicOrderSimulationEvidence,
+            reservedUris: [...reservedUris],
+            reservedTargetSnapshots,
+            rebuildByTargetId: rebuildByTargetId[targetId]
+              ? { [targetId]: rebuildByTargetId[targetId] }
+              : {},
+          });
+          const generation = await prisma.generationRun.findUnique({
+            where: { id: generated.runId },
+            select: { status: true, error: true, summary: true },
+          });
+          const targetSummary =
+            readTargetSummaries(generation?.summary).get(targetId) ?? null;
+          const status = scheduleStatus(generated.status, targetSummary);
+          const reason =
+            typeof targetSummary?.error === "string"
+              ? targetSummary.error
+              : generation?.error ?? null;
+
+          await finishOne(entry.audit.id, status, reason, new Date(), {
+            generationRunId: generated.runId,
+            targetDurationMs: numberOrNull(targetSummary?.targetDurationMs),
+            validDurationBeforeMs: numberOrNull(targetSummary?.validDurationBeforeMs),
+            removedDurationMs: numberOrZero(targetSummary?.removedDurationMs),
+            addedDurationMs: numberOrZero(targetSummary?.addedDurationMs),
+            preservedCount: numberOrZero(targetSummary?.preservedCount),
+            removedCount: numberOrZero(targetSummary?.removedCount),
+            addedCount: numberOrZero(targetSummary?.addedCount),
+            snapshotBefore: stringOrNull(targetSummary?.snapshotBefore),
+            snapshotAfter: stringOrNull(targetSummary?.snapshotAfter),
+            details: targetSummary
+              ? (targetSummary as Prisma.InputJsonValue)
+              : undefined,
+          });
+          results.push(result(entry, generated.runId, status));
+        },
+        async (entry, error) => {
+          const reason = errorMessage(error);
+          await finishOne(entry.audit.id, "FAILED", reason, new Date());
+          results.push(result(entry, "", `error: ${reason}`));
+        },
+      );
     } catch (error) {
       const reason = errorMessage(error);
       await finishMany(

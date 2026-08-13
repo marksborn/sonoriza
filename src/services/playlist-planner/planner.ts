@@ -123,6 +123,14 @@ export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylist
 
   for (const candidate of preserved ?? []) {
     if (used.has(candidate.uri) || candidate.durationMs <= 0) continue;
+    if (
+      rules.compositionMode === "SEQUENCE" &&
+      rules.sequencePattern.length > 0 &&
+      candidate.type !==
+        rules.sequencePattern[items.length % rules.sequencePattern.length]
+    ) {
+      continue;
+    }
     place(candidate);
   }
 
