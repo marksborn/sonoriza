@@ -25,6 +25,9 @@ export type ImportLastFmHistoryResult = {
   completed: boolean;
   nextPage: number;
   totalPages: number | null;
+  /** Last whole second that can belong to the Last.fm side of the handoff. */
+  lastFmHistoryUntil: Date;
+  /** Exact exclusive Last.fm `to` boundary; Spotify owns this instant onward. */
   lastFmHistoryUntilExclusive: Date;
   profilePlayCount: number | null;
   acceptedEvents: number;
@@ -45,7 +48,7 @@ export type ImportLastFmHistoryResult = {
  * before that UNIX-second timestamp. The automatic handoff therefore uses the
  * whole-second timestamp of the first canonical Spotify event (or the current
  * whole second if Spotify history is not seeded yet). Spotify owns events at or
- * after the same boundary, so there is no intentional one-second overlap/gap.
+ * after the same boundary.
  *
  * Provider pages are intentionally spaced one second apart. HISTORY-01 is a
  * resumable import, not latency-sensitive user interaction; favoring provider
@@ -139,6 +142,7 @@ export async function importLastFmHistory(
       completed: result.completed,
       nextPage: run.nextPage,
       totalPages: run.totalPages,
+      lastFmHistoryUntil: new Date(run.to.getTime() - 1_000),
       lastFmHistoryUntilExclusive: run.to,
       profilePlayCount: run.profilePlayCount,
       acceptedEvents: run.acceptedEvents,
