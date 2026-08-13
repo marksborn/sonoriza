@@ -8,6 +8,7 @@ import {
 
 import {
   filterMusicBatchForCurrentRun,
+  MusicRepeatPreWriteBlockedError,
   revalidateMusicRepeatBeforeRealWrite,
 } from "./music-repeat-runtime";
 
@@ -71,7 +72,11 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   initialReserved?: Iterable<string>;
   onBatch?: (source: TSource, batch: IncrementalSourceBatch) => void;
   onRound?: (round: IncrementalPlanningRound) => void;
+  /** Test seam and bounded pre-write repair hook; production uses MUSIC-01 revalidation. */
+  revalidateBeforeWrite?: (plan: PlanRunResult) => Promise<void>;
 };
+
+const MAX_MUSIC_REPEAT_PREWRITE_REPLANS = 2;
 
 export async function collectIncrementally<
   TSource extends IncrementalCandidateSource,
@@ -82,21 +87,98 @@ export async function collectIncrementally<
   initialReserved,
   onBatch,
   onRound,
+  revalidateBeforeWrite = revalidateMusicRepeatBeforeRealWrite,
 }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
   const pools: PlannerPools = { music: [], podcasts: [] };
   const attemptedSourceIds = new Set<string>();
   const readSourceIds = new Set<string>();
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
+  let activePreservedByTargetId = preservedByTargetId
+    ? new Map(
+        [...preservedByTargetId.entries()].map(([targetId, candidates]) => [
+          targetId,
+          [...candidates],
+        ] as [string, Candidate[]]),
+      )
+    : undefined;
 
   let requestedKinds = new Set<IncrementalSourceKind>(relevantKinds);
   let rounds = 0;
-  let plan = planRun({ pools, targets, preservedByTargetId, initialReserved });
+  let preWriteReplans = 0;
+  let plan = planRun({
+    pools,
+    targets,
+    preservedByTargetId: activePreservedByTargetId,
+    initialReserved,
+  });
   let qualityFailures = failedTargets(plan);
   let planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
 
-  if (planningNeeds.length === 0 && qualityFailures.length === 0) {
-    await revalidateMusicRepeatBeforeRealWrite(plan);
+  const rebuildPlan = () => {
+    plan = planRun({
+      pools,
+      targets,
+      preservedByTargetId: activePreservedByTargetId,
+      initialReserved,
+    });
+    qualityFailures = failedTargets(plan);
+    planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
+  };
+
+  const repairAgainstLatestHistory = () => {
+    pools.music = filterMusicBatchForCurrentRun(pools.music).candidates;
+
+    if (activePreservedByTargetId) {
+      activePreservedByTargetId = new Map(
+        [...activePreservedByTargetId.entries()].map(([targetId, candidates]) => {
+          const preservedMusic = candidates.filter(
+            (candidate) => candidate.type === "MUSIC",
+          );
+          const allowedMusicUris = new Set(
+            filterMusicBatchForCurrentRun(preservedMusic).candidates.map(
+              (candidate) => candidate.uri,
+            ),
+          );
+          return [
+            targetId,
+            candidates.filter(
+              (candidate) =>
+                candidate.type !== "MUSIC" || allowedMusicUris.has(candidate.uri),
+            ),
+          ] as [string, Candidate[]];
+        }),
+      );
+    }
+
+    rebuildPlan();
+  };
+
+  const revalidateOrRepair = async (): Promise<boolean> => {
+    try {
+      await revalidateBeforeWrite(plan);
+      return true;
+    } catch (error) {
+      if (
+        !(error instanceof MusicRepeatPreWriteBlockedError) ||
+        preWriteReplans >= MAX_MUSIC_REPEAT_PREWRITE_REPLANS
+      ) {
+        throw error;
+      }
+      preWriteReplans += 1;
+      repairAgainstLatestHistory();
+      return false;
+    }
+  };
+
+  const settleReadyPlan = async (): Promise<boolean> => {
+    while (qualityFailures.length === 0 && planningNeeds.length === 0) {
+      if (await revalidateOrRepair()) return true;
+    }
+    return false;
+  };
+
+  if (await settleReadyPlan()) {
     return {
       pools,
       plan,
@@ -157,9 +239,7 @@ export async function collectIncrementally<
       onBatch?.(source, batch);
     }
 
-    plan = planRun({ pools, targets, preservedByTargetId, initialReserved });
-    qualityFailures = failedTargets(plan);
-    planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
+    rebuildPlan();
     onRound?.({
       round: rounds,
       requestedKinds: [...requestedKinds],
@@ -168,8 +248,7 @@ export async function collectIncrementally<
       qualityPassed: qualityFailures.length === 0 && planningNeeds.length === 0,
     });
 
-    if (qualityFailures.length === 0 && planningNeeds.length === 0) {
-      await revalidateMusicRepeatBeforeRealWrite(plan);
+    if (await settleReadyPlan()) {
       return {
         pools,
         plan,
@@ -192,7 +271,10 @@ export async function collectIncrementally<
     }
   }
 
-  await revalidateMusicRepeatBeforeRealWrite(plan);
+  while (!(await revalidateOrRepair())) {
+    // Re-run only the local planner against the refreshed MUSIC-01 context.
+  }
+
   return {
     pools,
     plan,

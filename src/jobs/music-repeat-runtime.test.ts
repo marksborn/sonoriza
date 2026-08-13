@@ -11,7 +11,11 @@ import {
   type IncrementalSourceBatch,
   type IncrementalSourceKind,
 } from "./incremental-planning";
-import { runWithMusicRepeatState, type MusicRepeatRunState } from "./music-repeat-runtime";
+import {
+  MusicRepeatPreWriteBlockedError,
+  runWithMusicRepeatState,
+  type MusicRepeatRunState,
+} from "./music-repeat-runtime";
 
 function candidate(id: string, kind: IncrementalSourceKind, durationMs: number): Candidate {
   return {
@@ -140,7 +144,7 @@ test("real-run revalidation is positioned before Spotify writer creation", () =>
   const collector = readFileSync("src/jobs/incremental-planning.ts", "utf8");
   const generator = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
 
-  assert.match(collector, /await revalidateMusicRepeatBeforeRealWrite\(plan\)/);
+  assert.match(collector, /revalidateBeforeWrite = revalidateMusicRepeatBeforeRealWrite/);
   const collectCall = generator.indexOf("await collectIncrementally({");
   const writerCreation = generator.indexOf("if (!simulate) writer = await SpotifyClient.forUser(userId)");
   assert.ok(collectCall >= 0 && writerCreation > collectCall);
@@ -190,4 +194,98 @@ test("#37 cooldown rejection happens before diversity counters are consumed", as
   );
   assert.equal(result.plan.targets[0]?.result.stats.artistLimitRejectedCount, 0);
   assert.equal(runtime.recentlyPlayedSkippedCount, 1);
+});
+
+test("#92 real run replans locally when playback history changes before write", async () => {
+  const music = source("music-replan", "MUSIC", [
+    {
+      candidates: [
+        candidate("first", "MUSIC", 300_000),
+        candidate("replacement", "MUSIC", 300_000),
+      ],
+      done: true,
+    },
+  ]);
+  const runtime = state([]);
+  runtime.simulate = false;
+  const musicOnlyTarget = target();
+  musicOnlyTarget.rules.targetDurationMs = 300_000;
+  musicOnlyTarget.rules.sequencePattern = ["MUSIC"];
+  musicOnlyTarget.rules.podcastPercent = 0;
+
+  let revalidations = 0;
+  const result = await runWithMusicRepeatState(runtime, () =>
+    collectIncrementally({
+      sources: [music],
+      targets: [musicOnlyTarget],
+      async revalidateBeforeWrite(plan) {
+        revalidations += 1;
+        if (revalidations === 1) {
+          runtime.context = {
+            ...runtime.context,
+            blockedTrackIds: new Set([
+              ...runtime.context.blockedTrackIds,
+              "first",
+            ]),
+          };
+          throw new MusicRepeatPreWriteBlockedError(1, 0);
+        }
+        assert.deepEqual(
+          plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
+          ["replacement"],
+        );
+      },
+    }),
+  );
+
+  assert.equal(revalidations, 2);
+  assert.deepEqual(
+    result.plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
+    ["replacement"],
+  );
+});
+
+test("#92 playback-history pre-write repair is bounded", async () => {
+  const music = source("music-replan-limit", "MUSIC", [
+    {
+      candidates: [
+        candidate("one", "MUSIC", 300_000),
+        candidate("two", "MUSIC", 300_000),
+        candidate("three", "MUSIC", 300_000),
+      ],
+      done: true,
+    },
+  ]);
+  const runtime = state([]);
+  runtime.simulate = false;
+  const musicOnlyTarget = target();
+  musicOnlyTarget.rules.targetDurationMs = 300_000;
+  musicOnlyTarget.rules.sequencePattern = ["MUSIC"];
+  musicOnlyTarget.rules.podcastPercent = 0;
+
+  let revalidations = 0;
+  await assert.rejects(
+    runWithMusicRepeatState(runtime, () =>
+      collectIncrementally({
+        sources: [music],
+        targets: [musicOnlyTarget],
+        async revalidateBeforeWrite(plan) {
+          revalidations += 1;
+          const selected = plan.targets[0]?.result.items[0]?.spotifyTrackId;
+          if (selected) {
+            runtime.context = {
+              ...runtime.context,
+              blockedTrackIds: new Set([
+                ...runtime.context.blockedTrackIds,
+                selected,
+              ]),
+            };
+          }
+          throw new MusicRepeatPreWriteBlockedError(1, 0);
+        },
+      }),
+    ),
+    MusicRepeatPreWriteBlockedError,
+  );
+  assert.equal(revalidations, 3);
 });

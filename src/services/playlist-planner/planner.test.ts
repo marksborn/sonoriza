@@ -684,3 +684,50 @@ test("#58 KEEP_FILLED sequence resumes from the slot after the preserved prefix"
   assert.deepEqual(result.items.map((item) => item.type), ["MUSIC", "PODCAST"]);
   assert.equal(result.items[0]?.uri, preservedMusic.uri);
 });
+
+test("#92 KEEP_FILLED SEQUENCE realigns preserved items after exclusivity removes one", () => {
+  const music = (id: string): Candidate => ({
+    uri: `spotify:track:${id}`,
+    type: "MUSIC",
+    title: id,
+    durationMs: 300_000,
+    spotifyTrackId: id,
+  });
+  const episode = (id: string): Candidate => ({
+    uri: `spotify:episode:${id}`,
+    type: "PODCAST",
+    title: id,
+    durationMs: 300_000,
+    programId: `show:${id}`,
+  });
+  const sequenceRules: PlaylistRules = {
+    targetDurationMs: 900_000,
+    compositionMode: "SEQUENCE",
+    podcastPercent: 33,
+    sequencePattern: ["MUSIC", "MUSIC", "PODCAST"],
+    maxEpisodesPerProgram: 10,
+  };
+  const result = planPlaylist({
+    rules: sequenceRules,
+    pools: { music: [], podcasts: [] },
+    reserved: ["spotify:track:m2"],
+    preserved: [
+      music("m1"),
+      music("m2"),
+      episode("p1"),
+      music("m3"),
+      music("m4"),
+      episode("p2"),
+    ],
+  });
+
+  assert.deepEqual(
+    result.items.map((item) => item.type),
+    ["MUSIC", "MUSIC", "PODCAST"],
+  );
+  assert.deepEqual(
+    result.items.map((item) => item.uri),
+    ["spotify:track:m1", "spotify:track:m3", "spotify:episode:p2"],
+  );
+  assert.equal(result.stats.compositionQualityPassed, true);
+});
