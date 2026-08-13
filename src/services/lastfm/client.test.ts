@@ -45,23 +45,43 @@ test("source event key is stable across cosmetic case/Unicode normalization", ()
     playedAt,
     trackName: "Café",
     artistName: "Artist",
-    albumName: "Album",
   });
   const second = lastFmSourceEventKey({
     playedAt,
     trackName: "CAFÉ",
     artistName: "artist",
-    albumName: "album",
   });
   assert.equal(first, second);
 });
 
+test("metadata enrichment does not change Last.fm scrobble identity", () => {
+  const bare = mapRecentTrackToListeningEvent({
+    name: "Track",
+    artist: { name: "Artist" },
+    date: { uts: "1770000000" },
+  });
+  const enriched = mapRecentTrackToListeningEvent({
+    name: "Track",
+    artist: { name: "Artist", mbid: "artist-mbid" },
+    album: { "#text": "Album", mbid: "album-mbid" },
+    mbid: "track-mbid",
+    date: { uts: "1770000000" },
+  });
+
+  assert.ok(bare);
+  assert.ok(enriched);
+  assert.equal(bare.sourceEventKey, enriched.sourceEventKey);
+});
+
 test("recent tracks skips now-playing rows without a completed timestamp", async () => {
   let requestedUrl = "";
+  let requestedUserAgent = "";
   const client = new LastFmClient({
     apiKey: "test-key",
-    fetchImpl: async (input) => {
+    fetchImpl: async (input, init) => {
       requestedUrl = String(input);
+      const headers = new Headers(init?.headers);
+      requestedUserAgent = headers.get("user-agent") ?? "";
       return jsonResponse({
         recenttracks: {
           track: [
@@ -103,6 +123,7 @@ test("recent tracks skips now-playing rows without a completed timestamp", async
   assert.equal(page.page, 2);
   assert.equal(page.totalPages, 15);
   assert.equal(page.total, 2890);
+  assert.match(requestedUserAgent, /^Sonoriza\//);
 
   const url = new URL(requestedUrl);
   assert.equal(url.searchParams.get("method"), "user.getrecenttracks");
