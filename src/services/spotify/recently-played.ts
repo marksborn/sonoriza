@@ -160,8 +160,6 @@ export function filterMusicCandidatesForRepeat(
     }
 
     if (!candidate.spotifyTrackId) {
-      // Safe default: an enabled cooldown must never be bypassed by missing
-      // provider identity. This should only happen for malformed/legacy input.
       missingTrackIdentitySkippedCount += 1;
       continue;
     }
@@ -186,12 +184,12 @@ export function filterMusicCandidatesForRepeat(
  * event stream and MUSIC-01's minimal `lastPlayedAt` projection. It never
  * writes to Spotify and is idempotent at both layers.
  *
- * If a Last.fm backfill has actually persisted historical coverage, its frozen
- * `to` timestamp is the source-handoff boundary. Spotify observations at/before
- * that boundary still update MUSIC-01 cooldown state, but do not enter the
- * immutable play-event stream; those plays belong to Last.fm's historical side
- * of the non-overlapping timeline. A failed run that never persisted a page is
- * deliberately ignored and cannot suppress Spotify history.
+ * If a Last.fm backfill has persisted historical coverage, its `to` timestamp
+ * is the exclusive source-handoff boundary. Spotify observations before that
+ * boundary still update MUSIC-01 cooldown state, but do not enter the immutable
+ * play-event stream. Spotify owns events at or after the boundary. A failed
+ * Last.fm run that never persisted a page is ignored and cannot suppress
+ * Spotify history.
  */
 export async function syncRecentlyPlayed(
   userId: string,
@@ -340,7 +338,7 @@ export async function syncRecentlyPlayed(
     contextUri: event.contextUri,
   }));
   const eventRows = lastFmHandoff
-    ? candidateEventRows.filter((event) => event.playedAt > lastFmHandoff.to)
+    ? candidateEventRows.filter((event) => event.playedAt >= lastFmHandoff.to)
     : candidateEventRows;
   const listeningEventsSuppressedByHandoff =
     candidateEventRows.length - eventRows.length;
@@ -468,10 +466,8 @@ async function spotifyGet<T>(accessToken: string, path: string): Promise<T> {
     if (error.kind === "RATE_LIMITED" && retries < MAX_RATE_LIMIT_RETRIES) {
       retries += 1;
       const waitMs =
-        Math.max(
-          0,
-          error.retryAfterSeconds ?? DEFAULT_RATE_LIMIT_WAIT_SECONDS,
-        ) * 1000 + Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
+        Math.max(0, error.retryAfterSeconds ?? DEFAULT_RATE_LIMIT_WAIT_SECONDS) * 1000 +
+        Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
       await sleep(waitMs);
       continue;
     }
