@@ -15,7 +15,7 @@ export type ImportLastFmHistoryOptions = {
   maxPages?: number;
   /** Resume an existing run; otherwise the latest PARTIAL/RUNNING run is reused. */
   runId?: string;
-  /** Explicit upper boundary for tests/controlled execution. */
+  /** Explicit exclusive upper boundary for tests/controlled execution. */
   to?: Date;
 };
 
@@ -25,7 +25,7 @@ export type ImportLastFmHistoryResult = {
   completed: boolean;
   nextPage: number;
   totalPages: number | null;
-  lastFmHistoryUntil: Date;
+  lastFmHistoryUntilExclusive: Date;
   profilePlayCount: number | null;
   acceptedEvents: number;
   insertedEvents: number;
@@ -40,11 +40,12 @@ export type ImportLastFmHistoryResult = {
  * can safely be retried. `skipDuplicates` is backed by the source-event unique
  * key, so retries/restarts are idempotent.
  *
- * Last.fm is a historical backfill source, not a second continuous truth. A
- * new run stops strictly before the automatic Spotify handoff boundary. Since
- * Last.fm range boundaries have whole-second precision, automatic cutoffs are
- * always the previous whole second. This prevents both sources from claiming a
- * playback that falls inside the same transition second.
+ * Last.fm is a historical backfill source, not a second continuous truth. Its
+ * documented `to` boundary is exclusive: it returns only scrobbles strictly
+ * before that UNIX-second timestamp. The automatic handoff therefore uses the
+ * whole-second timestamp of the first canonical Spotify event (or the current
+ * whole second if Spotify history is not seeded yet). Spotify owns events at or
+ * after the same boundary, so there is no intentional one-second overlap/gap.
  *
  * Provider pages are intentionally spaced one second apart. HISTORY-01 is a
  * resumable import, not latency-sensitive user interaction; favoring provider
@@ -138,7 +139,7 @@ export async function importLastFmHistory(
       completed: result.completed,
       nextPage: run.nextPage,
       totalPages: run.totalPages,
-      lastFmHistoryUntil: run.to,
+      lastFmHistoryUntilExclusive: run.to,
       profilePlayCount: run.profilePlayCount,
       acceptedEvents: run.acceptedEvents,
       insertedEvents: run.insertedEvents,
@@ -195,7 +196,7 @@ async function resolveRun(input: {
       orderBy: { playedAt: "asc" },
       select: { playedAt: true },
     });
-    handoffAt = lastFmSecondBefore(earliestSpotifyEvent?.playedAt ?? new Date());
+    handoffAt = wholeSecond(earliestSpotifyEvent?.playedAt ?? new Date());
   }
 
   return prisma.lastFmBackfillRun.create({
@@ -262,7 +263,6 @@ function toEventRow(
   };
 }
 
-function lastFmSecondBefore(date: Date): Date {
-  const wholeSecond = Math.floor(date.getTime() / 1000) * 1000;
-  return new Date(wholeSecond - 1000);
+function wholeSecond(date: Date): Date {
+  return new Date(Math.floor(date.getTime() / 1000) * 1000);
 }
