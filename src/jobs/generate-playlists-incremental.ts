@@ -33,6 +33,7 @@ import {
   type IncrementalSpotifySourceConfig,
   type SpotifyIncrementalCandidateSource,
 } from "@/services/spotify/incremental-reader";
+import { checkPodcastCompletionBeforeWrite } from "@/services/spotify/podcast-authoritative-state";
 
 import {
   collectIncrementally,
@@ -647,6 +648,69 @@ export async function generatePlaylists(
         const error =
           "A manutenção foi bloqueada antes de alterar o Spotify porque um destino mudou depois da leitura canônica. Tente novamente no próximo ciclo.";
         log({ level: "ERROR", message: error, data: snapshotViolations });
+        await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+    }
+
+    // SCHEDULE-03 / PODCAST-04 defense in depth: source collection and
+    // KEEP_FILLED preparation can become stale while a run is planning.
+    // Immediately before any Spotify write, re-read every selected podcast
+    // that does not explicitly allow replay through GET /episodes/{id}.
+    if (!simulate) {
+      let podcastPrewrite;
+
+      try {
+        podcastPrewrite = await checkPodcastCompletionBeforeWrite(
+          userId,
+          plan.targets.map((planned) => ({
+            targetPlaylistId: planned.targetPlaylistId,
+            targetName: planned.name,
+            items: planned.result.items,
+          })),
+          new Date(),
+        );
+      } catch (error) {
+        const providerError = errorMessage(error);
+
+        summary.podcastPrewriteRevalidation = {
+          status: "FAILED",
+          error: providerError,
+        };
+
+        const message =
+          `A geração foi bloqueada antes de alterar o Spotify porque não foi possível ` +
+          `revalidar o estado final dos podcasts: ${providerError}`;
+
+        log({
+          level: "ERROR",
+          message,
+        });
+
+        await finalizeRun(run.id, "FAILED", logs, summary, message);
+        return { runId: run.id, status: "FAILED" };
+      }
+
+      summary.podcastPrewriteRevalidation = {
+        status:
+          podcastPrewrite.violations.length === 0 ? "PASSED" : "BLOCKED",
+        checkedEpisodeCount: podcastPrewrite.checkedEpisodeIds.length,
+        checkedEpisodeIds: podcastPrewrite.checkedEpisodeIds,
+        violations: podcastPrewrite.violations,
+      };
+
+      if (podcastPrewrite.violations.length > 0) {
+        const error =
+          "A geração foi bloqueada antes de alterar o Spotify porque um ou mais " +
+          "podcasts sem replay explícito ficaram concluídos ou não puderam ser " +
+          "validados após o planejamento. O próximo ciclo deverá planejar novamente.";
+
+        log({
+          level: "ERROR",
+          message: error,
+          data: podcastPrewrite.violations,
+        });
+
         await finalizeRun(run.id, "FAILED", logs, summary, error);
         return { runId: run.id, status: "FAILED" };
       }
