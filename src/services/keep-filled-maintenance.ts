@@ -9,6 +9,7 @@ import {
 import type { Candidate } from "@/services/playlist-planner";
 import { parseSequencePattern } from "@/services/playlist-planner";
 import { SpotifyClient } from "@/services/spotify";
+import { refreshAuthoritativePodcastListeningStates } from "@/services/spotify/podcast-authoritative-state";
 import { prismaPodcastListeningStateStore } from "@/services/spotify/podcast-listening-state";
 import { loadMusicRepeatContext } from "@/services/spotify/recently-played";
 
@@ -85,7 +86,7 @@ export async function prepareKeepFilledTarget(
       },
     ];
   });
-  const podcastStates = await prismaPodcastListeningStateStore.observe(
+  const observedPodcastStates = await prismaPodcastListeningStateStore.observe(
     userId,
     observations,
   );
@@ -127,6 +128,33 @@ export async function prepareKeepFilledTarget(
       sourceSpotifyId: item.sourceSpotifyId,
       sourceIncludePlayed: item.sourceIncludePlayed,
     });
+  }
+
+  // SCHEDULE-03: a playlist-item resume_point can lag the playback state shown
+  // by Spotify. Before preserving a podcast whose provenance does not explicitly
+  // allow replay, ask the episode endpoint directly and merge that observation
+  // into PODCAST-04's sticky canonical state. This is intentionally limited to
+  // the small set of podcast items already present in this target.
+  const authoritativeEpisodeIds = remote.items.flatMap((item) => {
+    if (
+      item.type !== "PODCAST" ||
+      !item.uri ||
+      !item.spotifyEpisodeId ||
+      provenanceByUri.get(item.uri)?.sourceIncludePlayed === true
+    ) {
+      return [];
+    }
+    return [item.spotifyEpisodeId];
+  });
+  const authoritativePodcastStates =
+    await refreshAuthoritativePodcastListeningStates(
+      userId,
+      authoritativeEpisodeIds,
+      date,
+    );
+  const podcastStates = new Map(observedPodcastStates);
+  for (const [episodeId, state] of authoritativePodcastStates) {
+    podcastStates.set(episodeId, state);
   }
 
   const musicRepeat = await loadMusicRepeatContext(userId, date);
