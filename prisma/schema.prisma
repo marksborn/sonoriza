@@ -33,6 +33,8 @@ model User {
   generationRuns         GenerationRun[]
   musicPlaybackPolicy    MusicPlaybackPolicy?
   trackListeningStates   TrackListeningState[]
+  trackListeningEvents   TrackListeningEvent[]
+  lastFmBackfillRuns     LastFmBackfillRun[]
   episodeListeningStates EpisodeListeningState[]
   musicSourceCleanupRuns MusicSourceCleanupRun[]
   musicIngestionRules    MusicIngestionRule[]
@@ -284,13 +286,26 @@ model MusicIngestionRun {
 }
 
 // ---------------------------------------------------------------------------
-// Native music listening history — MUSIC-01
+// Native music listening history — MUSIC-01 / HISTORY-01
 // ---------------------------------------------------------------------------
 
 enum MusicRepeatWindowUnit {
   DAYS
   MONTHS
   YEARS
+}
+
+enum ListeningEventSource {
+  SPOTIFY_RECENTLY_PLAYED
+  LASTFM_SCROBBLE
+  IMPORT
+}
+
+enum LastFmBackfillStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
 }
 
 model MusicPlaybackPolicy {
@@ -321,6 +336,63 @@ model TrackListeningState {
 
   @@unique([userId, spotifyTrackId])
   @@index([userId, lastPlayedAt])
+}
+
+model TrackListeningEvent {
+  id              String               @id @default(cuid())
+  userId          String
+  spotifyTrackId  String?
+  spotifyUri      String?
+  trackName       String
+  artistName      String
+  primaryArtistId String?
+  albumName       String?
+  albumId         String?
+  isrc            String?
+  trackMbid       String?
+  artistMbid      String?
+  albumMbid       String?
+  playedAt        DateTime
+  source          ListeningEventSource
+  sourceEventKey  String
+  contextType     String?
+  contextUri      String?
+  metadata        Json?
+  createdAt       DateTime             @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, source, sourceEventKey])
+  @@index([userId, playedAt])
+  @@index([userId, spotifyTrackId, playedAt])
+  @@index([userId, artistName, trackName, playedAt])
+}
+
+model LastFmBackfillRun {
+  id                  String               @id @default(cuid())
+  userId              String
+  username            String
+  status              LastFmBackfillStatus @default(RUNNING)
+  from                 DateTime?
+  to                   DateTime
+  nextPage             Int                 @default(1)
+  totalPages           Int?
+  profilePlayCount     Int?
+  scannedProviderRows Int                  @default(0)
+  acceptedEvents      Int                  @default(0)
+  insertedEvents      Int                  @default(0)
+  duplicateEvents     Int                  @default(0)
+  nowPlayingSkipped   Int                  @default(0)
+  invalidSkipped      Int                  @default(0)
+  startedAt           DateTime             @default(now())
+  lastPageAt          DateTime?
+  finishedAt          DateTime?
+  error               String?              @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([userId, username, status])
 }
 
 // ---------------------------------------------------------------------------

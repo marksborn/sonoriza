@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import type { Candidate } from "@/services/playlist-planner";
 
 import { spotifyApiErrorFromResponse } from "./errors";
+import {
+  mapSpotifyRecentlyPlayedEvent,
+  type SpotifyListeningEventInput,
+} from "./listening-events";
 import { canonicalSpotifyTrackId, type SpotifyMusicTrackLike } from "./music-availability";
 import { getSpotifyAccessToken } from "./token";
 
@@ -41,6 +45,9 @@ export type RecentlyPlayedSyncResult = {
   enabled: boolean;
   eventsRead: number;
   identitiesUpdated: number;
+  listeningEventsInserted: number;
+  listeningEventsDuplicateCount: number;
+  listeningEventsSuppressedByHandoff: number;
   historyKnownSince: Date | null;
   lastSyncAt: Date | null;
 };
@@ -49,12 +56,19 @@ type RecentlyPlayedTrack = SpotifyMusicTrackLike & {
   id?: string | null;
   uri?: string | null;
   linked_from?: { id?: string | null } | null;
+  external_ids?: { isrc?: string | null } | null;
+};
+
+type RecentlyPlayedContext = {
+  type?: string | null;
+  uri?: string | null;
 };
 
 type RecentlyPlayedPage = {
   items?: Array<{
     track?: RecentlyPlayedTrack | null;
     played_at?: string | null;
+    context?: RecentlyPlayedContext | null;
   }>;
   next?: string | null;
   cursors?: { after?: string | null; before?: string | null } | null;
@@ -146,8 +160,6 @@ export function filterMusicCandidatesForRepeat(
     }
 
     if (!candidate.spotifyTrackId) {
-      // Safe default: an enabled cooldown must never be bypassed by missing
-      // provider identity. This should only happen for malformed/legacy input.
       missingTrackIdentitySkippedCount += 1;
       continue;
     }
@@ -168,8 +180,16 @@ export function filterMusicCandidatesForRepeat(
 }
 
 /**
- * Synchronizes Spotify's Recently Played feed into the minimal local
- * `lastPlayedAt` state. It never writes to Spotify and is idempotent.
+ * Synchronizes Spotify's Recently Played feed into both HISTORY-01's immutable
+ * event stream and MUSIC-01's minimal `lastPlayedAt` projection. It never
+ * writes to Spotify and is idempotent at both layers.
+ *
+ * If a Last.fm backfill has persisted historical coverage, its `to` timestamp
+ * is the exclusive source-handoff boundary. Spotify observations before that
+ * boundary still update MUSIC-01 cooldown state, but do not enter the immutable
+ * play-event stream. Spotify owns events at or after the boundary. A failed
+ * Last.fm run that never persisted a page is ignored and cannot suppress
+ * Spotify history.
  */
 export async function syncRecentlyPlayed(
   userId: string,
@@ -184,6 +204,9 @@ export async function syncRecentlyPlayed(
       enabled: false,
       eventsRead: 0,
       identitiesUpdated: 0,
+      listeningEventsInserted: 0,
+      listeningEventsDuplicateCount: 0,
+      listeningEventsSuppressedByHandoff: 0,
       historyKnownSince: policy?.historyKnownSince ?? null,
       lastSyncAt: policy?.lastSyncAt ?? null,
     };
@@ -208,6 +231,7 @@ export async function syncRecentlyPlayed(
   let earliestSeen: Date | null = null;
   let latestSeenMs: number | null = null;
   const aggregates = new Map<string, PlaybackAggregate>();
+  const listeningEvents = new Map<string, SpotifyListeningEventInput>();
 
   while (nextPath) {
     const page: RecentlyPlayedPage = await spotifyGet<RecentlyPlayedPage>(
@@ -227,6 +251,12 @@ export async function syncRecentlyPlayed(
       const playedAtMs = playedAt.getTime();
       latestSeenMs = latestSeenMs === null ? playedAtMs : Math.max(latestSeenMs, playedAtMs);
       const spotifyUri = typeof track.uri === "string" && track.uri ? track.uri : null;
+      const event = mapSpotifyRecentlyPlayedEvent({
+        track,
+        playedAt,
+        context: item.context,
+      });
+      if (event) listeningEvents.set(event.sourceEventKey, event);
 
       for (const spotifyTrackId of aliases) {
         const existing = aggregates.get(spotifyTrackId);
@@ -283,6 +313,43 @@ export async function syncRecentlyPlayed(
   });
   if (operations.length > 0) await prisma.$transaction(operations);
 
+  const lastFmHandoff = await prisma.lastFmBackfillRun.findFirst({
+    where: {
+      userId,
+      acceptedEvents: { gt: 0 },
+    },
+    orderBy: { startedAt: "desc" },
+    select: { to: true },
+  });
+  const candidateEventRows = [...listeningEvents.values()].map((event) => ({
+    userId,
+    spotifyTrackId: event.spotifyTrackId,
+    spotifyUri: event.spotifyUri,
+    trackName: event.trackName,
+    artistName: event.artistName,
+    primaryArtistId: event.primaryArtistId,
+    albumName: event.albumName,
+    albumId: event.albumId,
+    isrc: event.isrc,
+    playedAt: event.playedAt,
+    source: "SPOTIFY_RECENTLY_PLAYED" as const,
+    sourceEventKey: event.sourceEventKey,
+    contextType: event.contextType,
+    contextUri: event.contextUri,
+  }));
+  const eventRows = lastFmHandoff
+    ? candidateEventRows.filter((event) => event.playedAt >= lastFmHandoff.to)
+    : candidateEventRows;
+  const listeningEventsSuppressedByHandoff =
+    candidateEventRows.length - eventRows.length;
+  const eventWrite = eventRows.length
+    ? await prisma.trackListeningEvent.createMany({
+        data: eventRows,
+        skipDuplicates: true,
+      })
+    : { count: 0 };
+  const listeningEventsDuplicateCount = eventRows.length - eventWrite.count;
+
   const historyKnownSince = minDate(policy.historyKnownSince, earliestSeen);
   const priorCursorMs = parseCursorMs(policy.syncAfterCursor);
   const nextCursorMs =
@@ -300,6 +367,9 @@ export async function syncRecentlyPlayed(
     enabled: true,
     eventsRead,
     identitiesUpdated: operations.length,
+    listeningEventsInserted: eventWrite.count,
+    listeningEventsDuplicateCount,
+    listeningEventsSuppressedByHandoff,
     historyKnownSince,
     lastSyncAt: syncStartedAt,
   };
@@ -396,10 +466,8 @@ async function spotifyGet<T>(accessToken: string, path: string): Promise<T> {
     if (error.kind === "RATE_LIMITED" && retries < MAX_RATE_LIMIT_RETRIES) {
       retries += 1;
       const waitMs =
-        Math.max(
-          0,
-          error.retryAfterSeconds ?? DEFAULT_RATE_LIMIT_WAIT_SECONDS,
-        ) * 1000 + Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
+        Math.max(0, error.retryAfterSeconds ?? DEFAULT_RATE_LIMIT_WAIT_SECONDS) * 1000 +
+        Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
       await sleep(waitMs);
       continue;
     }
