@@ -1,5 +1,9 @@
+import type { Candidate } from "@/services/playlist-planner";
+
 import {
   prismaPodcastListeningStateStore,
+  spotifyEpisodeIdFromUri,
+  type CanonicalPodcastListeningState,
   type PodcastListeningObservation,
   type PodcastListeningStateStore,
 } from "./podcast-listening-state";
@@ -29,6 +33,28 @@ type AuthoritativePodcastRefreshOptions = {
   stateStore?: PodcastListeningStateStore;
 };
 
+export type PodcastPrewriteTarget = {
+  targetPlaylistId: string;
+  targetName: string;
+  items: readonly Candidate[];
+};
+
+export type PodcastPrewriteViolation = {
+  targetPlaylistId: string;
+  targetName: string;
+  uri: string;
+  spotifyEpisodeId: string | null;
+  reason:
+    | "UNVERIFIABLE_EPISODE_ID"
+    | "MISSING_CANONICAL_STATE"
+    | "COMPLETED_NO_REPLAY";
+};
+
+export type PodcastPrewriteGateResult = {
+  checkedEpisodeIds: string[];
+  violations: PodcastPrewriteViolation[];
+};
+
 /**
  * SCHEDULE-03: playlist-item resume_point proved insufficient as the sole
  * authority for KEEP_FILLED preservation. Re-read the small set of episode IDs
@@ -51,7 +77,7 @@ export async function refreshAuthoritativePodcastListeningStates(
         .filter((id) => id.length > 0),
     ),
   ];
-  if (ids.length === 0) return new Map();
+  if (ids.length === 0) return new Map<string, CanonicalPodcastListeningState>();
 
   const accessToken =
     options.accessToken ?? (await getSpotifyAccessToken(userId));
@@ -71,6 +97,84 @@ export async function refreshAuthoritativePodcastListeningStates(
     userId,
     observations,
   );
+}
+
+/**
+ * Final fail-closed gate immediately before a real Spotify write. Every
+ * selected podcast that does not explicitly allow replay is refreshed through
+ * the direct episode endpoint. A newly completed item blocks the whole run
+ * before any target can be modified; the next cycle can then replan safely.
+ */
+export async function checkPodcastCompletionBeforeWrite(
+  userId: string,
+  targets: Iterable<PodcastPrewriteTarget>,
+  observedAt = new Date(),
+  options: AuthoritativePodcastRefreshOptions = {},
+): Promise<PodcastPrewriteGateResult> {
+  const targetList = [...targets];
+  const refreshEpisodeIds: string[] = [];
+  const malformed: PodcastPrewriteViolation[] = [];
+
+  for (const target of targetList) {
+    for (const item of target.items) {
+      if (item.type !== "PODCAST" || item.sourceIncludePlayed === true) continue;
+
+      const episodeId = spotifyEpisodeIdFromUri(item.uri);
+      if (!episodeId) {
+        malformed.push({
+          targetPlaylistId: target.targetPlaylistId,
+          targetName: target.targetName,
+          uri: item.uri,
+          spotifyEpisodeId: null,
+          reason: "UNVERIFIABLE_EPISODE_ID",
+        });
+        continue;
+      }
+      refreshEpisodeIds.push(episodeId);
+    }
+  }
+
+  const checkedEpisodeIds = [...new Set(refreshEpisodeIds)];
+  const states = await refreshAuthoritativePodcastListeningStates(
+    userId,
+    checkedEpisodeIds,
+    observedAt,
+    options,
+  );
+  const violations = [...malformed];
+
+  for (const target of targetList) {
+    for (const item of target.items) {
+      if (item.type !== "PODCAST" || item.sourceIncludePlayed === true) continue;
+
+      const episodeId = spotifyEpisodeIdFromUri(item.uri);
+      if (!episodeId) continue;
+      const state = states.get(episodeId);
+
+      if (!state) {
+        violations.push({
+          targetPlaylistId: target.targetPlaylistId,
+          targetName: target.targetName,
+          uri: item.uri,
+          spotifyEpisodeId: episodeId,
+          reason: "MISSING_CANONICAL_STATE",
+        });
+        continue;
+      }
+
+      if (state.status === "COMPLETED") {
+        violations.push({
+          targetPlaylistId: target.targetPlaylistId,
+          targetName: target.targetName,
+          uri: item.uri,
+          spotifyEpisodeId: episodeId,
+          reason: "COMPLETED_NO_REPLAY",
+        });
+      }
+    }
+  }
+
+  return { checkedEpisodeIds, violations };
 }
 
 async function getEpisodePlaybackState(
