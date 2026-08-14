@@ -582,6 +582,45 @@ test("#37 a URI reserved by a higher-priority target does not consume artist/alb
   assert.equal(result.targets[1]?.result.stats.artistLimitRejectedCount, 0);
 });
 
+test("#89 MUSIC-05 suppresses a blocked track for one target without affecting another", () => {
+  const pools = {
+    music: [
+      diverseMusic("spotify:track:blocked", "artist-a", "album-a"),
+      diverseMusic("spotify:track:free", "artist-b", "album-b"),
+    ],
+    podcasts: [],
+  };
+  const result = planRun({
+    pools,
+    targets: [
+      {
+        targetPlaylistId: "A",
+        name: "A",
+        priority: 0,
+        rules: diversityRules(60_000, null, null),
+      },
+      {
+        targetPlaylistId: "B",
+        name: "B",
+        priority: 1,
+        rules: diversityRules(60_000, null, null),
+      },
+    ],
+    blockedMusicTrackIdsByTargetId: new Map([["A", new Set(["blocked"])]]),
+  });
+
+  // Target A is planned first and may not use the suppressed track.
+  assert.deepEqual(
+    result.targets[0]?.result.items.map((item) => item.uri),
+    ["spotify:track:free"],
+  );
+  // Target B is not suppressed, so the same track stays eligible there.
+  assert.deepEqual(
+    result.targets[1]?.result.items.map((item) => item.uri),
+    ["spotify:track:blocked"],
+  );
+});
+
 test("#37 SEQUENCE does not break the slot type to bypass music diversity", () => {
   const result = planPlaylist({
     rules: {

@@ -34,6 +34,13 @@ import {
   type SpotifyIncrementalCandidateSource,
 } from "@/services/spotify/incremental-reader";
 import { checkPodcastCompletionBeforeWrite } from "@/services/spotify/podcast-authoritative-state";
+import {
+  analyzeAndRecordInferredSkips,
+  loadPendingInferredSkips,
+  type InferredSkipAnalysisResult,
+  type PendingSkipSignal,
+  prismaMusicPreferenceSignalStore,
+} from "@/services/music-preference";
 
 import {
   collectIncrementally,
@@ -241,6 +248,43 @@ export async function generatePlaylists(
       return { runId: run.id, status: "FAILED" };
     }
 
+    // MUSIC-05: infer skips from the last applied generation and suppress those
+    // tracks in each target's next generation. Zero new Spotify calls — it reads
+    // only ORDER-01's persisted order and MUSIC-01's already-synced history.
+    // Fail-open: any analysis error is logged and generation proceeds unblocked.
+    const music05TargetIds = runTargets.map((target) => target.targetPlaylistId);
+    let music05Analysis: InferredSkipAnalysisResult | null = null;
+    let pendingInferredSkipsByTargetId = new Map<string, PendingSkipSignal[]>();
+    let music05Error: string | null = null;
+    try {
+      if (!simulate) {
+        music05Analysis = await analyzeAndRecordInferredSkips(
+          userId,
+          music05TargetIds,
+          { now: date },
+        );
+      }
+      pendingInferredSkipsByTargetId = await loadPendingInferredSkips(
+        userId,
+        music05TargetIds,
+      );
+    } catch (error) {
+      music05Error = errorMessage(error);
+      log({
+        level: "WARN",
+        message: `MUSIC-05 inferred-skip analysis skipped: ${music05Error}`,
+      });
+    }
+
+    const blockedMusicTrackIdsByTargetId = new Map<string, ReadonlySet<string>>();
+    for (const [targetId, signals] of pendingInferredSkipsByTargetId) {
+      if (signals.length === 0) continue;
+      blockedMusicTrackIdsByTargetId.set(
+        targetId,
+        new Set(signals.map((signal) => signal.spotifyTrackId)),
+      );
+    }
+
     let musicUnavailableSkippedCount = 0;
     let genericPodcastSuppressedCount = 0;
     const incremental = await collectIncrementally({
@@ -249,6 +293,7 @@ export async function generatePlaylists(
       preservedByTargetId: new Map(
         Object.entries(opts.preservedByTargetId ?? {}),
       ),
+      blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
       onBatch(source, batch) {
         musicUnavailableSkippedCount += batch.unavailableMusicSkippedCount ?? 0;
@@ -721,6 +766,9 @@ export async function generatePlaylists(
 
     const targetById = new Map(targets.map((target) => [target.id, target]));
     let anyFailed = false;
+    // MUSIC-05: signals that blocked a target are consumed only once that
+    // target's real generation is successfully applied (step 12).
+    const inferredSkipSignalIdsToConsume: string[] = [];
 
     for (const planned of plan.targets) {
       const target = targetById.get(planned.targetPlaylistId)!;
@@ -934,6 +982,13 @@ export async function generatePlaylists(
             stats.totalDurationMs / 60_000,
           )} min, ${stats.actualPodcastPercent}% podcast${simulate ? " (simulated)" : ""}`,
         });
+
+        // Real, applied generation consumes this target's blocking signals.
+        if (!simulate) {
+          for (const signal of pendingInferredSkipsByTargetId.get(target.id) ?? []) {
+            inferredSkipSignalIdsToConsume.push(signal.id);
+          }
+        }
       } catch (error) {
         anyFailed = true;
         targetSummary.error = errorMessage(error);
@@ -947,6 +1002,41 @@ export async function generatePlaylists(
     }
 
     summary.skipped = skipped.map((target) => target.name);
+
+    // MUSIC-05 step 12 + observability. Consuming is best-effort: a failure here
+    // must never turn an applied real generation into a run-level failure.
+    let inferredSkipConsumedCount = 0;
+    if (!simulate && inferredSkipSignalIdsToConsume.length > 0) {
+      try {
+        inferredSkipConsumedCount = await prismaMusicPreferenceSignalStore.consume(
+          userId,
+          inferredSkipSignalIdsToConsume,
+          run.id,
+          date,
+        );
+      } catch (error) {
+        log({
+          level: "WARN",
+          message: `MUSIC-05 signal consumption failed: ${errorMessage(error)}`,
+        });
+      }
+    }
+    summary.musicInferredSkip = {
+      simulate,
+      error: music05Error,
+      analysis: music05Analysis?.targets ?? [],
+      suppressedByTarget: Object.fromEntries(
+        [...blockedMusicTrackIdsByTargetId].map(([targetId, ids]) => [
+          targetId,
+          ids.size,
+        ]),
+      ),
+      inferredSkipSuppressedCount: [
+        ...blockedMusicTrackIdsByTargetId.values(),
+      ].reduce((sum, ids) => sum + ids.size, 0),
+      consumedSignalCount: inferredSkipConsumedCount,
+    };
+
     summary.spotifyApi = mergeSpotifyMetrics(
       reader.getRequestMetrics(),
       writer?.getRequestMetrics() ?? null,

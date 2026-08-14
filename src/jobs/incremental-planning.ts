@@ -69,6 +69,8 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   sources: TSource[];
   targets: RunTarget[];
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
+  /** MUSIC-05: per-target Spotify track ids temporarily suppressed as new music. */
+  blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
   onBatch?: (source: TSource, batch: IncrementalSourceBatch) => void;
   onRound?: (round: IncrementalPlanningRound) => void;
@@ -84,6 +86,7 @@ export async function collectIncrementally<
   sources,
   targets,
   preservedByTargetId,
+  blockedMusicTrackIdsByTargetId,
   initialReserved,
   onBatch,
   onRound,
@@ -110,6 +113,7 @@ export async function collectIncrementally<
     pools,
     targets,
     preservedByTargetId: activePreservedByTargetId,
+    blockedMusicTrackIdsByTargetId,
     initialReserved,
   });
   let qualityFailures = failedTargets(plan);
@@ -120,6 +124,7 @@ export async function collectIncrementally<
       pools,
       targets,
       preservedByTargetId: activePreservedByTargetId,
+      blockedMusicTrackIdsByTargetId,
       initialReserved,
     });
     qualityFailures = failedTargets(plan);

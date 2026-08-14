@@ -15,6 +15,12 @@ export interface PlanRunInput {
   targets: RunTarget[];
   /** SCHEDULE-01 valid remote items keyed by target id. */
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
+  /**
+   * MUSIC-05: Spotify track ids temporarily ineligible as new music for a given
+   * target, keyed by target id. Applied only to freshly picked candidates, so
+   * already-preserved valid remote items are never reinterpreted as skips.
+   */
+  blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
 }
 
@@ -40,6 +46,7 @@ export function planRun({
   pools,
   targets,
   preservedByTargetId,
+  blockedMusicTrackIdsByTargetId,
   initialReserved,
 }: PlanRunInput): PlanRunResult {
   const ordered = [...targets].sort((a, b) => a.priority - b.priority);
@@ -47,9 +54,24 @@ export function planRun({
   const results: PlanRunTargetResult[] = [];
 
   for (const target of ordered) {
+    const blockedMusicTrackIds = blockedMusicTrackIdsByTargetId?.get(
+      target.targetPlaylistId,
+    );
+    const targetPools =
+      blockedMusicTrackIds && blockedMusicTrackIds.size > 0
+        ? {
+            ...pools,
+            music: pools.music.filter(
+              (candidate) =>
+                candidate.type !== "MUSIC" ||
+                !candidate.spotifyTrackId ||
+                !blockedMusicTrackIds.has(candidate.spotifyTrackId),
+            ),
+          }
+        : pools;
     const result = planPlaylist({
       rules: target.rules,
-      pools,
+      pools: targetPools,
       reserved,
       preserved: preservedByTargetId?.get(target.targetPlaylistId),
     });
