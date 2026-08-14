@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { Candidate } from "@/services/playlist-planner";
+
 import { createVolatilePodcastListeningStateStore } from "./podcast-listening-state";
-import { refreshAuthoritativePodcastListeningStates } from "./podcast-authoritative-state";
+import {
+  checkPodcastCompletionBeforeWrite,
+  refreshAuthoritativePodcastListeningStates,
+} from "./podcast-authoritative-state";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
@@ -10,6 +15,23 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
+}
+
+function podcastCandidate(
+  id: string,
+  sourceIncludePlayed: boolean | undefined = false,
+): Candidate {
+  return {
+    uri: `spotify:episode:${id}`,
+    type: "PODCAST",
+    title: id,
+    durationMs: 1_000,
+    originalDurationMs: 1_000,
+    resumePositionMs: 0,
+    sourceSpotifyType: "SAVED_EPISODES",
+    sourceSpotifyId: "me",
+    sourceIncludePlayed,
+  };
 }
 
 test("direct episode playback marks a previously not-started episode completed", async () => {
@@ -130,4 +152,156 @@ test("missing resume_point is inconclusive rather than proof of not-started", as
 
   assert.equal(states.get("episode-1")?.status, "IN_PROGRESS");
   assert.equal(states.get("episode-1")?.resumePositionMs, 400);
+});
+
+test("prewrite gate blocks a podcast that became completed after planning", async () => {
+  const store = createVolatilePodcastListeningStateStore();
+  let calls = 0;
+
+  const result = await checkPodcastCompletionBeforeWrite(
+    "user-1",
+    [
+      {
+        targetPlaylistId: "target-1",
+        targetName: "Carro",
+        items: [podcastCandidate("episode-1")],
+      },
+    ],
+    new Date("2026-08-14T08:10:00Z"),
+    {
+      accessToken: "token",
+      stateStore: store,
+      fetchImpl: async () => {
+        calls += 1;
+        return jsonResponse({
+          id: "episode-1",
+          uri: "spotify:episode:episode-1",
+          type: "episode",
+          duration_ms: 1_000,
+          resume_point: {
+            fully_played: true,
+            resume_position_ms: 0,
+          },
+        });
+      },
+    },
+  );
+
+  assert.equal(calls, 1);
+  assert.deepEqual(result.checkedEpisodeIds, ["episode-1"]);
+  assert.deepEqual(result.violations, [
+    {
+      targetPlaylistId: "target-1",
+      targetName: "Carro",
+      uri: "spotify:episode:episode-1",
+      spotifyEpisodeId: "episode-1",
+      reason: "COMPLETED_NO_REPLAY",
+    },
+  ]);
+});
+
+test("prewrite gate allows explicit replay without an unnecessary provider call", async () => {
+  const store = createVolatilePodcastListeningStateStore();
+  let calls = 0;
+
+  const result = await checkPodcastCompletionBeforeWrite(
+    "user-1",
+    [
+      {
+        targetPlaylistId: "target-1",
+        targetName: "Carro",
+        items: [podcastCandidate("episode-1", true)],
+      },
+    ],
+    new Date("2026-08-14T08:10:00Z"),
+    {
+      accessToken: "token",
+      stateStore: store,
+      fetchImpl: async () => {
+        calls += 1;
+        return jsonResponse({});
+      },
+    },
+  );
+
+  assert.equal(calls, 0);
+  assert.deepEqual(result.checkedEpisodeIds, []);
+  assert.deepEqual(result.violations, []);
+});
+
+test("prewrite gate deduplicates provider reads across targets", async () => {
+  const store = createVolatilePodcastListeningStateStore();
+  let calls = 0;
+
+  const result = await checkPodcastCompletionBeforeWrite(
+    "user-1",
+    [
+      {
+        targetPlaylistId: "target-1",
+        targetName: "Carro",
+        items: [podcastCandidate("episode-1")],
+      },
+      {
+        targetPlaylistId: "target-2",
+        targetName: "Casa",
+        items: [podcastCandidate("episode-1")],
+      },
+    ],
+    new Date("2026-08-14T08:10:00Z"),
+    {
+      accessToken: "token",
+      stateStore: store,
+      fetchImpl: async () => {
+        calls += 1;
+        return jsonResponse({
+          id: "episode-1",
+          uri: "spotify:episode:episode-1",
+          type: "episode",
+          duration_ms: 1_000,
+          resume_point: {
+            fully_played: false,
+            resume_position_ms: 0,
+          },
+        });
+      },
+    },
+  );
+
+  assert.equal(calls, 1);
+  assert.deepEqual(result.checkedEpisodeIds, ["episode-1"]);
+  assert.deepEqual(result.violations, []);
+});
+
+test("prewrite gate fails closed when a podcast URI cannot prove its episode identity", async () => {
+  const store = createVolatilePodcastListeningStateStore();
+  const malformed = {
+    ...podcastCandidate("episode-1"),
+    uri: "spotify:show:not-an-episode",
+  };
+  let calls = 0;
+
+  const result = await checkPodcastCompletionBeforeWrite(
+    "user-1",
+    [
+      {
+        targetPlaylistId: "target-1",
+        targetName: "Carro",
+        items: [malformed],
+      },
+    ],
+    new Date("2026-08-14T08:10:00Z"),
+    {
+      accessToken: "token",
+      stateStore: store,
+      fetchImpl: async () => {
+        calls += 1;
+        return jsonResponse({});
+      },
+    },
+  );
+
+  assert.equal(calls, 0);
+  assert.deepEqual(result.checkedEpisodeIds, []);
+  assert.equal(result.violations.length, 1);
+  assert.equal(result.violations[0]?.reason, "UNVERIFIABLE_EPISODE_ID");
 });
