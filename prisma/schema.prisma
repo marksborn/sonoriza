@@ -43,6 +43,7 @@ model User {
   notificationPreference NotificationPreference?
   pushSubscriptions      PushSubscription[]
   pushDeliveries         PushDelivery[]
+  musicPreferenceSignals MusicPreferenceSignal[]
 }
 
 model Account {
@@ -596,6 +597,44 @@ model GenerationItem {
 
   @@index([runId])
   @@index([targetPlaylistId])
+}
+
+// ---------------------------------------------------------------------------
+// MUSIC-05 — inferred skip preference signals.
+//
+// A signal separate from TrackListeningState. Persisting an INFERRED_SKIP never
+// asserts a play: it is deliberately an inference derived from ORDER-01's
+// published order plus MUSIC-01's canonical observed plays. The table is shaped
+// so future signal types (and consumers like Tião Brain) can be added without
+// turning TrackListeningState into a preference aggregate.
+// ---------------------------------------------------------------------------
+
+enum MusicPreferenceSignalType {
+  INFERRED_SKIP
+}
+
+model MusicPreferenceSignal {
+  id                    String                    @id @default(cuid())
+  userId                String
+  spotifyTrackId        String
+  spotifyUri            String?
+  type                  MusicPreferenceSignalType
+  sourceGenerationRunId String
+  targetPlaylistId      String
+  generationItemId      String?
+  position              Int
+  confidence            Float                     @default(1)
+  evidence              Json?
+  inferredAt            DateTime                  @default(now())
+  consumedAt            DateTime?
+  consumedByRunId       String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Idempotency: re-analyzing the same generation/position never duplicates.
+  @@unique([userId, type, sourceGenerationRunId, targetPlaylistId, position])
+  @@index([userId, targetPlaylistId, type, consumedAt])
+  @@index([userId, spotifyTrackId])
 }
 
 // ---------------------------------------------------------------------------

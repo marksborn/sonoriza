@@ -19,6 +19,7 @@
     "test:simulation": "tsx --test src/services/simulation-presentation.test.ts src/services/configuration-readiness.test.ts",
     "test:lastfm": "tsx --test src/services/lastfm/*.test.ts",
     "test:history": "tsx --test src/services/listening-history/*.test.ts",
+    "test:music-preference": "tsx --test src/services/music-preference/*.test.ts",
     "history:lastfm": "tsx scripts/import-lastfm-history.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
