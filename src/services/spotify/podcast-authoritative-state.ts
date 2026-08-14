@@ -16,7 +16,7 @@ const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
 
 type FetchLike = typeof fetch;
 
-type EpisodePlaybackResponse = {
+export type EpisodePlaybackResponse = {
   id?: string;
   uri?: string;
   duration_ms?: number;
@@ -27,10 +27,20 @@ type EpisodePlaybackResponse = {
   } | null;
 };
 
+/**
+ * Reads one episode's authoritative playback state. Provide `episodeReader`
+ * (e.g. the run's instrumented {@link SpotifyClient}) so the pre-write reads
+ * are counted in the run's Spotify metrics instead of a private `fetch`.
+ */
+export type EpisodePlaybackReader = (
+  episodeId: string,
+) => Promise<EpisodePlaybackResponse>;
+
 type AuthoritativePodcastRefreshOptions = {
   accessToken?: string;
   fetchImpl?: FetchLike;
   stateStore?: PodcastListeningStateStore;
+  episodeReader?: EpisodePlaybackReader;
 };
 
 export type PodcastPrewriteTarget = {
@@ -79,17 +89,11 @@ export async function refreshAuthoritativePodcastListeningStates(
   ];
   if (ids.length === 0) return new Map<string, CanonicalPodcastListeningState>();
 
-  const accessToken =
-    options.accessToken ?? (await getSpotifyAccessToken(userId));
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const readEpisode = await resolveEpisodeReader(userId, options);
   const observations: PodcastListeningObservation[] = [];
 
   for (const episodeId of ids) {
-    const episode = await getEpisodePlaybackState(
-      accessToken,
-      episodeId,
-      fetchImpl,
-    );
+    const episode = await readEpisode(episodeId);
     observations.push(toObservation(episodeId, episode, observedAt));
   }
 
@@ -175,6 +179,19 @@ export async function checkPodcastCompletionBeforeWrite(
   }
 
   return { checkedEpisodeIds, violations };
+}
+
+async function resolveEpisodeReader(
+  userId: string,
+  options: AuthoritativePodcastRefreshOptions,
+): Promise<EpisodePlaybackReader> {
+  if (options.episodeReader) return options.episodeReader;
+
+  const accessToken =
+    options.accessToken ?? (await getSpotifyAccessToken(userId));
+  const fetchImpl = options.fetchImpl ?? fetch;
+  return (episodeId) =>
+    getEpisodePlaybackState(accessToken, episodeId, fetchImpl);
 }
 
 async function getEpisodePlaybackState(

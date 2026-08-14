@@ -669,6 +669,9 @@ export async function generatePlaylists(
             items: planned.result.items,
           })),
           new Date(),
+          // P2: route the authoritative episode reads through the run's
+          // instrumented client so they are counted in summary.spotifyApi.
+          { episodeReader: (episodeId) => writer!.getEpisodePlaybackState(episodeId) },
         );
       } catch (error) {
         const providerError = errorMessage(error);
