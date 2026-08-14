@@ -11,6 +11,7 @@ import {
   type SpotifySourceReadMetrics,
 } from "./errors";
 import { readPlayableMusicCandidate } from "./music-availability";
+import type { EpisodePlaybackResponse } from "./podcast-authoritative-state";
 import { spotifyEpisodeIdFromUri } from "./podcast-listening-state";
 import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
@@ -467,6 +468,20 @@ export class SpotifyClient {
     }
 
     return collector.result();
+  }
+
+  /**
+   * SCHEDULE-03: authoritative playback state for a single episode via
+   * `GET /episodes/{id}`. Routed through the instrumented request path so the
+   * pre-write revalidation reads are counted in the run's Spotify metrics
+   * (calls, retries, rate limits) instead of a private `fetch`.
+   */
+  async getEpisodePlaybackState(
+    episodeId: string,
+  ): Promise<EpisodePlaybackResponse> {
+    return this.request<EpisodePlaybackResponse>(
+      `/episodes/${encodeURIComponent(episodeId)}?market=from_token`,
+    );
   }
 
   /**

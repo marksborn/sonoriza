@@ -130,27 +130,40 @@ export async function prepareKeepFilledTarget(
     });
   }
 
+  // P2 (SCHEDULE-03 follow-up): an empty-calendar CLEAR removes every item and
+  // never preserves playback state, so it must not depend on the authoritative
+  // episode reads. A transient 429/404 there could otherwise block the run and
+  // leave the target filled. Skip the reads entirely on the CLEAR path.
+  const willClearEmptyCalendar =
+    target.durationMode === "CALENDAR" &&
+    resolved.durationMs <= 0 &&
+    target.emptyCalendarBehavior === "CLEAR";
+
   // SCHEDULE-03: a playlist-item resume_point can lag the playback state shown
   // by Spotify. Before preserving a podcast whose provenance does not explicitly
   // allow replay, ask the episode endpoint directly and merge that observation
   // into PODCAST-04's sticky canonical state. This is intentionally limited to
   // the small set of podcast items already present in this target.
-  const authoritativeEpisodeIds = remote.items.flatMap((item) => {
-    if (
-      item.type !== "PODCAST" ||
-      !item.uri ||
-      !item.spotifyEpisodeId ||
-      provenanceByUri.get(item.uri)?.sourceIncludePlayed === true
-    ) {
-      return [];
-    }
-    return [item.spotifyEpisodeId];
-  });
+  const authoritativeEpisodeIds = willClearEmptyCalendar
+    ? []
+    : remote.items.flatMap((item) => {
+        if (
+          item.type !== "PODCAST" ||
+          !item.uri ||
+          !item.spotifyEpisodeId ||
+          provenanceByUri.get(item.uri)?.sourceIncludePlayed === true
+        ) {
+          return [];
+        }
+        return [item.spotifyEpisodeId];
+      });
   const authoritativePodcastStates =
     await refreshAuthoritativePodcastListeningStates(
       userId,
       authoritativeEpisodeIds,
       date,
+      // P2: reuse this target's instrumented client for the authoritative reads.
+      { episodeReader: (episodeId) => spotify.getEpisodePlaybackState(episodeId) },
     );
   const podcastStates = new Map(observedPodcastStates);
   for (const [episodeId, state] of authoritativePodcastStates) {
@@ -174,11 +187,7 @@ export async function prepareKeepFilledTarget(
     maxPodcastDurationMs: resolved.podcastEpisodeMaxDurationMs,
   });
 
-  if (
-    target.durationMode === "CALENDAR" &&
-    resolved.durationMs <= 0 &&
-    target.emptyCalendarBehavior === "CLEAR"
-  ) {
+  if (willClearEmptyCalendar) {
     return {
       targetPlaylistId: target.id,
       preserved: [],

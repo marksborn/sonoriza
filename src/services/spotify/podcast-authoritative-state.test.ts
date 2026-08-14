@@ -272,6 +272,79 @@ test("prewrite gate deduplicates provider reads across targets", async () => {
   assert.deepEqual(result.violations, []);
 });
 
+test("authoritative refresh routes through a provided episode reader without a private fetch", async () => {
+  const store = createVolatilePodcastListeningStateStore();
+  const readerCalls: string[] = [];
+  let fetchCalls = 0;
+
+  const states = await refreshAuthoritativePodcastListeningStates(
+    "user-1",
+    ["episode-1"],
+    new Date("2026-08-14T08:05:00Z"),
+    {
+      stateStore: store,
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        return jsonResponse({});
+      },
+      episodeReader: async (episodeId) => {
+        readerCalls.push(episodeId);
+        return {
+          id: episodeId,
+          uri: `spotify:episode:${episodeId}`,
+          type: "episode",
+          duration_ms: 1_000,
+          resume_point: { fully_played: true, resume_position_ms: 0 },
+        };
+      },
+    },
+  );
+
+  assert.deepEqual(readerCalls, ["episode-1"]);
+  assert.equal(fetchCalls, 0);
+  assert.equal(states.get("episode-1")?.status, "COMPLETED");
+});
+
+test("prewrite gate routes provider reads through the instrumented episode reader", async () => {
+  const store = createVolatilePodcastListeningStateStore();
+  const readerCalls: string[] = [];
+  let fetchCalls = 0;
+
+  const result = await checkPodcastCompletionBeforeWrite(
+    "user-1",
+    [
+      {
+        targetPlaylistId: "target-1",
+        targetName: "Carro",
+        items: [podcastCandidate("episode-1")],
+      },
+    ],
+    new Date("2026-08-14T08:10:00Z"),
+    {
+      stateStore: store,
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        return jsonResponse({});
+      },
+      episodeReader: async (episodeId) => {
+        readerCalls.push(episodeId);
+        return {
+          id: episodeId,
+          uri: `spotify:episode:${episodeId}`,
+          type: "episode",
+          duration_ms: 1_000,
+          resume_point: { fully_played: true, resume_position_ms: 0 },
+        };
+      },
+    },
+  );
+
+  assert.deepEqual(readerCalls, ["episode-1"]);
+  assert.equal(fetchCalls, 0);
+  assert.deepEqual(result.checkedEpisodeIds, ["episode-1"]);
+  assert.equal(result.violations[0]?.reason, "COMPLETED_NO_REPLAY");
+});
+
 test("prewrite gate fails closed when a podcast URI cannot prove its episode identity", async () => {
   const store = createVolatilePodcastListeningStateStore();
   const malformed = {
