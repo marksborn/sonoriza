@@ -12,6 +12,14 @@ export interface CalendarEventFilter {
   marker?: string | null;
 }
 
+export interface CalendarDurationBlock {
+  key: string;
+  eventId: string;
+  startsAt: Date;
+  endsAt: Date;
+  durationMs: number;
+}
+
 export interface CalendarDurationResult {
   durationMs: number;
   maxEventDurationMs: number;
@@ -19,6 +27,8 @@ export interface CalendarDurationResult {
   timedEvents: number;
   filterMode: CalendarEventFilterMode;
   marker: string | null;
+  /** CALENDAR-02: eligible timed events in deterministic global chronology. */
+  blocks: CalendarDurationBlock[];
 }
 
 /** [start of day, start of next day) for the given date. */
@@ -82,7 +92,7 @@ export function maxTimedDurationMs(
 
 /**
  * Resolves calendar-driven duration for a day across calendars enabled for
- * duration, while also returning audit metadata for CONFIG-04.
+ * duration, while also returning audit metadata for CONFIG-04 / CALENDAR-02.
  *
  * MARKER mode is intentionally literal: Sonoriza only checks title and
  * description for the configured text and sums the event duration. It does not
@@ -108,18 +118,17 @@ export async function computeCalendarDuration(
       timedEvents: 0,
       filterMode: filter.mode,
       marker,
+      blocks: [],
     };
   }
 
   const { from, to } = dayBounds(date);
   const client = await GoogleCalendarClient.forUser(userId);
 
-  let durationMs = 0;
-  let maxEventDurationMs = 0;
-  let matchedEvents = 0;
   let timedEvents = 0;
+  const blocks: CalendarDurationBlock[] = [];
 
-  for (const calendarId of durationCalendarIds) {
+  for (const [calendarIndex, calendarId] of durationCalendarIds.entries()) {
     const events = await client.listEvents(calendarId, from, to);
     const timed = events.filter((event) => !event.allDay);
     const matched = timed.filter((event) =>
@@ -127,21 +136,40 @@ export async function computeCalendarDuration(
     );
 
     timedEvents += timed.length;
-    matchedEvents += matched.length;
-    durationMs += sumTimedDurationMs(matched);
-    maxEventDurationMs = Math.max(
-      maxEventDurationMs,
-      maxTimedDurationMs(matched),
-    );
+    for (const event of matched) {
+      const durationMs = Math.max(0, event.end.getTime() - event.start.getTime());
+      blocks.push({
+        key: `${calendarIndex}:${event.id}:${event.start.toISOString()}`,
+        eventId: event.id,
+        startsAt: new Date(event.start),
+        endsAt: new Date(event.end),
+        durationMs,
+      });
+    }
   }
+
+  blocks.sort((left, right) =>
+    left.startsAt.getTime() !== right.startsAt.getTime()
+      ? left.startsAt.getTime() - right.startsAt.getTime()
+      : left.endsAt.getTime() !== right.endsAt.getTime()
+        ? left.endsAt.getTime() - right.endsAt.getTime()
+        : left.key.localeCompare(right.key),
+  );
+
+  const durationMs = blocks.reduce((sum, block) => sum + block.durationMs, 0);
+  const maxEventDurationMs = blocks.reduce(
+    (max, block) => Math.max(max, block.durationMs),
+    0,
+  );
 
   return {
     durationMs,
     maxEventDurationMs,
-    matchedEvents,
+    matchedEvents: blocks.length,
     timedEvents,
     filterMode: filter.mode,
     marker,
+    blocks,
   };
 }
 
