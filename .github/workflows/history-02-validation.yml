@@ -24,6 +24,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: sonoriza_history02_gate
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_history02_gate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_history02_gate?schema=public
+      AUTH_SECRET: history-02-ci-only
+      NEXTAUTH_SECRET: history-02-ci-only
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +53,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npx prisma migrate deploy
       - run: npm run test:spotify-history
       - run: npm run test:history
       - run: npm run test:lastfm
