@@ -4,6 +4,7 @@ export {
   type CalendarEvent,
 } from "./client";
 export {
+  buildCalendarDurationBlocks,
   computeCalendarDuration,
   computeCalendarDurationMs,
   matchesCalendarEventFilter,
@@ -12,6 +13,7 @@ export {
   type CalendarEventFilter,
   type CalendarEventFilterMode,
   type DayBounds,
+  type CalendarDurationBlock,
   type CalendarDurationResult,
 } from "./duration";
 export { getGoogleAccessToken } from "./token";

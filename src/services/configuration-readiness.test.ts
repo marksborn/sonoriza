@@ -333,3 +333,69 @@ test("SCHEDULE-01 revalidates external reservation and rebuild snapshots before 
   assert.match(source, /rebuildByTargetId/);
   assert.match(source, /reservedTargetSnapshots/);
 });
+
+test(
+  "CALENDAR-02 duration strategy participates in configuration fingerprint",
+  () => {
+    const source = readFileSync(
+      "src/services/configuration-readiness.ts",
+      "utf8",
+    );
+
+    const fingerprintStart =
+      source.indexOf("const fingerprintPayload");
+
+    const fingerprintEnd =
+      source.indexOf(
+        "return {",
+        fingerprintStart,
+      );
+
+    const fingerprintSource =
+      source.slice(
+        fingerprintStart,
+        fingerprintEnd,
+      );
+
+    assert.match(
+      fingerprintSource,
+      /calendarDurationStrategy/,
+    );
+  },
+);
+
+test(
+  "CALENDAR-02 existing targets default safely to SUMMED",
+  () => {
+    const schema =
+      readFileSync(
+        "prisma/schema.prisma",
+        "utf8",
+      );
+
+    assert.match(
+      schema,
+      /calendarDurationStrategy\s+CalendarDurationStrategy\s+@default\(SUMMED\)/,
+    );
+  },
+);
+
+test(
+  "CALENDAR-02 productive generator wires calendar blocks only through the strategy helper",
+  () => {
+    const source = readFileSync(
+      "src/jobs/generate-playlists-incremental.ts",
+      "utf8",
+    );
+
+    assert.match(
+      source,
+      /calendarDurationPlanningBlocks/,
+    );
+
+    assert.match(
+      source,
+      /durationBlocks/,
+    );
+  },
+);

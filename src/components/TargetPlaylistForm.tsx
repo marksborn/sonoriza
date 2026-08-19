@@ -11,6 +11,7 @@ type TargetUpdatePolicy = "MANUAL" | "KEEP_FILLED" | "REBUILD_DAILY";
 type DurationMode = "FIXED" | "CALENDAR";
 type EmptyCalendarBehavior = "CLEAR" | "KEEP" | "SKIP";
 type CalendarEventFilterMode = "ALL" | "MARKER";
+type CalendarDurationStrategy = "SUMMED" | "PER_EVENT";
 type PodcastEpisodeMaxDurationMode = "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";
 
 export type SpotifyDestinationOption = {
@@ -27,6 +28,7 @@ export type TargetPlaylistFormInitial = {
   emptyCalendarBehavior: EmptyCalendarBehavior;
   calendarEventFilterMode: CalendarEventFilterMode;
   calendarEventMarker: string;
+  calendarDurationStrategy: CalendarDurationStrategy;
   compositionMode: CompositionMode;
   musicOrderMode: MusicOrderMode;
   podcastPercent: number;
@@ -89,6 +91,8 @@ export function TargetPlaylistForm({
   const [durationMode, setDurationMode] = useState<DurationMode>(initial.durationMode);
   const [calendarEventFilterMode, setCalendarEventFilterMode] =
     useState<CalendarEventFilterMode>(initial.calendarEventFilterMode);
+  const [calendarDurationStrategy, setCalendarDurationStrategy] =
+    useState<CalendarDurationStrategy>(initial.calendarDurationStrategy);
   const [compositionMode, setCompositionMode] = useState<CompositionMode>(
     initial.compositionMode,
   );
@@ -369,6 +373,72 @@ export function TargetPlaylistForm({
               </p>
             )}
           </div>
+
+          <fieldset className={sectionClass}>
+            <legend className="px-1 text-sm font-black text-ink-inverse">
+              Como usar a duração dos eventos
+            </legend>
+
+            <div className="mt-2 grid gap-3 md:grid-cols-2">
+              <label
+                className={optionClass(
+                  calendarDurationStrategy === "SUMMED",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="calendarDurationStrategy"
+                  value="SUMMED"
+                  checked={
+                    calendarDurationStrategy === "SUMMED"
+                  }
+                  onChange={() =>
+                    setCalendarDurationStrategy("SUMMED")
+                  }
+                  className="mr-2 accent-accent"
+                />
+
+                <span className="font-black text-ink-inverse">
+                  Somar duração dos eventos
+                </span>
+
+                <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                  Comportamento atual: por exemplo,
+                  35 min + 36 min formam um orçamento
+                  único de 71 min.
+                </span>
+              </label>
+
+              <label
+                className={optionClass(
+                  calendarDurationStrategy === "PER_EVENT",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="calendarDurationStrategy"
+                  value="PER_EVENT"
+                  checked={
+                    calendarDurationStrategy === "PER_EVENT"
+                  }
+                  onChange={() =>
+                    setCalendarDurationStrategy("PER_EVENT")
+                  }
+                  className="mr-2 accent-accent"
+                />
+
+                <span className="font-black text-ink-inverse">
+                  Restringir duração por evento
+                </span>
+
+                <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                  Cada evento vira um bloco independente.
+                  Um item nunca usa minutos disponíveis
+                  no evento seguinte.
+                </span>
+              </label>
+            </div>
+          </fieldset>
 
           <fieldset className={sectionClass}>
             <legend className="px-1 text-sm font-black text-ink-inverse">Eventos usados no cálculo</legend>

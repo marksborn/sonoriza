@@ -446,6 +446,11 @@ enum CalendarEventFilterMode {
   MARKER
 }
 
+enum CalendarDurationStrategy {
+  SUMMED
+  PER_EVENT
+}
+
 enum PodcastEpisodeMaxDurationMode {
   NONE
   FIXED
@@ -491,6 +496,7 @@ model TargetPlaylist {
   emptyCalendarBehavior            EmptyCalendarBehavior         @default(CLEAR)
   calendarEventFilterMode          CalendarEventFilterMode       @default(ALL)
   calendarEventMarker              String?
+  calendarDurationStrategy         CalendarDurationStrategy      @default(SUMMED)
   podcastPercent                   Int                           @default(60)
   podcastEpisodeMaxDurationMode    PodcastEpisodeMaxDurationMode @default(NONE)
   podcastEpisodeMaxDurationSeconds Int?

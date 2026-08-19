@@ -142,6 +142,9 @@ async function saveTarget(formData: FormData) {
   const calendarEventMarker = String(
     formData.get("calendarEventMarker") ?? "",
   ).trim();
+  const calendarDurationStrategy = String(
+    formData.get("calendarDurationStrategy") ?? "SUMMED",
+  ).trim();
   const podcastEpisodeMaxDurationMode = String(
     formData.get("podcastEpisodeMaxDurationMode") ?? "NONE",
   ).trim();
@@ -221,6 +224,20 @@ async function saveTarget(formData: FormData) {
       : null;
 
   if (durationMode === "CALENDAR" && !normalizedCalendarEventFilterMode) fail("invalid");
+
+  const normalizedCalendarDurationStrategy =
+    calendarDurationStrategy === "SUMMED" ||
+    calendarDurationStrategy === "PER_EVENT"
+      ? calendarDurationStrategy
+      : null;
+
+  if (
+    durationMode === "CALENDAR" &&
+    !normalizedCalendarDurationStrategy
+  ) {
+    fail("invalid");
+  }
+
   if (
     durationMode === "CALENDAR" &&
     normalizedCalendarEventFilterMode === "MARKER" &&
@@ -332,9 +349,14 @@ async function saveTarget(formData: FormData) {
     calendarEventFilterMode:
       durationMode === "CALENDAR" ? normalizedCalendarEventFilterMode! : "ALL",
     calendarEventMarker:
-      durationMode === "CALENDAR" && normalizedCalendarEventFilterMode === "MARKER"
+      durationMode === "CALENDAR" &&
+      normalizedCalendarEventFilterMode === "MARKER"
         ? calendarEventMarker
         : null,
+    calendarDurationStrategy:
+      durationMode === "CALENDAR"
+        ? normalizedCalendarDurationStrategy!
+        : "SUMMED",
     podcastPercent: podcastPercent!,
     podcastEpisodeMaxDurationMode: normalizedPodcastEpisodeMaxDurationMode,
     podcastEpisodeMaxDurationSeconds:
@@ -820,6 +842,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   emptyCalendarBehavior: "KEEP",
                   calendarEventFilterMode: "ALL",
                   calendarEventMarker: "",
+                  calendarDurationStrategy: "SUMMED",
                   compositionMode: "PROPORTION",
                   musicOrderMode: "STANDARD",
                   podcastPercent: 60,
@@ -918,6 +941,10 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                                       target.calendarEventMarker ?? "não informado"
                                     }`
                                   : "todos"
+                              } · duração: ${
+                                target.calendarDurationStrategy === "PER_EVENT"
+                                  ? "por evento"
+                                  : "somada"
                               } · sem evento: ${emptyBehaviorLabel(
                                 target.emptyCalendarBehavior,
                               )}`
@@ -1005,6 +1032,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             emptyCalendarBehavior: target.emptyCalendarBehavior,
                             calendarEventFilterMode: target.calendarEventFilterMode,
                             calendarEventMarker: target.calendarEventMarker ?? "",
+                            calendarDurationStrategy: target.calendarDurationStrategy,
                             compositionMode: target.compositionMode,
                             musicOrderMode: target.musicOrderMode,
                             podcastPercent: target.podcastPercent,
