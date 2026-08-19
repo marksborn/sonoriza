@@ -56,8 +56,38 @@ export interface PlaylistRules {
   maxTracksPerAlbum?: number | null;
 }
 
+/**
+ * CALENDAR-02: one independent duration budget inside a destination.
+ *
+ * The planner intentionally keeps the origin opaque. Calendar metadata is
+ * represented only by stable/read-only audit fields supplied by orchestration.
+ */
+export interface DurationPlanningBlock {
+  key: string;
+  targetDurationMs: number;
+  eventId?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+}
+
+export interface PlannedDurationBlock extends DurationPlanningBlock {
+  index: number;
+  itemStartPosition: number;
+  itemEndPositionExclusive: number;
+  itemCount: number;
+  filledDurationMs: number;
+  deficitMs: number;
+  musicDurationMs: number;
+  podcastDurationMs: number;
+  compositionQualityPassed: boolean;
+  stoppedAtPatternIndex: number | null;
+  sequenceStopReason: SequenceStopReason | null;
+}
+
 export interface PlannedItem extends Candidate {
   position: number;
+  /** CALENDAR-02: keeps post-selection ordering inside the original block. */
+  planningBlockIndex?: number;
 }
 
 export interface PlanResult {
@@ -99,5 +129,13 @@ export interface PlanResult {
     stoppedAtPatternIndex: number | null;
     sequenceQualityPassed: boolean | null;
     sequenceStopReason: SequenceStopReason | null;
+    /** CALENDAR-02: absent for the legacy/summed planner path. */
+    segmentation?: {
+      mode: "PER_EVENT";
+      targetDurationMs: number;
+      filledDurationMs: number;
+      deficitMs: number;
+      blocks: PlannedDurationBlock[];
+    };
   };
 }
