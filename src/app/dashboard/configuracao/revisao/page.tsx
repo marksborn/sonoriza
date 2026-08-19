@@ -15,6 +15,20 @@ type PageProps = {
   searchParams: Promise<{ run?: string }>;
 };
 
+type SimulationSegmentation = {
+  mode: "PER_EVENT";
+  targetDurationMs: number;
+  filledDurationMs: number;
+  deficitMs: number;
+  blocks: Array<{
+    index: number;
+    targetDurationMs: number;
+    filledDurationMs: number;
+    deficitMs: number;
+    itemCount: number;
+  }>;
+};
+
 type SimulationTargetSummary = {
   targetPlaylistId: string | null;
   name: string;
@@ -26,6 +40,13 @@ type SimulationTargetSummary = {
   calendarEventMarker: string | null;
   calendarDurationMinutes: number | null;
   calendarMaxEventDurationMinutes: number | null;
+  calendarDurationStrategy:
+    | "SUMMED"
+    | "PER_EVENT"
+    | null;
+  segmentation:
+    | SimulationSegmentation
+    | null;
   podcastEpisodeMaxDurationMode: "NONE" | "FIXED" | "CALENDAR_MAX_EVENT" | null;
   podcastEpisodeMaxDurationMinutes: number | null;
   podcastDurationExceededCount: number | null;
@@ -75,7 +96,126 @@ function booleanValue(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
-function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
+function readSimulationSegmentation(
+  value: unknown,
+): SimulationSegmentation | null {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+
+  const record =
+    value as Record<string, unknown>;
+
+  if (record.mode !== "PER_EVENT") {
+    return null;
+  }
+
+  const targetDurationMs =
+    numberValue(
+      record.targetDurationMs,
+    );
+
+  const filledDurationMs =
+    numberValue(
+      record.filledDurationMs,
+    );
+
+  const deficitMs =
+    numberValue(
+      record.deficitMs,
+    );
+
+  if (
+    targetDurationMs === null ||
+    filledDurationMs === null ||
+    deficitMs === null
+  ) {
+    return null;
+  }
+
+  const blocks =
+    Array.isArray(record.blocks)
+      ? record.blocks.flatMap(
+          (entry, arrayIndex) => {
+            if (
+              !entry ||
+              typeof entry !== "object" ||
+              Array.isArray(entry)
+            ) {
+              return [];
+            }
+
+            const block =
+              entry as Record<
+                string,
+                unknown
+              >;
+
+            const blockTarget =
+              numberValue(
+                block.targetDurationMs,
+              );
+
+            const blockFilled =
+              numberValue(
+                block.filledDurationMs,
+              );
+
+            const blockDeficit =
+              numberValue(
+                block.deficitMs,
+              );
+
+            const itemCount =
+              numberValue(
+                block.itemCount,
+              );
+
+            if (
+              blockTarget === null ||
+              blockFilled === null ||
+              blockDeficit === null ||
+              itemCount === null
+            ) {
+              return [];
+            }
+
+            return [
+              {
+                index:
+                  numberValue(
+                    block.index,
+                  ) ??
+                  arrayIndex,
+                targetDurationMs:
+                  blockTarget,
+                filledDurationMs:
+                  blockFilled,
+                deficitMs:
+                  blockDeficit,
+                itemCount,
+              },
+            ];
+          },
+        )
+      : [];
+
+  return {
+    mode: "PER_EVENT",
+    targetDurationMs,
+    filledDurationMs,
+    deficitMs,
+    blocks,
+  };
+}
+
+function readSimulationTargets(
+  summary: unknown,
+): SimulationTargetSummary[] {
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) return [];
   const targets = (summary as Record<string, unknown>).targets;
   if (!Array.isArray(targets)) return [];
@@ -101,7 +241,21 @@ function readSimulationTargets(summary: unknown): SimulationTargetSummary[] {
         calendarEventMarker:
           typeof value.calendarEventMarker === "string" ? value.calendarEventMarker : null,
         calendarDurationMinutes: numberValue(value.calendarDurationMinutes),
-        calendarMaxEventDurationMinutes: numberValue(value.calendarMaxEventDurationMinutes),
+        calendarMaxEventDurationMinutes:
+          numberValue(
+            value.calendarMaxEventDurationMinutes,
+          ),
+        calendarDurationStrategy:
+          value.calendarDurationStrategy ===
+            "SUMMED" ||
+          value.calendarDurationStrategy ===
+            "PER_EVENT"
+            ? value.calendarDurationStrategy
+            : null,
+        segmentation:
+          readSimulationSegmentation(
+            value.segmentation,
+          ),
         podcastEpisodeMaxDurationMode:
           value.podcastEpisodeMaxDurationMode === "NONE" ||
           value.podcastEpisodeMaxDurationMode === "FIXED" ||
@@ -595,6 +749,10 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                           target.calendarEventFilterMode === "MARKER"
                             ? `marcador ${target.calendarEventMarker ?? "não informado"}`
                             : "todos os eventos"
+                        } · ${
+                          target.calendarDurationStrategy === "PER_EVENT"
+                            ? "duração por evento"
+                            : "duração somada"
                         }`
                       : `Duração fixa: ${durationLabel(target.fixedDurationSeconds)}`}
                     {target.durationMode === "CALENDAR"
@@ -927,6 +1085,63 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                                 : ""}
                             </p>
                           )}
+                          {target.segmentation && (
+                            <div className="status-info mt-3 rounded-xl border p-3 text-xs leading-5">
+                              <p className="font-black">
+                                Duração por evento ·{" "}
+                                {target.segmentation.blocks.length} blocos independentes
+                              </p>
+
+                              <p className="mt-1 opacity-80">
+                                Alvo total{" "}
+                                {Math.round(
+                                  target.segmentation.targetDurationMs /
+                                    60_000,
+                                )}{" "}
+                                min · preenchido{" "}
+                                {Math.round(
+                                  target.segmentation.filledDurationMs /
+                                    60_000,
+                                )}{" "}
+                                min
+                                {target.segmentation.deficitMs > 0
+                                  ? ` · déficit ${Math.round(
+                                      target.segmentation.deficitMs /
+                                        60_000,
+                                    )} min`
+                                  : " · sem déficit"}
+                              </p>
+
+                              <div className="mt-2 space-y-1">
+                                {target.segmentation.blocks.map(
+                                  (block) => (
+                                    <p
+                                      key={`segment-${block.index}`}
+                                    >
+                                      Bloco {block.index + 1}: alvo{" "}
+                                      {Math.round(
+                                        block.targetDurationMs /
+                                          60_000,
+                                      )}{" "}
+                                      min · preenchido{" "}
+                                      {Math.round(
+                                        block.filledDurationMs /
+                                          60_000,
+                                      )}{" "}
+                                      min · {block.itemCount} itens
+                                      {block.deficitMs > 0
+                                        ? ` · déficit ${Math.round(
+                                            block.deficitMs /
+                                              60_000,
+                                          )} min`
+                                        : ""}
+                                    </p>
+                                  ),
+                                )}
+                              </div>
+                            </div>
+                          )}
+
                           {target.podcastEpisodeMaxDurationMode && (
                             <p className="mt-2 text-xs font-semibold leading-5 opacity-70">
                               {target.podcastEpisodeMaxDurationMode === "NONE"

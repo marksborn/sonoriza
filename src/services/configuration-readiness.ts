@@ -59,6 +59,7 @@ export type ConfigurationAssessment = {
     emptyCalendarBehavior: "CLEAR" | "KEEP" | "SKIP";
     calendarEventFilterMode: "ALL" | "MARKER";
     calendarEventMarker: string | null;
+    calendarDurationStrategy: "SUMMED" | "PER_EVENT";
     compositionMode: "PROPORTION" | "SEQUENCE";
     musicOrderMode: "STANDARD" | "RANDOMIZED";
     podcastPercent: number;
@@ -156,6 +157,7 @@ export async function assessConfiguration(
           emptyCalendarBehavior: true,
           calendarEventFilterMode: true,
           calendarEventMarker: true,
+          calendarDurationStrategy: true,
           compositionMode: true,
           musicOrderMode: true,
           podcastPercent: true,
@@ -223,6 +225,7 @@ export async function assessConfiguration(
     emptyCalendarBehavior: target.emptyCalendarBehavior,
     calendarEventFilterMode: target.calendarEventFilterMode,
     calendarEventMarker: target.calendarEventMarker,
+    calendarDurationStrategy: target.calendarDurationStrategy,
     compositionMode: target.compositionMode,
     musicOrderMode: target.musicOrderMode,
     podcastPercent: target.podcastPercent,
@@ -555,6 +558,7 @@ export async function assessConfiguration(
       emptyCalendarBehavior: target.emptyCalendarBehavior,
       calendarEventFilterMode: target.calendarEventFilterMode,
       calendarEventMarker: target.calendarEventMarker,
+      calendarDurationStrategy: target.calendarDurationStrategy,
       compositionMode: target.compositionMode,
       musicOrderMode: target.musicOrderMode,
       podcastPercent:

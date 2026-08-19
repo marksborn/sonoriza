@@ -1,6 +1,7 @@
 import type { RunStatus, RunTrigger, TargetPlaylist } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
 import {
   computeCalendarDuration,
   type CalendarDurationResult,
@@ -8,6 +9,7 @@ import {
 import {
   parseSequencePattern,
   type Candidate,
+  type DurationPlanningBlock,
   type RunTarget,
 } from "@/services/playlist-planner";
 import type { KeepFilledTargetPatch } from "@/services/keep-filled-maintenance";
@@ -167,13 +169,29 @@ export async function generatePlaylists(
       );
       resolvedDurationByTargetId.set(target.id, resolved);
 
-      if (target.durationMode === "CALENDAR" && resolved.durationMs <= 0) {
+      const durationBlocks =
+        calendarDurationPlanningBlocks(
+          target.calendarDurationStrategy,
+          resolved.calendar,
+        );
+
+      if (
+        target.durationMode === "CALENDAR" &&
+        resolved.durationMs <= 0
+      ) {
         if (target.emptyCalendarBehavior === "CLEAR") {
           log({
             level: "INFO",
             message: `Target "${target.name}" has no eligible calendar events → will be cleared`,
           });
-          runTargets.push(toRunTarget(target, 0, null));
+          runTargets.push(
+            toRunTarget(
+              target,
+              0,
+              null,
+              durationBlocks,
+            ),
+          );
         } else {
           log({
             level: "INFO",
@@ -189,6 +207,7 @@ export async function generatePlaylists(
           target,
           resolved.durationMs,
           resolved.podcastEpisodeMaxDurationMs,
+          durationBlocks,
         ),
       );
     }
@@ -791,8 +810,12 @@ export async function generatePlaylists(
         maxTracksPerArtist: target.maxTracksPerArtist,
         maxTracksPerAlbum: target.maxTracksPerAlbum,
         scheduledPolicy: opts.scheduledPolicyByTargetId?.[target.id] ?? null,
-        targetDurationMs: resolvedDuration?.durationMs ?? 0,
-        sequencePattern: parseSequencePattern(target.sequencePattern),
+        targetDurationMs:
+          resolvedDuration?.durationMs ?? 0,
+        calendarDurationStrategy:
+          target.calendarDurationStrategy,
+        sequencePattern:
+          parseSequencePattern(target.sequencePattern),
         ...stats,
         musicCount: items.filter((item) => item.type === "MUSIC").length,
         podcastCount: items.filter((item) => item.type === "PODCAST").length,
@@ -1243,6 +1266,7 @@ function toRunTarget(
   target: TargetPlaylist,
   durationMs: number,
   maxPodcastDurationMs: number | null,
+  durationBlocks?: DurationPlanningBlock[],
 ): RunTarget {
   const sequencePattern = parseSequencePattern(target.sequencePattern);
   if (target.compositionMode === "SEQUENCE" && sequencePattern.length === 0) {
@@ -1252,6 +1276,9 @@ function toRunTarget(
     targetPlaylistId: target.id,
     name: target.name,
     priority: target.priority,
+    ...(durationBlocks
+      ? { durationBlocks }
+      : {}),
     rules: {
       targetDurationMs: durationMs,
       compositionMode: target.compositionMode,
