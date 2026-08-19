@@ -17,15 +17,15 @@ test("HISTORY-02 reconciles strong Spotify and conservative Last.fm matches", ()
     event("near", "Artist E", "Track E", "2026-08-18T14:00:00Z"),
   ];
 
-  const existing: ExistingListeningEvent[] = [
-    existing("rp-a", "spotify", "Other metadata name is irrelevant", "Other artist", "2026-08-18T10:00:30Z", "SPOTIFY_RECENTLY_PLAYED"),
-    existing("lf-b", null, "Track B", "Artist B", "2026-08-18T11:00:10Z", "LASTFM_SCROBBLE"),
-    existing("lf-d1", null, "Track D", "Artist D", "2026-08-18T13:00:20Z", "LASTFM_SCROBBLE"),
-    existing("lf-d2", null, "Track D", "Artist D", "2026-08-18T13:00:40Z", "LASTFM_SCROBBLE"),
-    existing("rp-near", "near", "Track E", "Artist E", "2026-08-18T14:05:00Z", "SPOTIFY_RECENTLY_PLAYED"),
+  const existingEvents: ExistingListeningEvent[] = [
+    existingEvent("rp-a", "spotify", "Other metadata name is irrelevant", "Other artist", "2026-08-18T10:00:30Z", "SPOTIFY_RECENTLY_PLAYED"),
+    existingEvent("lf-b", null, "Track B", "Artist B", "2026-08-18T11:00:10Z", "LASTFM_SCROBBLE"),
+    existingEvent("lf-d1", null, "Track D", "Artist D", "2026-08-18T13:00:20Z", "LASTFM_SCROBBLE"),
+    existingEvent("lf-d2", null, "Track D", "Artist D", "2026-08-18T13:00:40Z", "LASTFM_SCROBBLE"),
+    existingEvent("rp-near", "near", "Track E", "Artist E", "2026-08-18T14:05:00Z", "SPOTIFY_RECENTLY_PLAYED"),
   ];
 
-  const result = reconcileSpotifyExtendedHistory(exports, existing);
+  const result = reconcileSpotifyExtendedHistory(exports, existingEvents);
   assert.deepEqual(
     result.entries.map((entry) => entry.classification),
     [
@@ -46,7 +46,7 @@ test("HISTORY-02 reconciles strong Spotify and conservative Last.fm matches", ()
 
 test("HISTORY-02 treats ts as stop time and matches against estimated start time", () => {
   const exportEvent = event("timing", "Artist", "Track", "2026-08-18T10:00:00Z", 180000);
-  const existingAtStart = existing("lf", null, "Track", "Artist", "2026-08-18T10:00:00Z", "LASTFM_SCROBBLE");
+  const existingAtStart = existingEvent("lf", null, "Track", "Artist", "2026-08-18T10:00:00Z", "LASTFM_SCROBBLE");
   const result = reconcileSpotifyExtendedHistory([exportEvent], [existingAtStart]);
   assert.equal(result.entries[0]?.classification, "EXACT_EXISTING_LASTFM");
   assert.equal(result.entries[0]?.matchDeltaMs, 0);
@@ -54,11 +54,11 @@ test("HISTORY-02 treats ts as stop time and matches against estimated start time
 
 test("HISTORY-02 does not re-enrich an already enriched canonical event", () => {
   const exportEvent = event("enriched", "Artist", "Track", "2026-08-18T10:00:00Z");
-  const existingEvent: ExistingListeningEvent = {
-    ...existing("rp", "enriched", "Track", "Artist", "2026-08-18T10:00:00Z", "SPOTIFY_RECENTLY_PLAYED"),
+  const existingEventRow: ExistingListeningEvent = {
+    ...existingEvent("rp", "enriched", "Track", "Artist", "2026-08-18T10:00:00Z", "SPOTIFY_RECENTLY_PLAYED"),
     metadata: { spotifyExtendedHistory: { sourceEventKey: exportEvent.sourceEventKey } },
   };
-  const result = reconcileSpotifyExtendedHistory([exportEvent], [existingEvent]);
+  const result = reconcileSpotifyExtendedHistory([exportEvent], [existingEventRow]);
   assert.equal(result.entries[0]?.enrichmentCandidate, false);
   assert.equal(result.summary.enrichmentCandidates, 0);
 });
@@ -108,7 +108,7 @@ function event(
   };
 }
 
-function existing(
+function existingEvent(
   id: string,
   spotifyTrackId: string | null,
   trackName: string,
