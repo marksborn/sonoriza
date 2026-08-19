@@ -307,6 +307,7 @@ function targetsNeedingMoreCandidates(
     if (!target) return false;
     const stats = planned.result.stats;
     if (!stats.compositionQualityPassed) return true;
+    if ((stats.segmentation?.deficitMs ?? 0) > 0) return true;
     return (
       target.rules.compositionMode === "SEQUENCE" &&
       stats.totalDurationMs < target.rules.targetDurationMs &&
