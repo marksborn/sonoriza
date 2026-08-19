@@ -31,6 +31,11 @@ export interface CalendarDurationResult {
   blocks: CalendarDurationBlock[];
 }
 
+type CalendarDurationEvent = {
+  calendarIndex: number;
+  event: CalendarEvent;
+};
+
 /** [start of day, start of next day) for the given date. */
 export function dayBounds(date: Date): DayBounds {
   const from = new Date(date);
@@ -91,6 +96,31 @@ export function maxTimedDurationMs(
 }
 
 /**
+ * CALENDAR-02 pure seam: maps eligible events from multiple calendars into a
+ * stable global chronology. Calendar index participates only in the opaque key
+ * so provider event ids may safely repeat across calendars.
+ */
+export function buildCalendarDurationBlocks(
+  entries: CalendarDurationEvent[],
+): CalendarDurationBlock[] {
+  return entries
+    .map(({ calendarIndex, event }) => ({
+      key: `${calendarIndex}:${event.id}:${event.start.toISOString()}`,
+      eventId: event.id,
+      startsAt: new Date(event.start),
+      endsAt: new Date(event.end),
+      durationMs: Math.max(0, event.end.getTime() - event.start.getTime()),
+    }))
+    .sort((left, right) =>
+      left.startsAt.getTime() !== right.startsAt.getTime()
+        ? left.startsAt.getTime() - right.startsAt.getTime()
+        : left.endsAt.getTime() !== right.endsAt.getTime()
+          ? left.endsAt.getTime() - right.endsAt.getTime()
+          : left.key.localeCompare(right.key),
+    );
+}
+
+/**
  * Resolves calendar-driven duration for a day across calendars enabled for
  * duration, while also returning audit metadata for CONFIG-04 / CALENDAR-02.
  *
@@ -126,7 +156,7 @@ export async function computeCalendarDuration(
   const client = await GoogleCalendarClient.forUser(userId);
 
   let timedEvents = 0;
-  const blocks: CalendarDurationBlock[] = [];
+  const matchedEvents: CalendarDurationEvent[] = [];
 
   for (const [calendarIndex, calendarId] of durationCalendarIds.entries()) {
     const events = await client.listEvents(calendarId, from, to);
@@ -136,26 +166,15 @@ export async function computeCalendarDuration(
     );
 
     timedEvents += timed.length;
-    for (const event of matched) {
-      const durationMs = Math.max(0, event.end.getTime() - event.start.getTime());
-      blocks.push({
-        key: `${calendarIndex}:${event.id}:${event.start.toISOString()}`,
-        eventId: event.id,
-        startsAt: new Date(event.start),
-        endsAt: new Date(event.end),
-        durationMs,
-      });
-    }
+    matchedEvents.push(
+      ...matched.map((event) => ({
+        calendarIndex,
+        event,
+      })),
+    );
   }
 
-  blocks.sort((left, right) =>
-    left.startsAt.getTime() !== right.startsAt.getTime()
-      ? left.startsAt.getTime() - right.startsAt.getTime()
-      : left.endsAt.getTime() !== right.endsAt.getTime()
-        ? left.endsAt.getTime() - right.endsAt.getTime()
-        : left.key.localeCompare(right.key),
-  );
-
+  const blocks = buildCalendarDurationBlocks(matchedEvents);
   const durationMs = blocks.reduce((sum, block) => sum + block.durationMs, 0);
   const maxEventDurationMs = blocks.reduce(
     (max, block) => Math.max(max, block.durationMs),
