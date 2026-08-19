@@ -6,6 +6,8 @@ export type OrderablePlaylistItem = {
   uri: string;
   type: "MUSIC" | "PODCAST";
   position: number;
+  /** CALENDAR-02: items with a block index are randomized only inside that block. */
+  planningBlockIndex?: number;
 };
 
 export type MusicOrderEvidence = {
@@ -24,10 +26,21 @@ export function createMusicOrderSeed(runId: string, targetPlaylistId: string): s
     .slice(0, 32);
 }
 
-function rankingKey(seed: string, item: OrderablePlaylistItem, originalIndex: number) {
+function rankingKey(
+  seed: string,
+  group: string,
+  item: OrderablePlaylistItem,
+  originalIndex: number,
+) {
   return createHash("sha256")
-    .update(`${seed}\0${originalIndex}\0${item.uri}`)
+    .update(`${seed}\0${group}\0${originalIndex}\0${item.uri}`)
     .digest("hex");
+}
+
+function orderGroup(item: OrderablePlaylistItem): string {
+  return item.planningBlockIndex === undefined
+    ? "whole-target"
+    : `block:${item.planningBlockIndex}`;
 }
 
 export function playlistOrderHash(items: OrderablePlaylistItem[]) {
@@ -40,6 +53,10 @@ export function playlistOrderHash(items: OrderablePlaylistItem[]) {
  * ORDER-01 runs strictly after selection. RANDOMIZED reassigns only MUSIC
  * identities among positions that are already MUSIC slots. Podcast positions,
  * the type pattern, selected URI set and total duration are untouched.
+ *
+ * CALENDAR-02 narrows that same operation to each planning block. This prevents
+ * differently-sized music items from moving across event boundaries after the
+ * segmented planner has already proved that every item fits its own budget.
  */
 export function applyMusicOrder<T extends OrderablePlaylistItem>(
   items: T[],
@@ -64,28 +81,48 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
 
   if (!seed) throw new Error("RANDOMIZED music order requires a seed");
 
-  const originalMusic = items.filter((item) => item.type === "MUSIC");
-  const rankedMusic = originalMusic
-    .map((item, originalIndex) => ({
-      item,
-      originalIndex,
-      key: rankingKey(seed, item, originalIndex),
-    }))
-    .sort((left, right) =>
-      left.key === right.key
-        ? left.originalIndex - right.originalIndex
-        : left.key.localeCompare(right.key),
-    )
-    .map((entry) => entry.item);
+  const rankedByGroup = new Map<string, T[]>();
+  const musicIndexByGroup = new Map<string, number>();
 
-  let musicIndex = 0;
+  for (const [group, groupItems] of groupMusic(items)) {
+    rankedByGroup.set(
+      group,
+      groupItems
+        .map(({ item, originalIndex }) => ({
+          item,
+          originalIndex,
+          key: rankingKey(seed, group, item, originalIndex),
+        }))
+        .sort((left, right) =>
+          left.key === right.key
+            ? left.originalIndex - right.originalIndex
+            : left.key.localeCompare(right.key),
+        )
+        .map((entry) => entry.item),
+    );
+    musicIndexByGroup.set(group, 0);
+  }
+
   const result = items.map((slot) => {
     if (slot.type !== "MUSIC") return { ...slot } as T;
-    const selected = rankedMusic[musicIndex++]!;
-    return { ...selected, position: slot.position } as T;
+    const group = orderGroup(slot);
+    const ranked = rankedByGroup.get(group) ?? [];
+    const index = musicIndexByGroup.get(group) ?? 0;
+    const selected = ranked[index];
+    if (!selected) throw new Error(`Missing randomized music for ${group}`);
+    musicIndexByGroup.set(group, index + 1);
+    return {
+      ...selected,
+      position: slot.position,
+      ...(slot.planningBlockIndex === undefined
+        ? {}
+        : { planningBlockIndex: slot.planningBlockIndex }),
+    } as T;
   });
 
-  const originalMusicUris = originalMusic.map((item) => item.uri);
+  const originalMusicUris = items
+    .filter((item) => item.type === "MUSIC")
+    .map((item) => item.uri);
   const finalMusicUris = result
     .filter((item) => item.type === "MUSIC")
     .map((item) => item.uri);
@@ -97,10 +134,24 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
       seed,
       seedSource,
       changed: originalMusicUris.some((uri, index) => finalMusicUris[index] !== uri),
-      musicCount: originalMusic.length,
+      musicCount: originalMusicUris.length,
       orderHash: playlistOrderHash(result),
     },
   };
+}
+
+function groupMusic<T extends OrderablePlaylistItem>(
+  items: T[],
+): Map<string, Array<{ item: T; originalIndex: number }>> {
+  const groups = new Map<string, Array<{ item: T; originalIndex: number }>>();
+  items.forEach((item, originalIndex) => {
+    if (item.type !== "MUSIC") return;
+    const group = orderGroup(item);
+    const current = groups.get(group) ?? [];
+    current.push({ item, originalIndex });
+    groups.set(group, current);
+  });
+  return groups;
 }
 
 export type ReusableMusicOrderEvidence = {
