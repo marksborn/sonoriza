@@ -83,8 +83,8 @@ export async function readSpotifyExtendedHistoryPackage(
   let podcastRecordCount = 0;
   let audiobookRecordCount = 0;
   let otherAudioRecordCount = 0;
-  let earliestEndedAt: Date | null = null;
-  let latestEndedAt: Date | null = null;
+  let earliestEndedAtMs: number | null = null;
+  let latestEndedAtMs: number | null = null;
 
   for (const entry of audioEntries) {
     const rows = parseJsonArray(entry.name, entry.data);
@@ -109,8 +109,13 @@ export async function readSpotifyExtendedHistoryPackage(
           continue;
         }
 
-        earliestEndedAt = earliestEndedAt === null || parsed.endedAt < earliestEndedAt ? parsed.endedAt : earliestEndedAt;
-        latestEndedAt = latestEndedAt === null || parsed.endedAt > latestEndedAt ? parsed.endedAt : latestEndedAt;
+        const endedAtMs = parsed.endedAt.getTime();
+        if (earliestEndedAtMs === null || endedAtMs < earliestEndedAtMs) {
+          earliestEndedAtMs = endedAtMs;
+        }
+        if (latestEndedAtMs === null || endedAtMs > latestEndedAtMs) {
+          latestEndedAtMs = endedAtMs;
+        }
 
         const seen = occurrenceCounts.get(parsed.sourceEventKey) ?? 0;
         occurrenceCounts.set(parsed.sourceEventKey, seen + 1);
@@ -158,8 +163,8 @@ export async function readSpotifyExtendedHistoryPackage(
     audiobookRecordCount,
     otherAudioRecordCount,
     invalidMusicRecords,
-    earliestEndedAt,
-    latestEndedAt,
+    earliestEndedAt: earliestEndedAtMs === null ? null : new Date(earliestEndedAtMs),
+    latestEndedAt: latestEndedAtMs === null ? null : new Date(latestEndedAtMs),
     musicEvents,
   };
 }
