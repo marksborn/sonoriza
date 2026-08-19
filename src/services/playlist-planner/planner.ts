@@ -17,6 +17,15 @@ export interface PlanPlaylistInput {
   reserved?: Iterable<string>;
   /** SCHEDULE-01: valid items already present in this target, in remote order. */
   preserved?: Candidate[];
+  /**
+   * CALENDAR-02: items selected by previous blocks. They seed cross-block
+   * program/diversity constraints without consuming this block's duration.
+   */
+  constraintSeed?: Candidate[];
+  /** CALENDAR-02: when true, no selected item may cross this duration budget. */
+  strictDurationBoundary?: boolean;
+  /** CALENDAR-02: keep SEQUENCE continuous across concatenated blocks. */
+  sequenceStartIndex?: number;
 }
 
 const MIX_QUALITY_TOLERANCE_POINTS = 10;
@@ -34,7 +43,15 @@ type MusicDiversityState = {
   missingAlbumIdentityRejectedUris: Set<string>;
 };
 
-export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylistInput): PlanResult {
+export function planPlaylist({
+  rules,
+  pools,
+  reserved,
+  preserved,
+  constraintSeed,
+  strictDurationBoundary = false,
+  sequenceStartIndex = 0,
+}: PlanPlaylistInput): PlanResult {
   const target = Math.max(0, rules.targetDurationMs);
   const podcastPercent = clamp(rules.podcastPercent, 0, 100);
   const maxPodcastDurationMs =
@@ -89,6 +106,10 @@ export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylist
   let musicDurationMs = 0;
   let podcastDurationMs = 0;
 
+  for (const candidate of constraintSeed ?? []) {
+    seedConstraintState(candidate, programCounts, musicDiversity);
+  }
+
   const totalDuration = () => musicDurationMs + podcastDurationMs;
   const place = (candidate: Candidate) => {
     items.push({ ...candidate, position: items.length });
@@ -124,10 +145,18 @@ export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylist
   for (const candidate of preserved ?? []) {
     if (used.has(candidate.uri) || candidate.durationMs <= 0) continue;
     if (
+      strictDurationBoundary &&
+      candidate.durationMs > Math.max(0, target - totalDuration())
+    ) {
+      continue;
+    }
+    if (
       rules.compositionMode === "SEQUENCE" &&
       rules.sequencePattern.length > 0 &&
       candidate.type !==
-        rules.sequencePattern[items.length % rules.sequencePattern.length]
+        rules.sequencePattern[
+          (sequenceStartIndex + items.length) % rules.sequencePattern.length
+        ]
     ) {
       continue;
     }
@@ -149,10 +178,11 @@ export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylist
       sequenceStopReason = "INVALID_PATTERN";
     } else {
       sequenceQualityPassed = true;
-      let patternIndex = items.length % pattern.length;
+      let patternIndex = (sequenceStartIndex + items.length) % pattern.length;
       sequenceSlotsRequested = items.length;
       sequenceSlotsFilled = items.length;
-      completedCycles = Math.floor(items.length / pattern.length);
+      completedCycles = Math.floor((sequenceStartIndex + items.length) / pattern.length) -
+        Math.floor(sequenceStartIndex / pattern.length);
 
       while (totalDuration() < target) {
         const remainingMs = target - totalDuration();
@@ -197,12 +227,16 @@ export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylist
     }
   } else {
     while (totalDuration() < target) {
+      const remainingMs = target - totalDuration();
+      const maxCandidateDurationMs = strictDurationBoundary
+        ? remainingMs
+        : Number.POSITIVE_INFINITY;
       const music = pickCandidate(
         poolByType.MUSIC,
         used,
         programCounts,
         rules.maxEpisodesPerProgram,
-        Number.POSITIVE_INFINITY,
+        maxCandidateDurationMs,
         musicDiversity,
       );
       const podcast = pickCandidate(
@@ -210,7 +244,7 @@ export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylist
         used,
         programCounts,
         rules.maxEpisodesPerProgram,
-        Number.POSITIVE_INFINITY,
+        maxCandidateDurationMs,
         musicDiversity,
       );
       if (!music && !podcast) break;
@@ -250,7 +284,8 @@ export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylist
     : 0;
   const proportionQualityPassed =
     target === 0 ||
-    (!poolExhausted && mixDeviationPoints <= MIX_QUALITY_TOLERANCE_POINTS);
+    (mixDeviationPoints <= MIX_QUALITY_TOLERANCE_POINTS &&
+      (strictDurationBoundary || !poolExhausted));
   const compositionQualityPassed = proportionMode
     ? proportionQualityPassed
     : sequenceQualityPassed === true;
@@ -297,6 +332,37 @@ export function planPlaylist({ rules, pools, reserved, preserved }: PlanPlaylist
       sequenceStopReason,
     },
   };
+}
+
+function seedConstraintState(
+  candidate: Candidate,
+  programCounts: Map<string, number>,
+  musicDiversity: MusicDiversityState,
+) {
+  if (candidate.type === "PODCAST") {
+    const programId = normalizedIdentity(candidate.programId);
+    if (programId) {
+      programCounts.set(programId, (programCounts.get(programId) ?? 0) + 1);
+    }
+    return;
+  }
+
+  const artistId = normalizedIdentity(candidate.primaryArtistId);
+  const albumId = normalizedIdentity(candidate.albumId);
+  if (artistId) {
+    musicDiversity.artistCounts.set(
+      artistId,
+      (musicDiversity.artistCounts.get(artistId) ?? 0) + 1,
+    );
+    musicDiversity.distinctArtistIds.add(artistId);
+  }
+  if (albumId) {
+    musicDiversity.albumCounts.set(
+      albumId,
+      (musicDiversity.albumCounts.get(albumId) ?? 0) + 1,
+    );
+    musicDiversity.distinctAlbumIds.add(albumId);
+  }
 }
 
 function chooseProportionCandidate(input: {
