@@ -32,9 +32,14 @@ function rankingKey(
   item: OrderablePlaylistItem,
   originalIndex: number,
 ) {
-  return createHash("sha256")
-    .update(`${seed}\0${group}\0${originalIndex}\0${item.uri}`)
-    .digest("hex");
+  // Backward compatibility: the legacy whole-target path must retain the exact
+  // ORDER-01 ranking function so an unrelated CALENDAR-02 deploy does not
+  // change existing STANDARD/RANDOMIZED semantics.
+  const payload =
+    group === "whole-target"
+      ? `${seed}\0${originalIndex}\0${item.uri}`
+      : `${seed}\0${group}\0${originalIndex}\0${item.uri}`;
+  return createHash("sha256").update(payload).digest("hex");
 }
 
 function orderGroup(item: OrderablePlaylistItem): string {
