@@ -101,6 +101,17 @@ export async function scanLastFmBackfill(
       }),
     );
 
+    // Last.fm occasionally returns synthetic/invalid timestamps even when a
+    // bounded range was requested (for example uts=1..60 -> Jan 1970). Treat
+    // the frozen checkpoint window as authoritative and never persist provider
+    // rows outside it. `to` is exclusive by HISTORY-01 contract.
+    const events = page.events.filter(
+      (event) =>
+        (checkpoint.from === null || event.playedAt >= checkpoint.from) &&
+        event.playedAt < checkpoint.to,
+    );
+    const outOfRangeCount = page.events.length - events.length;
+
     const totalPages = checkpoint.totalPages ?? page.totalPages;
     const scannedProviderRows =
       checkpoint.scannedProviderRows +
@@ -112,9 +123,10 @@ export async function scanLastFmBackfill(
       nextPage: checkpoint.nextPage + 1,
       totalPages,
       scannedProviderRows,
-      acceptedEvents: checkpoint.acceptedEvents + page.events.length,
+      acceptedEvents: checkpoint.acceptedEvents + events.length,
       nowPlayingSkipped: checkpoint.nowPlayingSkipped + page.nowPlayingCount,
-      invalidSkipped: checkpoint.invalidSkipped + page.invalidCount,
+      invalidSkipped:
+        checkpoint.invalidSkipped + page.invalidCount + outOfRangeCount,
     };
 
     // The caller must persist events and checkpoint atomically when possible.
@@ -122,7 +134,7 @@ export async function scanLastFmBackfill(
     await options.onPage({
       checkpointBefore: before,
       checkpointAfter: cloneCheckpoint(after),
-      events: page.events,
+      events,
     });
     checkpoint = after;
     pagesProcessed += 1;
