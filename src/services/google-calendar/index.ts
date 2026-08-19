@@ -4,6 +4,7 @@ export {
   type CalendarEvent,
 } from "./client";
 export {
+  buildCalendarDurationBlocks,
   computeCalendarDuration,
   computeCalendarDurationMs,
   matchesCalendarEventFilter,
