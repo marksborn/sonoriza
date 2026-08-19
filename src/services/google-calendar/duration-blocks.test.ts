@@ -8,7 +8,6 @@ function event(id: string, start: string, end: string): CalendarEvent {
   return {
     id,
     summary: id,
-    description: null,
     start: new Date(start),
     end: new Date(end),
     allDay: false,
