@@ -164,11 +164,22 @@ function reconcileOne(
   }
 
   const estimatedStartMs = event.estimatedStartedAt.getTime();
-  const spotifyCandidates = findWithin(
-    spotifyIndex.get(event.spotifyTrackId) ?? [],
-    estimatedStartMs,
-    AMBIGUOUS_MATCH_TOLERANCE_MS,
-  );
+
+  // Recently Played is only a strong candidate when the export itself carries
+  // Spotify catalog identity. For URI-less rows, never fall back to name-only
+  // matching against Spotify because that could merge remasters/live versions.
+  const spotifyCandidates =
+    event.spotifyTrackId === null
+      ? []
+      : findWithin(
+          spotifyIndex.get(event.spotifyTrackId) ?? [],
+          estimatedStartMs,
+          AMBIGUOUS_MATCH_TOLERANCE_MS,
+        );
+
+  // Last.fm does not provide Spotify identity, so URI-less rows use the same
+  // conservative exact normalized artist+track key plus temporal confidence.
+  // There is deliberately no fuzzy title/artist matching.
   const lastFmCandidates = findWithin(
     lastFmNameIndex.get(artistTrackKey(event.artistName, event.trackName)) ?? [],
     estimatedStartMs,
