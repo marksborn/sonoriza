@@ -54,7 +54,7 @@ function event(id: string, estimatedStartedAt: string): SpotifyExtendedMusicEven
   };
 }
 
-test("HISTORY-02 writer stores UTC playedAt even when PostgreSQL session uses America/Sao_Paulo", async () => {
+test("HISTORY-02 writer stores UTC playedAt and snapshot bounds remain UTC-safe in America/Sao_Paulo", async () => {
   const client = clientInSaoPaulo();
   const user = await client.user.create({
     data: { email: `history02-timezone-${randomUUID()}@example.test` },
@@ -69,6 +69,7 @@ test("HISTORY-02 writer stores UTC playedAt even when PostgreSQL session uses Am
     const exportEvents = [
       event("standard", "2026-08-18T10:00:00.000Z"),
       event("dst", "2017-01-15T10:00:00.000Z"),
+      event("boundary", "2026-08-18T19:56:17.493Z"),
     ];
 
     const reconciliation = reconcileSpotifyExtendedHistory(exportEvents, []);
@@ -84,10 +85,10 @@ test("HISTORY-02 writer stores UTC playedAt even when PostgreSQL session uses Am
       manifest,
       musicEvents: exportEvents,
       client,
-      batchSize: 2,
+      batchSize: 3,
     });
 
-    assert.equal(result.insertedEvents, 2);
+    assert.equal(result.insertedEvents, 3);
     assert.equal(result.duplicateEvents, 0);
 
     const rows = await client.$queryRaw<
@@ -104,7 +105,7 @@ test("HISTORY-02 writer stores UTC playedAt even when PostgreSQL session uses Am
       ORDER BY "sourceEventKey"
     `);
 
-    assert.equal(rows.length, 2);
+    assert.equal(rows.length, 3);
 
     for (const source of exportEvents) {
       const row = rows.find((candidate) => candidate.sourceEventKey === source.sourceEventKey);
@@ -123,6 +124,41 @@ test("HISTORY-02 writer stores UTC playedAt even when PostgreSQL session uses Am
         source.estimatedStartedAt.toISOString(),
       );
     }
+
+    const from = new Date("2014-08-23T15:36:57.981Z");
+    const to = new Date("2026-08-18T20:10:26.000Z");
+
+    const timezoneSensitiveSnapshot = await client.$queryRaw<Array<{ sourceEventKey: string }>>(Prisma.sql`
+      SELECT "sourceEventKey"
+      FROM "TrackListeningEvent"
+      WHERE "userId" = ${user.id}
+        AND "playedAt" >= ${from}
+        AND "playedAt" <= ${to}
+        AND "source" = 'SPOTIFY_EXTENDED_HISTORY'::"ListeningEventSource"
+      ORDER BY "sourceEventKey"
+    `);
+
+    assert.equal(
+      timezoneSensitiveSnapshot.some((row) => row.sourceEventKey === "extended-boundary"),
+      false,
+      "raw Date/timestamptz bounds reproduce the America/Sao_Paulo boundary bug",
+    );
+
+    const utcSafeSnapshot = await client.$queryRaw<Array<{ sourceEventKey: string }>>(Prisma.sql`
+      SELECT "sourceEventKey"
+      FROM "TrackListeningEvent"
+      WHERE "userId" = ${user.id}
+        AND "playedAt" >= (${from}::timestamptz AT TIME ZONE 'UTC')
+        AND "playedAt" <= (${to}::timestamptz AT TIME ZONE 'UTC')
+        AND "source" = 'SPOTIFY_EXTENDED_HISTORY'::"ListeningEventSource"
+      ORDER BY "sourceEventKey"
+    `);
+
+    assert.equal(
+      utcSafeSnapshot.some((row) => row.sourceEventKey === "extended-boundary"),
+      true,
+      "UTC-naive snapshot bounds must keep the boundary event regardless of session timezone",
+    );
 
     await markSpotifyExtendedHistoryRunPartial(
       client,
