@@ -12,7 +12,10 @@ import {
   parseSpotifyExtendedPersistenceManifest,
   type SpotifyExtendedPersistenceManifest,
 } from "@/services/spotify-extended-history/persistence-manifest";
-import { buildSpotifyExtendedPersistencePlan } from "@/services/spotify-extended-history/persistence-plan";
+import {
+  buildSpotifyExtendedPersistencePlan,
+  type SpotifyExtendedPersistencePlan,
+} from "@/services/spotify-extended-history/persistence-plan";
 import { applySpotifyExtendedHistory } from "@/services/spotify-extended-history/persistence-writer";
 import {
   AMBIGUOUS_MATCH_TOLERANCE_MS,
@@ -41,6 +44,13 @@ type Snapshot = {
   user: { id: string; email: string | null };
   existingEvents: ExistingListeningEvent[];
   reconciliation: SpotifyExtendedReconciliation;
+};
+
+type ManifestPostcheck = {
+  requiredActions: number;
+  satisfiedActions: number;
+  driftQuarantinedActions: number;
+  pendingActions: number;
 };
 
 async function main() {
@@ -78,7 +88,7 @@ async function finishDryRun(
   args: Args,
   parsed: SpotifyExtendedHistoryPackage,
   snapshot: Snapshot,
-  plan: ReturnType<typeof buildSpotifyExtendedPersistencePlan>,
+  plan: SpotifyExtendedPersistencePlan,
 ): Promise<void> {
   printPlan(plan, false);
 
@@ -110,7 +120,7 @@ async function runApply(
   args: Args,
   parsed: SpotifyExtendedHistoryPackage,
   before: Snapshot,
-  livePlan: ReturnType<typeof buildSpotifyExtendedPersistencePlan>,
+  livePlan: SpotifyExtendedPersistencePlan,
 ): Promise<void> {
   assertApplyArgs(args);
 
@@ -136,24 +146,23 @@ async function runApply(
     manifest.packageSha256,
     manifest.planHash,
   );
-
-  if (priorAttempts === 0 && livePlan.planHash !== manifest.planHash) {
-    throw new Error(
-      "HISTORY-02 live database no longer reproduces the frozen plan; run a new dry-run before first apply",
-    );
-  }
+  const livePlanMatchesManifest = livePlan.planHash === manifest.planHash;
 
   console.log("");
   console.log("========== APPLY GATE ==========");
   console.log(`Expected package SHA:  ${args.expectedPackageSha256}`);
   console.log(`Expected plan hash:    ${args.expectedPlanHash}`);
   console.log(`Expected manifest:     ${args.expectedManifestHash}`);
+  console.log(`Current live plan:     ${livePlan.planHash}`);
+  console.log(`Live plan unchanged:   ${livePlanMatchesManifest ? "SIM" : "NÃO — DRIFT-SAFE MODE"}`);
   console.log(`Prior attempts:        ${priorAttempts}`);
   console.log(`Execution mode:        ${priorAttempts === 0 ? "FIRST APPLY" : "RESUME / IDEMPOTENT REPLAY"}`);
   console.log(`Confirmation:          ${APPLY_CONFIRMATION}`);
   console.log("Spotify writes:        NÃO");
   console.log("Playlist generation:   NÃO");
   console.log("TrackListeningState:   NÃO ALTERAR");
+  console.log("Frozen quarantine:     NUNCA PROMOVIDA AUTOMATICAMENTE");
+  console.log("Stale INSERT_NEW:      REVALIDADO SOB LOCK; pode virar NOOP");
 
   const result = await applySpotifyExtendedHistory({
     userId: before.user.id,
@@ -171,9 +180,9 @@ async function runApply(
   console.log(`Audit run:             ${result.runId}`);
   console.log(`Inserted events:       ${result.insertedEvents}`);
   console.log(`Enriched events:       ${result.enrichedEvents}`);
-  console.log(`Duplicate/no-op insert:${result.duplicateEvents}`);
+  console.log(`Guarded/no-op inserts: ${result.duplicateEvents}`);
   console.log(`No-op enrichment:      ${result.noopEvents}`);
-  console.log(`Quarantined conflicts: ${result.quarantinedEvents}`);
+  console.log(`Frozen quarantine:     ${result.quarantinedEvents}`);
 
   const after = await readSnapshot(args.email, parsed);
   console.log("");
@@ -183,15 +192,24 @@ async function runApply(
   const afterPlan = buildSpotifyExtendedPersistencePlan(parsed.archiveSha256, after.reconciliation);
   printPlan(afterPlan, true);
 
-  if (afterPlan.summary.insertNew !== 0 || afterPlan.summary.enrichExisting !== 0) {
+  const manifestPostcheck = assessManifestPostcheck(manifest, afterPlan);
+  console.log("");
+  console.log("========== FROZEN MANIFEST POSTCHECK ==========");
+  console.log(`Required actions:      ${manifestPostcheck.requiredActions}`);
+  console.log(`Satisfied actions:     ${manifestPostcheck.satisfiedActions}`);
+  console.log(`Drift quarantined:     ${manifestPostcheck.driftQuarantinedActions}`);
+  console.log(`Pending frozen work:   ${manifestPostcheck.pendingActions}`);
+
+  if (manifestPostcheck.pendingActions !== 0) {
     throw new Error(
-      `HISTORY-02 postcheck incomplete: inserts=${afterPlan.summary.insertNew} enrichments=${afterPlan.summary.enrichExisting}`,
+      `HISTORY-02 frozen manifest postcheck incomplete: pending=${manifestPostcheck.pendingActions}`,
     );
   }
 
   console.log("");
-  console.log("APPLY COMPLETE: timeline factual reconciliada para todas as ações automáticas seguras.");
-  console.log("Conflitos permanecem em quarentena.");
+  console.log("APPLY COMPLETE: todas as ações ainda seguras do manifesto congelado convergiram.");
+  console.log("Ações que sofreram drift foram mantidas sem escrita automática e podem ser reavaliadas em novo dry-run.");
+  console.log("Conflitos congelados permanecem em quarentena.");
   console.log("Nenhuma escrita Spotify ou geração de playlist foi executada.");
 }
 
@@ -284,6 +302,64 @@ async function countPriorAttempts(
   }
 }
 
+function assessManifestPostcheck(
+  manifest: SpotifyExtendedPersistenceManifest,
+  afterPlan: SpotifyExtendedPersistencePlan,
+): ManifestPostcheck {
+  const currentBySourceKey = new Map(
+    afterPlan.actions.map((action) => [action.sourceEventKey, action] as const),
+  );
+
+  let requiredActions = 0;
+  let satisfiedActions = 0;
+  let driftQuarantinedActions = 0;
+  let pendingActions = 0;
+
+  for (const frozen of manifest.actions) {
+    if (frozen.kind !== "INSERT_NEW" && frozen.kind !== "ENRICH_EXISTING") continue;
+    requiredActions += 1;
+
+    const current = currentBySourceKey.get(frozen.sourceEventKey);
+    if (!current) {
+      pendingActions += 1;
+      continue;
+    }
+
+    if (frozen.kind === "INSERT_NEW") {
+      if (current.kind === "INSERT_NEW") {
+        pendingActions += 1;
+      } else if (current.kind === "NOOP_ALREADY_ENRICHED") {
+        satisfiedActions += 1;
+      } else {
+        // A candidate appeared after the manifest, or this event is now
+        // ambiguous. The guarded writer must not force the stale insert.
+        driftQuarantinedActions += 1;
+      }
+      continue;
+    }
+
+    if (
+      current.kind === "ENRICH_EXISTING"
+      && current.existingEventId === frozen.existingEventId
+    ) {
+      pendingActions += 1;
+    } else if (current.kind === "NOOP_ALREADY_ENRICHED") {
+      satisfiedActions += 1;
+    } else {
+      // The original enrichment target disappeared/changed or became
+      // ambiguous/new. Never retarget a frozen enrichment silently.
+      driftQuarantinedActions += 1;
+    }
+  }
+
+  return {
+    requiredActions,
+    satisfiedActions,
+    driftQuarantinedActions,
+    pendingActions,
+  };
+}
+
 function printSnapshot(snapshot: Snapshot): void {
   console.log("");
   console.log("========== CANONICAL HISTORY SNAPSHOT ==========");
@@ -328,7 +404,7 @@ function printReconciliation(result: SpotifyExtendedReconciliation): void {
 }
 
 function printPlan(
-  plan: ReturnType<typeof buildSpotifyExtendedPersistencePlan>,
+  plan: SpotifyExtendedPersistencePlan,
   postcheck: boolean,
 ): void {
   console.log("");
