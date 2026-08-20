@@ -10,12 +10,14 @@ export type ExistingListeningEvent = {
   artistName: string;
   playedAt: Date;
   source: string;
+  sourceEventKey?: string | null;
   metadata: unknown;
 };
 
 export type SpotifyExtendedClassification =
   | "EXACT_EXISTING_LASTFM"
   | "EXACT_EXISTING_RECENTLY_PLAYED"
+  | "EXACT_EXISTING_EXTENDED_HISTORY"
   | "NEW_UNCOVERED_EVENT"
   | "CONFLICT_AMBIGUOUS";
 
@@ -43,6 +45,7 @@ export type SpotifyExtendedReconciliationSummary = {
   totalUniqueExportEvents: number;
   exactExistingLastFm: number;
   exactExistingRecentlyPlayed: number;
+  exactExistingExtendedHistory: number;
   newUncoveredEvents: number;
   conflictAmbiguous: number;
   enrichmentCandidates: number;
@@ -72,11 +75,17 @@ export function reconcileSpotifyExtendedHistory(
   exportEvents: SpotifyExtendedMusicEvent[],
   existingEvents: ExistingListeningEvent[],
 ): SpotifyExtendedReconciliation {
+  const extendedSourceKeyIndex = new Map<string, IndexedExistingEvent>();
   const spotifyIndex = new Map<string, IndexedExistingEvent[]>();
   const lastFmNameIndex = new Map<string, IndexedExistingEvent[]>();
 
   for (const existing of existingEvents) {
     const indexed: IndexedExistingEvent = { ...existing, playedAtMs: existing.playedAt.getTime() };
+
+    if (existing.source === "SPOTIFY_EXTENDED_HISTORY" && existing.sourceEventKey) {
+      extendedSourceKeyIndex.set(existing.sourceEventKey, indexed);
+      continue;
+    }
 
     if (existing.source === "SPOTIFY_RECENTLY_PLAYED" && existing.spotifyTrackId) {
       pushIndex(spotifyIndex, existing.spotifyTrackId, indexed);
@@ -90,12 +99,15 @@ export function reconcileSpotifyExtendedHistory(
   sortIndex(spotifyIndex);
   sortIndex(lastFmNameIndex);
 
-  const entries = exportEvents.map((event) => reconcileOne(event, spotifyIndex, lastFmNameIndex));
+  const entries = exportEvents.map((event) =>
+    reconcileOne(event, extendedSourceKeyIndex, spotifyIndex, lastFmNameIndex),
+  );
 
   const summary: SpotifyExtendedReconciliationSummary = {
     totalUniqueExportEvents: entries.length,
     exactExistingLastFm: 0,
     exactExistingRecentlyPlayed: 0,
+    exactExistingExtendedHistory: 0,
     newUncoveredEvents: 0,
     conflictAmbiguous: 0,
     enrichmentCandidates: 0,
@@ -120,6 +132,8 @@ export function reconcileSpotifyExtendedHistory(
     } else if (entry.classification === "EXACT_EXISTING_RECENTLY_PLAYED") {
       summary.exactExistingRecentlyPlayed += 1;
       if (entry.matchDeltaMs !== null) summary.recentlyPlayedMatchDeltaMs.push(entry.matchDeltaMs);
+    } else if (entry.classification === "EXACT_EXISTING_EXTENDED_HISTORY") {
+      summary.exactExistingExtendedHistory += 1;
     } else if (entry.classification === "NEW_UNCOVERED_EVENT") {
       summary.newUncoveredEvents += 1;
       summary.estimatedInserts += 1;
@@ -140,9 +154,15 @@ export function reconcileSpotifyExtendedHistory(
 
 function reconcileOne(
   event: SpotifyExtendedMusicEvent,
+  extendedSourceKeyIndex: Map<string, IndexedExistingEvent>,
   spotifyIndex: Map<string, IndexedExistingEvent[]>,
   lastFmNameIndex: Map<string, IndexedExistingEvent[]>,
 ): ReconciledSpotifyExtendedEvent {
+  const exactExtended = extendedSourceKeyIndex.get(event.sourceEventKey);
+  if (exactExtended) {
+    return exactMatch(event, { event: exactExtended, deltaMs: 0 }, "EXACT_EXISTING_EXTENDED_HISTORY");
+  }
+
   const estimatedStartMs = event.estimatedStartedAt.getTime();
   const spotifyCandidates = findWithin(
     spotifyIndex.get(event.spotifyTrackId) ?? [],
@@ -206,7 +226,10 @@ function reconcileOne(
 function exactMatch(
   event: SpotifyExtendedMusicEvent,
   match: { event: IndexedExistingEvent; deltaMs: number },
-  classification: "EXACT_EXISTING_LASTFM" | "EXACT_EXISTING_RECENTLY_PLAYED",
+  classification:
+    | "EXACT_EXISTING_LASTFM"
+    | "EXACT_EXISTING_RECENTLY_PLAYED"
+    | "EXACT_EXISTING_EXTENDED_HISTORY",
 ): ReconciledSpotifyExtendedEvent {
   return {
     event,
@@ -214,7 +237,10 @@ function exactMatch(
     matchedExistingEventId: match.event.id,
     matchedSource: match.event.source,
     matchDeltaMs: match.deltaMs,
-    enrichmentCandidate: !hasExtendedHistoryMetadata(match.event.metadata),
+    enrichmentCandidate:
+      classification === "EXACT_EXISTING_EXTENDED_HISTORY"
+        ? false
+        : !hasExtendedHistoryMetadata(match.event.metadata),
     candidateCount: 1,
     conflictReason: null,
     nearestCandidateDeltaMs: null,
