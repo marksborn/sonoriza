@@ -11,12 +11,17 @@ export type SpotifyExtendedPersistenceActionKind =
   | "QUARANTINE_CONFLICT"
   | "NOOP_ALREADY_ENRICHED";
 
+export type SpotifyExtendedPersistenceConflictReason =
+  | NonNullable<ReconciledSpotifyExtendedEvent["conflictReason"]>
+  | "REUSED_EXISTING_TARGET"
+  | null;
+
 export type SpotifyExtendedPersistenceAction = {
   kind: SpotifyExtendedPersistenceActionKind;
   sourceEventKey: string;
   existingEventId: string | null;
   classification: ReconciledSpotifyExtendedEvent["classification"];
-  conflictReason: ReconciledSpotifyExtendedEvent["conflictReason"];
+  conflictReason: SpotifyExtendedPersistenceConflictReason;
   candidateCount: number;
 };
 
@@ -39,7 +44,9 @@ export function buildSpotifyExtendedPersistencePlan(
   packageSha256: string,
   reconciliation: SpotifyExtendedReconciliation,
 ): SpotifyExtendedPersistencePlan {
-  const actions = reconciliation.entries.map(toPersistenceAction);
+  const actions = quarantineReusedExistingTargets(
+    reconciliation.entries.map(toPersistenceAction),
+  );
   return persistencePlanFromActions(packageSha256, actions);
 }
 
@@ -47,6 +54,8 @@ export function persistencePlanFromActions(
   packageSha256: string,
   actions: SpotifyExtendedPersistenceAction[],
 ): SpotifyExtendedPersistencePlan {
+  assertUniqueEnrichmentTargets(actions);
+
   return {
     version: 1,
     packageSha256,
@@ -96,6 +105,58 @@ export function summarizeSpotifyExtendedPersistenceActions(
   }
 
   return summary;
+}
+
+function quarantineReusedExistingTargets(
+  actions: SpotifyExtendedPersistenceAction[],
+): SpotifyExtendedPersistenceAction[] {
+  const enrichmentTargetCounts = new Map<string, number>();
+
+  for (const action of actions) {
+    if (action.kind !== "ENRICH_EXISTING" || !action.existingEventId) continue;
+    enrichmentTargetCounts.set(
+      action.existingEventId,
+      (enrichmentTargetCounts.get(action.existingEventId) ?? 0) + 1,
+    );
+  }
+
+  return actions.map((action) => {
+    if (action.kind !== "ENRICH_EXISTING" || !action.existingEventId) return action;
+    const reuseCount = enrichmentTargetCounts.get(action.existingEventId) ?? 0;
+    if (reuseCount <= 1) return action;
+
+    // Multiple export events competing for one canonical listening event are
+    // globally ambiguous even when each one looked exact in isolation. Do not
+    // choose a winner by timestamp proximity: quarantine the whole collision
+    // group so persistence always preserves a demonstrable 1:1 relationship.
+    return {
+      ...action,
+      kind: "QUARANTINE_CONFLICT",
+      existingEventId: null,
+      classification: "CONFLICT_AMBIGUOUS",
+      conflictReason: "REUSED_EXISTING_TARGET",
+      candidateCount: reuseCount,
+    };
+  });
+}
+
+function assertUniqueEnrichmentTargets(
+  actions: SpotifyExtendedPersistenceAction[],
+): void {
+  const seen = new Set<string>();
+  let reusedTargets = 0;
+
+  for (const action of actions) {
+    if (action.kind !== "ENRICH_EXISTING" || !action.existingEventId) continue;
+    if (seen.has(action.existingEventId)) reusedTargets += 1;
+    else seen.add(action.existingEventId);
+  }
+
+  if (reusedTargets > 0) {
+    throw new Error(
+      `HISTORY-02 persistence plan reuses existingEventId across ENRICH_EXISTING actions (${reusedTargets} extra reuse actions)`,
+    );
+  }
 }
 
 function toPersistenceAction(
