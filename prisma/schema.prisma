@@ -25,25 +25,26 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts               Account[]
-  sessions               Session[]
-  calendarSelections     CalendarSelection[]
-  sourcePlaylists        SourcePlaylist[]
-  targetPlaylists        TargetPlaylist[]
-  generationRuns         GenerationRun[]
-  musicPlaybackPolicy    MusicPlaybackPolicy?
-  trackListeningStates   TrackListeningState[]
-  trackListeningEvents   TrackListeningEvent[]
-  lastFmBackfillRuns     LastFmBackfillRun[]
-  episodeListeningStates EpisodeListeningState[]
-  musicSourceCleanupRuns MusicSourceCleanupRun[]
-  musicIngestionRules    MusicIngestionRule[]
-  musicIngestionRuns     MusicIngestionRun[]
-  targetScheduleRuns     TargetScheduleRun[]
-  notificationPreference NotificationPreference?
-  pushSubscriptions      PushSubscription[]
-  pushDeliveries         PushDelivery[]
-  musicPreferenceSignals MusicPreferenceSignal[]
+  accounts                         Account[]
+  sessions                         Session[]
+  calendarSelections               CalendarSelection[]
+  sourcePlaylists                  SourcePlaylist[]
+  targetPlaylists                  TargetPlaylist[]
+  generationRuns                   GenerationRun[]
+  musicPlaybackPolicy              MusicPlaybackPolicy?
+  trackListeningStates             TrackListeningState[]
+  trackListeningEvents             TrackListeningEvent[]
+  lastFmBackfillRuns               LastFmBackfillRun[]
+  spotifyExtendedHistoryImportRuns SpotifyExtendedHistoryImportRun[]
+  episodeListeningStates           EpisodeListeningState[]
+  musicSourceCleanupRuns           MusicSourceCleanupRun[]
+  musicIngestionRules              MusicIngestionRule[]
+  musicIngestionRuns               MusicIngestionRun[]
+  targetScheduleRuns               TargetScheduleRun[]
+  notificationPreference           NotificationPreference?
+  pushSubscriptions                PushSubscription[]
+  pushDeliveries                   PushDelivery[]
+  musicPreferenceSignals           MusicPreferenceSignal[]
 }
 
 model Account {
@@ -298,11 +299,19 @@ enum MusicRepeatWindowUnit {
 
 enum ListeningEventSource {
   SPOTIFY_RECENTLY_PLAYED
+  SPOTIFY_EXTENDED_HISTORY
   LASTFM_SCROBBLE
   IMPORT
 }
 
 enum LastFmBackfillStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+enum SpotifyExtendedHistoryImportStatus {
   RUNNING
   SUCCESS
   PARTIAL
@@ -388,12 +397,37 @@ model LastFmBackfillRun {
   startedAt           DateTime             @default(now())
   lastPageAt          DateTime?
   finishedAt          DateTime?
-  error               String?              @db.Text
+  error                String?              @db.Text
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, startedAt])
   @@index([userId, username, status])
+}
+
+model SpotifyExtendedHistoryImportRun {
+  id                String                              @id @default(cuid())
+  userId            String
+  packageSha256     String
+  planHash          String
+  planVersion       Int                                 @default(1)
+  status            SpotifyExtendedHistoryImportStatus @default(RUNNING)
+  uniqueMusicEvents Int
+  insertPlanned     Int
+  enrichPlanned     Int
+  quarantinePlanned Int
+  insertedEvents    Int                                 @default(0)
+  enrichedEvents    Int                                 @default(0)
+  duplicateEvents   Int                                 @default(0)
+  noopEvents        Int                                 @default(0)
+  startedAt         DateTime                            @default(now())
+  finishedAt        DateTime?
+  error             String?                             @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([userId, packageSha256, planHash])
 }
 
 // ---------------------------------------------------------------------------
