@@ -242,6 +242,9 @@ async function readSnapshot(
       const from = new Date(lowerBound.getTime() - AMBIGUOUS_MATCH_TOLERANCE_MS);
       const to = new Date(upperBound.getTime() + AMBIGUOUS_MATCH_TOLERANCE_MS);
 
+      // TrackListeningEvent.playedAt is timestamp without time zone and stores
+      // UTC-naive values. Convert Date/timestamptz bounds to UTC-naive before
+      // comparing so the snapshot is independent of the PostgreSQL TimeZone.
       // Raw SQL is deliberate: the dry-run must work before the migration adds
       // SPOTIFY_EXTENDED_HISTORY to the generated Prisma enum.
       const existingEvents = await tx.$queryRaw<ExistingListeningEvent[]>(Prisma.sql`
@@ -256,8 +259,8 @@ async function readSnapshot(
           "metadata"
         FROM "TrackListeningEvent"
         WHERE "userId" = ${user.id}
-          AND "playedAt" >= ${from}
-          AND "playedAt" <= ${to}
+          AND "playedAt" >= (${from}::timestamptz AT TIME ZONE 'UTC')
+          AND "playedAt" <= (${to}::timestamptz AT TIME ZONE 'UTC')
           AND "source"::text IN (
             'LASTFM_SCROBBLE',
             'SPOTIFY_RECENTLY_PLAYED',
