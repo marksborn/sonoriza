@@ -42,6 +42,69 @@ test("HISTORY-02 persistence plan separates inserts, enrichment and quarantine",
   );
 });
 
+test("HISTORY-02 persistence plan quarantines every export event that reuses one enrichment target", () => {
+  const first = event("first", "Artist A", "Track A", "2026-08-18T10:00:00Z");
+  const second = event("second", "Artist A", "Track A", "2026-08-18T10:01:00Z");
+
+  const reconciliation = reconcileSpotifyExtendedHistory(
+    [first, second],
+    [
+      existing(
+        "lf-shared",
+        null,
+        "Track A",
+        "Artist A",
+        "2026-08-18T10:00:30Z",
+        "LASTFM_SCROBBLE",
+      ),
+    ],
+  );
+
+  assert.deepEqual(
+    reconciliation.entries.map((entry) => [entry.classification, entry.matchedExistingEventId]),
+    [
+      ["EXACT_EXISTING_LASTFM", "lf-shared"],
+      ["EXACT_EXISTING_LASTFM", "lf-shared"],
+    ],
+    "each event is exact in isolation, which is why the global persistence guard is required",
+  );
+
+  const plan = buildSpotifyExtendedPersistencePlan("package-sha", reconciliation);
+
+  assert.deepEqual(plan.summary, {
+    insertNew: 0,
+    enrichExisting: 0,
+    quarantineConflict: 2,
+    noopAlreadyEnriched: 0,
+  });
+
+  assert.deepEqual(
+    plan.actions.map((action) => ({
+      kind: action.kind,
+      existingEventId: action.existingEventId,
+      classification: action.classification,
+      conflictReason: action.conflictReason,
+      candidateCount: action.candidateCount,
+    })),
+    [
+      {
+        kind: "QUARANTINE_CONFLICT",
+        existingEventId: null,
+        classification: "CONFLICT_AMBIGUOUS",
+        conflictReason: "REUSED_EXISTING_TARGET",
+        candidateCount: 2,
+      },
+      {
+        kind: "QUARANTINE_CONFLICT",
+        existingEventId: null,
+        classification: "CONFLICT_AMBIGUOUS",
+        conflictReason: "REUSED_EXISTING_TARGET",
+        candidateCount: 2,
+      },
+    ],
+  );
+});
+
 test("HISTORY-02 persistence plan hash is deterministic and binds the package", () => {
   const reconciliation = reconcileSpotifyExtendedHistory(
     [event("fresh", "Artist", "Track", "2026-08-18T10:00:00Z")],
