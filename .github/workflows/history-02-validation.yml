@@ -1,0 +1,66 @@
+name: HISTORY-02 validation
+
+on:
+  push:
+    branches:
+      - "agent/history-02-extended-dry-run"
+    paths:
+      - "src/services/spotify-extended-history/**"
+      - "scripts/import-spotify-extended-history.ts"
+      - "prisma/migrations/**"
+      - "prisma/schema.prisma"
+      - "package.json"
+      - ".github/workflows/history-02-validation.yml"
+  pull_request:
+    paths:
+      - "src/services/spotify-extended-history/**"
+      - "scripts/import-spotify-extended-history.ts"
+      - "prisma/migrations/**"
+      - "prisma/schema.prisma"
+      - "package.json"
+      - ".github/workflows/history-02-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: sonoriza_history02_gate
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_history02_gate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_history02_gate?schema=public
+      AUTH_SECRET: history-02-ci-only
+      NEXTAUTH_SECRET: history-02-ci-only
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npm run test:spotify-history
+      - run: npm run test:history
+      - run: npm run test:lastfm
+      - run: npm run typecheck
+      - run: npm run build
