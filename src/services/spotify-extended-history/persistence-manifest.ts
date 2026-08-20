@@ -4,13 +4,11 @@ import {
   persistencePlanFromActions,
   type SpotifyExtendedPersistenceAction,
   type SpotifyExtendedPersistenceActionKind,
+  type SpotifyExtendedPersistenceConflictReason,
   type SpotifyExtendedPersistencePlan,
   type SpotifyExtendedPersistencePlanSummary,
 } from "./persistence-plan";
-import type {
-  SpotifyExtendedClassification,
-  SpotifyExtendedConflictReason,
-} from "./reconcile";
+import type { SpotifyExtendedClassification } from "./reconcile";
 
 export type SpotifyExtendedPersistenceManifest = {
   version: 1;
@@ -38,13 +36,14 @@ const CLASSIFICATIONS = new Set<SpotifyExtendedClassification>([
   "CONFLICT_AMBIGUOUS",
 ]);
 
-const CONFLICT_REASONS = new Set<SpotifyExtendedConflictReason>([
+const CONFLICT_REASONS = new Set<NonNullable<SpotifyExtendedPersistenceConflictReason>>([
   "MULTIPLE_CONFIDENT_LASTFM",
   "MULTIPLE_CONFIDENT_SPOTIFY",
   "CONFIDENT_CROSS_SOURCE",
   "NEAR_ONLY_LASTFM",
   "NEAR_ONLY_SPOTIFY",
   "NEAR_CROSS_SOURCE",
+  "REUSED_EXISTING_TARGET",
 ]);
 
 export function buildSpotifyExtendedPersistenceManifest(
@@ -92,6 +91,9 @@ export function parseSpotifyExtendedPersistenceManifest(
     throw new Error("HISTORY-02 manifest contains duplicate sourceEventKey values");
   }
 
+  // persistencePlanFromActions also enforces that ENRICH_EXISTING actions
+  // cannot reuse the same canonical target. This intentionally invalidates
+  // older manifests that violate the 1:1 persistence invariant.
   const reconstructed = persistencePlanFromActions(value.packageSha256, actions);
   if (reconstructed.planHash !== value.planHash) {
     throw new Error("HISTORY-02 manifest plan hash does not match its actions");
@@ -163,7 +165,7 @@ function parseAction(value: unknown, index: number): SpotifyExtendedPersistenceA
     value.conflictReason !== null
     && (
       typeof value.conflictReason !== "string"
-      || !CONFLICT_REASONS.has(value.conflictReason as SpotifyExtendedConflictReason)
+      || !CONFLICT_REASONS.has(value.conflictReason as NonNullable<SpotifyExtendedPersistenceConflictReason>)
     )
   ) {
     throw new Error(`HISTORY-02 manifest action ${index} conflictReason is invalid`);
@@ -177,7 +179,7 @@ function parseAction(value: unknown, index: number): SpotifyExtendedPersistenceA
     sourceEventKey: value.sourceEventKey,
     existingEventId: value.existingEventId as string | null,
     classification: value.classification as SpotifyExtendedClassification,
-    conflictReason: value.conflictReason as SpotifyExtendedConflictReason | null,
+    conflictReason: value.conflictReason as SpotifyExtendedPersistenceConflictReason,
     candidateCount: value.candidateCount as number,
   };
 }

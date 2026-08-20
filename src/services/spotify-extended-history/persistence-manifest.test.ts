@@ -7,7 +7,10 @@ import {
   parseSpotifyExtendedPersistenceManifest,
 } from "./persistence-manifest";
 import { buildSpotifyExtendedPersistencePlan } from "./persistence-plan";
-import { reconcileSpotifyExtendedHistory } from "./reconcile";
+import {
+  reconcileSpotifyExtendedHistory,
+  type ExistingListeningEvent,
+} from "./reconcile";
 
 const PACKAGE_SHA = "a".repeat(64);
 
@@ -47,6 +50,31 @@ test("HISTORY-02 manifest rejects action tampering", () => {
   );
 });
 
+test("HISTORY-02 manifest rejects reused ENRICH_EXISTING targets even before apply", () => {
+  const first = event("one", "Artist A", "Track A", "2026-08-18T10:00:00Z");
+  const second = event("two", "Artist B", "Track B", "2026-08-18T11:00:00Z");
+  const existingEvents: ExistingListeningEvent[] = [
+    existing("lf-one", "Artist A", "Track A", "2026-08-18T10:00:01Z"),
+    existing("lf-two", "Artist B", "Track B", "2026-08-18T11:00:01Z"),
+  ];
+
+  const plan = buildSpotifyExtendedPersistencePlan(
+    PACKAGE_SHA,
+    reconcileSpotifyExtendedHistory([first, second], existingEvents),
+  );
+  assert.deepEqual(plan.actions.map((action) => action.kind), ["ENRICH_EXISTING", "ENRICH_EXISTING"]);
+
+  const manifest = buildSpotifyExtendedPersistenceManifest("user-1", plan);
+  const tampered = JSON.parse(JSON.stringify(manifest)) as Record<string, unknown>;
+  const actions = tampered.actions as Array<Record<string, unknown>>;
+  actions[1]!.existingEventId = actions[0]!.existingEventId;
+
+  assert.throws(
+    () => parseSpotifyExtendedPersistenceManifest(tampered),
+    /reuses existingEventId across ENRICH_EXISTING/i,
+  );
+});
+
 test("HISTORY-02 manifest hash changes when user changes", () => {
   const plan = buildSpotifyExtendedPersistencePlan(
     PACKAGE_SHA,
@@ -59,8 +87,13 @@ test("HISTORY-02 manifest hash changes when user changes", () => {
   assert.equal(first.planHash, second.planHash, "plan hash remains the Gate 2.2 content hash");
 });
 
-function event(id: string): SpotifyExtendedMusicEvent {
-  const startedAt = new Date("2026-08-18T10:00:00Z");
+function event(
+  id: string,
+  artistName = "Artist",
+  trackName = "Track",
+  startedAtIso = "2026-08-18T10:00:00Z",
+): SpotifyExtendedMusicEvent {
+  const startedAt = new Date(startedAtIso);
   return {
     sourceFile: "fixture.json",
     sourceIndex: 0,
@@ -69,8 +102,8 @@ function event(id: string): SpotifyExtendedMusicEvent {
     msPlayed: 180_000,
     spotifyTrackUri: `spotify:track:${id}`,
     spotifyTrackId: id,
-    trackName: "Track",
-    artistName: "Artist",
+    trackName,
+    artistName,
     albumName: "Album",
     reasonStart: null,
     reasonEnd: null,
@@ -79,5 +112,22 @@ function event(id: string): SpotifyExtendedMusicEvent {
     offlineTimestamp: null,
     incognitoMode: false,
     sourceEventKey: `key-${id}`,
+  };
+}
+
+function existing(
+  id: string,
+  artistName: string,
+  trackName: string,
+  playedAtIso: string,
+): ExistingListeningEvent {
+  return {
+    id,
+    spotifyTrackId: null,
+    trackName,
+    artistName,
+    playedAt: new Date(playedAtIso),
+    source: "LASTFM_SCROBBLE",
+    metadata: null,
   };
 }
