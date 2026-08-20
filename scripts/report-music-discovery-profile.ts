@@ -30,46 +30,54 @@ async function main() {
     return;
   }
 
-  console.log("========== DISCOVERY-01 — GATE 1 READ-ONLY ==========");
-  console.log(`User:                    ${user.email ?? user.id}`);
-  console.log(`Generated at:            ${report.generatedAt.toISOString()}`);
-  console.log(`Timeline events:         ${report.coverage.totalCanonicalEvents}`);
-  console.log(`First play:              ${iso(report.coverage.firstPlayedAt)}`);
-  console.log(`Last play:               ${iso(report.coverage.lastPlayedAt)}`);
-  console.log(`Last.fm valid from:      ${iso(report.coverage.lastFmValidFrom)}`);
-  console.log(`Legacy Last.fm excluded:${report.coverage.invalidLegacyLastFmExcluded}`);
-  console.log(`Spotify-ID events:       ${report.coverage.canonicalSpotifyIdentityEvents}`);
-  console.log(`Unresolved events:       ${report.coverage.unresolvedIdentityEvents}`);
-  console.log(`Extended evidence:       ${report.coverage.extendedEvidenceEvents}`);
-  console.log(`msPlayed evidence:       ${report.coverage.msPlayedEvidenceEvents}`);
-  console.log(`Explicit skips:          ${report.coverage.explicitSkipEvents}`);
-  console.log(`Inferred skips:          ${report.coverage.inferredSkipSignals}`);
-  console.log(`Pending inferred skips:  ${report.coverage.pendingInferredSkipSignals}`);
+  console.log("========== DISCOVERY-01 — GATE 1.1 READ-ONLY ==========");
+  console.log(`User:                         ${user.email ?? user.id}`);
+  console.log(`Generated at:                 ${report.generatedAt.toISOString()}`);
+  console.log(`Timeline events:              ${report.coverage.totalCanonicalEvents}`);
+  console.log(`First play:                   ${iso(report.coverage.firstPlayedAt)}`);
+  console.log(`Last play:                    ${iso(report.coverage.lastPlayedAt)}`);
+  console.log(`Last.fm valid from:           ${iso(report.coverage.lastFmValidFrom)}`);
+  console.log(`Legacy Last.fm excluded:      ${report.coverage.invalidLegacyLastFmExcluded}`);
+  console.log(`Synthetic epoch excluded:     ${report.coverage.invalidSyntheticEpochEventsExcluded}`);
+  console.log(`Non-musical profile excluded: ${report.coverage.nonMusicalProfileEventsExcluded}`);
+  console.log(`Artist aliases canonicalized: ${report.coverage.artistAliasEventsCanonicalized}`);
+  console.log(`Spotify-ID events:            ${report.coverage.canonicalSpotifyIdentityEvents}`);
+  console.log(`Unresolved events:            ${report.coverage.unresolvedIdentityEvents}`);
+  console.log(`Extended evidence:            ${report.coverage.extendedEvidenceEvents}`);
+  console.log(`msPlayed evidence:            ${report.coverage.msPlayedEvidenceEvents}`);
+  console.log(`Explicit skips:               ${report.coverage.explicitSkipEvents}`);
+  console.log(`Inferred skips:               ${report.coverage.inferredSkipSignals}`);
+  console.log(`Pending inferred skips:       ${report.coverage.pendingInferredSkipSignals}`);
   console.log("Sources:");
   for (const source of report.coverage.sourceCounts) {
     console.log(`  ${source.source.padEnd(28)} ${source.count}`);
   }
 
   console.log("\nCooldown MUSIC-01:");
-  console.log(`  enabled:        ${report.cooldown.enabled}`);
-  console.log(`  complete:       ${report.cooldown.complete}`);
-  console.log(`  window:         ${report.cooldown.windowValue ?? "-"} ${report.cooldown.windowUnit ?? "-"}`);
-  console.log(`  cutoff:         ${iso(report.cooldown.cutoff)}`);
-  console.log(`  blocked tracks: ${report.cooldown.blockedTrackCount}`);
+  console.log(`  enabled:            ${report.cooldown.enabled}`);
+  console.log(`  complete:           ${report.cooldown.complete}`);
+  console.log(`  window:             ${report.cooldown.windowValue ?? "-"} ${report.cooldown.windowUnit ?? "-"}`);
+  console.log(`  cutoff:             ${iso(report.cooldown.cutoff)}`);
+  console.log(`  tracked states:     ${report.cooldown.trackedStateCount}`);
+  console.log(`  timeline fallbacks: ${report.cooldown.timelineFallbackTrackCount}`);
+  console.log(`  timeline overrides: ${report.cooldown.timelineOverrideTrackCount}`);
+  console.log(`  blocked tracks:     ${report.cooldown.blockedTrackCount}`);
 
   printArtists("Top artists — historical", report.topArtistsHistorical);
   printArtists("Top artists — 30 days", report.topArtists30d);
   printArtists("Top artists — 90 days", report.topArtists90d);
   printArtists("Top artists — 365 days", report.topArtists365d);
-  printArtists("Recent momentum — absolute 30d delta", report.recentMomentum);
+  printArtists("Recent momentum — sustained across listening days", report.recentMomentum);
   printArtists("Dormant historical favorites", report.dormantFavorites);
-  printArtists("Rediscovery returns", report.rediscoveryReturns);
+  printArtists("Rediscovery returns — affinity first", report.rediscoveryReturns);
   printTracks("Top canonical tracks — historical", report.topTracksHistorical);
   printTracks("FAMILIAR candidates — cooldown eligible", report.familiarCandidates);
   printTracks("REDESCOBERTA candidates — dormant + eligible", report.rediscoveryCandidates);
 
-  console.log("\nGate 1 is read-only: no Spotify writes, no Last.fm calls, no playlist generation, no score persistence.");
-  console.log(`Heuristics: dormant=${report.heuristics.dormantDays}d, rediscovery-gap=${report.heuristics.rediscoveryGapDays}d.`);
+  console.log("\nGate 1.1 is read-only: no Spotify writes, no Last.fm calls, no playlist generation, no score persistence.");
+  console.log(
+    `Heuristics: dormant=${report.heuristics.dormantDays}d, rediscovery-gap=${report.heuristics.rediscoveryGapDays}d, momentum-days>=${report.heuristics.momentumMinListeningDays}, rediscovery-prior>=${report.heuristics.rediscoveryMinPriorPlays}, rediscovery-recent>=${report.heuristics.rediscoveryMinRecentPlays}.`,
+  );
 }
 
 function printArtists(title: string, rows: DiscoveryArtistProfile[]) {
@@ -80,7 +88,7 @@ function printArtists(title: string, rows: DiscoveryArtistProfile[]) {
   }
   rows.forEach((row, index) => {
     console.log(
-      `  ${String(index + 1).padStart(2)}. ${row.artistName} — plays=${row.playCount}, 30d=${row.plays30d}, prev30d=${row.previous30d}, delta=${signed(row.momentumDelta30d)}, days=${row.distinctListeningDays}, explicitSkip=${row.explicitSkipCount}, inferredSkip=${row.inferredSkipCount}${row.rediscoveryGapDays === null ? "" : `, returnGap=${row.rediscoveryGapDays}d`}`,
+      `  ${String(index + 1).padStart(2)}. ${row.artistName} — plays=${row.playCount}, prior=${row.priorPlayCount}, 30d=${row.plays30d}/${row.listeningDays30d}d, prev30d=${row.previous30d}/${row.previousListeningDays30d}d, delta=${signed(row.momentumDelta30d)}, skip=${rate(row.explicitSkipRate)} (${row.explicitSkipCount}/${row.extendedEvidenceCount}), inferredSkip=${row.inferredSkipCount}${row.rediscoveryGapDays === null ? "" : `, returnGap=${row.rediscoveryGapDays}d`}`,
     );
   });
 }
@@ -98,7 +106,7 @@ function printTracks(title: string, rows: DiscoveryTrackProfile[]) {
         ? "eligible"
         : "cooldown";
     console.log(
-      `  ${String(index + 1).padStart(2)}. ${row.artistName} — ${row.trackName} — plays=${row.playCount}, 30d=${row.plays30d}, ${eligibility}, extended=${row.extendedEvidenceCount}, explicitSkip=${row.explicitSkipCount}, inferredSkip=${row.inferredSkipCount}`,
+      `  ${String(index + 1).padStart(2)}. ${row.artistName} — ${row.trackName} — plays=${row.playCount}, 30d=${row.plays30d}, ${eligibility}/${row.cooldownLastPlayedSource ?? "-"}, skip=${rate(row.explicitSkipRate)} (${row.explicitSkipCount}/${row.extendedEvidenceCount}), inferredSkip=${row.inferredSkipCount}`,
     );
   });
 }
@@ -144,6 +152,10 @@ function iso(value: Date | null): string {
 
 function signed(value: number): string {
   return value > 0 ? `+${value}` : String(value);
+}
+
+function rate(value: number | null): string {
+  return value === null ? "n/a" : `${(value * 100).toFixed(1)}%`;
 }
 
 main()

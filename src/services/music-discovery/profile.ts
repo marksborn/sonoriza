@@ -11,6 +11,18 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_TOP_N = 10;
 const DEFAULT_DORMANT_DAYS = 365;
 const DEFAULT_REDISCOVERY_GAP_DAYS = 180;
+const MIN_MOMENTUM_LISTENING_DAYS = 3;
+const MIN_REDISCOVERY_PRIOR_PLAYS = 10;
+const MIN_REDISCOVERY_RECENT_PLAYS = 2;
+const SYNTHETIC_EPOCH_CUTOFF = new Date("1971-01-01T00:00:00.000Z");
+
+const NON_MUSICAL_ARTIST_KEYS = new Set(["spotify"]);
+const ARTIST_ALIAS_KEYS = new Map<string, string>([
+  ["detonautas", "detonautas roque clube"],
+]);
+const CANONICAL_ARTIST_LABELS = new Map<string, string>([
+  ["detonautas roque clube", "Detonautas Roque Clube"],
+]);
 
 export type DiscoveryHistoryEvent = {
   source: ListeningEventSource;
@@ -43,22 +55,34 @@ export type DiscoveryPlaybackPolicy = {
 export type DiscoveryArtistProfile = {
   artistName: string;
   playCount: number;
+  priorPlayCount: number;
   plays30d: number;
   previous30d: number;
   plays90d: number;
   plays365d: number;
   distinctTrackCount: number;
   distinctListeningDays: number;
+  listeningDays30d: number;
+  previousListeningDays30d: number;
   firstPlayedAt: Date;
   lastPlayedAt: Date;
+  extendedEvidenceCount: number;
+  msPlayedEvidenceCount: number;
   explicitSkipCount: number;
+  explicitSkipRate: number | null;
   inferredSkipCount: number;
   pendingInferredSkipCount: number;
   momentumDelta30d: number;
+  momentumListeningDayDelta30d: number;
   momentumRatio30d: number | null;
   daysSinceLastPlay: number;
   rediscoveryGapDays: number | null;
 };
+
+export type CooldownLastPlayedSource =
+  | "STATE"
+  | "TIMELINE"
+  | "STATE_AND_TIMELINE";
 
 export type DiscoveryTrackProfile = {
   spotifyTrackId: string;
@@ -74,9 +98,11 @@ export type DiscoveryTrackProfile = {
   extendedEvidenceCount: number;
   msPlayedEvidenceCount: number;
   explicitSkipCount: number;
+  explicitSkipRate: number | null;
   inferredSkipCount: number;
   pendingInferredSkipCount: number;
   cooldownLastPlayedAt: Date | null;
+  cooldownLastPlayedSource: CooldownLastPlayedSource | null;
   cooldownEligible: boolean | null;
 };
 
@@ -85,6 +111,9 @@ export type MusicDiscoveryProfile = {
   heuristics: {
     dormantDays: number;
     rediscoveryGapDays: number;
+    momentumMinListeningDays: number;
+    rediscoveryMinPriorPlays: number;
+    rediscoveryMinRecentPlays: number;
     note: string;
   };
   coverage: {
@@ -93,7 +122,10 @@ export type MusicDiscoveryProfile = {
     lastFmValidFrom: Date | null;
     totalCanonicalEvents: number;
     invalidLegacyLastFmExcluded: number;
+    invalidSyntheticEpochEventsExcluded: number;
     futureEventsExcluded: number;
+    nonMusicalProfileEventsExcluded: number;
+    artistAliasEventsCanonicalized: number;
     sourceCounts: Array<{ source: ListeningEventSource; count: number }>;
     canonicalSpotifyIdentityEvents: number;
     unresolvedIdentityEvents: number;
@@ -111,6 +143,8 @@ export type MusicDiscoveryProfile = {
     windowUnit: MusicRepeatWindowUnit | null;
     cutoff: Date | null;
     trackedStateCount: number;
+    timelineFallbackTrackCount: number;
+    timelineOverrideTrackCount: number;
     blockedTrackCount: number;
   };
   topArtistsHistorical: DiscoveryArtistProfile[];
@@ -153,6 +187,7 @@ type ExtendedEvidence = {
 
 type ArtistAggregate = {
   artistName: string;
+  canonicalLabelLocked: boolean;
   playCount: number;
   plays30d: number;
   previous30d: number;
@@ -160,8 +195,12 @@ type ArtistAggregate = {
   plays365d: number;
   distinctTracks: Set<string>;
   distinctDays: Set<string>;
+  recentDays: Set<string>;
+  previousRecentDays: Set<string>;
   firstPlayedAt: Date;
   lastPlayedAt: Date;
+  extendedEvidenceCount: number;
+  msPlayedEvidenceCount: number;
   explicitSkipCount: number;
   inferredSkipCount: number;
   pendingInferredSkipCount: number;
@@ -175,6 +214,7 @@ type TrackAggregate = {
   trackName: string;
   artistName: string;
   artistKey: string;
+  canonicalArtistLabelLocked: boolean;
   albumName: string | null;
   playCount: number;
   plays30d: number;
@@ -187,6 +227,13 @@ type TrackAggregate = {
   explicitSkipCount: number;
   inferredSkipCount: number;
   pendingInferredSkipCount: number;
+};
+
+type ArtistIdentity = {
+  key: string;
+  displayName: string;
+  canonicalized: boolean;
+  canonicalLabelLocked: boolean;
 };
 
 export async function getMusicDiscoveryProfile(
@@ -274,10 +321,22 @@ export function buildMusicDiscoveryProfile(
   const dormantCutoff = daysBefore(asOf, dormantDays);
 
   let invalidLegacyLastFmExcluded = 0;
+  let invalidSyntheticEpochEventsExcluded = 0;
   let futureEventsExcluded = 0;
   const events = input.events.filter((event) => {
     if (event.playedAt > asOf) {
       futureEventsExcluded += 1;
+      return false;
+    }
+    if (event.playedAt < SYNTHETIC_EPOCH_CUTOFF) {
+      invalidSyntheticEpochEventsExcluded += 1;
+      if (
+        event.source === "LASTFM_SCROBBLE" &&
+        input.lastFmValidFrom &&
+        event.playedAt < input.lastFmValidFrom
+      ) {
+        invalidLegacyLastFmExcluded += 1;
+      }
       return false;
     }
     if (
@@ -301,6 +360,8 @@ export function buildMusicDiscoveryProfile(
   let extendedEvidenceEvents = 0;
   let msPlayedEvidenceEvents = 0;
   let explicitSkipEvents = 0;
+  let nonMusicalProfileEventsExcluded = 0;
+  let artistAliasEventsCanonicalized = 0;
 
   for (const event of events) {
     sourceCounts.set(event.source, (sourceCounts.get(event.source) ?? 0) + 1);
@@ -315,7 +376,14 @@ export function buildMusicDiscoveryProfile(
     if (evidence.msPlayed !== null) msPlayedEvidenceEvents += 1;
     if (evidence.explicitSkip) explicitSkipEvents += 1;
 
-    const artistKey = normalized(event.artistName);
+    if (isNonMusicalProfileEvent(event)) {
+      nonMusicalProfileEventsExcluded += 1;
+      continue;
+    }
+
+    const identity = artistIdentity(event.artistName);
+    if (identity.canonicalized) artistAliasEventsCanonicalized += 1;
+    const artistKey = identity.key;
     const trackKey = event.spotifyTrackId
       ? `spotify:${event.spotifyTrackId}`
       : `unresolved:${normalized(event.trackName)}:${normalized(event.albumName ?? "")}`;
@@ -324,7 +392,8 @@ export function buildMusicDiscoveryProfile(
     let artist = artists.get(artistKey);
     if (!artist) {
       artist = {
-        artistName: event.artistName.trim(),
+        artistName: identity.displayName,
+        canonicalLabelLocked: identity.canonicalLabelLocked,
         playCount: 0,
         plays30d: 0,
         previous30d: 0,
@@ -332,8 +401,12 @@ export function buildMusicDiscoveryProfile(
         plays365d: 0,
         distinctTracks: new Set(),
         distinctDays: new Set(),
+        recentDays: new Set(),
+        previousRecentDays: new Set(),
         firstPlayedAt: event.playedAt,
         lastPlayedAt: event.playedAt,
+        extendedEvidenceCount: 0,
+        msPlayedEvidenceCount: 0,
         explicitSkipCount: 0,
         inferredSkipCount: 0,
         pendingInferredSkipCount: 0,
@@ -349,15 +422,17 @@ export function buildMusicDiscoveryProfile(
     if (event.playedAt < artist.firstPlayedAt) artist.firstPlayedAt = event.playedAt;
     if (event.playedAt > artist.lastPlayedAt) {
       artist.lastPlayedAt = event.playedAt;
-      artist.artistName = event.artistName.trim();
+      if (!artist.canonicalLabelLocked) artist.artistName = identity.displayName;
     }
     if (event.playedAt >= cutoff30) {
       artist.plays30d += 1;
+      artist.recentDays.add(dayKey);
       if (!artist.firstRecentAt || event.playedAt < artist.firstRecentAt) {
         artist.firstRecentAt = event.playedAt;
       }
     } else if (event.playedAt >= cutoff60) {
       artist.previous30d += 1;
+      artist.previousRecentDays.add(dayKey);
     }
     if (event.playedAt >= cutoff90) artist.plays90d += 1;
     if (event.playedAt >= cutoff365) artist.plays365d += 1;
@@ -367,6 +442,8 @@ export function buildMusicDiscoveryProfile(
     ) {
       artist.lastBeforeRecentWindow = event.playedAt;
     }
+    if (evidence.present) artist.extendedEvidenceCount += 1;
+    if (evidence.msPlayed !== null) artist.msPlayedEvidenceCount += 1;
     if (evidence.explicitSkip) artist.explicitSkipCount += 1;
 
     if (!event.spotifyTrackId) continue;
@@ -376,8 +453,9 @@ export function buildMusicDiscoveryProfile(
         spotifyTrackId: event.spotifyTrackId,
         spotifyUri: event.spotifyUri,
         trackName: event.trackName.trim(),
-        artistName: event.artistName.trim(),
+        artistName: identity.displayName,
         artistKey,
+        canonicalArtistLabelLocked: identity.canonicalLabelLocked,
         albumName: event.albumName?.trim() || null,
         playCount: 0,
         plays30d: 0,
@@ -402,8 +480,10 @@ export function buildMusicDiscoveryProfile(
       track.latestLabelAt = event.playedAt;
       track.spotifyUri = event.spotifyUri ?? track.spotifyUri;
       track.trackName = event.trackName.trim();
-      track.artistName = event.artistName.trim();
       track.artistKey = artistKey;
+      track.canonicalArtistLabelLocked = identity.canonicalLabelLocked;
+      if (!track.canonicalArtistLabelLocked) track.artistName = identity.displayName;
+      else track.artistName = CANONICAL_ARTIST_LABELS.get(artistKey) ?? identity.displayName;
       track.albumName = event.albumName?.trim() || null;
     }
     if (evidence.present) track.extendedEvidenceCount += 1;
@@ -432,11 +512,17 @@ export function buildMusicDiscoveryProfile(
   }
 
   const policy = input.playbackPolicy;
-  let cooldownCutoff: Date | null = null;
   const cooldownComplete = Boolean(
-    !policy?.enabled || (policy.windowValue && policy.windowUnit),
+    !policy?.enabled ||
+      (policy.windowValue !== null && policy.windowValue > 0 && policy.windowUnit !== null),
   );
-  if (policy?.enabled && policy.windowValue && policy.windowUnit) {
+  let cooldownCutoff: Date | null = null;
+  if (
+    policy?.enabled &&
+    cooldownComplete &&
+    policy.windowValue !== null &&
+    policy.windowUnit !== null
+  ) {
     cooldownCutoff = computeMusicRepeatCutoff(
       asOf,
       policy.windowValue,
@@ -446,30 +532,39 @@ export function buildMusicDiscoveryProfile(
   const stateByTrackId = new Map(
     input.trackStates.map((state) => [state.spotifyTrackId, state.lastPlayedAt] as const),
   );
-  const blockedTrackCount = cooldownCutoff
-    ? input.trackStates.filter((state) => state.lastPlayedAt >= cooldownCutoff!).length
-    : 0;
 
   const artistProfiles = [...artists.values()].map((artist) => {
     const rediscoveryGap =
       artist.firstRecentAt && artist.lastBeforeRecentWindow
         ? wholeDaysBetween(artist.lastBeforeRecentWindow, artist.firstRecentAt)
         : null;
+    const priorPlayCount = Math.max(0, artist.playCount - artist.plays30d);
     return {
       artistName: artist.artistName,
       playCount: artist.playCount,
+      priorPlayCount,
       plays30d: artist.plays30d,
       previous30d: artist.previous30d,
       plays90d: artist.plays90d,
       plays365d: artist.plays365d,
       distinctTrackCount: artist.distinctTracks.size,
       distinctListeningDays: artist.distinctDays.size,
+      listeningDays30d: artist.recentDays.size,
+      previousListeningDays30d: artist.previousRecentDays.size,
       firstPlayedAt: artist.firstPlayedAt,
       lastPlayedAt: artist.lastPlayedAt,
+      extendedEvidenceCount: artist.extendedEvidenceCount,
+      msPlayedEvidenceCount: artist.msPlayedEvidenceCount,
       explicitSkipCount: artist.explicitSkipCount,
+      explicitSkipRate: ratioOrNull(
+        artist.explicitSkipCount,
+        artist.extendedEvidenceCount,
+      ),
       inferredSkipCount: artist.inferredSkipCount,
       pendingInferredSkipCount: artist.pendingInferredSkipCount,
       momentumDelta30d: artist.plays30d - artist.previous30d,
+      momentumListeningDayDelta30d:
+        artist.recentDays.size - artist.previousRecentDays.size,
       momentumRatio30d:
         artist.previous30d > 0 ? artist.plays30d / artist.previous30d : null,
       daysSinceLastPlay: wholeDaysBetween(artist.lastPlayedAt, asOf),
@@ -477,13 +572,36 @@ export function buildMusicDiscoveryProfile(
     } satisfies DiscoveryArtistProfile;
   });
 
+  let timelineFallbackTrackCount = 0;
+  let timelineOverrideTrackCount = 0;
   const trackProfiles = [...tracks.values()].map((track) => {
-    const cooldownLastPlayedAt = stateByTrackId.get(track.spotifyTrackId) ?? null;
+    const stateLastPlayedAt = stateByTrackId.get(track.spotifyTrackId) ?? null;
+    const timelineLastPlayedAt = track.lastPlayedAt;
+    let cooldownLastPlayedAt: Date | null = null;
+    let cooldownLastPlayedSource: CooldownLastPlayedSource | null = null;
+
+    if (!stateLastPlayedAt) {
+      cooldownLastPlayedAt = timelineLastPlayedAt;
+      cooldownLastPlayedSource = "TIMELINE";
+      timelineFallbackTrackCount += 1;
+    } else if (stateLastPlayedAt.getTime() === timelineLastPlayedAt.getTime()) {
+      cooldownLastPlayedAt = stateLastPlayedAt;
+      cooldownLastPlayedSource = "STATE_AND_TIMELINE";
+    } else if (timelineLastPlayedAt > stateLastPlayedAt) {
+      cooldownLastPlayedAt = timelineLastPlayedAt;
+      cooldownLastPlayedSource = "TIMELINE";
+      timelineOverrideTrackCount += 1;
+    } else {
+      cooldownLastPlayedAt = stateLastPlayedAt;
+      cooldownLastPlayedSource = "STATE";
+    }
+
     let cooldownEligible: boolean | null = true;
     if (policy?.enabled) {
       if (!cooldownComplete || !cooldownCutoff) cooldownEligible = null;
-      else cooldownEligible = !cooldownLastPlayedAt || cooldownLastPlayedAt < cooldownCutoff;
+      else cooldownEligible = cooldownLastPlayedAt < cooldownCutoff;
     }
+
     return {
       spotifyTrackId: track.spotifyTrackId,
       spotifyUri: track.spotifyUri,
@@ -498,15 +616,25 @@ export function buildMusicDiscoveryProfile(
       extendedEvidenceCount: track.extendedEvidenceCount,
       msPlayedEvidenceCount: track.msPlayedEvidenceCount,
       explicitSkipCount: track.explicitSkipCount,
+      explicitSkipRate: ratioOrNull(
+        track.explicitSkipCount,
+        track.extendedEvidenceCount,
+      ),
       inferredSkipCount: track.inferredSkipCount,
       pendingInferredSkipCount: track.pendingInferredSkipCount,
       cooldownLastPlayedAt,
+      cooldownLastPlayedSource,
       cooldownEligible,
     } satisfies DiscoveryTrackProfile;
   });
 
+  const blockedTrackCount = trackProfiles.filter(
+    (track) => track.cooldownEligible === false,
+  ).length;
+
   const byHistorical = (a: DiscoveryArtistProfile, b: DiscoveryArtistProfile) =>
-    b.playCount - a.playCount || b.distinctListeningDays - a.distinctListeningDays ||
+    b.playCount - a.playCount ||
+    b.distinctListeningDays - a.distinctListeningDays ||
     a.artistName.localeCompare(b.artistName);
   const byWindow = (field: "plays30d" | "plays90d" | "plays365d") =>
     (a: DiscoveryArtistProfile, b: DiscoveryArtistProfile) =>
@@ -530,11 +658,15 @@ export function buildMusicDiscoveryProfile(
   );
   const recentMomentum = top(
     artistProfiles.filter(
-      (artist) => artist.plays30d > 0 && artist.momentumDelta30d > 0,
+      (artist) =>
+        artist.plays30d > 0 &&
+        artist.momentumDelta30d > 0 &&
+        artist.listeningDays30d >= MIN_MOMENTUM_LISTENING_DAYS,
     ),
     topN,
     (a, b) =>
       b.momentumDelta30d - a.momentumDelta30d ||
+      b.listeningDays30d - a.listeningDays30d ||
       b.plays30d - a.plays30d ||
       byHistorical(a, b),
   );
@@ -546,11 +678,14 @@ export function buildMusicDiscoveryProfile(
   const rediscoveryReturns = top(
     artistProfiles.filter(
       (artist) =>
-        artist.plays30d > 0 &&
+        artist.plays30d >= MIN_REDISCOVERY_RECENT_PLAYS &&
+        artist.priorPlayCount >= MIN_REDISCOVERY_PRIOR_PLAYS &&
         (artist.rediscoveryGapDays ?? 0) >= rediscoveryGapDays,
     ),
     topN,
     (a, b) =>
+      b.priorPlayCount - a.priorPlayCount ||
+      b.plays30d - a.plays30d ||
       (b.rediscoveryGapDays ?? 0) - (a.rediscoveryGapDays ?? 0) ||
       byHistorical(a, b),
   );
@@ -580,8 +715,11 @@ export function buildMusicDiscoveryProfile(
     heuristics: {
       dormantDays,
       rediscoveryGapDays,
+      momentumMinListeningDays: MIN_MOMENTUM_LISTENING_DAYS,
+      rediscoveryMinPriorPlays: MIN_REDISCOVERY_PRIOR_PLAYS,
+      rediscoveryMinRecentPlays: MIN_REDISCOVERY_RECENT_PLAYS,
       note:
-        "Gate 1 exposes raw facts and transparent ranking heuristics only; final preference weights are intentionally not defined yet.",
+        "Gate 1.1 applies conservative profile hygiene and transparent ranking thresholds only; final preference weights are intentionally not defined yet.",
     },
     coverage: {
       firstPlayedAt,
@@ -589,7 +727,10 @@ export function buildMusicDiscoveryProfile(
       lastFmValidFrom: input.lastFmValidFrom,
       totalCanonicalEvents: events.length,
       invalidLegacyLastFmExcluded,
+      invalidSyntheticEpochEventsExcluded,
       futureEventsExcluded,
+      nonMusicalProfileEventsExcluded,
+      artistAliasEventsCanonicalized,
       sourceCounts: [...sourceCounts.entries()]
         .map(([source, count]) => ({ source, count }))
         .sort((a, b) => a.source.localeCompare(b.source)),
@@ -609,6 +750,8 @@ export function buildMusicDiscoveryProfile(
       windowUnit: policy?.windowUnit ?? null,
       cutoff: cooldownCutoff,
       trackedStateCount: input.trackStates.length,
+      timelineFallbackTrackCount,
+      timelineOverrideTrackCount,
       blockedTrackCount,
     },
     topArtistsHistorical,
@@ -622,6 +765,22 @@ export function buildMusicDiscoveryProfile(
     familiarCandidates,
     rediscoveryCandidates,
   };
+}
+
+function artistIdentity(value: string): ArtistIdentity {
+  const rawKey = normalized(value);
+  const key = ARTIST_ALIAS_KEYS.get(rawKey) ?? rawKey;
+  const canonicalLabel = CANONICAL_ARTIST_LABELS.get(key);
+  return {
+    key,
+    displayName: canonicalLabel ?? value.trim(),
+    canonicalized: key !== rawKey,
+    canonicalLabelLocked: Boolean(canonicalLabel),
+  };
+}
+
+function isNonMusicalProfileEvent(event: DiscoveryHistoryEvent): boolean {
+  return NON_MUSICAL_ARTIST_KEYS.has(normalized(event.artistName));
 }
 
 function extendedEvidence(metadata: unknown): ExtendedEvidence {
@@ -645,7 +804,15 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 function normalized(value: string): string {
-  return value.normalize("NFKC").trim().toLocaleLowerCase("en-US").replace(/\s+/g, " ");
+  return value
+    .normalize("NFKC")
+    .trim()
+    .toLocaleLowerCase("en-US")
+    .replace(/\s+/g, " ");
+}
+
+function ratioOrNull(numerator: number, denominator: number): number | null {
+  return denominator > 0 ? numerator / denominator : null;
 }
 
 function daysBefore(date: Date, days: number): Date {
