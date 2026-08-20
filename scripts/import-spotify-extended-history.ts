@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import {
   readSpotifyExtendedHistoryPackage,
@@ -8,6 +10,7 @@ import {
   AMBIGUOUS_MATCH_TOLERANCE_MS,
   reconcileSpotifyExtendedHistory,
   summarizeAbsoluteDeltas,
+  type ExistingListeningEvent,
 } from "@/services/spotify-extended-history/reconcile";
 
 type Args = {
@@ -44,25 +47,32 @@ async function main() {
       const upperBound = parsed.latestEndedAt;
       if (!lowerBound || !upperBound) throw new Error("Spotify package contains no valid music events");
 
-      const existingEvents = await tx.trackListeningEvent.findMany({
-        where: {
-          userId: user.id,
-          playedAt: {
-            gte: new Date(lowerBound.getTime() - AMBIGUOUS_MATCH_TOLERANCE_MS),
-            lte: new Date(upperBound.getTime() + AMBIGUOUS_MATCH_TOLERANCE_MS),
-          },
-          source: { in: ["LASTFM_SCROBBLE", "SPOTIFY_RECENTLY_PLAYED"] },
-        },
-        select: {
-          id: true,
-          spotifyTrackId: true,
-          trackName: true,
-          artistName: true,
-          playedAt: true,
-          source: true,
-          metadata: true,
-        },
-      });
+      const from = new Date(lowerBound.getTime() - AMBIGUOUS_MATCH_TOLERANCE_MS);
+      const to = new Date(upperBound.getTime() + AMBIGUOUS_MATCH_TOLERANCE_MS);
+
+      // Raw SQL is deliberate here: a dry-run built from the HISTORY-02 branch
+      // must be able to inspect a production database both before and after the
+      // migration that adds SPOTIFY_EXTENDED_HISTORY to the Prisma enum.
+      const existingEvents = await tx.$queryRaw<ExistingListeningEvent[]>(Prisma.sql`
+        SELECT
+          "id",
+          "spotifyTrackId",
+          "trackName",
+          "artistName",
+          "playedAt",
+          "source"::text AS "source",
+          "sourceEventKey",
+          "metadata"
+        FROM "TrackListeningEvent"
+        WHERE "userId" = ${user.id}
+          AND "playedAt" >= ${from}
+          AND "playedAt" <= ${to}
+          AND "source"::text IN (
+            'LASTFM_SCROBBLE',
+            'SPOTIFY_RECENTLY_PLAYED',
+            'SPOTIFY_EXTENDED_HISTORY'
+          )
+      `);
 
       console.log("");
       console.log("========== CANONICAL HISTORY SNAPSHOT ==========");
@@ -70,6 +80,7 @@ async function main() {
       console.log(`Existing events read:  ${existingEvents.length}`);
       console.log(`Existing Last.fm:      ${existingEvents.filter((event) => event.source === "LASTFM_SCROBBLE").length}`);
       console.log(`Existing Recently:     ${existingEvents.filter((event) => event.source === "SPOTIFY_RECENTLY_PLAYED").length}`);
+      console.log(`Existing Extended:     ${existingEvents.filter((event) => event.source === "SPOTIFY_EXTENDED_HISTORY").length}`);
 
       return reconcileSpotifyExtendedHistory(parsed.musicEvents, existingEvents);
     },
@@ -82,6 +93,7 @@ async function main() {
   console.log(`Unique music events:   ${summary.totalUniqueExportEvents}`);
   console.log(`EXACT Last.fm:         ${summary.exactExistingLastFm}`);
   console.log(`EXACT Recently Played: ${summary.exactExistingRecentlyPlayed}`);
+  console.log(`EXACT Extended:        ${summary.exactExistingExtendedHistory}`);
   console.log(`NEW uncovered:         ${summary.newUncoveredEvents}`);
   console.log(`CONFLICT/ambiguous:    ${summary.conflictAmbiguous}`);
   console.log(`Enrichment candidates: ${summary.enrichmentCandidates}`);
