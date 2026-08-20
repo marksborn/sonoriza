@@ -7,6 +7,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 import type { SpotifyExtendedMusicEvent } from "./parser";
+import { buildSpotifyExtendedPersistenceManifest } from "./persistence-manifest";
 import { buildSpotifyExtendedPersistencePlan } from "./persistence-plan";
 import { applySpotifyExtendedHistory } from "./persistence-writer";
 import {
@@ -90,6 +91,7 @@ test("HISTORY-02 writer inserts, enriches, quarantines and is idempotent", async
     );
 
     const plan = buildSpotifyExtendedPersistencePlan(PACKAGE_SHA, reconciliation);
+    const manifest = buildSpotifyExtendedPersistenceManifest(user.id, plan);
     assert.deepEqual(plan.summary, {
       insertNew: 1,
       enrichExisting: 1,
@@ -102,7 +104,9 @@ test("HISTORY-02 writer inserts, enriches, quarantines and is idempotent", async
       packageSha256: PACKAGE_SHA,
       expectedPackageSha256: PACKAGE_SHA,
       expectedPlanHash: plan.planHash,
-      reconciliation,
+      expectedManifestHash: manifest.manifestHash,
+      manifest,
+      musicEvents: exportEvents,
       client: prisma,
       batchSize: 2,
     });
@@ -112,6 +116,7 @@ test("HISTORY-02 writer inserts, enriches, quarantines and is idempotent", async
     assert.equal(first.duplicateEvents, 0);
     assert.equal(first.noopEvents, 0);
     assert.equal(first.quarantinedEvents, 1);
+    assert.equal(first.manifestHash, manifest.manifestHash);
 
     const rows = await prisma.$queryRaw<
       Array<{
@@ -168,13 +173,15 @@ test("HISTORY-02 writer inserts, enriches, quarantines and is idempotent", async
       packageSha256: PACKAGE_SHA,
       expectedPackageSha256: PACKAGE_SHA,
       expectedPlanHash: plan.planHash,
-      reconciliation,
+      expectedManifestHash: manifest.manifestHash,
+      manifest,
+      musicEvents: exportEvents,
       client: prisma,
       batchSize: 2,
     });
 
-    assert.equal(second.insertedEvents, 0, "same frozen plan must never duplicate new events");
-    assert.equal(second.enrichedEvents, 0, "same frozen plan must never overwrite enrichment");
+    assert.equal(second.insertedEvents, 0, "same frozen manifest must never duplicate new events");
+    assert.equal(second.enrichedEvents, 0, "same frozen manifest must never overwrite enrichment");
     assert.equal(second.duplicateEvents, 1);
     assert.equal(second.noopEvents, 1);
     assert.equal(second.quarantinedEvents, 1);
@@ -204,7 +211,9 @@ test("HISTORY-02 writer inserts, enriches, quarantines and is idempotent", async
         packageSha256: PACKAGE_SHA,
         expectedPackageSha256: PACKAGE_SHA,
         expectedPlanHash: "0".repeat(64),
-        reconciliation,
+        expectedManifestHash: manifest.manifestHash,
+        manifest,
+        musicEvents: exportEvents,
         client: prisma,
       }),
       /plan hash does not match/i,
@@ -225,10 +234,26 @@ test("HISTORY-02 writer inserts, enriches, quarantines and is idempotent", async
         packageSha256: PACKAGE_SHA,
         expectedPackageSha256: "b".repeat(64),
         expectedPlanHash: plan.planHash,
-        reconciliation,
+        expectedManifestHash: manifest.manifestHash,
+        manifest,
+        musicEvents: exportEvents,
         client: prisma,
       }),
       /package SHA does not match/i,
+    );
+
+    await assert.rejects(
+      applySpotifyExtendedHistory({
+        userId: `${user.id}-other`,
+        packageSha256: PACKAGE_SHA,
+        expectedPackageSha256: PACKAGE_SHA,
+        expectedPlanHash: plan.planHash,
+        expectedManifestHash: manifest.manifestHash,
+        manifest,
+        musicEvents: exportEvents,
+        client: prisma,
+      }),
+      /manifest user does not match/i,
     );
   } finally {
     await prisma.user.delete({ where: { id: user.id } });
