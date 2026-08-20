@@ -236,7 +236,7 @@ async function enrichExistingEvents(
     ${event.spotifyTrackId}::text,
     ${event.spotifyTrackUri}::text,
     ${event.albumName}::text,
-    ${JSON.stringify(toExtendedMetadata(packageSha256, event))}::jsonb
+    ${JSON.stringify(toExtendedEvidence(packageSha256, event))}::jsonb
   )`);
 
   return tx.$executeRaw(Prisma.sql`
@@ -256,20 +256,24 @@ async function enrichExistingEvents(
   `);
 }
 
+function toExtendedEvidence(packageSha256: string, event: SpotifyExtendedMusicEvent) {
+  return {
+    packageSha256,
+    sourceEventKey: event.sourceEventKey,
+    spotifyTrackUri: event.spotifyTrackUri,
+    endedAt: event.endedAt.toISOString(),
+    estimatedStartedAt: event.estimatedStartedAt.toISOString(),
+    msPlayed: event.msPlayed,
+    skipped: event.skipped,
+    explicitSkip: event.skipped === true,
+    reasonStart: event.reasonStart,
+    reasonEnd: event.reasonEnd,
+  };
+}
+
 function toExtendedMetadata(packageSha256: string, event: SpotifyExtendedMusicEvent) {
   return {
-    spotifyExtendedHistory: {
-      packageSha256,
-      sourceEventKey: event.sourceEventKey,
-      spotifyTrackUri: event.spotifyTrackUri,
-      endedAt: event.endedAt.toISOString(),
-      estimatedStartedAt: event.estimatedStartedAt.toISOString(),
-      msPlayed: event.msPlayed,
-      skipped: event.skipped,
-      explicitSkip: event.skipped === true,
-      reasonStart: event.reasonStart,
-      reasonEnd: event.reasonEnd,
-    },
+    spotifyExtendedHistory: toExtendedEvidence(packageSha256, event),
   };
 }
 
