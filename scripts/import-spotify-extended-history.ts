@@ -89,6 +89,22 @@ async function main() {
   printDeltaSummary("Last.fm start delta", summarizeAbsoluteDeltas(summary.lastFmMatchDeltaMs));
   printDeltaSummary("Recently start delta", summarizeAbsoluteDeltas(summary.recentlyPlayedMatchDeltaMs));
 
+  console.log("");
+  console.log("========== CONFLICT DIAGNOSTICS ==========");
+  console.log(`MULTIPLE_CONFIDENT_LASTFM:  ${summary.conflictReasonCounts.MULTIPLE_CONFIDENT_LASTFM}`);
+  console.log(`MULTIPLE_CONFIDENT_SPOTIFY: ${summary.conflictReasonCounts.MULTIPLE_CONFIDENT_SPOTIFY}`);
+  console.log(`CONFIDENT_CROSS_SOURCE:     ${summary.conflictReasonCounts.CONFIDENT_CROSS_SOURCE}`);
+  console.log(`NEAR_ONLY_LASTFM:           ${summary.conflictReasonCounts.NEAR_ONLY_LASTFM}`);
+  console.log(`NEAR_ONLY_SPOTIFY:          ${summary.conflictReasonCounts.NEAR_ONLY_SPOTIFY}`);
+  console.log(`NEAR_CROSS_SOURCE:          ${summary.conflictReasonCounts.NEAR_CROSS_SOURCE}`);
+  console.log("Candidate count buckets:");
+  console.log(`  1:                       ${summary.conflictCandidateCountBuckets.one}`);
+  console.log(`  2:                       ${summary.conflictCandidateCountBuckets.two}`);
+  console.log(`  3:                       ${summary.conflictCandidateCountBuckets.three}`);
+  console.log(`  4:                       ${summary.conflictCandidateCountBuckets.four}`);
+  console.log(`  5+:                      ${summary.conflictCandidateCountBuckets.fiveOrMore}`);
+  printDeltaSummary("Conflict nearest delta", summarizeAbsoluteDeltas(summary.conflictNearestDeltaMs));
+
   if (args.samples > 0) {
     console.log("");
     console.log("========== LOCAL DIAGNOSTIC SAMPLES ==========");
@@ -103,6 +119,8 @@ async function main() {
         entry.event.trackName,
         entry.event.spotifyTrackUri,
         `candidates=${entry.candidateCount}`,
+        `reason=${entry.conflictReason ?? "n/a"}`,
+        `nearest=${entry.nearestCandidateDeltaMs === null ? "n/a" : `${Math.round(entry.nearestCandidateDeltaMs / 1000)}s`}`,
       ].join(" | "));
     }
   }
