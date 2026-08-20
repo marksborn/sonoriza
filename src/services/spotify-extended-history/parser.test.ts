@@ -71,7 +71,98 @@ test("HISTORY-02 parses Spotify ZIP, separates domains and deduplicates music", 
     assert.equal(parsed.musicEvents[0]?.spotifyTrackId, "abc123");
     assert.equal(parsed.musicEvents[0]?.estimatedStartedAt.toISOString(), "2026-08-18T19:57:26.000Z");
     assert.equal(parsed.musicEvents[1]?.skipped, true);
-    assert.equal(parsed.musicEvents[0]?.sourceEventKey.length, 64);
+    assert.equal(
+      parsed.musicEvents[0]?.sourceEventKey,
+      "4e29d7946052d7aaf3708ff8c769054a147cb66e5689edc0a6b7a24afd44751e",
+      "URI-backed sourceEventKey must remain byte-for-byte compatible with HISTORY-02 v1",
+    );
+  } finally {
+    await rm(path, { force: true });
+  }
+});
+
+test("HISTORY-02 keeps metadata-complete music without URI and gives it stable distinct identity", async () => {
+  const noUriMusic = {
+    ts: "2026-08-18T20:00:26Z",
+    ms_played: 180000,
+    master_metadata_track_name: "URI-less Song",
+    master_metadata_album_artist_name: "URI-less Artist",
+    master_metadata_album_album_name: "URI-less Album",
+    spotify_track_uri: null,
+    spotify_episode_uri: null,
+    audiobook_uri: null,
+    reason_start: "trackdone",
+    reason_end: "endplay",
+    skipped: false,
+    offline: false,
+    offline_timestamp: null,
+    incognito_mode: false,
+  };
+  const differentTrackSamePlaybackShape = {
+    ...noUriMusic,
+    master_metadata_track_name: "Different URI-less Song",
+  };
+  const malformedUri = {
+    ...noUriMusic,
+    spotify_track_uri: "spotify:album:not-a-track",
+  };
+  const incompleteMusicMetadata = {
+    ...noUriMusic,
+    master_metadata_album_album_name: null,
+  };
+  const podcastWithStaleMasterMetadata = {
+    ...noUriMusic,
+    spotify_episode_uri: "spotify:episode:episode123",
+    episode_name: "Episode",
+    episode_show_name: "Show",
+  };
+
+  const archive = makeStoredZip([
+    {
+      name: "Spotify Extended Streaming History/Streaming_History_Audio_2026.json",
+      content: JSON.stringify([
+        noUriMusic,
+        noUriMusic,
+        differentTrackSamePlaybackShape,
+        malformedUri,
+        incompleteMusicMetadata,
+        podcastWithStaleMasterMetadata,
+      ]),
+    },
+  ]);
+
+  const path = join(tmpdir(), `spotify-history-no-uri-${process.pid}-${Date.now()}.zip`);
+  await writeFile(path, archive);
+  try {
+    const parsed = await readSpotifyExtendedHistoryPackage(path);
+
+    assert.equal(parsed.audioRecordCount, 6);
+    assert.equal(parsed.musicRecordCount, 5);
+    assert.equal(parsed.podcastRecordCount, 1);
+    assert.equal(parsed.otherAudioRecordCount, 0);
+    assert.equal(parsed.invalidMusicRecords.length, 2);
+    assert.deepEqual(
+      parsed.invalidMusicRecords.map((row) => row.reason).sort(),
+      ["invalid spotify_track_uri", "missing album name"],
+    );
+
+    assert.equal(parsed.uniqueMusicEventCount, 2);
+    assert.equal(parsed.duplicateMusicGroupCount, 1);
+    assert.equal(parsed.duplicateMusicOccurrenceCount, 1);
+
+    const first = parsed.musicEvents[0];
+    const second = parsed.musicEvents[1];
+    assert.ok(first);
+    assert.ok(second);
+    assert.equal(first.spotifyTrackUri, null);
+    assert.equal(first.spotifyTrackId, null);
+    assert.equal(first.sourceEventKey.length, 64);
+    assert.equal(second.sourceEventKey.length, 64);
+    assert.notEqual(
+      first.sourceEventKey,
+      second.sourceEventKey,
+      "different URI-less track metadata must not collapse into one source event",
+    );
   } finally {
     await rm(path, { force: true });
   }
