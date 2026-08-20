@@ -47,6 +47,13 @@ export type ApplySpotifyExtendedHistoryResult = {
  * the same manifest repeats the same action list, while inserts and enrichment
  * remain idempotent at the database layer.
  *
+ * A frozen INSERT_NEW is still revalidated at write time. Each batch briefly
+ * acquires SHARE ROW EXCLUSIVE on TrackListeningEvent, which blocks concurrent
+ * history writers (but not readers) while the guarded INSERT checks the current
+ * canonical timeline. If a Last.fm/Recently Played/Extended candidate appeared
+ * after the dry-run, the stale insert converges to a no-op instead of creating
+ * a cross-source duplicate.
+ *
  * It never calls Spotify/Last.fm, never generates playlists and never updates
  * TrackListeningState. Historical rows enrich the factual timeline only.
  */
@@ -123,6 +130,12 @@ export async function applySpotifyExtendedHistory(
       }
 
       const batchResult = await client.$transaction(async (tx) => {
+        // Prevent a Last.fm/Recently writer from racing between our canonical
+        // candidate check and INSERT. AccessShare readers remain allowed.
+        await tx.$executeRawUnsafe(
+          'LOCK TABLE "TrackListeningEvent" IN SHARE ROW EXCLUSIVE MODE',
+        );
+
         const inserted = await insertNewEvents(
           tx,
           options.userId,
@@ -195,28 +208,37 @@ async function insertNewEvents(
   if (events.length === 0) return 0;
 
   const rows = events.map((event) => Prisma.sql`(
-    ${randomUUID()},
-    ${userId},
-    ${event.spotifyTrackId},
-    ${event.spotifyTrackUri},
-    ${event.trackName},
-    ${event.artistName},
-    ${null},
-    ${event.albumName},
-    ${null},
-    ${null},
-    ${null},
-    ${null},
-    ${null},
-    ${event.estimatedStartedAt},
-    'SPOTIFY_EXTENDED_HISTORY'::"ListeningEventSource",
-    ${event.sourceEventKey},
-    ${null},
-    ${null},
+    ${randomUUID()}::text,
+    ${userId}::text,
+    ${event.spotifyTrackId}::text,
+    ${event.spotifyTrackUri}::text,
+    ${event.trackName}::text,
+    ${event.artistName}::text,
+    ${event.albumName}::text,
+    ${event.estimatedStartedAt}::timestamp,
+    ${event.sourceEventKey}::text,
+    ${normalizeText(event.artistName)}::text,
+    ${normalizeText(event.trackName)}::text,
     ${JSON.stringify(toExtendedMetadata(packageSha256, event))}::jsonb
   )`);
 
   return tx.$executeRaw(Prisma.sql`
+    WITH incoming(
+      "id",
+      "userId",
+      "spotifyTrackId",
+      "spotifyUri",
+      "trackName",
+      "artistName",
+      "albumName",
+      "playedAt",
+      "sourceEventKey",
+      "artistKey",
+      "trackKey",
+      "metadata"
+    ) AS (
+      VALUES ${Prisma.join(rows)}
+    )
     INSERT INTO "TrackListeningEvent" (
       "id",
       "userId",
@@ -238,7 +260,54 @@ async function insertNewEvents(
       "contextUri",
       "metadata"
     )
-    VALUES ${Prisma.join(rows)}
+    SELECT
+      incoming."id",
+      incoming."userId",
+      incoming."spotifyTrackId",
+      incoming."spotifyUri",
+      incoming."trackName",
+      incoming."artistName",
+      NULL,
+      incoming."albumName",
+      NULL,
+      NULL,
+      NULL,
+      NULL,
+      NULL,
+      incoming."playedAt",
+      'SPOTIFY_EXTENDED_HISTORY'::"ListeningEventSource",
+      incoming."sourceEventKey",
+      NULL,
+      NULL,
+      incoming."metadata"
+    FROM incoming
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM "TrackListeningEvent" existing
+      WHERE existing."userId" = incoming."userId"
+        AND (
+          (
+            existing."source" = 'SPOTIFY_EXTENDED_HISTORY'::"ListeningEventSource"
+            AND existing."sourceEventKey" = incoming."sourceEventKey"
+          )
+          OR (
+            existing."playedAt" BETWEEN
+              incoming."playedAt" - INTERVAL '10 minutes'
+              AND incoming."playedAt" + INTERVAL '10 minutes'
+            AND (
+              (
+                existing."source" = 'SPOTIFY_RECENTLY_PLAYED'::"ListeningEventSource"
+                AND existing."spotifyTrackId" = incoming."spotifyTrackId"
+              )
+              OR (
+                existing."source" = 'LASTFM_SCROBBLE'::"ListeningEventSource"
+                AND lower(regexp_replace(btrim(existing."artistName"), '[[:space:]]+', ' ', 'g')) = incoming."artistKey"
+                AND lower(regexp_replace(btrim(existing."trackName"), '[[:space:]]+', ' ', 'g')) = incoming."trackKey"
+              )
+            )
+          )
+        )
+    )
     ON CONFLICT ("userId", "source", "sourceEventKey") DO NOTHING
   `);
 }
@@ -295,6 +364,14 @@ function toExtendedMetadata(packageSha256: string, event: SpotifyExtendedMusicEv
   return {
     spotifyExtendedHistory: toExtendedEvidence(packageSha256, event),
   };
+}
+
+function normalizeText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .toLocaleLowerCase("en-US")
+    .replace(/\s+/g, " ");
 }
 
 async function createAuditRun(
