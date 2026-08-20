@@ -15,8 +15,8 @@ export type SpotifyExtendedMusicEvent = {
   endedAt: Date;
   estimatedStartedAt: Date;
   msPlayed: number;
-  spotifyTrackUri: string;
-  spotifyTrackId: string;
+  spotifyTrackUri: string | null;
+  spotifyTrackId: string | null;
   trackName: string;
   artistName: string;
   albumName: string;
@@ -100,6 +100,10 @@ export async function readSpotifyExtendedHistoryPackage(
       const trackUri = nullableString(row.spotify_track_uri);
       const episodeUri = nullableString(row.spotify_episode_uri);
       const audiobookUri = nullableString(row.audiobook_uri) ?? nullableString(row.audiobook_chapter_uri);
+      const hasTrackMetadata =
+        nullableString(row.master_metadata_track_name) !== null
+        || nullableString(row.master_metadata_album_artist_name) !== null
+        || nullableString(row.master_metadata_album_album_name) !== null;
 
       if (trackUri) {
         musicRecordCount += 1;
@@ -123,6 +127,9 @@ export async function readSpotifyExtendedHistoryPackage(
         continue;
       }
 
+      // Explicit podcast/audiobook identity wins when spotify_track_uri is absent.
+      // This avoids treating episode metadata as music even if an export row also
+      // contains stale master_metadata_* fields.
       if (episodeUri) {
         podcastRecordCount += 1;
         continue;
@@ -131,6 +138,32 @@ export async function readSpotifyExtendedHistoryPackage(
         audiobookRecordCount += 1;
         continue;
       }
+
+      // Spotify can emit music rows without spotify_track_uri (for example when
+      // catalog identity is unavailable). Keep those rows only when music
+      // metadata is present; parseMusicRecord will reject incomplete metadata.
+      if (hasTrackMetadata) {
+        musicRecordCount += 1;
+        const parsed = parseMusicRecord(entry.name, sourceIndex, row);
+        if ("reason" in parsed) {
+          invalidMusicRecords.push(parsed);
+          continue;
+        }
+
+        const endedAtMs = parsed.endedAt.getTime();
+        if (earliestEndedAtMs === null || endedAtMs < earliestEndedAtMs) {
+          earliestEndedAtMs = endedAtMs;
+        }
+        if (latestEndedAtMs === null || endedAtMs > latestEndedAtMs) {
+          latestEndedAtMs = endedAtMs;
+        }
+
+        const seen = occurrenceCounts.get(parsed.sourceEventKey) ?? 0;
+        occurrenceCounts.set(parsed.sourceEventKey, seen + 1);
+        if (seen === 0) musicEvents.push(parsed);
+        continue;
+      }
+
       otherAudioRecordCount += 1;
     }
   }
@@ -184,9 +217,14 @@ function parseMusicRecord(
   if (!ts) return invalid(sourceFile, sourceIndex, "missing ts");
   const endedAt = new Date(ts);
   if (Number.isNaN(endedAt.getTime())) return invalid(sourceFile, sourceIndex, "invalid ts");
-  if (!spotifyTrackUri) return invalid(sourceFile, sourceIndex, "missing spotify_track_uri");
-  const uriMatch = TRACK_URI_RE.exec(spotifyTrackUri);
-  if (!uriMatch?.[1]) return invalid(sourceFile, sourceIndex, "invalid spotify_track_uri");
+
+  let spotifyTrackId: string | null = null;
+  if (spotifyTrackUri) {
+    const uriMatch = TRACK_URI_RE.exec(spotifyTrackUri);
+    if (!uriMatch?.[1]) return invalid(sourceFile, sourceIndex, "invalid spotify_track_uri");
+    spotifyTrackId = uriMatch[1];
+  }
+
   if (!trackName) return invalid(sourceFile, sourceIndex, "missing track name");
   if (!artistName) return invalid(sourceFile, sourceIndex, "missing artist name");
   if (!albumName) return invalid(sourceFile, sourceIndex, "missing album name");
@@ -202,6 +240,9 @@ function parseMusicRecord(
   const sourceEventKey = spotifyExtendedSourceEventKey({
     ts,
     spotifyTrackUri,
+    trackName,
+    artistName,
+    albumName,
     msPlayed,
     reasonStart,
     reasonEnd,
@@ -218,7 +259,7 @@ function parseMusicRecord(
     estimatedStartedAt,
     msPlayed,
     spotifyTrackUri,
-    spotifyTrackId: uriMatch[1],
+    spotifyTrackId,
     trackName,
     artistName,
     albumName,
@@ -234,7 +275,10 @@ function parseMusicRecord(
 
 export function spotifyExtendedSourceEventKey(input: {
   ts: string;
-  spotifyTrackUri: string;
+  spotifyTrackUri: string | null;
+  trackName?: string;
+  artistName?: string;
+  albumName?: string;
   msPlayed: number;
   reasonStart: string | null;
   reasonEnd: string | null;
@@ -243,10 +287,39 @@ export function spotifyExtendedSourceEventKey(input: {
   offlineTimestamp: number | null;
   incognitoMode: boolean | null;
 }): string {
+  // Keep the historical v1 identity byte-for-byte compatible for rows that
+  // have a Spotify URI. Existing imported sourceEventKey values must never be
+  // invalidated by adding support for URI-less rows.
+  if (input.spotifyTrackUri !== null) {
+    const canonical = [
+      "spotify-extended-history-v1",
+      input.ts,
+      input.spotifyTrackUri,
+      String(input.msPlayed),
+      input.reasonStart ?? "",
+      input.reasonEnd ?? "",
+      serializeNullableBoolean(input.skipped),
+      serializeNullableBoolean(input.offline),
+      input.offlineTimestamp === null ? "" : String(input.offlineTimestamp),
+      serializeNullableBoolean(input.incognitoMode),
+    ].join("\u0000");
+
+    return createHash("sha256").update(canonical).digest("hex");
+  }
+
+  if (!input.trackName || !input.artistName || !input.albumName) {
+    throw new Error("URI-less Spotify Extended music identity requires track, artist and album");
+  }
+
+  // URI-less rows need a separate identity namespace. Exact textual metadata is
+  // part of the key so two different tracks at the same timestamp/msPlayed do
+  // not collapse merely because Spotify omitted catalog identity.
   const canonical = [
-    "spotify-extended-history-v1",
+    "spotify-extended-history-no-uri-v1",
     input.ts,
-    input.spotifyTrackUri,
+    input.artistName,
+    input.trackName,
+    input.albumName,
     String(input.msPlayed),
     input.reasonStart ?? "",
     input.reasonEnd ?? "",
