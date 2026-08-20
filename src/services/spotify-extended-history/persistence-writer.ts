@@ -215,7 +215,7 @@ async function insertNewEvents(
     ${event.trackName}::text,
     ${event.artistName}::text,
     ${event.albumName}::text,
-    ${event.estimatedStartedAt}::timestamp,
+    (${event.estimatedStartedAt}::timestamptz AT TIME ZONE 'UTC'),
     ${event.sourceEventKey}::text,
     ${normalizeText(event.artistName)}::text,
     ${normalizeText(event.trackName)}::text,
@@ -450,6 +450,21 @@ async function finishAuditRun(
       "noopEvents" = ${input.noopEvents},
       "finishedAt" = CURRENT_TIMESTAMP,
       "error" = ${input.error}
+    WHERE "id" = ${runId}
+  `);
+}
+
+export async function markSpotifyExtendedHistoryRunPartial(
+  client: PrismaClient,
+  runId: string,
+  error: string,
+): Promise<void> {
+  await client.$executeRaw(Prisma.sql`
+    UPDATE "SpotifyExtendedHistoryImportRun"
+    SET
+      "status" = 'PARTIAL'::"SpotifyExtendedHistoryImportStatus",
+      "finishedAt" = CURRENT_TIMESTAMP,
+      "error" = ${error}
     WHERE "id" = ${runId}
   `);
 }
