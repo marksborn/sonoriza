@@ -20,17 +20,19 @@ export type SpotifyExtendedPersistenceAction = {
   candidateCount: number;
 };
 
+export type SpotifyExtendedPersistencePlanSummary = {
+  insertNew: number;
+  enrichExisting: number;
+  quarantineConflict: number;
+  noopAlreadyEnriched: number;
+};
+
 export type SpotifyExtendedPersistencePlan = {
   version: 1;
   packageSha256: string;
   planHash: string;
   actions: SpotifyExtendedPersistenceAction[];
-  summary: {
-    insertNew: number;
-    enrichExisting: number;
-    quarantineConflict: number;
-    noopAlreadyEnriched: number;
-  };
+  summary: SpotifyExtendedPersistencePlanSummary;
 };
 
 export function buildSpotifyExtendedPersistencePlan(
@@ -38,21 +40,26 @@ export function buildSpotifyExtendedPersistencePlan(
   reconciliation: SpotifyExtendedReconciliation,
 ): SpotifyExtendedPersistencePlan {
   const actions = reconciliation.entries.map(toPersistenceAction);
+  return persistencePlanFromActions(packageSha256, actions);
+}
 
-  const summary = {
-    insertNew: 0,
-    enrichExisting: 0,
-    quarantineConflict: 0,
-    noopAlreadyEnriched: 0,
+export function persistencePlanFromActions(
+  packageSha256: string,
+  actions: SpotifyExtendedPersistenceAction[],
+): SpotifyExtendedPersistencePlan {
+  return {
+    version: 1,
+    packageSha256,
+    planHash: calculateSpotifyExtendedPersistencePlanHash(packageSha256, actions),
+    actions,
+    summary: summarizeSpotifyExtendedPersistenceActions(actions),
   };
+}
 
-  for (const action of actions) {
-    if (action.kind === "INSERT_NEW") summary.insertNew += 1;
-    else if (action.kind === "ENRICH_EXISTING") summary.enrichExisting += 1;
-    else if (action.kind === "QUARANTINE_CONFLICT") summary.quarantineConflict += 1;
-    else summary.noopAlreadyEnriched += 1;
-  }
-
+export function calculateSpotifyExtendedPersistencePlanHash(
+  packageSha256: string,
+  actions: SpotifyExtendedPersistenceAction[],
+): string {
   const canonical = {
     version: 1,
     packageSha256,
@@ -66,17 +73,29 @@ export function buildSpotifyExtendedPersistencePlan(
     })),
   };
 
-  const planHash = createHash("sha256")
+  return createHash("sha256")
     .update(JSON.stringify(canonical))
     .digest("hex");
+}
 
-  return {
-    version: 1,
-    packageSha256,
-    planHash,
-    actions,
-    summary,
+export function summarizeSpotifyExtendedPersistenceActions(
+  actions: SpotifyExtendedPersistenceAction[],
+): SpotifyExtendedPersistencePlanSummary {
+  const summary: SpotifyExtendedPersistencePlanSummary = {
+    insertNew: 0,
+    enrichExisting: 0,
+    quarantineConflict: 0,
+    noopAlreadyEnriched: 0,
   };
+
+  for (const action of actions) {
+    if (action.kind === "INSERT_NEW") summary.insertNew += 1;
+    else if (action.kind === "ENRICH_EXISTING") summary.enrichExisting += 1;
+    else if (action.kind === "QUARANTINE_CONFLICT") summary.quarantineConflict += 1;
+    else summary.noopAlreadyEnriched += 1;
+  }
+
+  return summary;
 }
 
 function toPersistenceAction(
