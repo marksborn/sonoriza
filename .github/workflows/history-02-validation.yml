@@ -17,7 +17,7 @@ on:
       - ".github/workflows/history-02-validation.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -47,12 +47,118 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Patch HISTORY-02 Prisma schema once
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("prisma/schema.prisma")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = [
+              (
+                  "  lastFmBackfillRuns     LastFmBackfillRun[]\n",
+                  "  lastFmBackfillRuns     LastFmBackfillRun[]\n  spotifyExtendedHistoryImportRuns SpotifyExtendedHistoryImportRun[]\n",
+              ),
+              (
+                  "enum ListeningEventSource {\n  SPOTIFY_RECENTLY_PLAYED\n  LASTFM_SCROBBLE\n  IMPORT\n}\n",
+                  "enum ListeningEventSource {\n  SPOTIFY_RECENTLY_PLAYED\n  SPOTIFY_EXTENDED_HISTORY\n  LASTFM_SCROBBLE\n  IMPORT\n}\n",
+              ),
+              (
+                  "enum LastFmBackfillStatus {\n  RUNNING\n  SUCCESS\n  PARTIAL\n  FAILED\n}\n",
+                  "enum LastFmBackfillStatus {\n  RUNNING\n  SUCCESS\n  PARTIAL\n  FAILED\n}\n\nenum SpotifyExtendedHistoryImportStatus {\n  RUNNING\n  SUCCESS\n  PARTIAL\n  FAILED\n}\n",
+              ),
+          ]
+
+          for old, new in replacements:
+              if new in text:
+                  continue
+              if old not in text:
+                  raise SystemExit(f"expected schema anchor not found: {old!r}")
+              text = text.replace(old, new, 1)
+
+          anchor = '''model LastFmBackfillRun {
+  id                  String               @id @default(cuid())
+  userId              String
+  username            String
+  status              LastFmBackfillStatus @default(RUNNING)
+  from                 DateTime?
+  to                   DateTime
+  nextPage             Int                 @default(1)
+  totalPages           Int?
+  profilePlayCount     Int?
+  scannedProviderRows Int                  @default(0)
+  acceptedEvents      Int                  @default(0)
+  insertedEvents      Int                  @default(0)
+  duplicateEvents     Int                  @default(0)
+  nowPlayingSkipped   Int                  @default(0)
+  invalidSkipped      Int                  @default(0)
+  startedAt           DateTime             @default(now())
+  lastPageAt          DateTime?
+  finishedAt          DateTime?
+  error                String?              @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([userId, username, status])
+}
+'''
+
+          model = anchor + '''
+model SpotifyExtendedHistoryImportRun {
+  id                String                             @id @default(cuid())
+  userId            String
+  packageSha256     String
+  planHash          String
+  planVersion       Int                                @default(1)
+  status            SpotifyExtendedHistoryImportStatus @default(RUNNING)
+  uniqueMusicEvents Int
+  insertPlanned     Int
+  enrichPlanned     Int
+  quarantinePlanned Int
+  insertedEvents    Int                                @default(0)
+  enrichedEvents    Int                                @default(0)
+  duplicateEvents   Int                                @default(0)
+  noopEvents        Int                                @default(0)
+  startedAt         DateTime                           @default(now())
+  finishedAt        DateTime?
+  error             String?                            @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([userId, packageSha256, planHash])
+}
+'''
+
+          if "model SpotifyExtendedHistoryImportRun {" not in text:
+              if anchor not in text:
+                  raise SystemExit("LastFmBackfillRun anchor not found")
+              text = text.replace(anchor, model, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+          if git diff --quiet -- prisma/schema.prisma; then
+            echo "Schema already patched."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add prisma/schema.prisma
+            git commit -m "feat(history): add extended history provenance schema"
+            git push origin HEAD:agent/history-02-extended-dry-run
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: "24.19.0"
           cache: npm
 
       - run: npm ci
+      - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npm run test:spotify-history
       - run: npm run test:history
