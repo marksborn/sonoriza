@@ -3,6 +3,7 @@ import {
   readSpotifyExtendedHistoryPackage,
   type SpotifyExtendedHistoryPackage,
 } from "@/services/spotify-extended-history/parser";
+import { buildSpotifyExtendedPersistencePlan } from "@/services/spotify-extended-history/persistence-plan";
 import {
   AMBIGUOUS_MATCH_TOLERANCE_MS,
   reconcileSpotifyExtendedHistory,
@@ -104,6 +105,17 @@ async function main() {
   console.log(`  4:                       ${summary.conflictCandidateCountBuckets.four}`);
   console.log(`  5+:                      ${summary.conflictCandidateCountBuckets.fiveOrMore}`);
   printDeltaSummary("Conflict nearest delta", summarizeAbsoluteDeltas(summary.conflictNearestDeltaMs));
+
+  const plan = buildSpotifyExtendedPersistencePlan(parsed.archiveSha256, result);
+  console.log("");
+  console.log("========== PERSISTENCE PLAN — FROZEN / READ-ONLY ==========");
+  console.log(`Plan version:           ${plan.version}`);
+  console.log(`Plan hash:              ${plan.planHash}`);
+  console.log(`INSERT_NEW:             ${plan.summary.insertNew}`);
+  console.log(`ENRICH_EXISTING:        ${plan.summary.enrichExisting}`);
+  console.log(`QUARANTINE_CONFLICT:    ${plan.summary.quarantineConflict}`);
+  console.log(`NOOP_ALREADY_ENRICHED:  ${plan.summary.noopAlreadyEnriched}`);
+  console.log("Apply available:        NÃO");
 
   if (args.samples > 0) {
     console.log("");
