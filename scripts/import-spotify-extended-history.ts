@@ -16,7 +16,10 @@ import {
   buildSpotifyExtendedPersistencePlan,
   type SpotifyExtendedPersistencePlan,
 } from "@/services/spotify-extended-history/persistence-plan";
-import { applySpotifyExtendedHistory } from "@/services/spotify-extended-history/persistence-writer";
+import {
+  applySpotifyExtendedHistory,
+  markSpotifyExtendedHistoryRunPartial,
+} from "@/services/spotify-extended-history/persistence-writer";
 import {
   AMBIGUOUS_MATCH_TOLERANCE_MS,
   reconcileSpotifyExtendedHistory,
@@ -201,9 +204,10 @@ async function runApply(
   console.log(`Pending frozen work:   ${manifestPostcheck.pendingActions}`);
 
   if (manifestPostcheck.pendingActions !== 0) {
-    throw new Error(
-      `HISTORY-02 frozen manifest postcheck incomplete: pending=${manifestPostcheck.pendingActions}`,
-    );
+    const postcheckError =
+      `HISTORY-02 frozen manifest postcheck incomplete: pending=${manifestPostcheck.pendingActions}`;
+    await markSpotifyExtendedHistoryRunPartial(prisma, result.runId, postcheckError);
+    throw new Error(postcheckError);
   }
 
   console.log("");
