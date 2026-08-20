@@ -1,0 +1,64 @@
+name: DISCOVERY-01 validation
+
+on:
+  push:
+    branches:
+      - "agent/discovery-01-profile-gate1"
+    paths:
+      - "src/services/music-discovery/**"
+      - "scripts/report-music-discovery-profile.ts"
+      - "package.json"
+      - ".github/workflows/discovery-01-validation.yml"
+  pull_request:
+    paths:
+      - "src/services/music-discovery/**"
+      - "scripts/report-music-discovery-profile.ts"
+      - "package.json"
+      - ".github/workflows/discovery-01-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_discovery_gate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_discovery_gate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_discovery_gate?schema=public
+      NEXTAUTH_SECRET: discovery-gate-secret
+      AUTH_SECRET: discovery-gate-secret
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npm run test:discovery
+      - run: npm run test:history
+      - run: npm run test:music-preference
+      - run: npm run test:spotify-history
+      - run: npm run typecheck
+      - run: npm run build
