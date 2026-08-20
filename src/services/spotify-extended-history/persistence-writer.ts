@@ -6,10 +6,13 @@ import { prisma as defaultPrisma } from "@/lib/prisma";
 
 import type { SpotifyExtendedMusicEvent } from "./parser";
 import {
-  buildSpotifyExtendedPersistencePlan,
+  parseSpotifyExtendedPersistenceManifest,
+  type SpotifyExtendedPersistenceManifest,
+} from "./persistence-manifest";
+import {
+  persistencePlanFromActions,
   type SpotifyExtendedPersistencePlan,
 } from "./persistence-plan";
-import type { SpotifyExtendedReconciliation } from "./reconcile";
 
 const DEFAULT_BATCH_SIZE = 500;
 
@@ -18,7 +21,9 @@ export type ApplySpotifyExtendedHistoryOptions = {
   packageSha256: string;
   expectedPackageSha256: string;
   expectedPlanHash: string;
-  reconciliation: SpotifyExtendedReconciliation;
+  expectedManifestHash: string;
+  manifest: SpotifyExtendedPersistenceManifest;
+  musicEvents: SpotifyExtendedMusicEvent[];
   client?: PrismaClient;
   batchSize?: number;
 };
@@ -26,6 +31,7 @@ export type ApplySpotifyExtendedHistoryOptions = {
 export type ApplySpotifyExtendedHistoryResult = {
   runId: string;
   planHash: string;
+  manifestHash: string;
   insertedEvents: number;
   enrichedEvents: number;
   duplicateEvents: number;
@@ -36,12 +42,13 @@ export type ApplySpotifyExtendedHistoryResult = {
 /**
  * HISTORY-02 persistence writer.
  *
- * This function deliberately accepts an already-reconciled, frozen plan. It
- * does not call Spotify/Last.fm, does not generate playlists and never updates
- * TrackListeningState. Historical rows enrich the factual timeline only.
+ * The writer executes a frozen manifest instead of rebuilding actions from the
+ * current database state. That makes a partial import restartable: re-running
+ * the same manifest repeats the same action list, while inserts and enrichment
+ * remain idempotent at the database layer.
  *
- * The caller must supply both the expected package SHA and expected plan hash.
- * Any drift aborts before the audit run or listening history is written.
+ * It never calls Spotify/Last.fm, never generates playlists and never updates
+ * TrackListeningState. Historical rows enrich the factual timeline only.
  */
 export async function applySpotifyExtendedHistory(
   options: ApplySpotifyExtendedHistoryOptions,
@@ -52,23 +59,38 @@ export async function applySpotifyExtendedHistory(
     throw new Error("HISTORY-02 batchSize must be an integer between 1 and 2000");
   }
 
+  const manifest = parseSpotifyExtendedPersistenceManifest(options.manifest);
+  if (manifest.userId !== options.userId) {
+    throw new Error("HISTORY-02 manifest user does not match the apply user");
+  }
   if (options.packageSha256 !== options.expectedPackageSha256) {
     throw new Error("HISTORY-02 package SHA does not match the frozen dry-run");
   }
-
-  const plan = buildSpotifyExtendedPersistencePlan(
-    options.packageSha256,
-    options.reconciliation,
-  );
-  if (plan.planHash !== options.expectedPlanHash) {
+  if (manifest.packageSha256 !== options.packageSha256) {
+    throw new Error("HISTORY-02 manifest package SHA does not match the supplied package");
+  }
+  if (manifest.planHash !== options.expectedPlanHash) {
     throw new Error("HISTORY-02 persistence plan hash does not match the frozen dry-run");
+  }
+  if (manifest.manifestHash !== options.expectedManifestHash) {
+    throw new Error("HISTORY-02 manifest hash does not match the frozen dry-run");
+  }
+
+  const plan = persistencePlanFromActions(manifest.packageSha256, manifest.actions);
+  if (plan.planHash !== manifest.planHash) {
+    throw new Error("HISTORY-02 manifest actions no longer reproduce the frozen plan hash");
   }
 
   const eventBySourceKey = new Map(
-    options.reconciliation.entries.map((entry) => [entry.event.sourceEventKey, entry.event] as const),
+    options.musicEvents.map((event) => [event.sourceEventKey, event] as const),
   );
-  if (eventBySourceKey.size !== options.reconciliation.entries.length) {
-    throw new Error("HISTORY-02 reconciliation contains duplicate sourceEventKey values");
+  if (eventBySourceKey.size !== options.musicEvents.length) {
+    throw new Error("HISTORY-02 package contains duplicate sourceEventKey values after parsing");
+  }
+  for (const action of plan.actions) {
+    if (!eventBySourceKey.has(action.sourceEventKey)) {
+      throw new Error(`HISTORY-02 planned sourceEventKey is missing from package: ${action.sourceEventKey}`);
+    }
   }
 
   const runId = randomUUID();
@@ -86,10 +108,7 @@ export async function applySpotifyExtendedHistory(
       const enrichEvents: { id: string; event: SpotifyExtendedMusicEvent }[] = [];
 
       for (const action of actions) {
-        const event = eventBySourceKey.get(action.sourceEventKey);
-        if (!event) {
-          throw new Error(`HISTORY-02 planned sourceEventKey is missing: ${action.sourceEventKey}`);
-        }
+        const event = eventBySourceKey.get(action.sourceEventKey)!;
 
         if (action.kind === "INSERT_NEW") {
           insertEvents.push(event);
@@ -143,6 +162,7 @@ export async function applySpotifyExtendedHistory(
     return {
       runId,
       planHash: plan.planHash,
+      manifestHash: manifest.manifestHash,
       insertedEvents,
       enrichedEvents,
       duplicateEvents,
