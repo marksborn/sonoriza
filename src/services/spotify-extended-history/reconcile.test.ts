@@ -36,12 +36,52 @@ test("HISTORY-02 reconciles strong Spotify and conservative Last.fm matches", ()
       "CONFLICT_AMBIGUOUS",
     ],
   );
+  assert.deepEqual(
+    result.entries.map((entry) => entry.conflictReason),
+    [null, null, null, "MULTIPLE_CONFIDENT_LASTFM", "NEAR_ONLY_SPOTIFY"],
+  );
+  assert.equal(result.entries[3]?.nearestCandidateDeltaMs, 20_000);
+  assert.equal(result.entries[4]?.nearestCandidateDeltaMs, 5 * 60 * 1000);
   assert.equal(result.summary.exactExistingRecentlyPlayed, 1);
   assert.equal(result.summary.exactExistingLastFm, 1);
   assert.equal(result.summary.newUncoveredEvents, 1);
   assert.equal(result.summary.conflictAmbiguous, 2);
   assert.equal(result.summary.enrichmentCandidates, 2);
   assert.equal(result.summary.estimatedInserts, 1);
+  assert.equal(result.summary.conflictReasonCounts.MULTIPLE_CONFIDENT_LASTFM, 1);
+  assert.equal(result.summary.conflictReasonCounts.NEAR_ONLY_SPOTIFY, 1);
+  assert.deepEqual(result.summary.conflictCandidateCountBuckets, {
+    one: 1,
+    two: 1,
+    three: 0,
+    four: 0,
+    fiveOrMore: 0,
+  });
+});
+
+test("HISTORY-02 diagnoses cross-source confident and near conflicts", () => {
+  const confident = event("cross-confident", "Artist F", "Track F", "2026-08-18T15:00:00Z");
+  const near = event("cross-near", "Artist G", "Track G", "2026-08-18T16:00:00Z");
+
+  const existingEvents: ExistingListeningEvent[] = [
+    existingEvent("rp-f", "cross-confident", "Track F", "Artist F", "2026-08-18T15:00:30Z", "SPOTIFY_RECENTLY_PLAYED"),
+    existingEvent("lf-f", null, "Track F", "Artist F", "2026-08-18T15:01:00Z", "LASTFM_SCROBBLE"),
+    existingEvent("rp-g", "cross-near", "Track G", "Artist G", "2026-08-18T16:05:00Z", "SPOTIFY_RECENTLY_PLAYED"),
+    existingEvent("lf-g", null, "Track G", "Artist G", "2026-08-18T16:06:00Z", "LASTFM_SCROBBLE"),
+  ];
+
+  const result = reconcileSpotifyExtendedHistory([confident, near], existingEvents);
+  assert.equal(result.entries[0]?.conflictReason, "CONFIDENT_CROSS_SOURCE");
+  assert.equal(result.entries[1]?.conflictReason, "NEAR_CROSS_SOURCE");
+  assert.equal(result.summary.conflictReasonCounts.CONFIDENT_CROSS_SOURCE, 1);
+  assert.equal(result.summary.conflictReasonCounts.NEAR_CROSS_SOURCE, 1);
+  assert.deepEqual(result.summary.conflictCandidateCountBuckets, {
+    one: 0,
+    two: 2,
+    three: 0,
+    four: 0,
+    fiveOrMore: 0,
+  });
 });
 
 test("HISTORY-02 treats ts as stop time and matches against estimated start time", () => {
