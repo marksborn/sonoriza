@@ -111,6 +111,38 @@ type CompleteProfileAccumulator = {
 
 type CompleteProfileEventRow = DiscoveryHistoryEvent & { id: string };
 
+type CompleteProfileOptions = Omit<
+  MusicDiscoveryProfileOptions,
+  "topN" | "completeUniverse"
+>;
+
+type FinalizeProfileInput = {
+  accumulator: CompleteProfileAccumulator;
+  asOf: Date;
+  dormantDays: number;
+  rediscoveryGapDays: number;
+  inferredSkips: DiscoveryPreferenceSignal[];
+  trackStates: DiscoveryTrackState[];
+  playbackPolicy: DiscoveryPlaybackPolicy | null;
+  lastFmValidFrom: Date | null;
+};
+
+export type RetainedCompleteMusicDiscoveryProfile = Pick<
+  MusicDiscoveryProfile,
+  | "generatedAt"
+  | "heuristics"
+  | "coverage"
+  | "cooldown"
+  | "topArtistsHistorical"
+  | "topTracksHistorical"
+>;
+
+type PreparedCompleteMusicDiscoveryProfile =
+  RetainedCompleteMusicDiscoveryProfile & {
+    artistProfiles: DiscoveryArtistProfile[];
+    trackProfiles: DiscoveryTrackProfile[];
+  };
+
 /**
  * PERF-01 complete-universe loader.
  *
@@ -122,8 +154,35 @@ type CompleteProfileEventRow = DiscoveryHistoryEvent & { id: string };
  */
 export async function getBatchedCompleteMusicDiscoveryProfile(
   userId: string,
-  options: Omit<MusicDiscoveryProfileOptions, "topN" | "completeUniverse"> = {},
+  options: CompleteProfileOptions = {},
 ): Promise<MusicDiscoveryProfile> {
+  return loadBatchedCompleteMusicDiscoveryProfile(userId, options, finalizeProfile);
+}
+
+/**
+ * PERF-01 runtime finalizer.
+ *
+ * Runtime scoring only needs canonical historical artist/track universes plus
+ * profile context. This path shares the exact same paged aggregation and
+ * canonical profile projection, but intentionally stops before allocating the
+ * redundant diagnostic/window/candidate views of the full profile.
+ */
+export async function getBatchedRetainedCompleteMusicDiscoveryProfile(
+  userId: string,
+  options: CompleteProfileOptions = {},
+): Promise<RetainedCompleteMusicDiscoveryProfile> {
+  return loadBatchedCompleteMusicDiscoveryProfile(
+    userId,
+    options,
+    finalizeRetainedProfile,
+  );
+}
+
+async function loadBatchedCompleteMusicDiscoveryProfile<T>(
+  userId: string,
+  options: CompleteProfileOptions,
+  finalize: (input: FinalizeProfileInput) => T,
+): Promise<T> {
   const client = options.client ?? defaultPrisma;
   const asOf = validDate(options.asOf ?? new Date(), "asOf");
   const dormantDays = positiveInteger(
@@ -194,7 +253,7 @@ export async function getBatchedCompleteMusicDiscoveryProfile(
     if (page.length < COMPLETE_PROFILE_EVENT_BATCH_SIZE) break;
   }
 
-  return finalizeProfile({
+  return finalize({
     accumulator,
     asOf,
     dormantDays,
@@ -435,16 +494,9 @@ function aggregateEvent(
   if (evidence.explicitSkip) track.explicitSkipCount += 1;
 }
 
-function finalizeProfile(input: {
-  accumulator: CompleteProfileAccumulator;
-  asOf: Date;
-  dormantDays: number;
-  rediscoveryGapDays: number;
-  inferredSkips: DiscoveryPreferenceSignal[];
-  trackStates: DiscoveryTrackState[];
-  playbackPolicy: DiscoveryPlaybackPolicy | null;
-  lastFmValidFrom: Date | null;
-}): MusicDiscoveryProfile {
+function prepareFinalizedProfile(
+  input: FinalizeProfileInput,
+): PreparedCompleteMusicDiscoveryProfile {
   const {
     accumulator: state,
     asOf,
@@ -496,7 +548,9 @@ function finalizeProfile(input: {
     );
   }
   const stateByTrackId = new Map(
-    trackStates.map((trackState) => [trackState.spotifyTrackId, trackState.lastPlayedAt] as const),
+    trackStates.map(
+      (trackState) => [trackState.spotifyTrackId, trackState.lastPlayedAt] as const,
+    ),
   );
 
   const artistProfiles = [...state.artists.values()].map((artist) => {
@@ -597,59 +651,12 @@ function finalizeProfile(input: {
   const blockedTrackCount = trackProfiles.filter(
     (track) => track.cooldownEligible === false,
   ).length;
-  const dormantCutoff = daysBefore(asOf, dormantDays);
 
   const byHistorical = (a: DiscoveryArtistProfile, b: DiscoveryArtistProfile) =>
     b.playCount - a.playCount ||
     b.distinctListeningDays - a.distinctListeningDays ||
     a.artistName.localeCompare(b.artistName);
-  const byWindow = (field: "plays30d" | "plays90d" | "plays365d") =>
-    (a: DiscoveryArtistProfile, b: DiscoveryArtistProfile) =>
-      b[field] - a[field] || byHistorical(a, b);
-
   const topArtistsHistorical = sorted(artistProfiles, byHistorical);
-  const topArtists30d = sorted(
-    artistProfiles.filter((artist) => artist.plays30d > 0),
-    byWindow("plays30d"),
-  );
-  const topArtists90d = sorted(
-    artistProfiles.filter((artist) => artist.plays90d > 0),
-    byWindow("plays90d"),
-  );
-  const topArtists365d = sorted(
-    artistProfiles.filter((artist) => artist.plays365d > 0),
-    byWindow("plays365d"),
-  );
-  const recentMomentum = sorted(
-    artistProfiles.filter(
-      (artist) =>
-        artist.plays30d > 0 &&
-        artist.momentumDelta30d > 0 &&
-        artist.listeningDays30d >= MIN_MOMENTUM_LISTENING_DAYS,
-    ),
-    (a, b) =>
-      b.momentumDelta30d - a.momentumDelta30d ||
-      b.listeningDays30d - a.listeningDays30d ||
-      b.plays30d - a.plays30d ||
-      byHistorical(a, b),
-  );
-  const dormantFavorites = sorted(
-    artistProfiles.filter((artist) => artist.lastPlayedAt < dormantCutoff),
-    byHistorical,
-  );
-  const rediscoveryReturns = sorted(
-    artistProfiles.filter(
-      (artist) =>
-        artist.plays30d >= MIN_REDISCOVERY_RECENT_PLAYS &&
-        artist.priorPlayCount >= MIN_REDISCOVERY_PRIOR_PLAYS &&
-        (artist.rediscoveryGapDays ?? 0) >= rediscoveryGapDays,
-    ),
-    (a, b) =>
-      b.priorPlayCount - a.priorPlayCount ||
-      b.plays30d - a.plays30d ||
-      (b.rediscoveryGapDays ?? 0) - (a.rediscoveryGapDays ?? 0) ||
-      byHistorical(a, b),
-  );
 
   const byTrackHistory = (a: DiscoveryTrackProfile, b: DiscoveryTrackProfile) =>
     b.playCount - a.playCount ||
@@ -658,16 +665,6 @@ function finalizeProfile(input: {
       `${b.artistName}\u0000${b.trackName}`,
     );
   const topTracksHistorical = sorted(trackProfiles, byTrackHistory);
-  const familiarCandidates = sorted(
-    trackProfiles.filter((track) => track.cooldownEligible === true),
-    byTrackHistory,
-  );
-  const rediscoveryCandidates = sorted(
-    trackProfiles.filter(
-      (track) => track.cooldownEligible === true && track.lastPlayedAt < dormantCutoff,
-    ),
-    byTrackHistory,
-  );
 
   return {
     generatedAt: asOf,
@@ -715,13 +712,115 @@ function finalizeProfile(input: {
       blockedTrackCount,
     },
     topArtistsHistorical,
+    topTracksHistorical,
+    artistProfiles,
+    trackProfiles,
+  };
+}
+
+function finalizeRetainedProfile(
+  input: FinalizeProfileInput,
+): RetainedCompleteMusicDiscoveryProfile {
+  const prepared = prepareFinalizedProfile(input);
+  return {
+    generatedAt: prepared.generatedAt,
+    heuristics: prepared.heuristics,
+    coverage: prepared.coverage,
+    cooldown: prepared.cooldown,
+    topArtistsHistorical: prepared.topArtistsHistorical,
+    topTracksHistorical: prepared.topTracksHistorical,
+  };
+}
+
+function finalizeProfile(input: FinalizeProfileInput): MusicDiscoveryProfile {
+  const prepared = prepareFinalizedProfile(input);
+  const { artistProfiles, trackProfiles } = prepared;
+  const dormantCutoff = daysBefore(
+    prepared.generatedAt,
+    prepared.heuristics.dormantDays,
+  );
+
+  const byHistorical = (a: DiscoveryArtistProfile, b: DiscoveryArtistProfile) =>
+    b.playCount - a.playCount ||
+    b.distinctListeningDays - a.distinctListeningDays ||
+    a.artistName.localeCompare(b.artistName);
+  const byWindow = (field: "plays30d" | "plays90d" | "plays365d") =>
+    (a: DiscoveryArtistProfile, b: DiscoveryArtistProfile) =>
+      b[field] - a[field] || byHistorical(a, b);
+
+  const topArtists30d = sorted(
+    artistProfiles.filter((artist) => artist.plays30d > 0),
+    byWindow("plays30d"),
+  );
+  const topArtists90d = sorted(
+    artistProfiles.filter((artist) => artist.plays90d > 0),
+    byWindow("plays90d"),
+  );
+  const topArtists365d = sorted(
+    artistProfiles.filter((artist) => artist.plays365d > 0),
+    byWindow("plays365d"),
+  );
+  const recentMomentum = sorted(
+    artistProfiles.filter(
+      (artist) =>
+        artist.plays30d > 0 &&
+        artist.momentumDelta30d > 0 &&
+        artist.listeningDays30d >= MIN_MOMENTUM_LISTENING_DAYS,
+    ),
+    (a, b) =>
+      b.momentumDelta30d - a.momentumDelta30d ||
+      b.listeningDays30d - a.listeningDays30d ||
+      b.plays30d - a.plays30d ||
+      byHistorical(a, b),
+  );
+  const dormantFavorites = sorted(
+    artistProfiles.filter((artist) => artist.lastPlayedAt < dormantCutoff),
+    byHistorical,
+  );
+  const rediscoveryReturns = sorted(
+    artistProfiles.filter(
+      (artist) =>
+        artist.plays30d >= MIN_REDISCOVERY_RECENT_PLAYS &&
+        artist.priorPlayCount >= MIN_REDISCOVERY_PRIOR_PLAYS &&
+        (artist.rediscoveryGapDays ?? 0) >= prepared.heuristics.rediscoveryGapDays,
+    ),
+    (a, b) =>
+      b.priorPlayCount - a.priorPlayCount ||
+      b.plays30d - a.plays30d ||
+      (b.rediscoveryGapDays ?? 0) - (a.rediscoveryGapDays ?? 0) ||
+      byHistorical(a, b),
+  );
+
+  const byTrackHistory = (a: DiscoveryTrackProfile, b: DiscoveryTrackProfile) =>
+    b.playCount - a.playCount ||
+    b.distinctListeningDays - a.distinctListeningDays ||
+    `${a.artistName}\u0000${a.trackName}`.localeCompare(
+      `${b.artistName}\u0000${b.trackName}`,
+    );
+  const familiarCandidates = sorted(
+    trackProfiles.filter((track) => track.cooldownEligible === true),
+    byTrackHistory,
+  );
+  const rediscoveryCandidates = sorted(
+    trackProfiles.filter(
+      (track) => track.cooldownEligible === true && track.lastPlayedAt < dormantCutoff,
+    ),
+    byTrackHistory,
+  );
+
+  return {
+    generatedAt: prepared.generatedAt,
+    heuristics: prepared.heuristics,
+    coverage: prepared.coverage,
+    cooldown: prepared.cooldown,
+    topArtistsHistorical: prepared.topArtistsHistorical,
     topArtists30d,
     topArtists90d,
     topArtists365d,
     recentMomentum,
     dormantFavorites,
     rediscoveryReturns,
-    topTracksHistorical,
+    topTracksHistorical: prepared.topTracksHistorical,
     familiarCandidates,
     rediscoveryCandidates,
   };
