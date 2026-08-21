@@ -40,6 +40,19 @@ type ProjectedCompleteHistoryRow = {
   extendedEvidencePresent: boolean;
   msPlayed: number | null;
   explicitSkip: boolean;
+  metadata?: unknown;
+};
+
+type ProjectedEventPageRow = {
+  id: string;
+  source: ListeningEventSource;
+  spotifyTrackId: string | null;
+  spotifyUri: string | null;
+  trackName: string;
+  artistName: string;
+  albumName: string | null;
+  playedAt: Date;
+  metadata: unknown;
 };
 
 const LISTENING_EVENT_SOURCES = new Set<string>([
@@ -138,19 +151,7 @@ async function loadProjectedEventPage(
   client: PrismaClient,
   args: BatchedFindManyArgs,
   mode: ProjectedHistoryMode,
-): Promise<
-  Array<{
-    id: string;
-    source: ListeningEventSource;
-    spotifyTrackId: string | null;
-    spotifyUri: string | null;
-    trackName: string;
-    artistName: string;
-    albumName: string | null;
-    playedAt: Date;
-    metadata: unknown;
-  }>
-> {
+): Promise<ProjectedEventPageRow[]> {
   const userId = args.where?.userId;
   if (typeof userId !== "string" || !userId) {
     throw new Error("PERF-01 projected history requires where.userId");
@@ -236,17 +237,20 @@ async function loadProjectedEventPage(
     COMPLETE_PROFILE_EVENT_BATCH_SIZE,
   );
 
-  return rows.map((row) => ({
-    id: row.id,
-    source: listeningEventSource(row.source),
-    spotifyTrackId: row.spotifyTrackId,
-    spotifyUri: runtimeRetained ? null : row.spotifyUri,
-    trackName: row.trackName,
-    artistName: row.artistName,
-    albumName: runtimeRetained ? null : row.albumName,
-    playedAt: row.playedAt,
-    metadata: minimalExtendedHistoryMetadata(row),
-  }));
+  // PERF-01: $queryRaw already allocated the event-row objects. Mutate those
+  // bounded page objects into the exact shape consumed by the canonical
+  // aggregator instead of allocating a second object for every historical
+  // event via rows.map(...). At most one 2k page remains live at a time.
+  for (const row of rows) {
+    row.source = listeningEventSource(row.source);
+    if (runtimeRetained) {
+      row.spotifyUri = null;
+      row.albumName = null;
+    }
+    row.metadata = minimalExtendedHistoryMetadata(row);
+  }
+
+  return rows as unknown as ProjectedEventPageRow[];
 }
 
 function minimalExtendedHistoryMetadata(
