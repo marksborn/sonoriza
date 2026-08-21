@@ -1,6 +1,6 @@
 import type { DiscoveryTrackProfile } from "./profile";
+import { buildDiscoveryScoringReportEligibleOnly } from "./scoring-eligible-only";
 import {
-  buildDiscoveryScoringReport,
   DISCOVERY_SCORE_CALIBRATION,
   type BuildDiscoveryScoringInput,
   type DiscoveryArtistScoreCard,
@@ -90,7 +90,7 @@ export function buildDiscoveryGate22ScoringReport(
     input.artists.length,
     input.tracks.length,
   );
-  const base = buildDiscoveryScoringReport({
+  const base = buildDiscoveryScoringReportEligibleOnly({
     ...input,
     topN: expandedTopN,
   });
