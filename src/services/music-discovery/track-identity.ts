@@ -1,0 +1,74 @@
+import type { PrismaClient } from "@prisma/client";
+
+import { prisma as defaultPrisma } from "@/lib/prisma";
+
+export type DiscoveryTrackIdentityRow = {
+  spotifyTrackId: string | null;
+  isrc: string | null;
+  primaryArtistId: string | null;
+};
+
+export type DiscoveryTrackIdentityEvidence = {
+  spotifyTrackId: string;
+  isrc: string | null;
+  primaryArtistId: string | null;
+  isrcConflict: boolean;
+  primaryArtistIdConflict: boolean;
+};
+
+export async function getDiscoveryTrackIdentityEvidence(
+  userId: string,
+  client: PrismaClient = defaultPrisma,
+): Promise<DiscoveryTrackIdentityEvidence[]> {
+  const rows = await client.trackListeningEvent.findMany({
+    where: { userId, spotifyTrackId: { not: null } },
+    select: {
+      spotifyTrackId: true,
+      isrc: true,
+      primaryArtistId: true,
+    },
+  });
+
+  return buildDiscoveryTrackIdentityEvidence(rows);
+}
+
+export function buildDiscoveryTrackIdentityEvidence(
+  rows: DiscoveryTrackIdentityRow[],
+): DiscoveryTrackIdentityEvidence[] {
+  const byTrack = new Map<
+    string,
+    { isrcs: Set<string>; primaryArtistIds: Set<string> }
+  >();
+
+  for (const row of rows) {
+    if (!row.spotifyTrackId) continue;
+    let aggregate = byTrack.get(row.spotifyTrackId);
+    if (!aggregate) {
+      aggregate = { isrcs: new Set(), primaryArtistIds: new Set() };
+      byTrack.set(row.spotifyTrackId, aggregate);
+    }
+
+    const isrc = normalizeIsrc(row.isrc);
+    if (isrc) aggregate.isrcs.add(isrc);
+    const primaryArtistId = row.primaryArtistId?.trim() || null;
+    if (primaryArtistId) aggregate.primaryArtistIds.add(primaryArtistId);
+  }
+
+  return [...byTrack.entries()]
+    .map(([spotifyTrackId, aggregate]) => ({
+      spotifyTrackId,
+      isrc: aggregate.isrcs.size === 1 ? [...aggregate.isrcs][0] : null,
+      primaryArtistId:
+        aggregate.primaryArtistIds.size === 1
+          ? [...aggregate.primaryArtistIds][0]
+          : null,
+      isrcConflict: aggregate.isrcs.size > 1,
+      primaryArtistIdConflict: aggregate.primaryArtistIds.size > 1,
+    }))
+    .sort((a, b) => a.spotifyTrackId.localeCompare(b.spotifyTrackId));
+}
+
+function normalizeIsrc(value: string | null): string | null {
+  const normalized = value?.replace(/[^A-Za-z0-9]/g, "").toUpperCase() ?? "";
+  return normalized || null;
+}
