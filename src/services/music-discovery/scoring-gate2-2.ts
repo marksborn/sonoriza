@@ -94,16 +94,26 @@ export function buildDiscoveryGate22ScoringReport(
     ...input,
     topN: expandedTopN,
   });
-  const identityByTrackId = new Map(
-    input.trackIdentities.map((row) => [row.spotifyTrackId, row] as const),
-  );
-  const profileByTrackId = new Map(
-    input.tracks.map((track) => [track.spotifyTrackId, track] as const),
-  );
 
-  const rediscovery = base.rediscoveryCandidates.map((candidate) =>
-    normalizeTrackCandidateReasons(candidate),
-  );
+  // PERF-01: avoid allocating a temporary tuple array just to build these Maps.
+  // With the COMPLETE universe, track profiles can contain tens of thousands of rows.
+  const identityByTrackId = new Map<string, DiscoveryTrackIdentityEvidence>();
+  for (const row of input.trackIdentities) {
+    identityByTrackId.set(row.spotifyTrackId, row);
+  }
+  const profileByTrackId = new Map<string, DiscoveryTrackProfile>();
+  for (const track of input.tracks) {
+    profileByTrackId.set(track.spotifyTrackId, track);
+  }
+
+  // PERF-01: Gate 2.1 already owns fresh score objects. Gate 2.2 only widens
+  // reason semantics, so normalize those objects in place instead of cloning
+  // every candidate and every reasons[] array for the COMPLETE universe.
+  const rediscovery = base.rediscoveryCandidates as DiscoveryGate22TrackCandidate[];
+  for (const candidate of base.rediscoveryCandidates) {
+    normalizeTrackCandidateReasonsInPlace(candidate);
+  }
+
   const recordingIdentityMatchSources: Record<RecordingIdentityMatchSource, number> = {
     ISRC: 0,
     SPOTIFY_PRIMARY_ARTIST_TITLE: 0,
@@ -111,9 +121,11 @@ export function buildDiscoveryGate22ScoringReport(
   };
   let recordingIdentityPreemptions = 0;
 
-  const familiar = base.familiarCandidates
-    .map((candidate) => normalizeTrackCandidateReasons(candidate))
-    .filter((candidate) => {
+  for (const candidate of base.familiarCandidates) {
+    normalizeTrackCandidateReasonsInPlace(candidate);
+  }
+  const familiar = (base.familiarCandidates as DiscoveryGate22TrackCandidate[]).filter(
+    (candidate) => {
       const familiarTrack = profileByTrackId.get(candidate.spotifyTrackId);
       if (!familiarTrack) return true;
       const familiarIdentity = withIdentity(familiarTrack, identityByTrackId);
@@ -133,7 +145,12 @@ export function buildDiscoveryGate22ScoringReport(
         return false;
       }
       return true;
-    });
+    },
+  );
+
+  for (const row of base.topArtistAffinity) normalizeArtistScoreReasonsInPlace(row);
+  for (const row of base.rediscoveryReturns) normalizeArtistCandidateReasonsInPlace(row);
+  for (const row of base.deepeningCandidates) normalizeArtistCandidateReasonsInPlace(row);
 
   const spotifyIdPreemptions =
     base.selectionPolicy.rediscoveryPreemptedFamiliarCount;
@@ -151,17 +168,20 @@ export function buildDiscoveryGate22ScoringReport(
         spotifyIdPreemptions + recordingIdentityPreemptions,
       recordingIdentityMatchSources,
     },
-    topArtistAffinity: base.topArtistAffinity
-      .map(normalizeArtistScoreReasons)
-      .slice(0, input.topN),
-    familiarCandidates: familiar.slice(0, input.topN),
-    rediscoveryCandidates: rediscovery.slice(0, input.topN),
-    rediscoveryReturns: base.rediscoveryReturns
-      .map(normalizeArtistCandidateReasons)
-      .slice(0, input.topN),
-    deepeningCandidates: base.deepeningCandidates
-      .map(normalizeArtistCandidateReasons)
-      .slice(0, input.topN),
+    topArtistAffinity: limitRows(
+      base.topArtistAffinity as DiscoveryGate22ArtistScoreCard[],
+      input.topN,
+    ),
+    familiarCandidates: limitRows(familiar, input.topN),
+    rediscoveryCandidates: limitRows(rediscovery, input.topN),
+    rediscoveryReturns: limitRows(
+      base.rediscoveryReturns as DiscoveryGate22ArtistCandidate[],
+      input.topN,
+    ),
+    deepeningCandidates: limitRows(
+      base.deepeningCandidates as DiscoveryGate22ArtistCandidate[],
+      input.topN,
+    ),
   };
 }
 
@@ -212,74 +232,69 @@ function withIdentity(
   };
 }
 
-function normalizeArtistScoreReasons(
-  row: DiscoveryArtistScoreCard,
-): DiscoveryGate22ArtistScoreCard {
-  return {
-    ...row,
-    reasons: normalizeSkipReasonSemantics(
-      row.reasons,
-      row.components.adjustedExplicitSkipRate,
-      row.components.negativePenalty,
-    ),
-  };
+function normalizeArtistScoreReasonsInPlace(row: DiscoveryArtistScoreCard): void {
+  normalizeSkipReasonSemanticsInPlace(
+    row.reasons,
+    row.components.adjustedExplicitSkipRate,
+    row.components.negativePenalty,
+  );
 }
 
-function normalizeArtistCandidateReasons(
+function normalizeArtistCandidateReasonsInPlace(
   row: DiscoveryScoredArtistCandidate,
-): DiscoveryGate22ArtistCandidate {
-  return {
-    ...row,
-    reasons: normalizeSkipReasonSemantics(
-      row.reasons,
-      row.components.adjustedExplicitSkipRate,
-      row.components.negativePenalty,
-    ),
-  };
+): void {
+  normalizeSkipReasonSemanticsInPlace(
+    row.reasons,
+    row.components.adjustedExplicitSkipRate,
+    row.components.negativePenalty,
+  );
 }
 
-function normalizeTrackCandidateReasons(
+function normalizeTrackCandidateReasonsInPlace(
   row: DiscoveryScoredTrackCandidate,
-): DiscoveryGate22TrackCandidate {
-  return {
-    ...row,
-    reasons: normalizeSkipReasonSemantics(
-      row.reasons,
-      row.components.adjustedExplicitSkipRate,
-      row.components.negativePenalty,
-    ),
-  };
+): void {
+  normalizeSkipReasonSemanticsInPlace(
+    row.reasons,
+    row.components.adjustedExplicitSkipRate,
+    row.components.negativePenalty,
+  );
 }
 
-function normalizeSkipReasonSemantics(
+function normalizeSkipReasonSemanticsInPlace(
   reasons: DiscoveryScoreReason[],
   adjustedSkipRate: number,
   negativePenalty: number,
-): DiscoveryGate22Reason[] {
-  return reasons.map((reason) => {
+): void {
+  for (const reason of reasons) {
     if (
       reason.code !== "ELEVATED_EXPLICIT_SKIP_RATE" &&
       reason.code !== "HIGH_EXPLICIT_SKIP_RATE"
     ) {
-      return reason;
+      continue;
     }
 
+    const mutable = reason as DiscoveryGate22Reason;
     if (
       adjustedSkipRate >=
       DISCOVERY_SCORE_CALIBRATION.skipBayesPrior.strongNegativeRate
     ) {
-      return { ...reason, code: "HIGH_EXPLICIT_SKIP_RATE" };
+      mutable.code = "HIGH_EXPLICIT_SKIP_RATE";
+      continue;
     }
     if (
       adjustedSkipRate >= DISCOVERY_SCORE_CALIBRATION.skipBayesPrior.elevatedRate
     ) {
-      return { ...reason, code: "ELEVATED_EXPLICIT_SKIP_RATE" };
+      mutable.code = "ELEVATED_EXPLICIT_SKIP_RATE";
+      continue;
     }
     if (negativePenalty > 0) {
-      return { ...reason, code: "MILD_EXPLICIT_SKIP_PENALTY" };
+      mutable.code = "MILD_EXPLICIT_SKIP_PENALTY";
     }
-    return reason;
-  });
+  }
+}
+
+function limitRows<T>(rows: T[], count: number): T[] {
+  return rows.length <= count ? rows : rows.slice(0, count);
 }
 
 function hasVersionQualifier(value: string): boolean {
