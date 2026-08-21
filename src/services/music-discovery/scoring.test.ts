@@ -61,7 +61,7 @@ function track(
     playCount: input.playCount ?? 20,
     plays30d: input.plays30d ?? 0,
     firstPlayedAt: input.firstPlayedAt ?? new Date("2015-01-01T00:00:00.000Z"),
-    lastPlayedAt: input.lastPlayedAt ?? new Date("2025-01-01T00:00:00.000Z"),
+    lastPlayedAt: input.lastPlayedAt ?? new Date("2026-01-01T00:00:00.000Z"),
     distinctListeningDays: input.distinctListeningDays ?? 18,
     extendedEvidenceCount,
     msPlayedEvidenceCount: input.msPlayedEvidenceCount ?? extendedEvidenceCount,
@@ -71,7 +71,8 @@ function track(
       (extendedEvidenceCount > 0 ? explicitSkipCount / extendedEvidenceCount : null),
     inferredSkipCount: input.inferredSkipCount ?? 0,
     pendingInferredSkipCount: input.pendingInferredSkipCount ?? 0,
-    cooldownLastPlayedAt: input.cooldownLastPlayedAt ?? input.lastPlayedAt ?? new Date("2025-01-01T00:00:00.000Z"),
+    cooldownLastPlayedAt:
+      input.cooldownLastPlayedAt ?? input.lastPlayedAt ?? new Date("2026-01-01T00:00:00.000Z"),
     cooldownLastPlayedSource: input.cooldownLastPlayedSource ?? "TIMELINE",
     cooldownEligible: input.cooldownEligible ?? true,
   };
