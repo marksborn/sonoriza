@@ -8,7 +8,7 @@ const SKIP_PRIOR_MEAN = 0.18;
 const SKIP_PRIOR_WEIGHT = 12;
 
 export const DISCOVERY_SCORE_CALIBRATION = {
-  version: "gate2-v1",
+  version: "gate2.1-v1",
   scales: {
     artistHistoricalPlays: 150,
     artistHistoricalDays: 100,
@@ -28,6 +28,7 @@ export const DISCOVERY_SCORE_CALIBRATION = {
     mean: SKIP_PRIOR_MEAN,
     weight: SKIP_PRIOR_WEIGHT,
     neutralRate: 0.12,
+    elevatedRate: 0.18,
     strongNegativeRate: 0.65,
   },
   weights: {
@@ -47,25 +48,36 @@ export const DISCOVERY_SCORE_CALIBRATION = {
     rediscoveryMinRecentPlays: 2,
     rediscoveryMinGapDays: 180,
     rediscoveryMinTrackPlays: MIN_REDISCOVERY_TRACK_PLAYS,
+    minimumScores: {
+      familiar: 55,
+      rediscovery: 55,
+      rediscoveryReturn: 40,
+      deepening: 45,
+      externalDiscovery: 55,
+    },
   },
   note:
-    "Gate 2 v1 is deterministic and explainable. Scores are diagnostic/read-only; no playlist or preference writes are performed.",
+    "Gate 2.1 keeps Gate 2 weights, adds category arbitration, explainability, score floors and an explicit complete-universe contract. Scores remain read-only.",
 } as const;
 
 export type DiscoveryScoreReasonCode =
   | "HIGH_HISTORICAL_AFFINITY"
+  | "TRACK_HISTORY_SUPPORT"
   | "STRONG_LISTENING_DAY_DEPTH"
   | "RECENT_INTEREST"
   | "POSITIVE_MOMENTUM"
   | "LOW_EXPLICIT_SKIP_RATE"
+  | "ELEVATED_EXPLICIT_SKIP_RATE"
   | "HIGH_EXPLICIT_SKIP_RATE"
   | "INFERRED_SKIP_SIGNAL"
   | "LONG_DORMANCY"
   | "REDISCOVERY_RETURN"
   | "CATALOG_BREADTH"
+  | "ALBUM_DEEPENING_SIGNAL"
   | "COOLDOWN_BLOCKED"
   | "COOLDOWN_UNKNOWN"
   | "INSUFFICIENT_HISTORY"
+  | "CATEGORY_MINIMUM_NOT_MET"
   | "KNOWN_HISTORY_NOT_NEW"
   | "HIGH_SIMILARITY"
   | "STRONG_SEED_AFFINITY";
@@ -154,10 +166,20 @@ export type ExternalDiscoveryCandidateScore = {
   reasons: DiscoveryScoreReason[];
 };
 
+export type DiscoveryCandidateUniverse = "COMPLETE" | "DIAGNOSTIC_PARTIAL";
+
 export type DiscoveryScoringReport = {
   version: string;
   generatedAt: Date;
   calibration: typeof DISCOVERY_SCORE_CALIBRATION;
+  selectionPolicy: {
+    candidateUniverse: DiscoveryCandidateUniverse;
+    selectionReady: boolean;
+    categoryBudgetRule: "CEILING_NOT_QUOTA";
+    trackCategoryPrecedence: readonly ["REDESCOBERTA", "FAMILIAR"];
+    rediscoveryPreemptedFamiliarCount: number;
+    minimumScores: typeof DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores;
+  };
   topArtistAffinity: DiscoveryArtistScoreCard[];
   familiarCandidates: DiscoveryScoredTrackCandidate[];
   rediscoveryCandidates: DiscoveryScoredTrackCandidate[];
@@ -176,6 +198,7 @@ export type BuildDiscoveryScoringInput = {
   topN: number;
   artists: DiscoveryArtistProfile[];
   tracks: DiscoveryTrackProfile[];
+  candidateUniverse?: DiscoveryCandidateUniverse;
 };
 
 type NegativeSignals = {
@@ -186,26 +209,42 @@ type NegativeSignals = {
 export function buildDiscoveryScoringReport(
   input: BuildDiscoveryScoringInput,
 ): DiscoveryScoringReport {
+  const candidateUniverse = input.candidateUniverse ?? "COMPLETE";
   const artistCards = input.artists.map(scoreArtistProfile);
   const artistByKey = new Map(
     artistCards.map((artist) => [normalized(artist.artistName), artist] as const),
   );
 
   const topArtistAffinity = topByScore(artistCards, input.topN);
-  const familiarCandidates = topByScore(
-    input.tracks
-      .map((track) => scoreFamiliarTrack(track, artistByKey))
-      .filter((candidate) => candidate.eligible),
-    input.topN,
+
+  const scoredRediscoveryTracks = input.tracks.map((track) =>
+    scoreRediscoveryTrack(track, artistByKey, input.generatedAt, input.dormantDays),
+  );
+  const rediscoveryEligibleIds = new Set(
+    scoredRediscoveryTracks
+      .filter((candidate) => candidate.eligible)
+      .map((candidate) => candidate.spotifyTrackId),
   );
   const rediscoveryCandidates = topByScore(
-    input.tracks
-      .map((track) =>
-        scoreRediscoveryTrack(track, artistByKey, input.generatedAt, input.dormantDays),
-      )
-      .filter((candidate) => candidate.eligible),
+    scoredRediscoveryTracks.filter((candidate) => candidate.eligible),
     input.topN,
   );
+
+  const scoredFamiliarTracks = input.tracks.map((track) =>
+    scoreFamiliarTrack(track, artistByKey),
+  );
+  const preemptedFamiliarCount = scoredFamiliarTracks.filter(
+    (candidate) =>
+      candidate.eligible && rediscoveryEligibleIds.has(candidate.spotifyTrackId),
+  ).length;
+  const familiarCandidates = topByScore(
+    scoredFamiliarTracks.filter(
+      (candidate) =>
+        candidate.eligible && !rediscoveryEligibleIds.has(candidate.spotifyTrackId),
+    ),
+    input.topN,
+  );
+
   const rediscoveryReturns = topByScore(
     input.artists
       .map((artist) =>
@@ -234,6 +273,14 @@ export function buildDiscoveryScoringReport(
     version: DISCOVERY_SCORE_CALIBRATION.version,
     generatedAt: new Date(input.generatedAt),
     calibration: DISCOVERY_SCORE_CALIBRATION,
+    selectionPolicy: {
+      candidateUniverse,
+      selectionReady: candidateUniverse === "COMPLETE",
+      categoryBudgetRule: "CEILING_NOT_QUOTA",
+      trackCategoryPrecedence: ["REDESCOBERTA", "FAMILIAR"],
+      rediscoveryPreemptedFamiliarCount: preemptedFamiliarCount,
+      minimumScores: DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores,
+    },
     topArtistAffinity,
     familiarCandidates,
     rediscoveryCandidates,
@@ -245,6 +292,14 @@ export function buildDiscoveryScoringReport(
         "DESCOBERTA scoring is implemented as a pure candidate contract. Candidate acquisition/similarity calls remain a separate gate; known history is never labeled as new discovery.",
     },
   };
+}
+
+export function assertDiscoverySelectionReady(report: DiscoveryScoringReport): void {
+  if (!report.selectionPolicy.selectionReady) {
+    throw new Error(
+      "DISCOVERY selection requires candidateUniverse=COMPLETE; diagnostic partial pools cannot drive planner selection.",
+    );
+  }
 }
 
 export function scoreArtistProfile(
@@ -374,6 +429,9 @@ export function scoreExternalDiscoveryCandidate(
         weights.sourceConfidence * sourceConfidence,
     ),
   );
+  const eligible =
+    score >= DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.externalDiscovery;
+  if (!eligible) addMinimumScoreReason("DESCOBERTA", score, reasons);
 
   return {
     category: "DESCOBERTA",
@@ -381,7 +439,7 @@ export function scoreExternalDiscoveryCandidate(
     artistName: candidate.artistName,
     source: candidate.source,
     score,
-    eligible: true,
+    eligible,
     components: { similarity, seedArtistAffinity, seedTrackAffinity, sourceConfidence },
     reasons,
   };
@@ -407,28 +465,28 @@ function scoreFamiliarTrack(
     reasons.push({ code: "COOLDOWN_UNKNOWN", detail: "MUSIC-01 cooldown eligibility is unknown." });
   }
   addTrackQualityReasons(track, negative, reasons);
-  if (trackHistory >= 0.65) {
-    reasons.push({
-      code: "HIGH_HISTORICAL_AFFINITY",
-      detail: `Track history strength=${trackHistory.toFixed(2)} across ${track.distinctListeningDays} listening days.`,
-    });
-  }
+  addTrackHistoryReason(track, trackHistory, reasons);
 
   const weights = DISCOVERY_SCORE_CALIBRATION.weights.familiarTrack;
-  const unitScore = clamp01(
-    weights.trackHistory * trackHistory +
-      weights.artistHistory * (artist?.components.historicalAffinity ?? 0) +
-      weights.artistRecent * (artist?.components.recentAffinity ?? 0) +
-      weights.negativePenalty * negative.penalty,
+  const score = score100(
+    clamp01(
+      weights.trackHistory * trackHistory +
+        weights.artistHistory * (artist?.components.historicalAffinity ?? 0) +
+        weights.artistRecent * (artist?.components.recentAffinity ?? 0) +
+        weights.negativePenalty * negative.penalty,
+    ),
   );
-  const eligible = track.cooldownEligible === true;
+  const baseEligible = track.cooldownEligible === true;
+  const eligible =
+    baseEligible && score >= DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.familiar;
+  if (baseEligible && !eligible) addMinimumScoreReason("FAMILIAR", score, reasons);
 
   return {
     category: "FAMILIAR",
     spotifyTrackId: track.spotifyTrackId,
     trackName: track.trackName,
     artistName: track.artistName,
-    score: eligible ? score100(unitScore) : 0,
+    score: baseEligible ? score : 0,
     eligible,
     components: {
       trackHistoricalStrength: rounded(trackHistory),
@@ -469,7 +527,7 @@ function scoreRediscoveryTrack(
         )
       : 0;
   const reasons: DiscoveryScoreReason[] = [];
-  const eligible =
+  const baseEligible =
     track.cooldownEligible === true &&
     daysSinceLastPlay >= dormantDays &&
     track.playCount >= DISCOVERY_SCORE_CALIBRATION.thresholds.rediscoveryMinTrackPlays;
@@ -492,22 +550,28 @@ function scoreRediscoveryTrack(
     });
   }
   addTrackQualityReasons(track, negative, reasons);
+  addTrackHistoryReason(track, trackHistory, reasons);
 
   const weights = DISCOVERY_SCORE_CALIBRATION.weights.rediscoveryTrack;
-  const unitScore = clamp01(
-    weights.trackHistory * trackHistory +
-      weights.artistHistory * (artist?.components.historicalAffinity ?? 0) +
-      weights.dormancy * dormancy +
-      weights.artistRecent * (artist?.components.recentAffinity ?? 0) +
-      weights.negativePenalty * negative.penalty,
+  const score = score100(
+    clamp01(
+      weights.trackHistory * trackHistory +
+        weights.artistHistory * (artist?.components.historicalAffinity ?? 0) +
+        weights.dormancy * dormancy +
+        weights.artistRecent * (artist?.components.recentAffinity ?? 0) +
+        weights.negativePenalty * negative.penalty,
+    ),
   );
+  const eligible =
+    baseEligible && score >= DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.rediscovery;
+  if (baseEligible && !eligible) addMinimumScoreReason("REDESCOBERTA", score, reasons);
 
   return {
     category: "REDESCOBERTA",
     spotifyTrackId: track.spotifyTrackId,
     trackName: track.trackName,
     artistName: track.artistName,
-    score: eligible ? score100(unitScore) : 0,
+    score: baseEligible ? score : 0,
     eligible,
     components: {
       trackHistoricalStrength: rounded(trackHistory),
@@ -527,7 +591,7 @@ function scoreRediscoveryReturn(
   rediscoveryGapDays: number,
 ): DiscoveryScoredArtistCandidate {
   const gap = artist.rediscoveryGapDays ?? 0;
-  const eligible =
+  const baseEligible =
     artist.priorPlayCount >= DISCOVERY_SCORE_CALIBRATION.thresholds.rediscoveryMinPriorPlays &&
     artist.plays30d >= DISCOVERY_SCORE_CALIBRATION.thresholds.rediscoveryMinRecentPlays &&
     gap >= rediscoveryGapDays;
@@ -543,7 +607,7 @@ function scoreRediscoveryReturn(
         )
       : 0;
   const reasons = [...affinity.reasons];
-  if (eligible) {
+  if (baseEligible) {
     reasons.push({
       code: "REDISCOVERY_RETURN",
       detail: `${artist.priorPlayCount} prior plays, ${artist.plays30d} plays in 30d after a ${gap}-day gap.`,
@@ -557,18 +621,24 @@ function scoreRediscoveryReturn(
 
   const weights = DISCOVERY_SCORE_CALIBRATION.weights.rediscoveryReturn;
   const components = affinity.components;
-  const unitScore = clamp01(
-    weights.historical * components.historicalAffinity +
-      weights.recent * components.recentAffinity +
-      weights.dormancy * rediscoveryDormancy +
-      weights.momentum * components.momentum +
-      weights.negativePenalty * components.negativePenalty,
+  const score = score100(
+    clamp01(
+      weights.historical * components.historicalAffinity +
+        weights.recent * components.recentAffinity +
+        weights.dormancy * rediscoveryDormancy +
+        weights.momentum * components.momentum +
+        weights.negativePenalty * components.negativePenalty,
+    ),
   );
+  const eligible =
+    baseEligible &&
+    score >= DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.rediscoveryReturn;
+  if (baseEligible && !eligible) addMinimumScoreReason("REDISCOVERY_RETURN", score, reasons);
 
   return {
     category: "REDISCOVERY_RETURN",
     artistName: artist.artistName,
-    score: eligible ? score100(unitScore) : 0,
+    score: baseEligible ? score : 0,
     eligible,
     components: { ...components, rediscoveryDormancy: rounded(rediscoveryDormancy) },
     reasons,
@@ -582,26 +652,30 @@ function scoreDeepeningArtist(
   const reasons = [...affinity.reasons];
   const components = affinity.components;
   const weights = DISCOVERY_SCORE_CALIBRATION.weights.deepeningArtist;
-  const unitScore = clamp01(
-    weights.historical * components.historicalAffinity +
-      weights.recent * components.recentAffinity +
-      weights.momentum * components.momentum +
-      weights.catalogBreadth * components.catalogBreadth +
-      weights.negativePenalty * components.negativePenalty,
+  const score = score100(
+    clamp01(
+      weights.historical * components.historicalAffinity +
+        weights.recent * components.recentAffinity +
+        weights.momentum * components.momentum +
+        weights.catalogBreadth * components.catalogBreadth +
+        weights.negativePenalty * components.negativePenalty,
+    ),
   );
-  const eligible = unitScore > 0;
+  const eligible = score >= DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.deepening;
 
-  if (components.catalogBreadth >= 0.5) {
+  if (eligible) {
     reasons.push({
-      code: "CATALOG_BREADTH",
-      detail: `${artist.distinctTrackCount} distinct tracks observed; ALBUM-01 can reuse this artist-level signal with album coverage.`,
+      code: "ALBUM_DEEPENING_SIGNAL",
+      detail: `${artist.distinctTrackCount} distinct tracks observed; ALBUM-01 can combine this artist signal with album coverage.`,
     });
+  } else if (score > 0) {
+    addMinimumScoreReason("APROFUNDAMENTO", score, reasons);
   }
 
   return {
     category: "APROFUNDAMENTO",
     artistName: artist.artistName,
-    score: eligible ? score100(unitScore) : 0,
+    score,
     eligible,
     components: { ...components, rediscoveryDormancy: 0 },
     reasons,
@@ -641,17 +715,13 @@ function commonArtistReasons(
       detail: `30d delta=${artist.momentumDelta30d}, listening-day delta=${artist.momentumListeningDayDelta30d}.`,
     });
   }
-  if (negative.adjustedExplicitSkipRate >= 0.45 && artist.extendedEvidenceCount >= 5) {
-    reasons.push({
-      code: "HIGH_EXPLICIT_SKIP_RATE",
-      detail: `${artist.explicitSkipCount}/${artist.extendedEvidenceCount} explicit skips; adjusted rate=${negative.adjustedExplicitSkipRate.toFixed(2)}.`,
-    });
-  } else if (artist.explicitSkipRate !== null && artist.explicitSkipRate <= 0.1 && artist.extendedEvidenceCount >= 20) {
-    reasons.push({
-      code: "LOW_EXPLICIT_SKIP_RATE",
-      detail: `${artist.explicitSkipCount}/${artist.extendedEvidenceCount} explicit skips.`,
-    });
-  }
+  addNegativeReason(
+    artist.explicitSkipCount,
+    artist.extendedEvidenceCount,
+    artist.explicitSkipRate,
+    negative,
+    reasons,
+  );
   if (artist.inferredSkipCount > 0) {
     reasons.push({
       code: "INFERRED_SKIP_SIGNAL",
@@ -672,23 +742,84 @@ function addTrackQualityReasons(
   negative: NegativeSignals,
   reasons: DiscoveryScoreReason[],
 ) {
-  if (negative.adjustedExplicitSkipRate >= 0.45 && track.extendedEvidenceCount >= 5) {
-    reasons.push({
-      code: "HIGH_EXPLICIT_SKIP_RATE",
-      detail: `${track.explicitSkipCount}/${track.extendedEvidenceCount} explicit skips; adjusted rate=${negative.adjustedExplicitSkipRate.toFixed(2)}.`,
-    });
-  } else if (track.explicitSkipRate !== null && track.explicitSkipRate <= 0.1 && track.extendedEvidenceCount >= 20) {
-    reasons.push({
-      code: "LOW_EXPLICIT_SKIP_RATE",
-      detail: `${track.explicitSkipCount}/${track.extendedEvidenceCount} explicit skips.`,
-    });
-  }
+  addNegativeReason(
+    track.explicitSkipCount,
+    track.extendedEvidenceCount,
+    track.explicitSkipRate,
+    negative,
+    reasons,
+  );
   if (track.inferredSkipCount > 0) {
     reasons.push({
       code: "INFERRED_SKIP_SIGNAL",
       detail: `${track.inferredSkipCount} inferred skips (${track.pendingInferredSkipCount} pending).`,
     });
   }
+}
+
+function addNegativeReason(
+  explicitSkipCount: number,
+  extendedEvidenceCount: number,
+  rawSkipRate: number | null,
+  negative: NegativeSignals,
+  reasons: DiscoveryScoreReason[],
+) {
+  if (extendedEvidenceCount <= 0) return;
+  if (negative.adjustedExplicitSkipRate >= 0.45) {
+    reasons.push({
+      code: "HIGH_EXPLICIT_SKIP_RATE",
+      detail: `${explicitSkipCount}/${extendedEvidenceCount} explicit skips; adjusted rate=${negative.adjustedExplicitSkipRate.toFixed(2)}, penalty=${negative.penalty.toFixed(2)}.`,
+    });
+  } else if (negative.penalty > 0) {
+    reasons.push({
+      code: "ELEVATED_EXPLICIT_SKIP_RATE",
+      detail: `${explicitSkipCount}/${extendedEvidenceCount} explicit skips; adjusted rate=${negative.adjustedExplicitSkipRate.toFixed(2)}, penalty=${negative.penalty.toFixed(2)}.`,
+    });
+  } else if (rawSkipRate !== null && rawSkipRate <= 0.1 && extendedEvidenceCount >= 20) {
+    reasons.push({
+      code: "LOW_EXPLICIT_SKIP_RATE",
+      detail: `${explicitSkipCount}/${extendedEvidenceCount} explicit skips.`,
+    });
+  }
+}
+
+function addTrackHistoryReason(
+  track: DiscoveryTrackProfile,
+  trackHistory: number,
+  reasons: DiscoveryScoreReason[],
+) {
+  if (trackHistory >= 0.65) {
+    reasons.push({
+      code: "HIGH_HISTORICAL_AFFINITY",
+      detail: `Track history strength=${trackHistory.toFixed(2)} across ${track.distinctListeningDays} listening days.`,
+    });
+  } else if (trackHistory > 0) {
+    reasons.push({
+      code: "TRACK_HISTORY_SUPPORT",
+      detail: `Track history strength=${trackHistory.toFixed(2)} across ${track.distinctListeningDays} listening days.`,
+    });
+  }
+}
+
+function addMinimumScoreReason(
+  category: "FAMILIAR" | "REDESCOBERTA" | "REDISCOVERY_RETURN" | "APROFUNDAMENTO" | "DESCOBERTA",
+  score: number,
+  reasons: DiscoveryScoreReason[],
+) {
+  const minimum =
+    category === "FAMILIAR"
+      ? DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.familiar
+      : category === "REDESCOBERTA"
+        ? DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.rediscovery
+        : category === "REDISCOVERY_RETURN"
+          ? DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.rediscoveryReturn
+          : category === "APROFUNDAMENTO"
+            ? DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.deepening
+            : DISCOVERY_SCORE_CALIBRATION.thresholds.minimumScores.externalDiscovery;
+  reasons.push({
+    code: "CATEGORY_MINIMUM_NOT_MET",
+    detail: `${category} score=${score.toFixed(1)} is below the selection floor ${minimum.toFixed(1)}; the category may abstain instead of filling quota.`,
+  });
 }
 
 function trackHistoricalStrength(track: DiscoveryTrackProfile): number {
@@ -712,11 +843,14 @@ function scoreNegativeSignals(
   const adjustedExplicitSkipRate =
     (explicitSkipCount + SKIP_PRIOR_MEAN * SKIP_PRIOR_WEIGHT) /
     (extendedEvidenceCount + SKIP_PRIOR_WEIGHT);
-  const explicitPenalty = clamp01(
-    (adjustedExplicitSkipRate - DISCOVERY_SCORE_CALIBRATION.skipBayesPrior.neutralRate) /
-      (DISCOVERY_SCORE_CALIBRATION.skipBayesPrior.strongNegativeRate -
-        DISCOVERY_SCORE_CALIBRATION.skipBayesPrior.neutralRate),
-  );
+  const explicitPenalty =
+    extendedEvidenceCount <= 0
+      ? 0
+      : clamp01(
+          (adjustedExplicitSkipRate - DISCOVERY_SCORE_CALIBRATION.skipBayesPrior.neutralRate) /
+            (DISCOVERY_SCORE_CALIBRATION.skipBayesPrior.strongNegativeRate -
+              DISCOVERY_SCORE_CALIBRATION.skipBayesPrior.neutralRate),
+        );
   const inferredPenalty = saturating(
     inferredSkipCount,
     DISCOVERY_SCORE_CALIBRATION.scales.inferredSkipCount,
