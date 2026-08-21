@@ -42,6 +42,12 @@ export async function getCompleteMusicDiscoveryProfile(
     options,
   );
 
+  return retainCompleteMusicDiscoveryProfile(fullProfile);
+}
+
+export function retainCompleteMusicDiscoveryProfile(
+  fullProfile: MusicDiscoveryProfile,
+): CompleteMusicDiscoveryProfile {
   return {
     universe: "COMPLETE",
     profile: {
