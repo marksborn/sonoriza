@@ -81,6 +81,11 @@ test("projected lean COMPLETE finalizer preserves runtime scoring facts while dr
 
   let rawCalls = 0;
   let rawQuery = "";
+  let projectedRows: Array<{
+    spotifyUri: string | null;
+    albumName: string | null;
+    metadata?: unknown;
+  }> = [];
   const fakeClient = {
     user: {
       findUnique: async () => ({ id: "user-lean" }),
@@ -113,7 +118,7 @@ test("projected lean COMPLETE finalizer preserves runtime scoring facts while dr
       assert.equal(userId, "user-lean");
       assert.equal(take, COMPLETE_PROFILE_EVENT_BATCH_SIZE);
       assert.equal(cursorId, null);
-      return events.map((event) => {
+      const rows = events.map((event) => {
         const metadata = asRecord(event.metadata);
         const extended = asRecord(metadata?.spotifyExtendedHistory);
         return {
@@ -132,6 +137,8 @@ test("projected lean COMPLETE finalizer preserves runtime scoring facts while dr
             extended?.explicitSkip === true || extended?.skipped === true,
         };
       });
+      projectedRows = rows;
+      return rows;
     },
   } as unknown as PrismaClient;
 
@@ -147,6 +154,13 @@ test("projected lean COMPLETE finalizer preserves runtime scoring facts while dr
   assert.equal(rawCalls, 1);
   assert.match(rawQuery, /NULL::text AS "spotifyUri"/);
   assert.match(rawQuery, /NULL::text AS "albumName"/);
+  assert.equal(projectedRows.length, events.length);
+  assert.equal(projectedRows[0]?.spotifyUri, null);
+  assert.equal(projectedRows[0]?.albumName, null);
+  assert.deepEqual(projectedRows[0]?.metadata, {
+    spotifyExtendedHistory: { msPlayed: 0 },
+  });
+  assert.equal(projectedRows[1]?.metadata, null);
   assert.deepEqual(retained, {
     generatedAt: canonical.generatedAt,
     heuristics: canonical.heuristics,
