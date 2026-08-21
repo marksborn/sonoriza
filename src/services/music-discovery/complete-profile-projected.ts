@@ -26,6 +26,8 @@ type BatchedFindManyArgs = {
   skip?: unknown;
 };
 
+type ProjectedHistoryMode = "FULL" | "RUNTIME_RETAINED";
+
 type ProjectedCompleteHistoryRow = {
   id: string;
   source: string;
@@ -47,6 +49,23 @@ const LISTENING_EVENT_SOURCES = new Set<string>([
   "IMPORT",
 ]);
 
+// PERF-01: the canonical aggregator only observes whether Extended History
+// evidence exists, whether msPlayed is numeric and whether an explicit skip is
+// present. Reuse four immutable sentinel shapes instead of allocating a nested
+// metadata object for every projected history row.
+const EXTENDED_EVIDENCE_ONLY = Object.freeze({
+  spotifyExtendedHistory: Object.freeze({}),
+});
+const EXTENDED_EVIDENCE_MS = Object.freeze({
+  spotifyExtendedHistory: Object.freeze({ msPlayed: 0 }),
+});
+const EXTENDED_EVIDENCE_SKIP = Object.freeze({
+  spotifyExtendedHistory: Object.freeze({ explicitSkip: true }),
+});
+const EXTENDED_EVIDENCE_MS_SKIP = Object.freeze({
+  spotifyExtendedHistory: Object.freeze({ msPlayed: 0, explicitSkip: true }),
+});
+
 /**
  * PERF-01 third cut.
  *
@@ -65,7 +84,7 @@ export async function getProjectedBatchedCompleteMusicDiscoveryProfile(
   options: CompleteProfileOptions = {},
 ): Promise<MusicDiscoveryProfile> {
   const client = options.client ?? defaultPrisma;
-  const projectedClient = createProjectedHistoryClient(client);
+  const projectedClient = createProjectedHistoryClient(client, "FULL");
 
   return getBatchedCompleteMusicDiscoveryProfile(userId, {
     ...options,
@@ -77,13 +96,17 @@ export async function getProjectedBatchedCompleteMusicDiscoveryProfile(
  * PERF-01 runtime path. Uses the same SQL projection and paged aggregation as
  * the canonical profile, but asks the batched loader for only the historical
  * universes and context required by runtime scoring.
+ *
+ * Runtime scoring never reads spotifyUri or albumName from historical profile
+ * tracks, so this path also avoids crossing/storing those strings. The FULL
+ * projected path above remains unchanged for diagnostics and equivalence.
  */
 export async function getProjectedBatchedRetainedCompleteMusicDiscoveryProfile(
   userId: string,
   options: CompleteProfileOptions = {},
 ): Promise<RetainedCompleteMusicDiscoveryProfile> {
   const client = options.client ?? defaultPrisma;
-  const projectedClient = createProjectedHistoryClient(client);
+  const projectedClient = createProjectedHistoryClient(client, "RUNTIME_RETAINED");
 
   return getBatchedRetainedCompleteMusicDiscoveryProfile(userId, {
     ...options,
@@ -91,7 +114,10 @@ export async function getProjectedBatchedRetainedCompleteMusicDiscoveryProfile(
   });
 }
 
-function createProjectedHistoryClient(client: PrismaClient): PrismaClient {
+function createProjectedHistoryClient(
+  client: PrismaClient,
+  mode: ProjectedHistoryMode,
+): PrismaClient {
   // getBatchedCompleteMusicDiscoveryProfile only uses these delegates. Supplying
   // a narrow adapter avoids proxying Prisma internals while replacing exactly
   // the heavy TrackListeningEvent.findMany call.
@@ -103,7 +129,7 @@ function createProjectedHistoryClient(client: PrismaClient): PrismaClient {
     lastFmBackfillRun: client.lastFmBackfillRun,
     trackListeningEvent: {
       findMany: async (args: BatchedFindManyArgs) =>
-        loadProjectedEventPage(client, args),
+        loadProjectedEventPage(client, args, mode),
     },
   } as unknown as PrismaClient;
 }
@@ -111,6 +137,7 @@ function createProjectedHistoryClient(client: PrismaClient): PrismaClient {
 async function loadProjectedEventPage(
   client: PrismaClient,
   args: BatchedFindManyArgs,
+  mode: ProjectedHistoryMode,
 ): Promise<
   Array<{
     id: string;
@@ -148,6 +175,14 @@ async function loadProjectedEventPage(
     throw new Error("PERF-01 projected history does not expect skip without cursor");
   }
 
+  const runtimeRetained = mode === "RUNTIME_RETAINED";
+  const spotifyUriProjection = runtimeRetained
+    ? 'NULL::text AS "spotifyUri"'
+    : '"spotifyUri"';
+  const albumNameProjection = runtimeRetained
+    ? 'NULL::text AS "albumName"'
+    : '"albumName"';
+
   const rows = await client.$queryRawUnsafe<ProjectedCompleteHistoryRow[]>(
     `
       /* PERF-01: project only the Extended History facts consumed by DISCOVERY */
@@ -155,10 +190,10 @@ async function loadProjectedEventPage(
         "id",
         "source"::text AS "source",
         "spotifyTrackId",
-        "spotifyUri",
+        ${spotifyUriProjection},
         "trackName",
         "artistName",
-        "albumName",
+        ${albumNameProjection},
         "playedAt",
         (jsonb_typeof("metadata"->'spotifyExtendedHistory') = 'object')
           AS "extendedEvidencePresent",
@@ -205,10 +240,10 @@ async function loadProjectedEventPage(
     id: row.id,
     source: listeningEventSource(row.source),
     spotifyTrackId: row.spotifyTrackId,
-    spotifyUri: row.spotifyUri,
+    spotifyUri: runtimeRetained ? null : row.spotifyUri,
     trackName: row.trackName,
     artistName: row.artistName,
-    albumName: row.albumName,
+    albumName: runtimeRetained ? null : row.albumName,
     playedAt: row.playedAt,
     metadata: minimalExtendedHistoryMetadata(row),
   }));
@@ -218,13 +253,11 @@ function minimalExtendedHistoryMetadata(
   row: ProjectedCompleteHistoryRow,
 ): unknown {
   if (!row.extendedEvidencePresent) return null;
-
-  return {
-    spotifyExtendedHistory: {
-      ...(row.msPlayed === null ? {} : { msPlayed: row.msPlayed }),
-      ...(row.explicitSkip ? { explicitSkip: true } : {}),
-    },
-  };
+  const hasMsPlayed = row.msPlayed !== null;
+  if (hasMsPlayed && row.explicitSkip) return EXTENDED_EVIDENCE_MS_SKIP;
+  if (hasMsPlayed) return EXTENDED_EVIDENCE_MS;
+  if (row.explicitSkip) return EXTENDED_EVIDENCE_SKIP;
+  return EXTENDED_EVIDENCE_ONLY;
 }
 
 function listeningEventSource(value: string): ListeningEventSource {
