@@ -5,6 +5,8 @@ import { prisma as defaultPrisma } from "@/lib/prisma";
 import {
   COMPLETE_PROFILE_EVENT_BATCH_SIZE,
   getBatchedCompleteMusicDiscoveryProfile,
+  getBatchedRetainedCompleteMusicDiscoveryProfile,
+  type RetainedCompleteMusicDiscoveryProfile,
 } from "./complete-profile-batched";
 import type {
   MusicDiscoveryProfile,
@@ -66,6 +68,24 @@ export async function getProjectedBatchedCompleteMusicDiscoveryProfile(
   const projectedClient = createProjectedHistoryClient(client);
 
   return getBatchedCompleteMusicDiscoveryProfile(userId, {
+    ...options,
+    client: projectedClient,
+  });
+}
+
+/**
+ * PERF-01 runtime path. Uses the same SQL projection and paged aggregation as
+ * the canonical profile, but asks the batched loader for only the historical
+ * universes and context required by runtime scoring.
+ */
+export async function getProjectedBatchedRetainedCompleteMusicDiscoveryProfile(
+  userId: string,
+  options: CompleteProfileOptions = {},
+): Promise<RetainedCompleteMusicDiscoveryProfile> {
+  const client = options.client ?? defaultPrisma;
+  const projectedClient = createProjectedHistoryClient(client);
+
+  return getBatchedRetainedCompleteMusicDiscoveryProfile(userId, {
     ...options,
     client: projectedClient,
   });
