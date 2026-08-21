@@ -6,7 +6,6 @@ import {
   type DiscoveryGate22TrackCandidate,
   type RecordingIdentityMatchSource,
 } from "./scoring-gate2-2";
-import { assertDiscoverySelectionReady } from "./scoring";
 import type { DiscoveryTrackIdentityEvidence } from "./track-identity";
 
 export const DISCOVERY_PLANNER_PREVIEW_POLICY_V1 = {
@@ -86,9 +85,13 @@ type ClassifiedEntry = DiscoveryPlannerPoolEntry & {
 export function buildDiscoveryPlannerMusicPool(
   input: BuildDiscoveryPlannerPoolInput,
 ): DiscoveryPlannerPoolResult {
-  assertDiscoverySelectionReady(input.report);
-  if (input.report.selectionPolicy.candidateUniverse !== "COMPLETE") {
-    throw new Error("DISCOVERY planner bridge requires candidateUniverse=COMPLETE");
+  if (
+    !input.report.selectionPolicy.selectionReady ||
+    input.report.selectionPolicy.candidateUniverse !== "COMPLETE"
+  ) {
+    throw new Error(
+      "DISCOVERY planner bridge requires candidateUniverse=COMPLETE; diagnostic partial pools cannot drive planner selection.",
+    );
   }
 
   const rediscoveryCeiling = normalizeCeiling(
