@@ -7,6 +7,11 @@ import {
 } from "@/services/playlist-planner";
 
 import {
+  DISCOVERY_GATE4A_SEQUENCE_TERMINAL_UNDERFILL_TOLERANCE_MS,
+  currentDiscoveryRuntimeState,
+  prepareDiscoveryMusicForCurrentRun,
+} from "./discovery-runtime";
+import {
   filterMusicBatchForCurrentRun,
   MusicRepeatPreWriteBlockedError,
   revalidateMusicRepeatBeforeRealWrite,
@@ -107,15 +112,40 @@ export async function collectIncrementally<
   replanAfterEachSourceRead = false,
   sequenceTerminalUnderfillToleranceMs = 0,
 }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
-  const pools: PlannerPools = { music: [], podcasts: [] };
-  const attemptedSourceIds = new Set<string>();
-  const readSourceIds = new Set<string>();
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
+  const discoveryState = currentDiscoveryRuntimeState();
+  const discovery =
+    discoveryState?.enabled && relevantKinds.includes("MUSIC")
+      ? await prepareDiscoveryMusicForCurrentRun(sources)
+      : null;
+
+  if (discoveryState?.enabled && !relevantKinds.includes("MUSIC")) {
+    discoveryState.evidence = { skipped: "NO_MUSIC_DEMAND" };
+  }
+
+  const activeSources: TSource[] = discovery ? discovery.podcastSources : sources;
+  const pools: PlannerPools = {
+    music: discovery ? dedupeByUri(discovery.rankedMusic) : [],
+    podcasts: [],
+  };
+  const attemptedSourceIds = new Set<string>(
+    discovery?.completedMusicSourceIds ?? [],
+  );
+  const readSourceIds = new Set<string>(discovery?.completedMusicSourceIds ?? []);
+  const effectiveReplanAfterEachSourceRead = discovery
+    ? true
+    : replanAfterEachSourceRead;
+  const effectiveSequenceTerminalUnderfillToleranceMs = discovery
+    ? Math.max(
+        sequenceTerminalUnderfillToleranceMs,
+        DISCOVERY_GATE4A_SEQUENCE_TERMINAL_UNDERFILL_TOLERANCE_MS,
+      )
+    : sequenceTerminalUnderfillToleranceMs;
   const terminalUnderfillToleranceMs = Math.max(
     0,
-    Number.isFinite(sequenceTerminalUnderfillToleranceMs)
-      ? sequenceTerminalUnderfillToleranceMs
+    Number.isFinite(effectiveSequenceTerminalUnderfillToleranceMs)
+      ? effectiveSequenceTerminalUnderfillToleranceMs
       : 0,
   );
   let activePreservedByTargetId = preservedByTargetId
@@ -217,7 +247,7 @@ export async function collectIncrementally<
     if (requestedKinds.size === 0) {
       requestedKinds = new Set(
         relevantKinds.filter((kind) =>
-          sources.some((source) => source.kind === kind && !source.done),
+          activeSources.some((source) => source.kind === kind && !source.done),
         ),
       );
     }
@@ -231,13 +261,13 @@ export async function collectIncrementally<
       attemptedSourceIds,
       readSourceIds,
       rounds,
-      stoppedEarly: sources.some((source) => !source.done),
+      stoppedEarly: activeSources.some((source) => !source.done),
       failure: null,
     };
   }
 
   while (requestedKinds.size > 0) {
-    const readable = sources.filter(
+    const readable = activeSources.filter(
       (source) => !source.done && requestedKinds.has(source.kind),
     );
     if (readable.length === 0) break;
@@ -285,7 +315,7 @@ export async function collectIncrementally<
       }
       onBatch?.(source, batch);
 
-      if (replanAfterEachSourceRead) {
+      if (effectiveReplanAfterEachSourceRead) {
         rebuildPlan();
         if (await settleReadyPlan()) {
           return {
@@ -295,7 +325,9 @@ export async function collectIncrementally<
             attemptedSourceIds,
             readSourceIds,
             rounds,
-            stoppedEarly: sources.some((candidateSource) => !candidateSource.done),
+            stoppedEarly: activeSources.some(
+              (candidateSource) => !candidateSource.done,
+            ),
             failure: null,
           };
         }
@@ -320,7 +352,7 @@ export async function collectIncrementally<
         attemptedSourceIds,
         readSourceIds,
         rounds,
-        stoppedEarly: sources.some((source) => !source.done),
+        stoppedEarly: activeSources.some((source) => !source.done),
         failure: null,
       };
     }

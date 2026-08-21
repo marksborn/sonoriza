@@ -5,6 +5,12 @@ import { isSpotifyApiError } from "@/services/spotify";
 import { refreshMusicRepeatContext } from "@/services/spotify/recently-played";
 
 import {
+  createDiscoveryGate4ARunState,
+  discoveryRuntimeSummary,
+  runWithDiscoveryRuntimeState,
+  type DiscoveryRuntimeState,
+} from "./discovery-runtime";
+import {
   runWithMusicRepeatState,
   type MusicRepeatRunState,
 } from "./music-repeat-runtime";
@@ -17,15 +23,15 @@ import {
 export type { GeneratePlaylistsOptions, GeneratePlaylistsResult };
 
 /**
- * MUSIC-01 wrapper around the existing generator. Playback history is refreshed
- * before source collection, carried in an AsyncLocalStorage context so music
- * batches can be filtered before the planner, and persisted into the run
- * summary after the underlying generator finishes.
+ * MUSIC-01 wrapper around the existing generator. Gate 4A also establishes a
+ * fail-closed DISCOVERY runtime context, disabled by default and enabled only
+ * when both the master flag and the per-user e-mail allowlist match.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
 ): Promise<GeneratePlaylistsResult> {
   const simulate = opts.simulate ?? opts.trigger === "SIMULATION";
+  const asOf = opts.date ?? new Date();
   let prepared: Awaited<ReturnType<typeof refreshMusicRepeatContext>>;
 
   try {
@@ -33,6 +39,16 @@ export async function generatePlaylists(
   } catch (error) {
     return recordPlaybackHistorySyncFailure(opts, simulate, error);
   }
+
+  const user = await prisma.user.findUnique({
+    where: { id: opts.userId },
+    select: { email: true },
+  });
+  const discoveryState = createDiscoveryGate4ARunState({
+    userId: opts.userId,
+    userEmail: user?.email ?? null,
+    asOf,
+  });
 
   const state: MusicRepeatRunState = {
     userId: opts.userId,
@@ -48,21 +64,23 @@ export async function generatePlaylists(
   };
 
   const result = await runWithMusicRepeatState(state, () =>
-    generatePlaylistsIncremental(opts),
+    runWithDiscoveryRuntimeState(discoveryState, () =>
+      generatePlaylistsIncremental(opts),
+    ),
   );
 
   // The underlying generator is authoritative for the execution result. If the
-  // auxiliary MUSIC-01 metrics cannot be appended afterwards, never turn a
+  // auxiliary observability cannot be appended afterwards, never turn a
   // successfully completed real write into an API-level failure/retry hazard.
   try {
-    await appendMusicRepeatSummary(result.runId, state);
+    await appendRuntimeSummary(result.runId, state, discoveryState);
   } catch (error) {
     try {
       await prisma.generationLog.create({
         data: {
           runId: result.runId,
           level: "WARN",
-          message: `MUSIC-01 metrics persistence failed after generation: ${
+          message: `Runtime metrics persistence failed after generation: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },
@@ -75,9 +93,10 @@ export async function generatePlaylists(
   return result;
 }
 
-async function appendMusicRepeatSummary(
+async function appendRuntimeSummary(
   runId: string,
   state: MusicRepeatRunState,
+  discoveryState: DiscoveryRuntimeState,
 ): Promise<void> {
   const run = await prisma.generationRun.findUnique({
     where: { id: runId },
@@ -98,6 +117,7 @@ async function appendMusicRepeatSummary(
         musicRecentlyPlayedSkippedCount: state.recentlyPlayedSkippedCount,
         musicMissingTrackIdentitySkippedCount:
           state.missingTrackIdentitySkippedCount,
+        discoveryRuntime: discoveryRuntimeSummary(discoveryState),
       } as Prisma.InputJsonValue,
     },
   });
