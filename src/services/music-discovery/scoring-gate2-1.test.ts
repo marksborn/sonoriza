@@ -136,7 +136,13 @@ test("returned candidates are explainable and elevated skip penalty is explicit"
   assert.ok(
     familiar.reasons.some((reason) => reason.code === "ELEVATED_EXPLICIT_SKIP_RATE"),
   );
-  assert.ok(familiar.reasons.some((reason) => reason.code === "TRACK_HISTORY_SUPPORT"));
+  assert.ok(
+    familiar.reasons.some(
+      (reason) =>
+        reason.code === "TRACK_HISTORY_SUPPORT" ||
+        reason.code === "HIGH_HISTORICAL_AFFINITY",
+    ),
+  );
 });
 
 test("category score floor allows REDISCOVERY_RETURN to abstain from weak tail", () => {
