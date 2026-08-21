@@ -57,15 +57,18 @@ export function buildDiscoveryTrackIdentityEvidence(
   return [...byTrack.entries()]
     .map(([spotifyTrackId, aggregate]) => ({
       spotifyTrackId,
-      isrc: aggregate.isrcs.size === 1 ? [...aggregate.isrcs][0] : null,
-      primaryArtistId:
-        aggregate.primaryArtistIds.size === 1
-          ? [...aggregate.primaryArtistIds][0]
-          : null,
+      isrc: singleOrNull(aggregate.isrcs),
+      primaryArtistId: singleOrNull(aggregate.primaryArtistIds),
       isrcConflict: aggregate.isrcs.size > 1,
       primaryArtistIdConflict: aggregate.primaryArtistIds.size > 1,
     }))
     .sort((a, b) => a.spotifyTrackId.localeCompare(b.spotifyTrackId));
+}
+
+function singleOrNull(values: Set<string>): string | null {
+  if (values.size !== 1) return null;
+  const value = values.values().next().value;
+  return typeof value === "string" ? value : null;
 }
 
 function normalizeIsrc(value: string | null): string | null {
