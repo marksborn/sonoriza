@@ -6,9 +6,14 @@ import type {
   MusicDiscoveryProfileOptions,
 } from "./profile";
 
+export type CompleteMusicDiscoveryContext = Pick<
+  MusicDiscoveryProfile,
+  "generatedAt" | "heuristics" | "coverage" | "cooldown"
+>;
+
 export type CompleteMusicDiscoveryProfile = {
   universe: "COMPLETE";
-  profile: MusicDiscoveryProfile;
+  profile: CompleteMusicDiscoveryContext;
   artists: DiscoveryArtistProfile[];
   tracks: DiscoveryTrackProfile[];
 };
@@ -21,20 +26,37 @@ export type CompleteMusicDiscoveryProfile = {
  * PERF-01 keeps that COMPLETE contract while reading listening history in
  * bounded pages and projecting only the Extended History facts the canonical
  * aggregator actually consumes.
+ *
+ * The canonical aggregator also returns several derived/sorted views over the
+ * same COMPLETE artist/track objects. Runtime scoring only needs the canonical
+ * historical artist/track universes plus small profile context. Retaining the
+ * full report here would keep those redundant arrays alive through identities,
+ * source collection and scoring, so only the small context is retained.
  */
 export async function getCompleteMusicDiscoveryProfile(
   userId: string,
   options: Omit<MusicDiscoveryProfileOptions, "topN" | "completeUniverse"> = {},
 ): Promise<CompleteMusicDiscoveryProfile> {
-  const profile = await getProjectedBatchedCompleteMusicDiscoveryProfile(
+  const fullProfile = await getProjectedBatchedCompleteMusicDiscoveryProfile(
     userId,
     options,
   );
 
+  return retainCompleteMusicDiscoveryProfile(fullProfile);
+}
+
+export function retainCompleteMusicDiscoveryProfile(
+  fullProfile: MusicDiscoveryProfile,
+): CompleteMusicDiscoveryProfile {
   return {
     universe: "COMPLETE",
-    profile,
-    artists: profile.topArtistsHistorical,
-    tracks: profile.topTracksHistorical,
+    profile: {
+      generatedAt: fullProfile.generatedAt,
+      heuristics: fullProfile.heuristics,
+      coverage: fullProfile.coverage,
+      cooldown: fullProfile.cooldown,
+    },
+    artists: fullProfile.topArtistsHistorical,
+    tracks: fullProfile.topTracksHistorical,
   };
 }
