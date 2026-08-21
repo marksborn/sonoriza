@@ -48,9 +48,9 @@ type ArtistAggregate = {
   plays90d: number;
   plays365d: number;
   distinctTracks: Set<string>;
-  distinctDays: Set<string>;
-  recentDays: Set<string>;
-  previousRecentDays: Set<string>;
+  distinctDays: Set<number>;
+  recentDays: Set<number>;
+  previousRecentDays: Set<number>;
   firstPlayedAt: Date;
   lastPlayedAt: Date;
   extendedEvidenceCount: number;
@@ -75,7 +75,7 @@ type TrackAggregate = {
   firstPlayedAt: Date;
   lastPlayedAt: Date;
   latestLabelAt: Date;
-  distinctDays: Set<string>;
+  distinctDays: Set<number>;
   extendedEvidenceCount: number;
   msPlayedEvidenceCount: number;
   explicitSkipCount: number;
@@ -323,7 +323,7 @@ function aggregateEvent(
   const trackKey = event.spotifyTrackId
     ? `spotify:${event.spotifyTrackId}`
     : `unresolved:${normalized(event.trackName)}:${normalized(event.albumName ?? "")}`;
-  const dayKey = event.playedAt.toISOString().slice(0, 10);
+  const dayKey = utcEpochDay(event.playedAt);
 
   let artist = state.artists.get(artistKey);
   if (!artist) {
@@ -773,6 +773,10 @@ function ratioOrNull(numerator: number, denominator: number): number | null {
 
 function daysBefore(date: Date, days: number): Date {
   return new Date(date.getTime() - days * DAY_MS);
+}
+
+function utcEpochDay(date: Date): number {
+  return Math.floor(date.getTime() / DAY_MS);
 }
 
 function wholeDaysBetween(earlier: Date, later: Date): number {
