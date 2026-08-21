@@ -90,7 +90,7 @@ test("track similarity accepts current 0..1 and legacy percentage-like match val
   assert.equal(rows.length, 2);
   assert.equal(rows[0]?.match, 1);
   assert.equal(rows[0]?.artistName, "Disturbed");
-  assert.equal(rows[1]?.match, 0.1095);
+  assert.ok(Math.abs((rows[1]?.match ?? 0) - 0.1095) < 1e-12);
 });
 
 test("similarity client validates bounded result size before calling provider", async () => {
