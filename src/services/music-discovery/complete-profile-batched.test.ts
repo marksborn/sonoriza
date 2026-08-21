@@ -144,3 +144,82 @@ test("batched COMPLETE loader preserves the canonical profile across multiple pa
   assert.equal(eventPageCalls, 2);
   assert.deepEqual(batched, legacy);
 });
+
+test("numeric epoch-day keys preserve canonical UTC day boundaries", async () => {
+  const events = [
+    {
+      id: "event-001",
+      source: "SPOTIFY_RECENTLY_PLAYED" as const,
+      spotifyTrackId: "track-utc",
+      spotifyUri: "spotify:track:track-utc",
+      trackName: "UTC Track",
+      artistName: "UTC Artist",
+      albumName: "UTC Album",
+      playedAt: new Date("2026-08-20T00:00:00.000Z"),
+      metadata: null,
+    },
+    {
+      id: "event-002",
+      source: "SPOTIFY_RECENTLY_PLAYED" as const,
+      spotifyTrackId: "track-utc",
+      spotifyUri: "spotify:track:track-utc",
+      trackName: "UTC Track",
+      artistName: "UTC Artist",
+      albumName: "UTC Album",
+      playedAt: new Date("2026-08-20T23:59:59.999Z"),
+      metadata: null,
+    },
+    {
+      id: "event-003",
+      source: "SPOTIFY_RECENTLY_PLAYED" as const,
+      spotifyTrackId: "track-utc",
+      spotifyUri: "spotify:track:track-utc",
+      trackName: "UTC Track",
+      artistName: "UTC Artist",
+      albumName: "UTC Album",
+      playedAt: new Date("2026-08-21T00:00:00.000Z"),
+      metadata: null,
+    },
+  ];
+
+  const legacy = buildMusicDiscoveryProfile({
+    asOf: AS_OF,
+    events,
+    inferredSkips: [],
+    trackStates: [],
+    playbackPolicy: null,
+    lastFmValidFrom: null,
+    completeUniverse: true,
+  });
+
+  const fakeClient = {
+    user: {
+      findUnique: async () => ({ id: "user-utc" }),
+    },
+    musicPreferenceSignal: {
+      findMany: async () => [],
+    },
+    trackListeningState: {
+      findMany: async () => [],
+    },
+    musicPlaybackPolicy: {
+      findUnique: async () => null,
+    },
+    lastFmBackfillRun: {
+      findFirst: async () => null,
+    },
+    trackListeningEvent: {
+      findMany: async () => events,
+    },
+  } as unknown as PrismaClient;
+
+  const batched = await getBatchedCompleteMusicDiscoveryProfile("user-utc", {
+    asOf: AS_OF,
+    client: fakeClient,
+  });
+
+  assert.deepEqual(batched, legacy);
+  assert.equal(batched.topArtistsHistorical[0]?.distinctListeningDays, 2);
+  assert.equal(batched.topArtistsHistorical[0]?.listeningDays30d, 2);
+  assert.equal(batched.topTracksHistorical[0]?.distinctListeningDays, 2);
+});
