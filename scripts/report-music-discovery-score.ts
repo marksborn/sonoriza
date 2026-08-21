@@ -54,6 +54,7 @@ async function main() {
     topN: args.topN,
     artists,
     tracks,
+    candidateUniverse: "DIAGNOSTIC_PARTIAL",
   });
 
   if (args.json) {
@@ -62,7 +63,12 @@ async function main() {
         {
           user: user.email ?? user.id,
           profileGeneratedAt: profile.generatedAt,
-          candidatePool: { artists: artists.length, tracks: tracks.length },
+          candidatePool: {
+            artists: artists.length,
+            tracks: tracks.length,
+            universe: scoring.selectionPolicy.candidateUniverse,
+            selectionReady: scoring.selectionPolicy.selectionReady,
+          },
           scoring,
         },
         null,
@@ -72,11 +78,17 @@ async function main() {
     return;
   }
 
-  console.log("========== DISCOVERY-01 — GATE 2 SCORE READ-ONLY ==========");
+  console.log("========== DISCOVERY-01 — GATE 2.1 SCORE READ-ONLY ==========");
   console.log(`User:              ${user.email ?? user.id}`);
   console.log(`Generated at:      ${profile.generatedAt.toISOString()}`);
   console.log(`Score version:     ${scoring.version}`);
   console.log(`Candidate pool:    ${artists.length} artists / ${tracks.length} tracks`);
+  console.log(`Universe:          ${scoring.selectionPolicy.candidateUniverse}`);
+  console.log(`Selection ready:   ${scoring.selectionPolicy.selectionReady}`);
+  console.log(`Budget rule:       ${scoring.selectionPolicy.categoryBudgetRule}`);
+  console.log(
+    `Arbitration:        REDESCOBERTA > FAMILIAR; ${scoring.selectionPolicy.rediscoveryPreemptedFamiliarCount} familiar duplicates preempted`,
+  );
   console.log("No writes: profile + scores only; no inbox, playlist or preference persistence.");
 
   printArtistAffinity("Top artist affinity", scoring.topArtistAffinity);
@@ -87,6 +99,9 @@ async function main() {
 
   console.log("\nDESCOBERTA:");
   console.log(`  ${scoring.externalDiscovery.status}: ${scoring.externalDiscovery.note}`);
+  console.log(
+    "\nPlanner guard: this CLI intentionally uses a DIAGNOSTIC_PARTIAL pool. A planner consumer must supply candidateUniverse=COMPLETE.",
+  );
 }
 
 function printArtistAffinity(title: string, rows: DiscoveryArtistScoreCard[]) {
@@ -100,7 +115,7 @@ function printArtistAffinity(title: string, rows: DiscoveryArtistScoreCard[]) {
 
 function printTracks(title: string, rows: DiscoveryScoredTrackCandidate[]) {
   console.log(`\n${title}:`);
-  if (rows.length === 0) return console.log("  (none)");
+  if (rows.length === 0) return console.log("  (none / category abstained)");
   rows.forEach((row, index) => {
     console.log(
       `  ${rank(index)} ${row.artistName} — ${row.trackName} — score=${row.score}, history=${row.components.trackHistoricalStrength}, artist=${row.components.artistHistoricalAffinity}, dormancy=${row.components.dormancy}, negative=${row.components.negativePenalty} — ${reasonCodes(row.reasons)}`,
@@ -110,7 +125,7 @@ function printTracks(title: string, rows: DiscoveryScoredTrackCandidate[]) {
 
 function printArtists(title: string, rows: DiscoveryScoredArtistCandidate[]) {
   console.log(`\n${title}:`);
-  if (rows.length === 0) return console.log("  (none)");
+  if (rows.length === 0) return console.log("  (none / category abstained)");
   rows.forEach((row, index) => {
     console.log(
       `  ${rank(index)} ${row.artistName} — score=${row.score}, historical=${row.components.historicalAffinity}, recent=${row.components.recentAffinity}, momentum=${row.components.momentum}, dormancy=${row.components.rediscoveryDormancy}, negative=${row.components.negativePenalty} — ${reasonCodes(row.reasons)}`,
@@ -119,7 +134,7 @@ function printArtists(title: string, rows: DiscoveryScoredArtistCandidate[]) {
 }
 
 function reasonCodes(reasons: Array<{ code: string }>): string {
-  return reasons.map((reason) => reason.code).join(", ") || "NO_STRONG_REASON";
+  return reasons.map((reason) => reason.code).join(", ") || "NO_REASON_BUG";
 }
 
 function rank(index: number): string {
