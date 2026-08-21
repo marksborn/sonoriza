@@ -76,6 +76,19 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   onRound?: (round: IncrementalPlanningRound) => void;
   /** Test seam and bounded pre-write repair hook; production uses MUSIC-01 revalidation. */
   revalidateBeforeWrite?: (plan: PlanRunResult) => Promise<void>;
+  /**
+   * Optional caller policy. When enabled, the collector rebuilds and may settle
+   * after every individual source read instead of waiting for the whole source
+   * pass. Defaults false to preserve the production collector's current cadence.
+   */
+  replanAfterEachSourceRead?: boolean;
+  /**
+   * Optional caller policy for SEQUENCE terminal underfill. A quality-passing
+   * plan that stops with NO_FITTING_CANDIDATE and a remaining duration at or
+   * below this threshold is considered terminal instead of triggering more
+   * source reads. Defaults 0, preserving current production behavior.
+   */
+  sequenceTerminalUnderfillToleranceMs?: number;
 };
 
 const MAX_MUSIC_REPEAT_PREWRITE_REPLANS = 2;
@@ -91,12 +104,20 @@ export async function collectIncrementally<
   onBatch,
   onRound,
   revalidateBeforeWrite = revalidateMusicRepeatBeforeRealWrite,
+  replanAfterEachSourceRead = false,
+  sequenceTerminalUnderfillToleranceMs = 0,
 }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
   const pools: PlannerPools = { music: [], podcasts: [] };
   const attemptedSourceIds = new Set<string>();
   const readSourceIds = new Set<string>();
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
+  const terminalUnderfillToleranceMs = Math.max(
+    0,
+    Number.isFinite(sequenceTerminalUnderfillToleranceMs)
+      ? sequenceTerminalUnderfillToleranceMs
+      : 0,
+  );
   let activePreservedByTargetId = preservedByTargetId
     ? new Map(
         [...preservedByTargetId.entries()].map(([targetId, candidates]) => [
@@ -117,7 +138,11 @@ export async function collectIncrementally<
     initialReserved,
   });
   let qualityFailures = failedTargets(plan);
-  let planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
+  let planningNeeds = targetsNeedingMoreCandidates(
+    plan,
+    targetById,
+    terminalUnderfillToleranceMs,
+  );
 
   const rebuildPlan = () => {
     plan = planRun({
@@ -128,7 +153,11 @@ export async function collectIncrementally<
       initialReserved,
     });
     qualityFailures = failedTargets(plan);
-    planningNeeds = targetsNeedingMoreCandidates(plan, targetById);
+    planningNeeds = targetsNeedingMoreCandidates(
+      plan,
+      targetById,
+      terminalUnderfillToleranceMs,
+    );
   };
 
   const repairAgainstLatestHistory = () => {
@@ -183,6 +212,17 @@ export async function collectIncrementally<
     return false;
   };
 
+  const refreshRequestedKinds = () => {
+    requestedKinds = inferNeededKinds(planningNeeds, targetById);
+    if (requestedKinds.size === 0) {
+      requestedKinds = new Set(
+        relevantKinds.filter((kind) =>
+          sources.some((source) => source.kind === kind && !source.done),
+        ),
+      );
+    }
+  };
+
   if (await settleReadyPlan()) {
     return {
       pools,
@@ -204,6 +244,8 @@ export async function collectIncrementally<
 
     rounds += 1;
     for (const source of readable) {
+      if (!requestedKinds.has(source.kind)) continue;
+
       let batch: IncrementalSourceBatch;
       attemptedSourceIds.add(source.id);
       try {
@@ -242,6 +284,23 @@ export async function collectIncrementally<
         pools.podcasts.push(...batch.candidates);
       }
       onBatch?.(source, batch);
+
+      if (replanAfterEachSourceRead) {
+        rebuildPlan();
+        if (await settleReadyPlan()) {
+          return {
+            pools,
+            plan,
+            qualityFailures,
+            attemptedSourceIds,
+            readSourceIds,
+            rounds,
+            stoppedEarly: sources.some((candidateSource) => !candidateSource.done),
+            failure: null,
+          };
+        }
+        refreshRequestedKinds();
+      }
     }
 
     rebuildPlan();
@@ -266,14 +325,7 @@ export async function collectIncrementally<
       };
     }
 
-    requestedKinds = inferNeededKinds(planningNeeds, targetById);
-    if (requestedKinds.size === 0) {
-      requestedKinds = new Set(
-        relevantKinds.filter((kind) =>
-          sources.some((source) => source.kind === kind && !source.done),
-        ),
-      );
-    }
+    refreshRequestedKinds();
   }
 
   while (!(await revalidateOrRepair())) {
@@ -301,6 +353,7 @@ function failedTargets(plan: PlanRunResult): PlanRunResult["targets"] {
 function targetsNeedingMoreCandidates(
   plan: PlanRunResult,
   targetById: Map<string, RunTarget>,
+  sequenceTerminalUnderfillToleranceMs: number,
 ): PlanRunResult["targets"] {
   return plan.targets.filter((planned) => {
     const target = targetById.get(planned.targetPlaylistId);
@@ -308,11 +361,27 @@ function targetsNeedingMoreCandidates(
     const stats = planned.result.stats;
     if (!stats.compositionQualityPassed) return true;
     if ((stats.segmentation?.deficitMs ?? 0) > 0) return true;
-    return (
-      target.rules.compositionMode === "SEQUENCE" &&
-      stats.totalDurationMs < target.rules.targetDurationMs &&
-      stats.stoppedAtPatternIndex !== null
+
+    if (
+      target.rules.compositionMode !== "SEQUENCE" ||
+      stats.totalDurationMs >= target.rules.targetDurationMs ||
+      stats.stoppedAtPatternIndex === null
+    ) {
+      return false;
+    }
+
+    const durationDeficitMs = Math.max(
+      0,
+      target.rules.targetDurationMs - stats.totalDurationMs,
     );
+    if (
+      stats.sequenceStopReason === "NO_FITTING_CANDIDATE" &&
+      durationDeficitMs <= sequenceTerminalUnderfillToleranceMs
+    ) {
+      return false;
+    }
+
+    return true;
   });
 }
 
