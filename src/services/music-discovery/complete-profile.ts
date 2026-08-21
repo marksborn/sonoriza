@@ -1,4 +1,4 @@
-import { getBatchedCompleteMusicDiscoveryProfile } from "./complete-profile-batched";
+import { getProjectedBatchedCompleteMusicDiscoveryProfile } from "./complete-profile-projected";
 import type {
   DiscoveryArtistProfile,
   DiscoveryTrackProfile,
@@ -19,13 +19,17 @@ export type CompleteMusicDiscoveryProfile = {
  * identity before Gate 2.2 scoring is allowed to declare the universe COMPLETE.
  *
  * PERF-01 keeps that COMPLETE contract while reading listening history in
- * bounded pages instead of materializing the full event timeline in Node.
+ * bounded pages and projecting only the Extended History facts the canonical
+ * aggregator actually consumes.
  */
 export async function getCompleteMusicDiscoveryProfile(
   userId: string,
   options: Omit<MusicDiscoveryProfileOptions, "topN" | "completeUniverse"> = {},
 ): Promise<CompleteMusicDiscoveryProfile> {
-  const profile = await getBatchedCompleteMusicDiscoveryProfile(userId, options);
+  const profile = await getProjectedBatchedCompleteMusicDiscoveryProfile(
+    userId,
+    options,
+  );
 
   return {
     universe: "COMPLETE",
