@@ -5,11 +5,12 @@ import {
   type DiscoveryTrackProfile,
 } from "@/services/music-discovery/profile";
 import {
-  buildDiscoveryScoringReport,
-  type DiscoveryArtistScoreCard,
-  type DiscoveryScoredArtistCandidate,
-  type DiscoveryScoredTrackCandidate,
-} from "@/services/music-discovery/scoring";
+  buildDiscoveryGate22ScoringReport,
+  type DiscoveryGate22ArtistCandidate,
+  type DiscoveryGate22ArtistScoreCard,
+  type DiscoveryGate22TrackCandidate,
+} from "@/services/music-discovery/scoring-gate2-2";
+import { getDiscoveryTrackIdentityEvidence } from "@/services/music-discovery/track-identity";
 
 type Args = {
   email: string;
@@ -28,10 +29,13 @@ async function main() {
   });
   if (!user) throw new Error(`Sonoriza user not found for ${args.email}`);
 
-  const profile = await getMusicDiscoveryProfile(user.id, {
-    asOf: args.asOf,
-    topN: PROFILE_POOL_SIZE,
-  });
+  const [profile, trackIdentities] = await Promise.all([
+    getMusicDiscoveryProfile(user.id, {
+      asOf: args.asOf,
+      topN: PROFILE_POOL_SIZE,
+    }),
+    getDiscoveryTrackIdentityEvidence(user.id),
+  ]);
   const artists = uniqueArtists([
     ...profile.topArtistsHistorical,
     ...profile.topArtists30d,
@@ -47,13 +51,14 @@ async function main() {
     ...profile.rediscoveryCandidates,
   ]);
 
-  const scoring = buildDiscoveryScoringReport({
+  const scoring = buildDiscoveryGate22ScoringReport({
     generatedAt: profile.generatedAt,
     dormantDays: profile.heuristics.dormantDays,
     rediscoveryGapDays: profile.heuristics.rediscoveryGapDays,
     topN: args.topN,
     artists,
     tracks,
+    trackIdentities,
     candidateUniverse: "DIAGNOSTIC_PARTIAL",
   });
 
@@ -66,6 +71,7 @@ async function main() {
           candidatePool: {
             artists: artists.length,
             tracks: tracks.length,
+            trackIdentities: trackIdentities.length,
             universe: scoring.selectionPolicy.candidateUniverse,
             selectionReady: scoring.selectionPolicy.selectionReady,
           },
@@ -78,16 +84,20 @@ async function main() {
     return;
   }
 
-  console.log("========== DISCOVERY-01 — GATE 2.1 SCORE READ-ONLY ==========");
+  console.log("========== DISCOVERY-01 — GATE 2.2 SCORE READ-ONLY ==========");
   console.log(`User:              ${user.email ?? user.id}`);
   console.log(`Generated at:      ${profile.generatedAt.toISOString()}`);
   console.log(`Score version:     ${scoring.version}`);
   console.log(`Candidate pool:    ${artists.length} artists / ${tracks.length} tracks`);
+  console.log(`Identity evidence: ${trackIdentities.length} Spotify track IDs`);
   console.log(`Universe:          ${scoring.selectionPolicy.candidateUniverse}`);
   console.log(`Selection ready:   ${scoring.selectionPolicy.selectionReady}`);
   console.log(`Budget rule:       ${scoring.selectionPolicy.categoryBudgetRule}`);
   console.log(
-    `Arbitration:        REDESCOBERTA > FAMILIAR; ${scoring.selectionPolicy.rediscoveryPreemptedFamiliarCount} familiar duplicates preempted`,
+    `Arbitration:        REDESCOBERTA > FAMILIAR; ${scoring.selectionPolicy.rediscoveryPreemptedFamiliarCount} total preempted (${scoring.selectionPolicy.rediscoveryPreemptedFamiliarBySpotifyIdCount} same Spotify ID + ${scoring.selectionPolicy.rediscoveryPreemptedFamiliarByRecordingIdentityCount} cross-release identity)`,
+  );
+  console.log(
+    `Identity matches:   ISRC=${scoring.selectionPolicy.recordingIdentityMatchSources.ISRC}, primaryArtist+title=${scoring.selectionPolicy.recordingIdentityMatchSources.SPOTIFY_PRIMARY_ARTIST_TITLE}, canonicalArtist+title=${scoring.selectionPolicy.recordingIdentityMatchSources.CANONICAL_ARTIST_TITLE}`,
   );
   console.log("No writes: profile + scores only; no inbox, playlist or preference persistence.");
 
@@ -104,7 +114,7 @@ async function main() {
   );
 }
 
-function printArtistAffinity(title: string, rows: DiscoveryArtistScoreCard[]) {
+function printArtistAffinity(title: string, rows: DiscoveryGate22ArtistScoreCard[]) {
   console.log(`\n${title}:`);
   rows.forEach((row, index) => {
     console.log(
@@ -113,7 +123,7 @@ function printArtistAffinity(title: string, rows: DiscoveryArtistScoreCard[]) {
   });
 }
 
-function printTracks(title: string, rows: DiscoveryScoredTrackCandidate[]) {
+function printTracks(title: string, rows: DiscoveryGate22TrackCandidate[]) {
   console.log(`\n${title}:`);
   if (rows.length === 0) return console.log("  (none / category abstained)");
   rows.forEach((row, index) => {
@@ -123,7 +133,7 @@ function printTracks(title: string, rows: DiscoveryScoredTrackCandidate[]) {
   });
 }
 
-function printArtists(title: string, rows: DiscoveryScoredArtistCandidate[]) {
+function printArtists(title: string, rows: DiscoveryGate22ArtistCandidate[]) {
   console.log(`\n${title}:`);
   if (rows.length === 0) return console.log("  (none / category abstained)");
   rows.forEach((row, index) => {
