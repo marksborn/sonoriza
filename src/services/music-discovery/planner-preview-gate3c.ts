@@ -1,4 +1,8 @@
-import { collectIncrementally, type IncrementalCandidateSource, type IncrementalPlanningResult } from "@/jobs/incremental-planning";
+import {
+  collectIncrementally,
+  type IncrementalCandidateSource,
+  type IncrementalPlanningResult,
+} from "@/jobs/incremental-planning";
 import type { Candidate, RunTarget } from "@/services/playlist-planner";
 
 import type { CompleteMusicDiscoveryProfile } from "./complete-profile";
@@ -11,6 +15,8 @@ import {
 } from "./planner-preview";
 import type { DiscoveryTrackIdentityEvidence } from "./track-identity";
 
+export const DISCOVERY_GATE3D_SEQUENCE_TERMINAL_UNDERFILL_TOLERANCE_MS = 30_000;
+
 export type Gate3CMusicUniverse = {
   universe: "MUSIC_COMPLETE";
   sourceUniverse: CompleteDiscoverySourceUniverse;
@@ -18,6 +24,9 @@ export type Gate3CMusicUniverse = {
 };
 
 export type Gate3CPodcastEvidence = {
+  policyVersion: "gate3d-podcast-read-v1";
+  replanAfterEachSourceRead: true;
+  sequenceTerminalUnderfillToleranceMs: number;
   sourceCount: number;
   readSourceCount: number;
   attemptedSourceCount: number;
@@ -36,7 +45,7 @@ export type Gate3CPodcastEvidence = {
 };
 
 export type Gate3CPlannerPreview = {
-  version: "gate3c-preview-v1";
+  version: "gate3d-preview-v1";
   selectionMode: "PREVIEW_ONLY";
   selection: CompleteDiscoveryPlannerPreview;
   incremental: IncrementalPlanningResult<IncrementalCandidateSource>;
@@ -82,8 +91,10 @@ export async function buildGate3CHybridPlannerPreview(input: {
 
   // Reuse the already-certified Gate 3B scoring + bridge with a source universe
   // that is complete for MUSIC and intentionally empty for PODCAST. Its plan is
-  // not used; Gate 3C feeds the ranked music pool into the existing incremental
-  // collector so podcast reading keeps production's early-stop semantics.
+  // not used; Gate 3D feeds the ranked music pool into the existing incremental
+  // collector while opting into source-level replanning and a bounded terminal
+  // SEQUENCE underfill tolerance. Default production collector behavior remains
+  // unchanged until DISCOVERY is explicitly activated there.
   const selection = buildCompleteDiscoveryPlannerPreview({
     profile: input.profile,
     sourceUniverse: input.musicUniverse.sourceUniverse,
@@ -100,6 +111,9 @@ export async function buildGate3CHybridPlannerPreview(input: {
     sources: [rankedMusicSource, ...input.podcastSources],
     targets: input.targets,
     blockedMusicTrackIdsByTargetId: input.blockedMusicTrackIdsByTargetId,
+    replanAfterEachSourceRead: true,
+    sequenceTerminalUnderfillToleranceMs:
+      DISCOVERY_GATE3D_SEQUENCE_TERMINAL_UNDERFILL_TOLERANCE_MS,
     // Preview never performs a pre-write Spotify revalidation because it never
     // reaches a writer. MUSIC-01 was already applied before scoring the pool.
     revalidateBeforeWrite: async () => undefined,
@@ -124,18 +138,27 @@ export async function buildGate3CHybridPlannerPreview(input: {
   });
 
   return {
-    version: "gate3c-preview-v1",
+    version: "gate3d-preview-v1",
     selectionMode: "PREVIEW_ONLY",
     selection,
     incremental,
     podcastEvidence: {
+      policyVersion: "gate3d-podcast-read-v1",
+      replanAfterEachSourceRead: true,
+      sequenceTerminalUnderfillToleranceMs:
+        DISCOVERY_GATE3D_SEQUENCE_TERMINAL_UNDERFILL_TOLERANCE_MS,
       sourceCount: input.podcastSources.length,
-      readSourceCount: incremental.readSourceIds.size - (incremental.readSourceIds.has(rankedMusicSource.id) ? 1 : 0),
+      readSourceCount:
+        incremental.readSourceIds.size -
+        (incremental.readSourceIds.has(rankedMusicSource.id) ? 1 : 0),
       attemptedSourceCount:
         incremental.attemptedSourceIds.size -
         (incremental.attemptedSourceIds.has(rankedMusicSource.id) ? 1 : 0),
       readCalls: podcastEvidenceSources.reduce((sum, source) => sum + source.readCalls, 0),
-      candidateCount: podcastEvidenceSources.reduce((sum, source) => sum + source.candidateCount, 0),
+      candidateCount: podcastEvidenceSources.reduce(
+        (sum, source) => sum + source.candidateCount,
+        0,
+      ),
       stoppedEarly: input.podcastSources.some((source) => !source.done),
       doneSourceCount: podcastEvidenceSources.filter((source) => source.done).length,
       remainingSourceCount: podcastEvidenceSources.filter((source) => !source.done).length,
