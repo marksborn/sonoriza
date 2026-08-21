@@ -167,6 +167,7 @@ export type BuildMusicDiscoveryProfileInput = {
   playbackPolicy: DiscoveryPlaybackPolicy | null;
   lastFmValidFrom: Date | null;
   topN?: number;
+  completeUniverse?: boolean;
   dormantDays?: number;
   rediscoveryGapDays?: number;
 };
@@ -174,6 +175,7 @@ export type BuildMusicDiscoveryProfileInput = {
 export type MusicDiscoveryProfileOptions = {
   asOf?: Date;
   topN?: number;
+  completeUniverse?: boolean;
   dormantDays?: number;
   rediscoveryGapDays?: number;
   client?: PrismaClient;
@@ -293,6 +295,7 @@ export async function getMusicDiscoveryProfile(
     playbackPolicy,
     lastFmValidFrom: lastFmCoverage?.from ?? null,
     topN: options.topN,
+    completeUniverse: options.completeUniverse,
     dormantDays: options.dormantDays,
     rediscoveryGapDays: options.rediscoveryGapDays,
   });
@@ -302,7 +305,9 @@ export function buildMusicDiscoveryProfile(
   input: BuildMusicDiscoveryProfileInput,
 ): MusicDiscoveryProfile {
   const asOf = validDate(input.asOf, "asOf");
-  const topN = positiveInteger(input.topN ?? DEFAULT_TOP_N, "topN", 100);
+  const topN = input.completeUniverse
+    ? Math.max(1, input.events.length)
+    : positiveInteger(input.topN ?? DEFAULT_TOP_N, "topN", 100);
   const dormantDays = positiveInteger(
     input.dormantDays ?? DEFAULT_DORMANT_DAYS,
     "dormantDays",
