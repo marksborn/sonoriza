@@ -26,7 +26,7 @@
     "history:spotify": "tsx scripts/import-spotify-extended-history.ts",
     "discovery:profile": "tsx scripts/report-music-discovery-profile.ts",
     "discovery:score": "tsx scripts/report-music-discovery-score.ts",
-    "discovery:planner-preview": "tsx scripts/report-music-discovery-planner-preview.ts",
+    "discovery:planner-preview": "tsx scripts/report-music-discovery-planner-preview-gate3c.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
