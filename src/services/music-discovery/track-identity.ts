@@ -16,20 +16,74 @@ export type DiscoveryTrackIdentityEvidence = {
   primaryArtistIdConflict: boolean;
 };
 
+/**
+ * PERF-01 identity reduction.
+ *
+ * The previous path asked PostgreSQL to deduplicate identity triples, then
+ * materialized every distinct triple in Node and reduced them again through a
+ * Map plus two Sets per track. COMPLETE runtime only needs the final identity
+ * evidence, so PostgreSQL now performs the normalization, conflict detection
+ * and one-row-per-track reduction before data crosses the process boundary.
+ *
+ * Keep buildDiscoveryTrackIdentityEvidence() below as the canonical pure
+ * reducer used by unit tests and diagnostics. The SQL mirrors those rules:
+ * ISRC removes non-ASCII alphanumerics before uppercasing, primary artist IDs
+ * are trimmed, blank values are ignored, and conflicts mean >1 distinct
+ * normalized non-null value.
+ */
 export async function getDiscoveryTrackIdentityEvidence(
   userId: string,
   client: PrismaClient = defaultPrisma,
 ): Promise<DiscoveryTrackIdentityEvidence[]> {
-  // Duplicate listening events do not add any information to identity conflict
-  // detection. Let PostgreSQL collapse identical identity triples before they
-  // cross the process boundary so large histories do not materialize one Node
-  // object per play just to be reduced back into Sets below.
-  const rows = await client.trackListeningEvent.groupBy({
-    by: ["spotifyTrackId", "isrc", "primaryArtistId"],
-    where: { userId, spotifyTrackId: { not: null } },
-  });
-
-  return buildDiscoveryTrackIdentityEvidence(rows);
+  return client.$queryRawUnsafe<DiscoveryTrackIdentityEvidence[]>(
+    `
+      /* PERF-01: return one final identity-evidence row per Spotify track */
+      WITH normalized AS (
+        SELECT
+          "spotifyTrackId",
+          NULLIF(
+            UPPER(
+              regexp_replace(
+                COALESCE("isrc", ''),
+                '[^A-Za-z0-9]',
+                '',
+                'g'
+              )
+            ),
+            ''
+          ) AS "normalizedIsrc",
+          NULLIF(BTRIM(COALESCE("primaryArtistId", '')), '')
+            AS "normalizedPrimaryArtistId"
+        FROM "TrackListeningEvent"
+        WHERE "userId" = $1
+          AND "spotifyTrackId" IS NOT NULL
+      ), aggregated AS (
+        SELECT
+          "spotifyTrackId",
+          COUNT(DISTINCT "normalizedIsrc")
+            FILTER (WHERE "normalizedIsrc" IS NOT NULL) AS "isrcCount",
+          MIN("normalizedIsrc") AS "singleIsrc",
+          COUNT(DISTINCT "normalizedPrimaryArtistId")
+            FILTER (WHERE "normalizedPrimaryArtistId" IS NOT NULL)
+            AS "primaryArtistIdCount",
+          MIN("normalizedPrimaryArtistId") AS "singlePrimaryArtistId"
+        FROM normalized
+        GROUP BY "spotifyTrackId"
+      )
+      SELECT
+        "spotifyTrackId",
+        CASE WHEN "isrcCount" = 1 THEN "singleIsrc" ELSE NULL END AS "isrc",
+        CASE
+          WHEN "primaryArtistIdCount" = 1 THEN "singlePrimaryArtistId"
+          ELSE NULL
+        END AS "primaryArtistId",
+        ("isrcCount" > 1) AS "isrcConflict",
+        ("primaryArtistIdCount" > 1) AS "primaryArtistIdConflict"
+      FROM aggregated
+      ORDER BY "spotifyTrackId" ASC
+    `,
+    userId,
+  );
 }
 
 export function buildDiscoveryTrackIdentityEvidence(
