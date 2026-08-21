@@ -9,7 +9,7 @@ import { buildMusicDiscoveryProfile } from "./profile";
 
 const AS_OF = new Date("2026-08-21T16:00:00.000Z");
 
-test("projected lean COMPLETE finalizer preserves exactly the runtime-retained canonical profile", async () => {
+test("projected lean COMPLETE finalizer preserves runtime scoring facts while dropping unused track payload", async () => {
   const events = [
     {
       id: "event-001",
@@ -80,6 +80,7 @@ test("projected lean COMPLETE finalizer preserves exactly the runtime-retained c
   });
 
   let rawCalls = 0;
+  let rawQuery = "";
   const fakeClient = {
     user: {
       findUnique: async () => ({ id: "user-lean" }),
@@ -102,12 +103,13 @@ test("projected lean COMPLETE finalizer preserves exactly the runtime-retained c
       },
     },
     $queryRawUnsafe: async (
-      _query: string,
+      query: string,
       userId: string,
       cursorId: string | null,
       take: number,
     ) => {
       rawCalls += 1;
+      rawQuery = query;
       assert.equal(userId, "user-lean");
       assert.equal(take, COMPLETE_PROFILE_EVENT_BATCH_SIZE);
       assert.equal(cursorId, null);
@@ -143,13 +145,19 @@ test("projected lean COMPLETE finalizer preserves exactly the runtime-retained c
     );
 
   assert.equal(rawCalls, 1);
+  assert.match(rawQuery, /NULL::text AS "spotifyUri"/);
+  assert.match(rawQuery, /NULL::text AS "albumName"/);
   assert.deepEqual(retained, {
     generatedAt: canonical.generatedAt,
     heuristics: canonical.heuristics,
     coverage: canonical.coverage,
     cooldown: canonical.cooldown,
     topArtistsHistorical: canonical.topArtistsHistorical,
-    topTracksHistorical: canonical.topTracksHistorical,
+    topTracksHistorical: canonical.topTracksHistorical.map((track) => ({
+      ...track,
+      spotifyUri: null,
+      albumName: null,
+    })),
   });
   assert.deepEqual(Object.keys(retained).sort(), [
     "cooldown",
