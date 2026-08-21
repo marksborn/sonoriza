@@ -223,3 +223,111 @@ test("numeric epoch-day keys preserve canonical UTC day boundaries", async () =>
   assert.equal(batched.topArtistsHistorical[0]?.listeningDays30d, 2);
   assert.equal(batched.topTracksHistorical[0]?.distinctListeningDays, 2);
 });
+
+test("artist distinct-track references preserve Spotify and unresolved identity counts", async () => {
+  const events = [
+    {
+      id: "event-track-001",
+      source: "SPOTIFY_RECENTLY_PLAYED" as const,
+      spotifyTrackId: "track-a",
+      spotifyUri: "spotify:track:track-a",
+      trackName: "Track A",
+      artistName: "Reference Artist",
+      albumName: "Album A",
+      playedAt: new Date("2026-08-16T10:00:00.000Z"),
+      metadata: null,
+    },
+    {
+      id: "event-track-002",
+      source: "SPOTIFY_EXTENDED_HISTORY" as const,
+      spotifyTrackId: "track-a",
+      spotifyUri: "spotify:track:track-a",
+      trackName: "Track A",
+      artistName: "Reference Artist",
+      albumName: "Album A",
+      playedAt: new Date("2026-08-17T10:00:00.000Z"),
+      metadata: {
+        spotifyExtendedHistory: {
+          msPlayed: 180_000,
+          explicitSkip: false,
+        },
+      },
+    },
+    {
+      id: "event-track-003",
+      source: "SPOTIFY_RECENTLY_PLAYED" as const,
+      spotifyTrackId: "track-b",
+      spotifyUri: "spotify:track:track-b",
+      trackName: "Track B",
+      artistName: "Reference Artist",
+      albumName: "Album B",
+      playedAt: new Date("2026-08-18T10:00:00.000Z"),
+      metadata: null,
+    },
+    {
+      id: "event-track-004",
+      source: "LASTFM_SCROBBLE" as const,
+      spotifyTrackId: null,
+      spotifyUri: null,
+      trackName: "Loose Track",
+      artistName: "Reference Artist",
+      albumName: "Loose Album",
+      playedAt: new Date("2026-08-19T10:00:00.000Z"),
+      metadata: null,
+    },
+    {
+      id: "event-track-005",
+      source: "LASTFM_SCROBBLE" as const,
+      spotifyTrackId: null,
+      spotifyUri: null,
+      trackName: "Loose Track",
+      artistName: "Reference Artist",
+      albumName: "Loose Album",
+      playedAt: new Date("2026-08-20T10:00:00.000Z"),
+      metadata: null,
+    },
+  ];
+
+  const legacy = buildMusicDiscoveryProfile({
+    asOf: AS_OF,
+    events,
+    inferredSkips: [],
+    trackStates: [],
+    playbackPolicy: null,
+    lastFmValidFrom: null,
+    completeUniverse: true,
+  });
+
+  const fakeClient = {
+    user: {
+      findUnique: async () => ({ id: "user-track-refs" }),
+    },
+    musicPreferenceSignal: {
+      findMany: async () => [],
+    },
+    trackListeningState: {
+      findMany: async () => [],
+    },
+    musicPlaybackPolicy: {
+      findUnique: async () => null,
+    },
+    lastFmBackfillRun: {
+      findFirst: async () => null,
+    },
+    trackListeningEvent: {
+      findMany: async () => events,
+    },
+  } as unknown as PrismaClient;
+
+  const batched = await getBatchedCompleteMusicDiscoveryProfile(
+    "user-track-refs",
+    {
+      asOf: AS_OF,
+      client: fakeClient,
+    },
+  );
+
+  assert.deepEqual(batched, legacy);
+  assert.equal(batched.topArtistsHistorical[0]?.distinctTrackCount, 3);
+  assert.equal(batched.topTracksHistorical.length, 2);
+});
