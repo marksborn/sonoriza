@@ -36,6 +36,15 @@ export type DiscoveryRuntimeState = {
 
 type RuntimeSource = DiscoveryPreviewSource;
 
+type DiscoveryMemoryCheckpoint = {
+  phase: string;
+  rssMiB: number;
+  heapUsedMiB: number;
+  heapTotalMiB: number;
+  externalMiB: number;
+  arrayBuffersMiB: number;
+};
+
 const storage = new AsyncLocalStorage<DiscoveryRuntimeState>();
 
 export function resolveDiscoveryGate4APolicy(input: {
@@ -130,14 +139,29 @@ export async function prepareDiscoveryMusicForCurrentRun<
   const state = currentDiscoveryRuntimeState();
   if (!state?.enabled) return null;
 
+  const memoryCheckpoints: DiscoveryMemoryCheckpoint[] = [];
+  const checkpoint = (phase: string) => {
+    const sample = discoveryMemoryCheckpoint(phase);
+    memoryCheckpoints.push(sample);
+    console.info("[DISCOVERY-01][memory]", JSON.stringify(sample));
+  };
+
   try {
     const musicSources = sources.filter((source) => source.kind === "MUSIC");
     const podcastSources = sources.filter((source) => source.kind === "PODCAST");
-    const [sourceUniverse, profile, trackIdentities] = await Promise.all([
-      collectCompleteDiscoverySourceUniverse(musicSources),
-      getCompleteMusicDiscoveryProfile(state.userId, { asOf: state.asOf }),
-      getDiscoveryTrackIdentityEvidence(state.userId),
-    ]);
+
+    // PERF-01: these three operations can each materialize a large dataset.
+    // Run them sequentially so their transient query/result allocations do not
+    // overlap in Node. Their final reduced outputs still coexist for scoring.
+    checkpoint("start");
+    const profile = await getCompleteMusicDiscoveryProfile(state.userId, {
+      asOf: state.asOf,
+    });
+    checkpoint("after-profile");
+    const trackIdentities = await getDiscoveryTrackIdentityEvidence(state.userId);
+    checkpoint("after-identities");
+    const sourceUniverse = await collectCompleteDiscoverySourceUniverse(musicSources);
+    checkpoint("after-source-universe");
 
     const repeatFiltered = filterMusicBatchForCurrentRun(sourceUniverse.music);
     const cooldownByTrackId = new Map(
@@ -154,6 +178,7 @@ export async function prepareDiscoveryMusicForCurrentRun<
       }
       return true;
     });
+    checkpoint("after-music01-reconciliation");
 
     const selection = buildCompleteDiscoveryMusicSelection({
       profile,
@@ -164,6 +189,7 @@ export async function prepareDiscoveryMusicForCurrentRun<
       trackIdentities,
       rediscoveryCeiling: state.rediscoveryCeiling,
     });
+    checkpoint("after-scoring-ranking");
 
     state.applied = true;
     state.evidence = {
@@ -190,6 +216,7 @@ export async function prepareDiscoveryMusicForCurrentRun<
       replanAfterEachSourceRead: true,
       sequenceTerminalUnderfillToleranceMs:
         DISCOVERY_GATE4A_SEQUENCE_TERMINAL_UNDERFILL_TOLERANCE_MS,
+      memoryCheckpoints,
     };
 
     return {
@@ -216,6 +243,22 @@ export function discoveryRuntimeSummary(
     failure: state.failure,
     evidence: state.evidence,
   };
+}
+
+function discoveryMemoryCheckpoint(phase: string): DiscoveryMemoryCheckpoint {
+  const memory = process.memoryUsage();
+  return {
+    phase,
+    rssMiB: bytesToMiB(memory.rss),
+    heapUsedMiB: bytesToMiB(memory.heapUsed),
+    heapTotalMiB: bytesToMiB(memory.heapTotal),
+    externalMiB: bytesToMiB(memory.external),
+    arrayBuffersMiB: bytesToMiB(memory.arrayBuffers),
+  };
+}
+
+function bytesToMiB(value: number): number {
+  return Math.round((value / 1024 / 1024) * 10) / 10;
 }
 
 function normalizeEmail(value: string | null | undefined): string | null {
