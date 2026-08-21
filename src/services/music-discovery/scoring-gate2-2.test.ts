@@ -89,7 +89,7 @@ function identity(
 ): DiscoveryTrackIdentityEvidence {
   return {
     spotifyTrackId,
-    isrc: input.isrc ?? null,
+    isrc: input.isrc?.replace(/[^A-Za-z0-9]/g, "").toUpperCase() ?? null,
     primaryArtistId: input.primaryArtistId ?? "artist-1",
     isrcConflict: input.isrcConflict ?? false,
     primaryArtistIdConflict: input.primaryArtistIdConflict ?? false,
