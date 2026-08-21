@@ -6,6 +6,7 @@ import type { PrismaClient } from "@prisma/client";
 import {
   COMPLETE_PROFILE_EVENT_BATCH_SIZE,
   getBatchedCompleteMusicDiscoveryProfile,
+  getBatchedRetainedCompleteMusicDiscoveryProfile,
 } from "./complete-profile-batched";
 import { buildMusicDiscoveryProfile } from "./profile";
 
@@ -143,6 +144,25 @@ test("batched COMPLETE loader preserves the canonical profile across multiple pa
 
   assert.equal(eventPageCalls, 2);
   assert.deepEqual(batched, legacy);
+
+  eventPageCalls = 0;
+  const retained = await getBatchedRetainedCompleteMusicDiscoveryProfile(
+    "user-1",
+    {
+      asOf: AS_OF,
+      client: fakeClient,
+    },
+  );
+
+  assert.equal(eventPageCalls, 2);
+  assert.deepEqual(retained, {
+    generatedAt: legacy.generatedAt,
+    heuristics: legacy.heuristics,
+    coverage: legacy.coverage,
+    cooldown: legacy.cooldown,
+    topArtistsHistorical: legacy.topArtistsHistorical,
+    topTracksHistorical: legacy.topTracksHistorical,
+  });
 });
 
 test("numeric epoch-day keys preserve canonical UTC day boundaries", async () => {

@@ -721,14 +721,248 @@ function prepareFinalizedProfile(
 function finalizeRetainedProfile(
   input: FinalizeProfileInput,
 ): RetainedCompleteMusicDiscoveryProfile {
-  const prepared = prepareFinalizedProfile(input);
+  const {
+    accumulator: state,
+    asOf,
+    dormantDays,
+    rediscoveryGapDays,
+    inferredSkips,
+    trackStates,
+    playbackPolicy: policy,
+    lastFmValidFrom,
+  } = input;
+
+  let inferredSkipSignals = 0;
+  let pendingInferredSkipSignals = 0;
+  let unmappedInferredSkipSignals = 0;
+  for (const signal of inferredSkips) {
+    if (signal.inferredAt > asOf) continue;
+    inferredSkipSignals += 1;
+    const pending = signal.consumedAt === null || signal.consumedAt > asOf;
+    if (pending) pendingInferredSkipSignals += 1;
+    const track = state.tracks.get(signal.spotifyTrackId);
+    if (!track) {
+      unmappedInferredSkipSignals += 1;
+      continue;
+    }
+    track.inferredSkipCount += 1;
+    if (pending) track.pendingInferredSkipCount += 1;
+    const artist = state.artists.get(track.artistKey);
+    if (artist) {
+      artist.inferredSkipCount += 1;
+      if (pending) artist.pendingInferredSkipCount += 1;
+    }
+  }
+
+  const cooldownComplete = Boolean(
+    !policy?.enabled ||
+      (policy.windowValue !== null &&
+        policy.windowValue > 0 &&
+        policy.windowUnit !== null),
+  );
+  let cooldownCutoff: Date | null = null;
+  if (
+    policy?.enabled &&
+    cooldownComplete &&
+    policy.windowValue !== null &&
+    policy.windowUnit !== null
+  ) {
+    cooldownCutoff = computeMusicRepeatCutoff(
+      asOf,
+      policy.windowValue,
+      policy.windowUnit,
+    );
+  }
+
+  const stateByTrackId = new Map<string, Date>();
+  for (const trackState of trackStates) {
+    stateByTrackId.set(trackState.spotifyTrackId, trackState.lastPlayedAt);
+  }
+
+  // Runtime retained finalization is intentionally destructive. Once inferred
+  // skips have been applied, the aggregate Sets are no longer needed. Project
+  // one final profile at a time, clear its heavy Set payload immediately and
+  // remove the aggregate from the Map so the final arrays do not coexist with
+  // the complete historical object graph.
+  const topArtistsHistorical: DiscoveryArtistProfile[] = [];
+  for (const [artistKey, artist] of state.artists) {
+    const distinctTrackCount = artist.distinctTracks.size;
+    const distinctListeningDays = artist.distinctDays.size;
+    const listeningDays30d = artist.recentDays.size;
+    const previousListeningDays30d = artist.previousRecentDays.size;
+    const rediscoveryGap =
+      artist.firstRecentAt && artist.lastBeforeRecentWindow
+        ? wholeDaysBetween(artist.lastBeforeRecentWindow, artist.firstRecentAt)
+        : null;
+    const priorPlayCount = Math.max(0, artist.playCount - artist.plays30d);
+
+    topArtistsHistorical.push({
+      artistName: artist.artistName,
+      playCount: artist.playCount,
+      priorPlayCount,
+      plays30d: artist.plays30d,
+      previous30d: artist.previous30d,
+      plays90d: artist.plays90d,
+      plays365d: artist.plays365d,
+      distinctTrackCount,
+      distinctListeningDays,
+      listeningDays30d,
+      previousListeningDays30d,
+      firstPlayedAt: artist.firstPlayedAt,
+      lastPlayedAt: artist.lastPlayedAt,
+      extendedEvidenceCount: artist.extendedEvidenceCount,
+      msPlayedEvidenceCount: artist.msPlayedEvidenceCount,
+      explicitSkipCount: artist.explicitSkipCount,
+      explicitSkipRate: ratioOrNull(
+        artist.explicitSkipCount,
+        artist.extendedEvidenceCount,
+      ),
+      inferredSkipCount: artist.inferredSkipCount,
+      pendingInferredSkipCount: artist.pendingInferredSkipCount,
+      momentumDelta30d: artist.plays30d - artist.previous30d,
+      momentumListeningDayDelta30d:
+        listeningDays30d - previousListeningDays30d,
+      momentumRatio30d:
+        artist.previous30d > 0 ? artist.plays30d / artist.previous30d : null,
+      daysSinceLastPlay: wholeDaysBetween(artist.lastPlayedAt, asOf),
+      rediscoveryGapDays: rediscoveryGap,
+    });
+
+    artist.distinctTracks.clear();
+    artist.distinctDays.clear();
+    artist.recentDays.clear();
+    artist.previousRecentDays.clear();
+    state.artists.delete(artistKey);
+  }
+
+  let timelineFallbackTrackCount = 0;
+  let timelineOverrideTrackCount = 0;
+  let blockedTrackCount = 0;
+  const topTracksHistorical: DiscoveryTrackProfile[] = [];
+  for (const [trackKey, track] of state.tracks) {
+    const stateLastPlayedAt = stateByTrackId.get(track.spotifyTrackId) ?? null;
+    const timelineLastPlayedAt = track.lastPlayedAt;
+    let cooldownLastPlayedAt: Date | null = null;
+    let cooldownLastPlayedSource: CooldownLastPlayedSource | null = null;
+
+    if (!stateLastPlayedAt) {
+      cooldownLastPlayedAt = timelineLastPlayedAt;
+      cooldownLastPlayedSource = "TIMELINE";
+      timelineFallbackTrackCount += 1;
+    } else if (stateLastPlayedAt.getTime() === timelineLastPlayedAt.getTime()) {
+      cooldownLastPlayedAt = stateLastPlayedAt;
+      cooldownLastPlayedSource = "STATE_AND_TIMELINE";
+    } else if (timelineLastPlayedAt > stateLastPlayedAt) {
+      cooldownLastPlayedAt = timelineLastPlayedAt;
+      cooldownLastPlayedSource = "TIMELINE";
+      timelineOverrideTrackCount += 1;
+    } else {
+      cooldownLastPlayedAt = stateLastPlayedAt;
+      cooldownLastPlayedSource = "STATE";
+    }
+
+    let cooldownEligible: boolean | null = true;
+    if (policy?.enabled) {
+      if (!cooldownComplete || !cooldownCutoff) cooldownEligible = null;
+      else cooldownEligible = cooldownLastPlayedAt < cooldownCutoff;
+    }
+    if (cooldownEligible === false) blockedTrackCount += 1;
+
+    topTracksHistorical.push({
+      spotifyTrackId: track.spotifyTrackId,
+      spotifyUri: track.spotifyUri,
+      trackName: track.trackName,
+      artistName: track.artistName,
+      albumName: track.albumName,
+      playCount: track.playCount,
+      plays30d: track.plays30d,
+      firstPlayedAt: track.firstPlayedAt,
+      lastPlayedAt: track.lastPlayedAt,
+      distinctListeningDays: track.distinctDays.size,
+      extendedEvidenceCount: track.extendedEvidenceCount,
+      msPlayedEvidenceCount: track.msPlayedEvidenceCount,
+      explicitSkipCount: track.explicitSkipCount,
+      explicitSkipRate: ratioOrNull(
+        track.explicitSkipCount,
+        track.extendedEvidenceCount,
+      ),
+      inferredSkipCount: track.inferredSkipCount,
+      pendingInferredSkipCount: track.pendingInferredSkipCount,
+      cooldownLastPlayedAt,
+      cooldownLastPlayedSource,
+      cooldownEligible,
+    });
+
+    track.distinctDays.clear();
+    state.tracks.delete(trackKey);
+    stateByTrackId.delete(track.spotifyTrackId);
+  }
+  stateByTrackId.clear();
+
+  const byHistorical = (a: DiscoveryArtistProfile, b: DiscoveryArtistProfile) =>
+    b.playCount - a.playCount ||
+    b.distinctListeningDays - a.distinctListeningDays ||
+    a.artistName.localeCompare(b.artistName);
+  topArtistsHistorical.sort(byHistorical);
+
+  const byTrackHistory = (a: DiscoveryTrackProfile, b: DiscoveryTrackProfile) =>
+    b.playCount - a.playCount ||
+    b.distinctListeningDays - a.distinctListeningDays ||
+    `${a.artistName}\u0000${a.trackName}`.localeCompare(
+      `${b.artistName}\u0000${b.trackName}`,
+    );
+  topTracksHistorical.sort(byTrackHistory);
+
+  const sourceCounts = [...state.sourceCounts.entries()]
+    .map(([source, count]) => ({ source, count }))
+    .sort((a, b) => a.source.localeCompare(b.source));
+  state.sourceCounts.clear();
+
   return {
-    generatedAt: prepared.generatedAt,
-    heuristics: prepared.heuristics,
-    coverage: prepared.coverage,
-    cooldown: prepared.cooldown,
-    topArtistsHistorical: prepared.topArtistsHistorical,
-    topTracksHistorical: prepared.topTracksHistorical,
+    generatedAt: asOf,
+    heuristics: {
+      dormantDays,
+      rediscoveryGapDays,
+      momentumMinListeningDays: MIN_MOMENTUM_LISTENING_DAYS,
+      rediscoveryMinPriorPlays: MIN_REDISCOVERY_PRIOR_PLAYS,
+      rediscoveryMinRecentPlays: MIN_REDISCOVERY_RECENT_PLAYS,
+      note:
+        "Gate 1.1 applies conservative profile hygiene and transparent ranking thresholds only; final preference weights are intentionally not defined yet.",
+    },
+    coverage: {
+      firstPlayedAt: state.firstPlayedAt,
+      lastPlayedAt: state.lastPlayedAt,
+      lastFmValidFrom,
+      totalCanonicalEvents: state.totalCanonicalEvents,
+      invalidLegacyLastFmExcluded: state.invalidLegacyLastFmExcluded,
+      invalidSyntheticEpochEventsExcluded:
+        state.invalidSyntheticEpochEventsExcluded,
+      futureEventsExcluded: state.futureEventsExcluded,
+      nonMusicalProfileEventsExcluded: state.nonMusicalProfileEventsExcluded,
+      artistAliasEventsCanonicalized: state.artistAliasEventsCanonicalized,
+      sourceCounts,
+      canonicalSpotifyIdentityEvents: state.canonicalSpotifyIdentityEvents,
+      unresolvedIdentityEvents: state.unresolvedIdentityEvents,
+      extendedEvidenceEvents: state.extendedEvidenceEvents,
+      msPlayedEvidenceEvents: state.msPlayedEvidenceEvents,
+      explicitSkipEvents: state.explicitSkipEvents,
+      inferredSkipSignals,
+      pendingInferredSkipSignals,
+      unmappedInferredSkipSignals,
+    },
+    cooldown: {
+      enabled: policy?.enabled ?? false,
+      complete: cooldownComplete,
+      windowValue: policy?.windowValue ?? null,
+      windowUnit: policy?.windowUnit ?? null,
+      cutoff: cooldownCutoff,
+      trackedStateCount: trackStates.length,
+      timelineFallbackTrackCount,
+      timelineOverrideTrackCount,
+      blockedTrackCount,
+    },
+    topArtistsHistorical,
+    topTracksHistorical,
   };
 }
 
