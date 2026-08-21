@@ -108,10 +108,7 @@ export async function acquireLastFmExternalDiscovery(input: {
       });
       for (const candidate of similar) {
         if (normalized(candidate.name) === normalized(seed.artistName)) continue;
-        keepBestCandidate(
-          candidates,
-          fromSimilarArtist(candidate, seed),
-        );
+        keepBestCandidate(candidates, fromSimilarArtist(candidate, seed));
       }
     } catch (error) {
       failures.push({
@@ -224,8 +221,8 @@ function fromSimilarArtist(
   seed: ExternalDiscoveryArtistSeed,
 ): AcquiredExternalDiscoveryCandidate {
   return {
-    candidateKey: candidate.artistMbid
-      ? `artist:mbid:${candidate.artistMbid}`
+    candidateKey: candidate.mbid
+      ? `artist:mbid:${candidate.mbid}`
       : `artist:name:${normalized(candidate.name)}`,
     candidateType: "ARTIST",
     artistName: candidate.name,
