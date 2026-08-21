@@ -20,13 +20,13 @@ export async function getDiscoveryTrackIdentityEvidence(
   userId: string,
   client: PrismaClient = defaultPrisma,
 ): Promise<DiscoveryTrackIdentityEvidence[]> {
-  const rows = await client.trackListeningEvent.findMany({
+  // Duplicate listening events do not add any information to identity conflict
+  // detection. Let PostgreSQL collapse identical identity triples before they
+  // cross the process boundary so large histories do not materialize one Node
+  // object per play just to be reduced back into Sets below.
+  const rows = await client.trackListeningEvent.groupBy({
+    by: ["spotifyTrackId", "isrc", "primaryArtistId"],
     where: { userId, spotifyTrackId: { not: null } },
-    select: {
-      spotifyTrackId: true,
-      isrc: true,
-      primaryArtistId: true,
-    },
   });
 
   return buildDiscoveryTrackIdentityEvidence(rows);
