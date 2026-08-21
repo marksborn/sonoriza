@@ -26,6 +26,7 @@
     "history:spotify": "tsx scripts/import-spotify-extended-history.ts",
     "discovery:profile": "tsx scripts/report-music-discovery-profile.ts",
     "discovery:score": "tsx scripts/report-music-discovery-score.ts",
+    "discovery:external": "tsx scripts/report-music-discovery-external.ts",
     "discovery:planner-preview": "tsx scripts/report-music-discovery-planner-preview-gate3c.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -55,9 +56,8 @@
     "autoprefixer": "^10.4.20",
     "eslint": "^8.57.1",
     "eslint-config-next": "^15.1.4",
-    "postcss": "^8.4.49",
+    "postcss": "^8.5.23",
     "prisma": "^6.2.1",
-    "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },
