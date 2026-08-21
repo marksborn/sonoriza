@@ -56,14 +56,23 @@ export type CompleteDiscoverySourceUniverse = {
   };
 };
 
-export type BuildCompleteDiscoveryPlannerPreviewInput = {
+export type BuildCompleteDiscoveryMusicSelectionInput = {
   profile: CompleteMusicDiscoveryProfile;
   sourceUniverse: CompleteDiscoverySourceUniverse;
   trackIdentities: DiscoveryTrackIdentityEvidence[];
-  targets: RunTarget[];
-  blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   rediscoveryCeiling?: number;
 };
+
+export type CompleteDiscoveryMusicSelection = {
+  scoring: DiscoveryGate22ScoringReport;
+  plannerPool: DiscoveryPlannerPoolResult;
+};
+
+export type BuildCompleteDiscoveryPlannerPreviewInput =
+  BuildCompleteDiscoveryMusicSelectionInput & {
+    targets: RunTarget[];
+    blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
+  };
 
 export type CompleteDiscoveryPlannerPreview = {
   version: "gate3b-preview-v1";
@@ -157,18 +166,15 @@ export async function collectCompleteDiscoverySourceUniverse(
   };
 }
 
-/**
- * Complete historical facts + complete source candidates -> Gate 2.2 score ->
- * Gate 3A ranking bridge -> the existing planRun implementation.
- */
-export function buildCompleteDiscoveryPlannerPreview(
-  input: BuildCompleteDiscoveryPlannerPreviewInput,
-): CompleteDiscoveryPlannerPreview {
+/** Complete historical facts + complete source MUSIC -> Gate 2.2 -> Gate 3A. */
+export function buildCompleteDiscoveryMusicSelection(
+  input: BuildCompleteDiscoveryMusicSelectionInput,
+): CompleteDiscoveryMusicSelection {
   if (input.profile.universe !== "COMPLETE") {
-    throw new Error("DISCOVERY Gate 3B requires a COMPLETE historical profile universe");
+    throw new Error("DISCOVERY requires a COMPLETE historical profile universe");
   }
   if (input.sourceUniverse.universe !== "COMPLETE") {
-    throw new Error("DISCOVERY Gate 3B requires every source cursor to be exhausted");
+    throw new Error("DISCOVERY requires a COMPLETE source MUSIC universe");
   }
 
   const scoreTopN = Math.max(
@@ -195,9 +201,20 @@ export function buildCompleteDiscoveryPlannerPreview(
     rediscoveryCeiling: input.rediscoveryCeiling,
   });
 
+  return { scoring, plannerPool };
+}
+
+/**
+ * Complete historical facts + complete source candidates -> Gate 2.2 score ->
+ * Gate 3A ranking bridge -> the existing planRun implementation.
+ */
+export function buildCompleteDiscoveryPlannerPreview(
+  input: BuildCompleteDiscoveryPlannerPreviewInput,
+): CompleteDiscoveryPlannerPreview {
+  const selection = buildCompleteDiscoveryMusicSelection(input);
   const plan = planRun({
     pools: {
-      music: plannerPool.music,
+      music: selection.plannerPool.music,
       podcasts: input.sourceUniverse.podcasts,
     },
     targets: input.targets,
@@ -207,8 +224,8 @@ export function buildCompleteDiscoveryPlannerPreview(
   return {
     version: "gate3b-preview-v1",
     selectionMode: "PREVIEW_ONLY",
-    scoring,
-    plannerPool,
+    scoring: selection.scoring,
+    plannerPool: selection.plannerPool,
     plan,
     evidence: {
       profileUniverse: input.profile.universe,
@@ -217,7 +234,7 @@ export function buildCompleteDiscoveryPlannerPreview(
       historyTrackCount: input.profile.tracks.length,
       sourceMusicCount: input.sourceUniverse.music.length,
       sourcePodcastCount: input.sourceUniverse.podcasts.length,
-      rankedMusicCount: plannerPool.music.length,
+      rankedMusicCount: selection.plannerPool.music.length,
       targetCount: input.targets.length,
     },
   };
