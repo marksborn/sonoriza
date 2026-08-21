@@ -47,7 +47,7 @@ type ArtistAggregate = {
   previous30d: number;
   plays90d: number;
   plays365d: number;
-  distinctTracks: Set<string>;
+  distinctTracks: Set<TrackAggregate | string>;
   distinctDays: Set<number>;
   recentDays: Set<number>;
   previousRecentDays: Set<number>;
@@ -320,10 +320,38 @@ function aggregateEvent(
   const identity = artistIdentity(event.artistName);
   if (identity.canonicalized) state.artistAliasEventsCanonicalized += 1;
   const artistKey = identity.key;
-  const trackKey = event.spotifyTrackId
-    ? `spotify:${event.spotifyTrackId}`
+  const unresolvedTrackKey = event.spotifyTrackId
+    ? null
     : `unresolved:${normalized(event.trackName)}:${normalized(event.albumName ?? "")}`;
   const dayKey = utcEpochDay(event.playedAt);
+
+  let track: TrackAggregate | null = null;
+  if (event.spotifyTrackId) {
+    track = state.tracks.get(event.spotifyTrackId) ?? null;
+    if (!track) {
+      track = {
+        spotifyTrackId: event.spotifyTrackId,
+        spotifyUri: event.spotifyUri,
+        trackName: event.trackName.trim(),
+        artistName: identity.displayName,
+        artistKey,
+        canonicalArtistLabelLocked: identity.canonicalLabelLocked,
+        albumName: event.albumName?.trim() || null,
+        playCount: 0,
+        plays30d: 0,
+        firstPlayedAt: event.playedAt,
+        lastPlayedAt: event.playedAt,
+        latestLabelAt: event.playedAt,
+        distinctDays: new Set(),
+        extendedEvidenceCount: 0,
+        msPlayedEvidenceCount: 0,
+        explicitSkipCount: 0,
+        inferredSkipCount: 0,
+        pendingInferredSkipCount: 0,
+      };
+      state.tracks.set(event.spotifyTrackId, track);
+    }
+  }
 
   let artist = state.artists.get(artistKey);
   if (!artist) {
@@ -353,7 +381,7 @@ function aggregateEvent(
   }
 
   artist.playCount += 1;
-  artist.distinctTracks.add(trackKey);
+  artist.distinctTracks.add(track ?? unresolvedTrackKey!);
   artist.distinctDays.add(dayKey);
   if (event.playedAt < artist.firstPlayedAt) artist.firstPlayedAt = event.playedAt;
   if (event.playedAt > artist.lastPlayedAt) {
@@ -382,31 +410,7 @@ function aggregateEvent(
   if (evidence.msPlayed !== null) artist.msPlayedEvidenceCount += 1;
   if (evidence.explicitSkip) artist.explicitSkipCount += 1;
 
-  if (!event.spotifyTrackId) return;
-  let track = state.tracks.get(event.spotifyTrackId);
-  if (!track) {
-    track = {
-      spotifyTrackId: event.spotifyTrackId,
-      spotifyUri: event.spotifyUri,
-      trackName: event.trackName.trim(),
-      artistName: identity.displayName,
-      artistKey,
-      canonicalArtistLabelLocked: identity.canonicalLabelLocked,
-      albumName: event.albumName?.trim() || null,
-      playCount: 0,
-      plays30d: 0,
-      firstPlayedAt: event.playedAt,
-      lastPlayedAt: event.playedAt,
-      latestLabelAt: event.playedAt,
-      distinctDays: new Set(),
-      extendedEvidenceCount: 0,
-      msPlayedEvidenceCount: 0,
-      explicitSkipCount: 0,
-      inferredSkipCount: 0,
-      pendingInferredSkipCount: 0,
-    };
-    state.tracks.set(event.spotifyTrackId, track);
-  }
+  if (!track) return;
 
   track.playCount += 1;
   track.distinctDays.add(dayKey);
