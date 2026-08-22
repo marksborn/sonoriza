@@ -28,6 +28,7 @@ export type SpotifyDiscoveryResolution = {
     | "EXACT_TRACK_ARTIST_MATCH"
     | "EXACT_TRACK_ARTIST_SAME_ISRC_VARIANTS"
     | "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK"
+    | "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK"
     | "ARTIST_NOT_FOUND"
     | "ARTIST_AMBIGUOUS"
     | "TRACK_NOT_FOUND"
@@ -85,7 +86,7 @@ async function resolveTrackCandidate(
   const rows = await provider.searchTracks({
     artistName: candidate.artistName,
     trackName: candidate.trackName,
-    limit: 20,
+    limit: 10,
   });
   const exact = rows.filter(
     (row) =>
@@ -129,9 +130,21 @@ async function resolveArtistCandidate(
   candidate: SpotifyDiscoveryResolutionCandidate,
 ): Promise<SpotifyDiscoveryResolution> {
   const artistRows = await provider.searchArtists(candidate.artistName, 10);
-  const exactArtists = uniqueArtists(
+  let exactArtists = uniqueArtists(
     artistRows.filter((row) => normalized(row.name) === normalized(candidate.artistName)),
   );
+  let usedControlledAlias = false;
+
+  if (exactArtists.length === 0) {
+    const alias = controlledLeadingArticleAlias(candidate.artistName);
+    if (alias) {
+      const aliasRows = await provider.searchArtists(alias, 10);
+      exactArtists = uniqueArtists(
+        aliasRows.filter((row) => normalized(row.name) === normalized(alias)),
+      );
+      usedControlledAlias = exactArtists.length > 0;
+    }
+  }
 
   if (exactArtists.length === 0) return empty(candidate, "NOT_FOUND", "ARTIST_NOT_FOUND");
   if (exactArtists.length > 1) {
@@ -146,7 +159,7 @@ async function resolveArtistCandidate(
   }
 
   const artist = exactArtists[0]!;
-  const tracks = await provider.searchTracks({ artistName: candidate.artistName, limit: 20 });
+  const tracks = await provider.searchTracks({ artistName: artist.name, limit: 10 });
   const representative = tracks.find((track) =>
     track.artists.some((row) => row.id === artist.id),
   );
@@ -164,7 +177,9 @@ async function resolveArtistCandidate(
   return {
     candidateKey: candidate.candidateKey,
     status: "RESOLVED",
-    reason: "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK",
+    reason: usedControlledAlias
+      ? "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK"
+      : "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK",
     spotifyArtist: artist,
     spotifyTrack: representative,
     alternatives: [],
@@ -203,6 +218,13 @@ function uniqueArtists(rows: SpotifyCatalogArtistSummary[]): SpotifyCatalogArtis
   const byId = new Map<string, SpotifyCatalogArtistSummary>();
   for (const row of rows) byId.set(row.id, row);
   return [...byId.values()];
+}
+
+function controlledLeadingArticleAlias(value: string): string | null {
+  const clean = value.normalize("NFKC").trim().replace(/\s+/g, " ");
+  if (!/^the\s+/i.test(clean)) return null;
+  const alias = clean.replace(/^the\s+/i, "").trim();
+  return alias.length >= 2 ? alias : null;
 }
 
 function normalized(value: string): string {
