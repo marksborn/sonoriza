@@ -50,6 +50,11 @@ export type Gate3CPlannerPreview = {
   selection: CompleteDiscoveryPlannerPreview;
   incremental: IncrementalPlanningResult<IncrementalCandidateSource>;
   podcastEvidence: Gate3CPodcastEvidence;
+  /**
+   * Gate 5F replay hook: exact podcast candidates observed before Gate 3C
+   * stopped reading incrementally. Read-only and deduped by URI.
+   */
+  podcastCandidatesRead: Candidate[];
 };
 
 export async function collectCompleteDiscoveryMusicUniverse(
@@ -106,6 +111,7 @@ export async function buildGate3CHybridPlannerPreview(input: {
 
   const rankedMusicSource = createRankedMusicMemorySource(selection.plannerPool.music);
   const podcastReadStats = new Map<string, { readCalls: number; candidateCount: number }>();
+  const podcastCandidatesByUri = new Map<string, Candidate>();
 
   const incremental = await collectIncrementally({
     sources: [rankedMusicSource, ...input.podcastSources],
@@ -123,6 +129,12 @@ export async function buildGate3CHybridPlannerPreview(input: {
       current.readCalls += 1;
       current.candidateCount += batch.candidates.length;
       podcastReadStats.set(source.id, current);
+      for (const candidate of batch.candidates) {
+        if (candidate.type !== "PODCAST") continue;
+        if (!podcastCandidatesByUri.has(candidate.uri)) {
+          podcastCandidatesByUri.set(candidate.uri, candidate);
+        }
+      }
     },
   });
 
@@ -164,6 +176,7 @@ export async function buildGate3CHybridPlannerPreview(input: {
       remainingSourceCount: podcastEvidenceSources.filter((source) => !source.done).length,
       sources: podcastEvidenceSources,
     },
+    podcastCandidatesRead: [...podcastCandidatesByUri.values()],
   };
 }
 
