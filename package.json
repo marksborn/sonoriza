@@ -32,6 +32,7 @@
     "discovery:external:spotify-resolution": "tsx scripts/report-music-discovery-spotify-resolution.ts",
     "discovery:planner-preview": "tsx scripts/report-music-discovery-planner-preview-gate3c.ts",
     "discovery:planner-preview:gate5f": "tsx scripts/report-music-discovery-planner-preview-gate5f.ts",
+    "discovery:planner-preview:gate5g": "tsx scripts/report-music-discovery-planner-preview-gate5g.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
