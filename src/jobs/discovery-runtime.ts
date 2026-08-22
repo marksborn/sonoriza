@@ -290,51 +290,65 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
   }
 
   state.gate5h.attempted = true;
+
+  let external;
   try {
-    const external = await resolveRuntimeExternalDiscovery({
+    external = await resolveRuntimeExternalDiscovery({
       userId: state.userId,
       asOf: state.asOf,
     });
-    const providerFailureCount =
-      external.evidence.lastFmFailures +
-      external.evidence.spotifyFailures +
-      external.evidence.providerFailureCount;
-    if (providerFailureCount > 0) {
-      state.gate5h.failure = "PROVIDER_FAILURE_ABSTAIN";
-      state.gate5h.invariantsPassed = true;
-      state.gate5h.evidence = {
-        acquisition: external.evidence,
-        abstained: "PROVIDER_FAILURE",
-      };
-      return input.plan;
-    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    state.gate5h.failure = `ACQUISITION_FAILED_ABSTAIN: ${message}`;
+    state.gate5h.invariantsPassed = true;
+    state.gate5h.evidence = {
+      abstained: "ACQUISITION_ERROR",
+      error: message,
+    };
+    return input.plan;
+  }
 
-    if (external.discoveries.length === 0) {
-      state.gate5h.invariantsPassed = true;
-      state.gate5h.evidence = {
-        acquisition: external.evidence,
-        abstained: "NO_RESOLVED_DISCOVERY",
-      };
-      return input.plan;
-    }
+  const providerFailureCount =
+    external.evidence.lastFmFailures +
+    external.evidence.spotifyFailures +
+    external.evidence.providerFailureCount;
+  if (providerFailureCount > 0) {
+    state.gate5h.failure = "PROVIDER_FAILURE_ABSTAIN";
+    state.gate5h.invariantsPassed = true;
+    state.gate5h.evidence = {
+      acquisition: external.evidence,
+      abstained: "PROVIDER_FAILURE",
+    };
+    return input.plan;
+  }
 
-    // External acquisition introduces a real-time gap after the collector's
-    // original MUSIC-01 pre-write check. Refresh once before exposing any new
-    // discovery candidate to the final plan.
-    await revalidateMusicRepeatBeforeRealWrite(input.plan);
-    const repeatState = currentMusicRepeatState();
-    const globalBlocked = repeatState?.context.blockedTrackIds ?? new Set<string>();
-    const blockedByTarget = new Map<string, ReadonlySet<string>>();
-    for (const target of input.targets) {
-      const targetBlocked = input.blockedMusicTrackIdsByTargetId?.get(
-        target.targetPlaylistId,
-      );
-      blockedByTarget.set(
-        target.targetPlaylistId,
-        new Set([...(targetBlocked ?? []), ...globalBlocked]),
-      );
-    }
+  if (external.discoveries.length === 0) {
+    state.gate5h.invariantsPassed = true;
+    state.gate5h.evidence = {
+      acquisition: external.evidence,
+      abstained: "NO_RESOLVED_DISCOVERY",
+    };
+    return input.plan;
+  }
 
+  // External acquisition introduces a real-time gap after the collector's
+  // original MUSIC-01 pre-write check. This safety check is intentionally not
+  // fail-open: if the baseline became stale, the whole run must replan/stop.
+  await revalidateMusicRepeatBeforeRealWrite(input.plan);
+  const repeatState = currentMusicRepeatState();
+  const globalBlocked = repeatState?.context.blockedTrackIds ?? new Set<string>();
+  const blockedByTarget = new Map<string, ReadonlySet<string>>();
+  for (const target of input.targets) {
+    const targetBlocked = input.blockedMusicTrackIdsByTargetId?.get(
+      target.targetPlaylistId,
+    );
+    blockedByTarget.set(
+      target.targetPlaylistId,
+      new Set([...(targetBlocked ?? []), ...globalBlocked]),
+    );
+  }
+
+  try {
     const applied = applyDiscoveryGate5H({
       baseline: input.plan,
       targets: input.targets,
@@ -376,8 +390,15 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
     }
     return applied.plan;
   } catch (error) {
-    state.gate5h.failure = error instanceof Error ? error.message : String(error);
-    throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    state.gate5h.failure = `SURGICAL_APPLY_FAILED_ABSTAIN: ${message}`;
+    state.gate5h.invariantsPassed = true;
+    state.gate5h.evidence = {
+      acquisition: external.evidence,
+      abstained: "SURGICAL_APPLY_ERROR",
+      error: message,
+    };
+    return input.plan;
   }
 }
 
