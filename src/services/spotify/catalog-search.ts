@@ -20,7 +20,9 @@ export type SpotifyCatalogTrackSummary = {
   spotifyUrl: string | null;
   isrc: string | null;
   artists: SpotifyCatalogArtistSummary[];
+  albumId: string | null;
   albumName: string | null;
+  durationMs: number;
 };
 
 export type SpotifyCatalogSearchMetrics = {
@@ -51,7 +53,7 @@ export class SpotifyCatalogSearchClient {
   }
 
   async searchArtists(artistName: string, limit = 10): Promise<SpotifyCatalogArtistSummary[]> {
-    const q = `artist:"${searchValue(artistName)}"`;
+    const q = `artist:\"${searchValue(artistName)}\"`;
     const payload = await this.search({ q, type: "artist", limit });
     return (payload.artists?.items ?? [])
       .map(readArtist)
@@ -64,8 +66,8 @@ export class SpotifyCatalogSearchClient {
     limit?: number;
   }): Promise<SpotifyCatalogTrackSummary[]> {
     const clauses = [
-      input.trackName ? `track:"${searchValue(input.trackName)}"` : null,
-      `artist:"${searchValue(input.artistName)}"`,
+      input.trackName ? `track:\"${searchValue(input.trackName)}\"` : null,
+      `artist:\"${searchValue(input.artistName)}\"`,
     ].filter((value): value is string => Boolean(value));
     const payload = await this.search({
       q: clauses.join(" "),
@@ -142,10 +144,11 @@ type SpotifyTrackResponse = {
   id?: string | null;
   name?: string | null;
   uri?: string | null;
+  duration_ms?: number | null;
   external_urls?: { spotify?: string | null } | null;
   external_ids?: { isrc?: string | null } | null;
   artists?: SpotifyArtistResponse[] | null;
-  album?: { name?: string | null } | null;
+  album?: { id?: string | null; name?: string | null } | null;
   is_local?: boolean | null;
 };
 
@@ -173,7 +176,9 @@ function readTrack(row: SpotifyTrackResponse): SpotifyCatalogTrackSummary | null
     spotifyUrl: row.external_urls?.spotify?.trim() || null,
     isrc: row.external_ids?.isrc?.trim() || null,
     artists,
+    albumId: row.album?.id?.trim() || null,
     albumName: row.album?.name?.trim() || null,
+    durationMs: Math.max(0, row.duration_ms ?? 0),
   };
 }
 
@@ -187,7 +192,7 @@ export function spotifyCatalogSearchLimit(value: number): number {
 }
 
 function searchValue(value: string): string {
-  return value.normalize("NFKC").replace(/["\\]+/g, " ").replace(/\s+/g, " ").trim();
+  return value.normalize("NFKC").replace(/[\"\\]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function sleep(ms: number): Promise<void> {
