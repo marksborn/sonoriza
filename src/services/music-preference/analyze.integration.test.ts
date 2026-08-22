@@ -117,6 +117,80 @@ integrationTest(
 );
 
 integrationTest(
+  "previews a newly inferable skip for planning without persisting it",
+  async (t) => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const user = await prisma.user.create({
+      data: { email: `music05-preview-${suffix}@example.test` },
+    });
+    t.after(async () => {
+      await prisma.user.delete({ where: { id: user.id } });
+    });
+
+    const target = await prisma.targetPlaylist.create({
+      data: { userId: user.id, name: "Avulsa", sequencePattern: ["MUSIC"] },
+    });
+
+    const realRun = await prisma.generationRun.create({
+      data: {
+        userId: user.id,
+        trigger: "MANUAL",
+        simulation: false,
+        status: "SUCCESS",
+        startedAt: APPLIED,
+        finishedAt: APPLIED,
+        items: {
+          create: [
+            { targetPlaylistId: target.id, position: 14, contentType: "MUSIC", spotifyUri: "spotify:track:A", spotifyTrackId: "A" },
+            { targetPlaylistId: target.id, position: 15, contentType: "MUSIC", spotifyUri: "spotify:track:B", spotifyTrackId: "B" },
+            { targetPlaylistId: target.id, position: 16, contentType: "MUSIC", spotifyUri: "spotify:track:C", spotifyTrackId: "C" },
+          ],
+        },
+      },
+    });
+
+    await prisma.trackListeningEvent.createMany({
+      data: [
+        { userId: user.id, spotifyTrackId: "A", trackName: "A", artistName: "AA", playedAt: at(1), source: "SPOTIFY_RECENTLY_PLAYED", sourceEventKey: `preview-a-${suffix}` },
+        { userId: user.id, spotifyTrackId: "C", trackName: "C", artistName: "CC", playedAt: at(2), source: "SPOTIFY_RECENTLY_PLAYED", sourceEventKey: `preview-c-${suffix}` },
+        { userId: user.id, spotifyTrackId: "D", trackName: "D", artistName: "DD", playedAt: at(3), source: "SPOTIFY_RECENTLY_PLAYED", sourceEventKey: `preview-d-${suffix}` },
+      ],
+    });
+
+    assert.equal(
+      await prisma.musicPreferenceSignal.count({ where: { userId: user.id } }),
+      0,
+    );
+
+    const preview = await loadPendingInferredSkips(user.id, [target.id]);
+    const previewSignals = preview.get(target.id) ?? [];
+    assert.equal(previewSignals.length, 1);
+    assert.equal(previewSignals[0]!.spotifyTrackId, "B");
+    assert.equal(previewSignals[0]!.sourceGenerationRunId, realRun.id);
+    assert.equal(previewSignals[0]!.position, 15);
+    assert.match(previewSignals[0]!.id, /^preview:/);
+
+    // Read-only planning parity must not persist the would-be signal.
+    assert.equal(
+      await prisma.musicPreferenceSignal.count({ where: { userId: user.id } }),
+      0,
+    );
+
+    // A real analysis persists the same inference once, after which pending uses
+    // the canonical DB-backed signal instead of the synthetic preview identity.
+    const analysis = await analyzeAndRecordInferredSkips(user.id, [target.id]);
+    assert.equal(analysis.targets[0]!.createdSignalCount, 1);
+
+    const pending = await loadPendingInferredSkips(user.id, [target.id]);
+    const persistedSignals = pending.get(target.id) ?? [];
+    assert.equal(persistedSignals.length, 1);
+    assert.equal(persistedSignals[0]!.spotifyTrackId, "B");
+    assert.equal(persistedSignals[0]!.position, 15);
+    assert.doesNotMatch(persistedSignals[0]!.id, /^preview:/);
+  },
+);
+
+integrationTest(
   "records nothing when there is no prior applied generation",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
