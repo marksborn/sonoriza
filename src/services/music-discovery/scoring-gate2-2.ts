@@ -1,4 +1,5 @@
 import type { DiscoveryTrackProfile } from "./profile";
+import { normalizeRecordingRecency } from "./recording-recency";
 import { buildDiscoveryScoringReportEligibleOnly } from "./scoring-eligible-only";
 import {
   DISCOVERY_SCORE_CALIBRATION,
@@ -60,6 +61,10 @@ export type DiscoveryGate22ScoringReport = Omit<
   version: typeof DISCOVERY_GATE22_VERSION;
   selectionPolicy: DiscoveryScoringReport["selectionPolicy"] & {
     recordingIdentityPolicy: "ISRC_THEN_CONSERVATIVE_ARTIST_TITLE";
+    recordingRecencyPolicy: "MAX_EQUIVALENT_LAST_PLAYED_AND_COOLDOWN";
+    recordingRecencyAdjustedLastPlayedCount: number;
+    recordingRecencyAdjustedCooldownLastPlayedCount: number;
+    recordingRecencyAdjustedCooldownEligibilityCount: number;
     rediscoveryPreemptedFamiliarBySpotifyIdCount: number;
     rediscoveryPreemptedFamiliarByRecordingIdentityCount: number;
     recordingIdentityMatchSources: Record<RecordingIdentityMatchSource, number>;
@@ -85,13 +90,25 @@ type TrackWithIdentity = Pick<
 export function buildDiscoveryGate22ScoringReport(
   input: BuildDiscoveryGate22ScoringInput,
 ): DiscoveryGate22ScoringReport {
+  // Spotify can expose the same recording under multiple track IDs because of
+  // releases/licensing/market relinking. Normalize the freshest observed play
+  // and MUSIC-01 cooldown across conservative recording identity *before*
+  // Gate 2.1 category scoring, so an old release cannot become REDESCOBERTA
+  // while an equivalent release was played recently.
+  const recordingRecency = normalizeRecordingRecency({
+    tracks: input.tracks,
+    trackIdentities: input.trackIdentities,
+    match: recordingIdentityMatchSource,
+  });
+  const scoringTracks = recordingRecency.tracks;
   const expandedTopN = Math.max(
     input.topN,
     input.artists.length,
-    input.tracks.length,
+    scoringTracks.length,
   );
   const base = buildDiscoveryScoringReportEligibleOnly({
     ...input,
+    tracks: scoringTracks,
     topN: expandedTopN,
   });
 
@@ -102,7 +119,7 @@ export function buildDiscoveryGate22ScoringReport(
     identityByTrackId.set(row.spotifyTrackId, row);
   }
   const profileByTrackId = new Map<string, DiscoveryTrackProfile>();
-  for (const track of input.tracks) {
+  for (const track of scoringTracks) {
     profileByTrackId.set(track.spotifyTrackId, track);
   }
 
@@ -161,6 +178,13 @@ export function buildDiscoveryGate22ScoringReport(
     selectionPolicy: {
       ...base.selectionPolicy,
       recordingIdentityPolicy: "ISRC_THEN_CONSERVATIVE_ARTIST_TITLE",
+      recordingRecencyPolicy: recordingRecency.evidence.policy,
+      recordingRecencyAdjustedLastPlayedCount:
+        recordingRecency.evidence.adjustedLastPlayedCount,
+      recordingRecencyAdjustedCooldownLastPlayedCount:
+        recordingRecency.evidence.adjustedCooldownLastPlayedCount,
+      recordingRecencyAdjustedCooldownEligibilityCount:
+        recordingRecency.evidence.adjustedCooldownEligibilityCount,
       rediscoveryPreemptedFamiliarBySpotifyIdCount: spotifyIdPreemptions,
       rediscoveryPreemptedFamiliarByRecordingIdentityCount:
         recordingIdentityPreemptions,

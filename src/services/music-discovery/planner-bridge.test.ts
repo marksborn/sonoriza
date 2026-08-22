@@ -77,6 +77,10 @@ function report(input: {
       rediscoveryPreemptedFamiliarCount: 0,
       minimumScores: {} as DiscoveryGate22ScoringReport["selectionPolicy"]["minimumScores"],
       recordingIdentityPolicy: "ISRC_THEN_CONSERVATIVE_ARTIST_TITLE",
+      recordingRecencyPolicy: "MAX_EQUIVALENT_LAST_PLAYED_AND_COOLDOWN",
+      recordingRecencyAdjustedLastPlayedCount: 0,
+      recordingRecencyAdjustedCooldownLastPlayedCount: 0,
+      recordingRecencyAdjustedCooldownEligibilityCount: 0,
       rediscoveryPreemptedFamiliarBySpotifyIdCount: 0,
       rediscoveryPreemptedFamiliarByRecordingIdentityCount: 0,
       recordingIdentityMatchSources: {

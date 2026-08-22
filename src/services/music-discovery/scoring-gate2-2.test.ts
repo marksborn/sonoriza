@@ -96,7 +96,7 @@ function identity(
   };
 }
 
-test("same song across Spotify IDs is arbitrated by primary artist + title when ISRC is absent", () => {
+test("same recording across Spotify IDs shares recency before category scoring", () => {
   const tracks = [
     track({
       spotifyTrackId: "recent-release",
@@ -118,27 +118,68 @@ test("same song across Spotify IDs is arbitrated by primary artist + title when 
     topN: 20,
     artists: [artist({ artistName: "Mushroomhead" })],
     tracks,
+    trackIdentities: [identity("recent-release"), identity("old-release")],
+    candidateUniverse: "COMPLETE",
+  });
+
+  assert.deepEqual(report.rediscoveryCandidates, []);
+  assert.equal(
+    report.familiarCandidates.some((row) => row.spotifyTrackId === "old-release"),
+    true,
+  );
+  assert.equal(report.selectionPolicy.recordingRecencyAdjustedLastPlayedCount, 1);
+  assert.equal(
+    report.selectionPolicy.recordingRecencyPolicy,
+    "MAX_EQUIVALENT_LAST_PLAYED_AND_COOLDOWN",
+  );
+});
+
+test("Clouds Over California regression: recent market/release ID blocks dormant equivalent ID", () => {
+  const currentId = "6K4qjwuMpp9AT4uuKw2LLQ";
+  const historicalId = "21WIpZXepY9HA7NDwYiNaM";
+  const report = buildDiscoveryGate22ScoringReport({
+    generatedAt: new Date("2026-08-22T02:24:13.220Z"),
+    dormantDays: 365,
+    rediscoveryGapDays: 180,
+    topN: 20,
+    artists: [artist({ artistName: "DevilDriver" })],
+    tracks: [
+      track({
+        spotifyTrackId: currentId,
+        trackName: "Clouds over California",
+        artistName: "DevilDriver",
+        albumName: "The Last Kind Words",
+        lastPlayedAt: new Date("2026-08-21T16:40:43.809Z"),
+        cooldownLastPlayedAt: new Date("2026-08-21T16:40:43.809Z"),
+        cooldownLastPlayedSource: "STATE_AND_TIMELINE",
+        cooldownEligible: false,
+      }),
+      track({
+        spotifyTrackId: historicalId,
+        trackName: "Clouds Over California",
+        artistName: "DevilDriver",
+        albumName: "The Last Kind Words",
+        lastPlayedAt: new Date("2023-07-02T17:47:19.000Z"),
+        cooldownLastPlayedAt: new Date("2023-07-02T17:47:19.000Z"),
+        cooldownEligible: true,
+      }),
+    ],
     trackIdentities: [
-      identity("recent-release"),
-      identity("old-release"),
+      identity(currentId, { primaryArtistId: "79el7mcHYhXYW3Zek21i0L" }),
+      identity(historicalId, { primaryArtistId: "79el7mcHYhXYW3Zek21i0L" }),
     ],
     candidateUniverse: "COMPLETE",
   });
 
-  assert.deepEqual(
-    report.rediscoveryCandidates.map((row) => row.spotifyTrackId),
-    ["old-release"],
-  );
+  const selectedIds = new Set([
+    ...report.rediscoveryCandidates.map((row) => row.spotifyTrackId),
+    ...report.familiarCandidates.map((row) => row.spotifyTrackId),
+  ]);
+  assert.equal(selectedIds.has(currentId), false);
+  assert.equal(selectedIds.has(historicalId), false);
+  assert.equal(report.selectionPolicy.recordingRecencyAdjustedLastPlayedCount, 1);
   assert.equal(
-    report.familiarCandidates.some((row) => row.spotifyTrackId === "recent-release"),
-    false,
-  );
-  assert.equal(
-    report.selectionPolicy.rediscoveryPreemptedFamiliarByRecordingIdentityCount,
-    1,
-  );
-  assert.equal(
-    report.selectionPolicy.recordingIdentityMatchSources.SPOTIFY_PRIMARY_ARTIST_TITLE,
+    report.selectionPolicy.recordingRecencyAdjustedCooldownEligibilityCount,
     1,
   );
 });
@@ -285,5 +326,9 @@ test("Gate 2.2 preserves the COMPLETE-universe planner contract", () => {
   assert.equal(
     report.selectionPolicy.recordingIdentityPolicy,
     "ISRC_THEN_CONSERVATIVE_ARTIST_TITLE",
+  );
+  assert.equal(
+    report.selectionPolicy.recordingRecencyPolicy,
+    "MAX_EQUIVALENT_LAST_PLAYED_AND_COOLDOWN",
   );
 });
