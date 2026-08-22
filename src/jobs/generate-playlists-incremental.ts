@@ -45,10 +45,15 @@ import {
 } from "@/services/music-preference";
 
 import {
+  applyDiscoveryGate5HForCurrentRun,
+  currentDiscoveryRuntimeState,
+} from "./discovery-runtime";
+import {
   collectIncrementally,
   type IncrementalSourceBatch,
   type IncrementalPlanningRound,
 } from "./incremental-planning";
+import { revalidateMusicRepeatBeforeRealWrite } from "./music-repeat-runtime";
 
 export interface GeneratePlaylistsOptions {
   userId: string;
@@ -134,8 +139,6 @@ export async function generatePlaylists(
   let reader: SpotifyIncrementalReader | null = null;
 
   try {
-    // Resolve target demand before reading Spotify. This lets the collector skip
-    // source kinds that no active target actually needs.
     const targets = await prisma.targetPlaylist.findMany({
       where: {
         userId,
@@ -169,29 +172,18 @@ export async function generatePlaylists(
       );
       resolvedDurationByTargetId.set(target.id, resolved);
 
-      const durationBlocks =
-        calendarDurationPlanningBlocks(
-          target.calendarDurationStrategy,
-          resolved.calendar,
-        );
+      const durationBlocks = calendarDurationPlanningBlocks(
+        target.calendarDurationStrategy,
+        resolved.calendar,
+      );
 
-      if (
-        target.durationMode === "CALENDAR" &&
-        resolved.durationMs <= 0
-      ) {
+      if (target.durationMode === "CALENDAR" && resolved.durationMs <= 0) {
         if (target.emptyCalendarBehavior === "CLEAR") {
           log({
             level: "INFO",
             message: `Target "${target.name}" has no eligible calendar events → will be cleared`,
           });
-          runTargets.push(
-            toRunTarget(
-              target,
-              0,
-              null,
-              durationBlocks,
-            ),
-          );
+          runTargets.push(toRunTarget(target, 0, null, durationBlocks));
         } else {
           log({
             level: "INFO",
@@ -228,8 +220,6 @@ export async function generatePlaylists(
     const sourceCursors: SpotifyIncrementalCandidateSource[] = [];
     const setupFailures: SourceCollectionFailureRecord[] = [];
 
-    // Cursor creation is sequential by design. Podcast cursors are local-only;
-    // music snapshot validation is also serialized to avoid a metadata burst.
     for (const source of sources) {
       try {
         sourceCursors.push(await reader.createSource(source));
@@ -267,10 +257,6 @@ export async function generatePlaylists(
       return { runId: run.id, status: "FAILED" };
     }
 
-    // MUSIC-05: infer skips from the last applied generation and suppress those
-    // tracks in each target's next generation. Zero new Spotify calls — it reads
-    // only ORDER-01's persisted order and MUSIC-01's already-synced history.
-    // Fail-open: any analysis error is logged and generation proceeds unblocked.
     const music05TargetIds = runTargets.map((target) => target.targetPlaylistId);
     let music05Analysis: InferredSkipAnalysisResult | null = null;
     let pendingInferredSkipsByTargetId = new Map<string, PendingSkipSignal[]>();
@@ -309,9 +295,7 @@ export async function generatePlaylists(
     const incremental = await collectIncrementally({
       sources: sourceCursors,
       targets: runTargets,
-      preservedByTargetId: new Map(
-        Object.entries(opts.preservedByTargetId ?? {}),
-      ),
+      preservedByTargetId: new Map(Object.entries(opts.preservedByTargetId ?? {})),
       blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
       onBatch(source, batch) {
@@ -364,14 +348,13 @@ export async function generatePlaylists(
       summary.inconclusiveReason = collectionFailureReason(failures);
       summary.qualityPassed = false;
       summary.qualityFailures = [];
-
       const error = collectionFailureMessage(failures, simulate);
       log({ level: "WARN", message: error, data: summary.sourceCollection });
       await finalizeRun(run.id, "FAILED", logs, summary, error);
       return { runId: run.id, status: "FAILED" };
     }
 
-    const plan = incremental.plan;
+    let plan = incremental.plan;
     const qualityFailures = incremental.qualityFailures;
     summary.qualityPassed = qualityFailures.length === 0;
     summary.qualityFailures = qualityFailures.map((planned) => ({
@@ -392,9 +375,6 @@ export async function generatePlaylists(
       });
     }
 
-    // A conclusive quality failure means every source kind that could improve
-    // the failing plan was exhausted. Real generation still stops before any
-    // Spotify write; simulation may persist the best plan for diagnosis.
     if (!simulate && qualityFailures.length > 0) {
       const error =
         "A geração foi bloqueada antes de alterar o Spotify porque, mesmo após buscar os lotes necessários, o plano não conseguiu atender às regras de composição configuradas.";
@@ -453,18 +433,41 @@ export async function generatePlaylists(
         planned.result.items = ordered.items;
       }
       musicOrderEvidenceByTargetId.set(target.id, ordered.evidence);
+    }
 
+    plan = await applyDiscoveryGate5HForCurrentRun({
+      plan,
+      targets: runTargets,
+      blockedMusicTrackIdsByTargetId,
+      keepFilledTargetIds: new Set(Object.keys(opts.keepFilledByTargetId ?? {})),
+    });
+
+    for (const planned of plan.targets) {
+      const target = targetByPlanId.get(planned.targetPlaylistId);
+      if (!target) continue;
+      const evidence = musicOrderEvidenceByTargetId.get(target.id);
+      if (evidence) {
+        evidence.orderHash = playlistOrderHash(planned.result.items);
+        evidence.musicCount = planned.result.items.filter(
+          (item) => item.type === "MUSIC",
+        ).length;
+      }
+      const keepFilled = opts.keepFilledByTargetId?.[target.id] ?? null;
+      const reusedEvidence = keepFilled
+        ? null
+        : opts.musicOrderSimulationEvidence?.[target.id] ?? null;
       if (
         !keepFilled &&
         !simulate &&
         reusedEvidence &&
-        ordered.evidence.orderHash !== reusedEvidence.orderHash
+        evidence &&
+        evidence.orderHash !== reusedEvidence.orderHash
       ) {
         musicOrderPreviewViolations.push({
           targetPlaylistId: target.id,
           targetName: target.name,
           expectedOrderHash: reusedEvidence.orderHash,
-          actualOrderHash: ordered.evidence.orderHash,
+          actualOrderHash: evidence.orderHash,
         });
       }
     }
@@ -483,13 +486,26 @@ export async function generatePlaylists(
       if (!target || target.compositionMode !== "SEQUENCE") return [];
       const pattern = parseSequencePattern(target.sequencePattern);
       if (pattern.length === 0) {
-        return [{ targetPlaylistId: target.id, targetName: target.name, reason: "INVALID_PATTERN" }];
+        return [
+          {
+            targetPlaylistId: target.id,
+            targetName: target.name,
+            reason: "INVALID_PATTERN",
+          },
+        ];
       }
       const mismatch = planned.result.items.find(
         (item, index) => item.type !== pattern[index % pattern.length],
       );
       return mismatch
-        ? [{ targetPlaylistId: target.id, targetName: target.name, reason: "TYPE_MISMATCH", position: mismatch.position }]
+        ? [
+            {
+              targetPlaylistId: target.id,
+              targetName: target.name,
+              reason: "TYPE_MISMATCH",
+              position: mismatch.position,
+            },
+          ]
         : [];
     });
 
@@ -529,8 +545,6 @@ export async function generatePlaylists(
       return { runId: run.id, status: "FAILED" };
     }
 
-    // Defense in depth: revalidate selected podcasts against the
-    // freshly resolved limit before a writer can even be created.
     const durationLimitViolations = plan.targets.flatMap((planned) => {
       const maxDurationMs =
         resolvedDurationByTargetId.get(planned.targetPlaylistId)
@@ -560,7 +574,6 @@ export async function generatePlaylists(
       await finalizeRun(run.id, "FAILED", logs, summary, error);
       return { runId: run.id, status: "FAILED" };
     }
-
 
     if (!simulate) {
       const liveTargets = await prisma.targetPlaylist.findMany({
@@ -717,10 +730,6 @@ export async function generatePlaylists(
       }
     }
 
-    // SCHEDULE-03 / PODCAST-04 defense in depth: source collection and
-    // KEEP_FILLED preparation can become stale while a run is planning.
-    // Immediately before any Spotify write, re-read every selected podcast
-    // that does not explicitly allow replay through GET /episodes/{id}.
     if (!simulate) {
       let podcastPrewrite;
 
@@ -733,27 +742,18 @@ export async function generatePlaylists(
             items: planned.result.items,
           })),
           new Date(),
-          // P2: route the authoritative episode reads through the run's
-          // instrumented client so they are counted in summary.spotifyApi.
           { episodeReader: (episodeId) => writer!.getEpisodePlaybackState(episodeId) },
         );
       } catch (error) {
         const providerError = errorMessage(error);
-
         summary.podcastPrewriteRevalidation = {
           status: "FAILED",
           error: providerError,
         };
-
         const message =
           `A geração foi bloqueada antes de alterar o Spotify porque não foi possível ` +
           `revalidar o estado final dos podcasts: ${providerError}`;
-
-        log({
-          level: "ERROR",
-          message,
-        });
-
+        log({ level: "ERROR", message });
         await finalizeRun(run.id, "FAILED", logs, summary, message);
         return { runId: run.id, status: "FAILED" };
       }
@@ -771,22 +771,35 @@ export async function generatePlaylists(
           "A geração foi bloqueada antes de alterar o Spotify porque um ou mais " +
           "podcasts sem replay explícito ficaram concluídos ou não puderam ser " +
           "validados após o planejamento. O próximo ciclo deverá planejar novamente.";
-
-        log({
-          level: "ERROR",
-          message: error,
-          data: podcastPrewrite.violations,
-        });
-
+        log({ level: "ERROR", message: error, data: podcastPrewrite.violations });
         await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+    }
+
+    const gate5hState = currentDiscoveryRuntimeState()?.gate5h ?? null;
+    if (!simulate && gate5hState?.attempted) {
+      try {
+        await revalidateMusicRepeatBeforeRealWrite(plan);
+        summary.musicRepeatFinalRevalidation = {
+          status: "PASSED",
+          gate5hAttempted: true,
+        };
+      } catch (error) {
+        const message = errorMessage(error);
+        summary.musicRepeatFinalRevalidation = {
+          status: "BLOCKED",
+          gate5hAttempted: true,
+          error: message,
+        };
+        log({ level: "ERROR", message });
+        await finalizeRun(run.id, "FAILED", logs, summary, message);
         return { runId: run.id, status: "FAILED" };
       }
     }
 
     const targetById = new Map(targets.map((target) => [target.id, target]));
     let anyFailed = false;
-    // MUSIC-05: signals that blocked a target are consumed only once that
-    // target's real generation is successfully applied (step 12).
     const inferredSkipSignalIdsToConsume: string[] = [];
 
     for (const planned of plan.targets) {
@@ -810,12 +823,9 @@ export async function generatePlaylists(
         maxTracksPerArtist: target.maxTracksPerArtist,
         maxTracksPerAlbum: target.maxTracksPerAlbum,
         scheduledPolicy: opts.scheduledPolicyByTargetId?.[target.id] ?? null,
-        targetDurationMs:
-          resolvedDuration?.durationMs ?? 0,
-        calendarDurationStrategy:
-          target.calendarDurationStrategy,
-        sequencePattern:
-          parseSequencePattern(target.sequencePattern),
+        targetDurationMs: resolvedDuration?.durationMs ?? 0,
+        calendarDurationStrategy: target.calendarDurationStrategy,
+        sequencePattern: parseSequencePattern(target.sequencePattern),
         ...stats,
         musicCount: items.filter((item) => item.type === "MUSIC").length,
         podcastCount: items.filter((item) => item.type === "PODCAST").length,
@@ -1006,7 +1016,6 @@ export async function generatePlaylists(
           )} min, ${stats.actualPodcastPercent}% podcast${simulate ? " (simulated)" : ""}`,
         });
 
-        // Real, applied generation consumes this target's blocking signals.
         if (!simulate) {
           for (const signal of pendingInferredSkipsByTargetId.get(target.id) ?? []) {
             inferredSkipSignalIdsToConsume.push(signal.id);
@@ -1026,8 +1035,6 @@ export async function generatePlaylists(
 
     summary.skipped = skipped.map((target) => target.name);
 
-    // MUSIC-05 step 12 + observability. Consuming is best-effort: a failure here
-    // must never turn an applied real generation into a run-level failure.
     let inferredSkipConsumedCount = 0;
     if (!simulate && inferredSkipSignalIdsToConsume.length > 0) {
       try {
@@ -1276,9 +1283,7 @@ function toRunTarget(
     targetPlaylistId: target.id,
     name: target.name,
     priority: target.priority,
-    ...(durationBlocks
-      ? { durationBlocks }
-      : {}),
+    ...(durationBlocks ? { durationBlocks } : {}),
     rules: {
       targetDurationMs: durationMs,
       compositionMode: target.compositionMode,
@@ -1291,7 +1296,6 @@ function toRunTarget(
     },
   };
 }
-
 
 type MusicDiversityViolation = {
   targetPlaylistId: string;
