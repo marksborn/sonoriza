@@ -70,8 +70,30 @@ export type ExternalDiscoveryAcquisitionResult = {
   failures: ExternalDiscoveryAcquisitionFailure[];
 };
 
+export type ExternalDiscoveryTrackHistoryMatch =
+  | "MBID"
+  | "ARTIST_TRACK_NAME"
+  | "NONE"
+  | "NOT_APPLICABLE";
+
+export type ExternalDiscoveryHistoryEvidence = {
+  artistHistoricalPlayCount: number;
+  trackHistoricalPlayCount: number;
+  trackHistoryMatch: ExternalDiscoveryTrackHistoryMatch;
+};
+
+export type ExternalDiscoveryHistoryClass =
+  | "NEW_ARTIST"
+  | "NEW_TRACK_KNOWN_ARTIST"
+  | "KNOWN_TRACK_NOT_NEW"
+  | "KNOWN_ARTIST_NOT_NEW";
+
 export type EvaluatedExternalDiscoveryCandidate = AcquiredExternalDiscoveryCandidate & {
   knownHistoricalPlayCount: number;
+  artistHistoricalPlayCount: number;
+  trackHistoricalPlayCount: number;
+  trackHistoryMatch: ExternalDiscoveryTrackHistoryMatch;
+  historyClass: ExternalDiscoveryHistoryClass;
   scoreCard: ExternalDiscoveryCandidateScore;
 };
 
@@ -175,17 +197,21 @@ export async function acquireLastFmExternalDiscovery(input: {
 
 export function evaluateExternalDiscoveryCandidates(input: {
   candidates: AcquiredExternalDiscoveryCandidate[];
-  knownHistoricalPlayCount: (
+  historyEvidence: (
     candidate: AcquiredExternalDiscoveryCandidate,
-  ) => number;
+  ) => ExternalDiscoveryHistoryEvidence;
   topN?: number;
 }): ExternalDiscoveryEvaluationResult {
   const topN = boundedPositiveInt(input.topN ?? 50, "topN", 500);
   const evaluated = input.candidates.map((candidate) => {
-    const knownHistoricalPlayCount = input.knownHistoricalPlayCount(candidate);
-    if (!Number.isInteger(knownHistoricalPlayCount) || knownHistoricalPlayCount < 0) {
-      throw new Error("knownHistoricalPlayCount must return a non-negative integer");
-    }
+    const evidence = input.historyEvidence(candidate);
+    validateHistoryEvidence(evidence);
+
+    const knownHistoricalPlayCount =
+      candidate.candidateType === "TRACK"
+        ? evidence.trackHistoricalPlayCount
+        : evidence.artistHistoricalPlayCount;
+    const historyClass = classifyHistory(candidate, evidence);
     const scoreCard = scoreExternalDiscoveryCandidate({
       candidateKey: candidate.candidateKey,
       artistName: candidate.artistName,
@@ -196,9 +222,14 @@ export function evaluateExternalDiscoveryCandidates(input: {
       sourceConfidence: candidate.sourceConfidence,
       knownHistoricalPlayCount,
     });
+
     return {
       ...candidate,
       knownHistoricalPlayCount,
+      artistHistoricalPlayCount: evidence.artistHistoricalPlayCount,
+      trackHistoricalPlayCount: evidence.trackHistoricalPlayCount,
+      trackHistoryMatch: evidence.trackHistoryMatch,
+      historyClass,
       scoreCard,
     };
   });
@@ -214,6 +245,32 @@ export function evaluateExternalDiscoveryCandidates(input: {
     evaluated,
     eligible: evaluated.filter((row) => row.scoreCard.eligible).slice(0, topN),
   };
+}
+
+function classifyHistory(
+  candidate: AcquiredExternalDiscoveryCandidate,
+  evidence: ExternalDiscoveryHistoryEvidence,
+): ExternalDiscoveryHistoryClass {
+  if (candidate.candidateType === "ARTIST") {
+    return evidence.artistHistoricalPlayCount > 0
+      ? "KNOWN_ARTIST_NOT_NEW"
+      : "NEW_ARTIST";
+  }
+  if (evidence.trackHistoricalPlayCount > 0) return "KNOWN_TRACK_NOT_NEW";
+  return evidence.artistHistoricalPlayCount > 0
+    ? "NEW_TRACK_KNOWN_ARTIST"
+    : "NEW_ARTIST";
+}
+
+function validateHistoryEvidence(evidence: ExternalDiscoveryHistoryEvidence): void {
+  for (const [name, value] of [
+    ["artistHistoricalPlayCount", evidence.artistHistoricalPlayCount],
+    ["trackHistoricalPlayCount", evidence.trackHistoricalPlayCount],
+  ] as const) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`${name} must be a non-negative integer`);
+    }
+  }
 }
 
 function fromSimilarArtist(

@@ -5,6 +5,7 @@ import {
   evaluateExternalDiscoveryCandidates,
   type AcquiredExternalDiscoveryCandidate,
   type ExternalDiscoveryArtistSeed,
+  type ExternalDiscoveryHistoryEvidence,
   type ExternalDiscoveryTrackSeed,
 } from "@/services/music-discovery/external-discovery";
 import {
@@ -30,7 +31,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const apiKey = process.env.LASTFM_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error("Configure LASTFM_API_KEY before running DISCOVERY-01 Gate 5A");
+    throw new Error("Configure LASTFM_API_KEY before running DISCOVERY-01 Gate 5B");
   }
 
   const user = await prisma.user.findUnique({
@@ -97,19 +98,19 @@ async function main() {
     maxCandidates: Math.max(args.topN * 4, 50),
   });
 
-  const historyIndex = await getKnownArtistHistory(user.id, acquisition.candidates);
+  const historyIndex = await getKnownHistory(user.id, acquisition.candidates);
   const evaluation = evaluateExternalDiscoveryCandidates({
     candidates: acquisition.candidates,
-    knownHistoricalPlayCount: (candidate) => knownArtistPlayCount(candidate, historyIndex),
+    historyEvidence: (candidate) => historyEvidenceFor(candidate, historyIndex),
     topN: args.topN,
   });
 
   const payload = {
     user: user.email ?? user.id,
     generatedAt: new Date(),
-    gate: "DISCOVERY-01 Gate 5A",
+    gate: "DISCOVERY-01 Gate 5B",
     mode: "READ_ONLY",
-    historyPolicy: "ARTIST_ANY_HISTORY_IS_KNOWN",
+    historyPolicy: "ARTIST_BY_ARTIST_HISTORY__TRACK_BY_EXACT_TRACK_HISTORY",
     seeds: {
       artists: artistSeeds,
       tracks: trackSeeds,
@@ -118,12 +119,20 @@ async function main() {
     evaluation: {
       evaluatedCount: evaluation.evaluated.length,
       eligibleCount: evaluation.eligible.length,
-      knownHistoryRejectedCount: evaluation.evaluated.filter(
-        (row) => row.knownHistoricalPlayCount > 0,
+      newArtistCount: evaluation.evaluated.filter((row) => row.historyClass === "NEW_ARTIST")
+        .length,
+      newTrackKnownArtistCount: evaluation.evaluated.filter(
+        (row) => row.historyClass === "NEW_TRACK_KNOWN_ARTIST",
+      ).length,
+      knownTrackRejectedCount: evaluation.evaluated.filter(
+        (row) => row.historyClass === "KNOWN_TRACK_NOT_NEW",
+      ).length,
+      knownArtistRejectedCount: evaluation.evaluated.filter(
+        (row) => row.historyClass === "KNOWN_ARTIST_NOT_NEW",
       ).length,
       eligible: evaluation.eligible,
       rejectedKnownHistory: evaluation.evaluated
-        .filter((row) => row.knownHistoricalPlayCount > 0)
+        .filter((row) => !row.scoreCard.eligible && row.knownHistoricalPlayCount > 0)
         .slice(0, args.topN),
     },
   };
@@ -133,16 +142,24 @@ async function main() {
     return;
   }
 
-  console.log("========== DISCOVERY-01 — GATE 5A EXTERNAL READ-ONLY ==========");
-  console.log(`User:                 ${payload.user}`);
-  console.log(`Artist seeds:         ${artistSeeds.length}`);
-  console.log(`Track seeds:          ${trackSeeds.length}`);
-  console.log(`Last.fm calls:        ${acquisition.providerCalls}`);
-  console.log(`Acquired candidates: ${acquisition.candidates.length}`);
-  console.log(`Provider failures:    ${acquisition.failures.length}`);
-  console.log(`Eligible new:         ${evaluation.eligible.length}`);
-  console.log(`Known-history reject: ${payload.evaluation.knownHistoryRejectedCount}`);
-  console.log("History policy:       any prior artist history => not DESCOBERTA in Gate 5A");
+  console.log("========== DISCOVERY-01 — GATE 5B EXTERNAL READ-ONLY ==========");
+  console.log(`User:                      ${payload.user}`);
+  console.log(`Artist seeds:              ${artistSeeds.length}`);
+  console.log(`Track seeds:               ${trackSeeds.length}`);
+  console.log(`Last.fm calls:             ${acquisition.providerCalls}`);
+  console.log(`Acquired candidates:      ${acquisition.candidates.length}`);
+  console.log(`Provider failures:         ${acquisition.failures.length}`);
+  console.log(`Eligible new:              ${evaluation.eligible.length}`);
+  console.log(`NEW_ARTIST:                ${payload.evaluation.newArtistCount}`);
+  console.log(`NEW_TRACK_KNOWN_ARTIST:    ${payload.evaluation.newTrackKnownArtistCount}`);
+  console.log(`KNOWN_TRACK_NOT_NEW:       ${payload.evaluation.knownTrackRejectedCount}`);
+  console.log(`KNOWN_ARTIST_NOT_NEW:      ${payload.evaluation.knownArtistRejectedCount}`);
+  console.log(
+    "History policy:            artist candidate -> artist history; track candidate -> exact track history.",
+  );
+  console.log(
+    "Track identity:             MBID first; normalized artist + track name fallback.",
+  );
   console.log("No writes: no Spotify, MUSIC-03, preference or score persistence.");
 
   console.log("\nTop DESCOBERTA candidates:");
@@ -150,7 +167,7 @@ async function main() {
   evaluation.eligible.forEach((row, index) => {
     const subject = row.trackName ? `${row.artistName} — ${row.trackName}` : row.artistName;
     console.log(
-      `  ${String(index + 1).padStart(2)}. ${subject} — score=${row.scoreCard.score}, sim=${row.similarity.toFixed(3)}, source=${row.source}, seed=${row.seedArtistName}${row.seedTrackName ? ` — ${row.seedTrackName}` : ""}`,
+      `  ${String(index + 1).padStart(2)}. ${subject} — class=${row.historyClass}, score=${row.scoreCard.score}, sim=${row.similarity.toFixed(3)}, artistPlays=${row.artistHistoricalPlayCount}, trackPlays=${row.trackHistoricalPlayCount}, source=${row.source}, seed=${row.seedArtistName}${row.seedTrackName ? ` — ${row.seedTrackName}` : ""}`,
     );
   });
 
@@ -167,9 +184,11 @@ async function main() {
 type HistoryIndex = {
   byArtistName: Map<string, number>;
   byArtistMbid: Map<string, number>;
+  byTrackMbid: Map<string, number>;
+  byArtistTrackName: Map<string, number>;
 };
 
-async function getKnownArtistHistory(
+async function getKnownHistory(
   userId: string,
   candidates: AcquiredExternalDiscoveryCandidate[],
 ): Promise<HistoryIndex> {
@@ -181,8 +200,21 @@ async function getKnownArtistHistory(
         .filter((value): value is string => Boolean(value)),
     ),
   ];
+  const trackCandidates = candidates.filter(
+    (row): row is AcquiredExternalDiscoveryCandidate & { trackName: string } =>
+      row.candidateType === "TRACK" && Boolean(row.trackName),
+  );
+  const trackMbids = [
+    ...new Set(
+      trackCandidates
+        .map((row) => row.trackMbid)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  const trackArtistNames = [...new Set(trackCandidates.map((row) => row.artistName))];
+  const trackNames = [...new Set(trackCandidates.map((row) => row.trackName))];
 
-  const [nameRows, mbidRows] = await Promise.all([
+  const [artistNameRows, artistMbidRows, trackMbidRows, artistTrackRows] = await Promise.all([
     artistNames.length === 0
       ? Promise.resolve([])
       : prisma.trackListeningEvent.groupBy({
@@ -203,30 +235,103 @@ async function getKnownArtistHistory(
           },
           _count: { _all: true },
         }),
+    trackMbids.length === 0
+      ? Promise.resolve([])
+      : prisma.trackListeningEvent.groupBy({
+          by: ["trackMbid"],
+          where: {
+            userId,
+            trackMbid: { in: trackMbids },
+          },
+          _count: { _all: true },
+        }),
+    trackArtistNames.length === 0 || trackNames.length === 0
+      ? Promise.resolve([])
+      : prisma.trackListeningEvent.groupBy({
+          by: ["artistName", "trackName"],
+          where: {
+            userId,
+            artistName: { in: trackArtistNames, mode: "insensitive" },
+            trackName: { in: trackNames, mode: "insensitive" },
+          },
+          _count: { _all: true },
+        }),
   ]);
 
   const byArtistName = new Map<string, number>();
-  for (const row of nameRows) {
+  for (const row of artistNameRows) {
     const key = normalized(row.artistName);
     byArtistName.set(key, (byArtistName.get(key) ?? 0) + row._count._all);
   }
+
   const byArtistMbid = new Map<string, number>();
-  for (const row of mbidRows) {
+  for (const row of artistMbidRows) {
     if (!row.artistMbid) continue;
     byArtistMbid.set(row.artistMbid, (byArtistMbid.get(row.artistMbid) ?? 0) + row._count._all);
   }
-  return { byArtistName, byArtistMbid };
+
+  const byTrackMbid = new Map<string, number>();
+  for (const row of trackMbidRows) {
+    if (!row.trackMbid) continue;
+    byTrackMbid.set(row.trackMbid, (byTrackMbid.get(row.trackMbid) ?? 0) + row._count._all);
+  }
+
+  const byArtistTrackName = new Map<string, number>();
+  for (const row of artistTrackRows) {
+    const key = artistTrackKey(row.artistName, row.trackName);
+    byArtistTrackName.set(key, (byArtistTrackName.get(key) ?? 0) + row._count._all);
+  }
+
+  return { byArtistName, byArtistMbid, byTrackMbid, byArtistTrackName };
 }
 
-function knownArtistPlayCount(
+function historyEvidenceFor(
   candidate: AcquiredExternalDiscoveryCandidate,
   history: HistoryIndex,
-): number {
-  const byName = history.byArtistName.get(normalized(candidate.artistName)) ?? 0;
-  const byMbid = candidate.artistMbid
+): ExternalDiscoveryHistoryEvidence {
+  const artistByName = history.byArtistName.get(normalized(candidate.artistName)) ?? 0;
+  const artistByMbid = candidate.artistMbid
     ? history.byArtistMbid.get(candidate.artistMbid) ?? 0
     : 0;
-  return Math.max(byName, byMbid);
+  const artistHistoricalPlayCount = Math.max(artistByName, artistByMbid);
+
+  if (candidate.candidateType !== "TRACK" || !candidate.trackName) {
+    return {
+      artistHistoricalPlayCount,
+      trackHistoricalPlayCount: 0,
+      trackHistoryMatch: "NOT_APPLICABLE",
+    };
+  }
+
+  const trackByMbid = candidate.trackMbid
+    ? history.byTrackMbid.get(candidate.trackMbid) ?? 0
+    : 0;
+  const trackByName =
+    history.byArtistTrackName.get(artistTrackKey(candidate.artistName, candidate.trackName)) ?? 0;
+
+  if (trackByMbid > 0) {
+    return {
+      artistHistoricalPlayCount,
+      trackHistoricalPlayCount: Math.max(trackByMbid, trackByName),
+      trackHistoryMatch: "MBID",
+    };
+  }
+  if (trackByName > 0) {
+    return {
+      artistHistoricalPlayCount,
+      trackHistoricalPlayCount: trackByName,
+      trackHistoryMatch: "ARTIST_TRACK_NAME",
+    };
+  }
+  return {
+    artistHistoricalPlayCount,
+    trackHistoricalPlayCount: 0,
+    trackHistoryMatch: "NONE",
+  };
+}
+
+function artistTrackKey(artistName: string, trackName: string): string {
+  return `${normalized(artistName)}\u0000${normalized(trackName)}`;
 }
 
 function uniqueArtists(rows: DiscoveryArtistProfile[]): DiscoveryArtistProfile[] {
