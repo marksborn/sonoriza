@@ -12,7 +12,7 @@ import type { Gate5FResolvedDiscoveryCandidate } from "./planner-discovery-gate5
 import { previewSurgicalDiscoveryRun } from "./planner-discovery-gate5g";
 
 test("Gate 5G replaces exactly the 5th and 10th MUSIC slots without touching podcasts", () => {
-  const target = runTarget("t1", 12 * 60_000);
+  const target = runTarget("t1", 12 * 60_000, { podcastPercent: 20 });
   const baselineItems = withPositions([
     music("m1", "a1"),
     podcast("p1"),
