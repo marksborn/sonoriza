@@ -4,6 +4,7 @@ import { getSpotifyAccessToken } from "./token";
 const API = "https://api.spotify.com/v1";
 const MAX_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
+const SPOTIFY_SEARCH_MAX_LIMIT = 10;
 
 export type SpotifyCatalogArtistSummary = {
   id: string;
@@ -69,7 +70,7 @@ export class SpotifyCatalogSearchClient {
     const payload = await this.search({
       q: clauses.join(" "),
       type: "track",
-      limit: input.limit ?? 20,
+      limit: input.limit ?? SPOTIFY_SEARCH_MAX_LIMIT,
     });
     return (payload.tracks?.items ?? [])
       .map(readTrack)
@@ -81,7 +82,7 @@ export class SpotifyCatalogSearchClient {
     type: "artist" | "track";
     limit: number;
   }): Promise<SpotifySearchResponse> {
-    const limit = boundedLimit(input.limit);
+    const limit = spotifyCatalogSearchLimit(input.limit);
     const params = new URLSearchParams({
       q: input.q,
       type: input.type,
@@ -176,9 +177,11 @@ function readTrack(row: SpotifyTrackResponse): SpotifyCatalogTrackSummary | null
   };
 }
 
-function boundedLimit(value: number): number {
-  if (!Number.isInteger(value) || value < 1 || value > 50) {
-    throw new Error("Spotify search limit must be an integer between 1 and 50");
+export function spotifyCatalogSearchLimit(value: number): number {
+  if (!Number.isInteger(value) || value < 1 || value > SPOTIFY_SEARCH_MAX_LIMIT) {
+    throw new Error(
+      `Spotify search limit must be an integer between 1 and ${SPOTIFY_SEARCH_MAX_LIMIT}`,
+    );
   }
   return value;
 }
