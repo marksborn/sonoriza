@@ -29,6 +29,7 @@
     "discovery:external": "tsx scripts/report-music-discovery-external.ts",
     "discovery:external:diversity": "tsx scripts/report-music-discovery-external-diversity.ts",
     "discovery:external:arbitration": "tsx scripts/report-music-discovery-external-arbitration.ts",
+    "discovery:external:spotify-resolution": "tsx scripts/report-music-discovery-spotify-resolution.ts",
     "discovery:planner-preview": "tsx scripts/report-music-discovery-planner-preview-gate3c.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
