@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 
 import {
   inferInferredSkips,
+  type InferredSkip,
   type ObservedPlay,
   type PlannedGenerationItem,
 } from "./infer-skips";
@@ -31,6 +32,15 @@ type AnalyzeOptions = {
   store?: MusicPreferenceSignalStore;
 };
 
+type CurrentInference = {
+  targetPlaylistId: string;
+  analyzedGenerationRunId: string | null;
+  inferredSkips: InferredSkip[];
+  deferredEdgeTrackId: string | null;
+  musicSubsequenceLength: number;
+  reason: string | null;
+};
+
 /**
  * MUSIC-05 step 3-4: for each target, analyze the most recent applied real
  * generation and persist any inferred skips. Idempotent — re-analyzing the same
@@ -44,7 +54,115 @@ export async function analyzeAndRecordInferredSkips(
   options: AnalyzeOptions = {},
 ): Promise<InferredSkipAnalysisResult> {
   const store = options.store ?? prismaMusicPreferenceSignalStore;
+  const current = await analyzeCurrentInferredSkips(userId, targetPlaylistIds);
   const targets: InferredSkipAnalysisTargetResult[] = [];
+
+  for (const target of current) {
+    if (!target.analyzedGenerationRunId) {
+      targets.push(emptyTargetResult(target.targetPlaylistId, target.reason ?? "NO_APPLIED_GENERATION"));
+      continue;
+    }
+
+    const recorded = await store.recordInferredSkips({
+      userId,
+      sourceGenerationRunId: target.analyzedGenerationRunId,
+      targetPlaylistId: target.targetPlaylistId,
+      skips: target.inferredSkips,
+    });
+
+    targets.push({
+      targetPlaylistId: target.targetPlaylistId,
+      analyzedGenerationRunId: target.analyzedGenerationRunId,
+      inferredSkipCount: target.inferredSkips.length,
+      createdSignalCount: recorded.created,
+      duplicateSignalCount: recorded.duplicates,
+      deferredEdgeTrackId: target.deferredEdgeTrackId,
+      musicSubsequenceLength: target.musicSubsequenceLength,
+      reason: target.reason,
+    });
+  }
+
+  return { targets };
+}
+
+/**
+ * MUSIC-05 step 5: pending, not-yet-consumed skip signals keyed by target.
+ *
+ * With the default Prisma store, this also performs the same current skip
+ * inference read-only and exposes any not-yet-recorded signal as a synthetic
+ * preview row. This keeps ORDER-01 simulation and real generation on the same
+ * planning state without writing preference signals during simulation.
+ *
+ * Existing signals are checked regardless of consumed state, so a signal that
+ * has already been consumed is never resurrected by the read-only preview.
+ * Custom stores keep the historical list-only behavior unless
+ * `includeCurrentInference` is explicitly requested.
+ */
+export async function loadPendingInferredSkips(
+  userId: string,
+  targetPlaylistIds: readonly string[],
+  options: {
+    store?: MusicPreferenceSignalStore;
+    includeCurrentInference?: boolean;
+  } = {},
+): Promise<Map<string, PendingSkipSignal[]>> {
+  const store = options.store ?? prismaMusicPreferenceSignalStore;
+  const includeCurrentInference =
+    options.includeCurrentInference ?? options.store === undefined;
+  const byTarget = new Map<string, PendingSkipSignal[]>();
+
+  for (const targetPlaylistId of targetPlaylistIds) {
+    byTarget.set(
+      targetPlaylistId,
+      await store.listPendingSkips(userId, targetPlaylistId),
+    );
+  }
+
+  if (!includeCurrentInference) return byTarget;
+
+  const current = await analyzeCurrentInferredSkips(userId, targetPlaylistIds);
+
+  for (const target of current) {
+    const generationRunId = target.analyzedGenerationRunId;
+    if (!generationRunId || target.inferredSkips.length === 0) continue;
+
+    const positions = [...new Set(target.inferredSkips.map((skip) => skip.position))];
+    const existingSignals = await prisma.musicPreferenceSignal.findMany({
+      where: {
+        userId,
+        type: "INFERRED_SKIP",
+        sourceGenerationRunId: generationRunId,
+        targetPlaylistId: target.targetPlaylistId,
+        position: { in: positions },
+      },
+      select: { position: true },
+    });
+    const existingPositions = new Set(existingSignals.map((signal) => signal.position));
+    const pending = byTarget.get(target.targetPlaylistId) ?? [];
+
+    for (const skip of target.inferredSkips) {
+      if (existingPositions.has(skip.position)) continue;
+      pending.push({
+        id: previewSignalId(generationRunId, target.targetPlaylistId, skip.position),
+        spotifyTrackId: skip.spotifyTrackId,
+        spotifyUri: skip.spotifyUri,
+        position: skip.position,
+        sourceGenerationRunId: generationRunId,
+        targetPlaylistId: target.targetPlaylistId,
+      });
+    }
+
+    byTarget.set(target.targetPlaylistId, pending);
+  }
+
+  return byTarget;
+}
+
+async function analyzeCurrentInferredSkips(
+  userId: string,
+  targetPlaylistIds: readonly string[],
+): Promise<CurrentInference[]> {
+  const targets: CurrentInference[] = [];
 
   // The most recent observed play is inconclusive for this collection.
   const latestEvent = await prisma.trackListeningEvent.findFirst({
@@ -85,7 +203,14 @@ export async function analyzeAndRecordInferredSkips(
     });
 
     if (!generation) {
-      targets.push(emptyTargetResult(targetPlaylistId, "NO_APPLIED_GENERATION"));
+      targets.push({
+        targetPlaylistId,
+        analyzedGenerationRunId: null,
+        inferredSkips: [],
+        deferredEdgeTrackId: null,
+        musicSubsequenceLength: 0,
+        reason: "NO_APPLIED_GENERATION",
+      });
       continue;
     }
 
@@ -119,43 +244,25 @@ export async function analyzeAndRecordInferredSkips(
       generationAppliedAt: appliedAt,
     });
 
-    const recorded = await store.recordInferredSkips({
-      userId,
-      sourceGenerationRunId: generation.id,
-      targetPlaylistId,
-      skips: inference.inferredSkips,
-    });
-
     targets.push({
       targetPlaylistId,
       analyzedGenerationRunId: generation.id,
-      inferredSkipCount: inference.inferredSkips.length,
-      createdSignalCount: recorded.created,
-      duplicateSignalCount: recorded.duplicates,
+      inferredSkips: inference.inferredSkips,
       deferredEdgeTrackId: inference.deferredEdgeTrackId,
       musicSubsequenceLength: inference.musicSubsequenceLength,
       reason: null,
     });
   }
 
-  return { targets };
+  return targets;
 }
 
-/** MUSIC-05 step 5: pending, not-yet-consumed skip signals keyed by target. */
-export async function loadPendingInferredSkips(
-  userId: string,
-  targetPlaylistIds: readonly string[],
-  options: { store?: MusicPreferenceSignalStore } = {},
-): Promise<Map<string, PendingSkipSignal[]>> {
-  const store = options.store ?? prismaMusicPreferenceSignalStore;
-  const byTarget = new Map<string, PendingSkipSignal[]>();
-  for (const targetPlaylistId of targetPlaylistIds) {
-    byTarget.set(
-      targetPlaylistId,
-      await store.listPendingSkips(userId, targetPlaylistId),
-    );
-  }
-  return byTarget;
+function previewSignalId(
+  sourceGenerationRunId: string,
+  targetPlaylistId: string,
+  position: number,
+): string {
+  return `preview:${sourceGenerationRunId}:${targetPlaylistId}:${position}`;
 }
 
 function emptyTargetResult(
