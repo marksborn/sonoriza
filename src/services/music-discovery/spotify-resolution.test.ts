@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type {
-  SpotifyCatalogArtistSummary,
-  SpotifyCatalogTrackSummary,
+import {
+  spotifyCatalogSearchLimit,
+  type SpotifyCatalogArtistSummary,
+  type SpotifyCatalogTrackSummary,
 } from "@/services/spotify/catalog-search";
 import {
   resolveExternalDiscoveryCandidate,
@@ -24,6 +25,11 @@ const candidateArtist = {
   artistName: "Stick Figure",
   trackName: null,
 };
+
+test("Gate 5E honors Spotify's current search limit maximum", () => {
+  assert.equal(spotifyCatalogSearchLimit(10), 10);
+  assert.throws(() => spotifyCatalogSearchLimit(11), /between 1 and 10/);
+});
 
 test("Gate 5E resolves an exact track + artist identity", async () => {
   const resolved = await resolveExternalDiscoveryCandidate(
@@ -96,6 +102,36 @@ test("Gate 5E resolves one exact artist and chooses a representative track tied 
   assert.equal(resolved.reason, "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK");
   assert.equal(resolved.spotifyArtist?.id, "a1");
   assert.equal(resolved.spotifyTrack?.id, "right");
+});
+
+test("Gate 5E uses only a controlled leading-The alias fallback", async () => {
+  const searches: string[] = [];
+  const aliasProvider: SpotifyDiscoveryResolutionProvider = {
+    async searchArtists(name) {
+      searches.push(`artist:${name}`);
+      return name === "Dirty Heads" ? [artist("a1", "Dirty Heads")] : [];
+    },
+    async searchTracks(input) {
+      searches.push(`track:${input.artistName}`);
+      return [track("t1", "Vacation", "Dirty Heads", "a1", "US-DH-01")];
+    },
+  };
+
+  const resolved = await resolveExternalDiscoveryCandidate(aliasProvider, {
+    candidateKey: "artist:the-dirty-heads",
+    candidateType: "ARTIST",
+    artistName: "The Dirty Heads",
+    trackName: null,
+  });
+
+  assert.equal(resolved.status, "RESOLVED");
+  assert.equal(resolved.reason, "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK");
+  assert.equal(resolved.spotifyArtist?.name, "Dirty Heads");
+  assert.deepEqual(searches, [
+    "artist:The Dirty Heads",
+    "artist:Dirty Heads",
+    "track:Dirty Heads",
+  ]);
 });
 
 test("Gate 5E marks duplicate exact artist names ambiguous instead of guessing", async () => {
