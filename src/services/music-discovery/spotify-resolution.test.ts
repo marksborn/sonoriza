@@ -203,6 +203,8 @@ function track(
     spotifyUrl: `https://open.spotify.com/track/${id}`,
     isrc,
     artists: [artist(artistId, artistName)],
+    albumId: `album:${id}`,
     albumName: "Album",
+    durationMs: 180_000,
   };
 }
