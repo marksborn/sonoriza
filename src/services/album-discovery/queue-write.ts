@@ -1,15 +1,17 @@
 import type { AlbumQueuePreview } from "./queue-preview";
 
 export const ALBUM_QUEUE_WRITE_POLICY = {
-  version: "album-gate4-queue-writer-controlled-v1",
+  version: "album-gate4-queue-writer-controlled-v2",
   execution:
-    "EXPLICIT_ALBUM_ID_PLUS_EXPECTED_PLAYLIST_SNAPSHOT_PLUS_EXACT_CONFIRMATION_TOKEN",
+    "EXPLICIT_ALBUM_ID_PLUS_EXPECTED_PLAYLIST_SNAPSHOT_PLUS_EXPECTED_CONTENT_FINGERPRINT_PLUS_EXACT_CONFIRMATION_TOKEN",
   mutation: "APPEND_ONLY_COMPLETE_EDITION",
   preWrite:
-    "REBUILD_GATE3_PREVIEW_AND_REQUIRE_READY_TO_APPEND_WITH_UNCHANGED_EXPECTED_SNAPSHOT",
+    "REBUILD_GATE3_PREVIEW_AND_REQUIRE_READY_TO_APPEND_WITH_UNCHANGED_EXPECTED_SNAPSHOT_AND_CONTENT_FINGERPRINT",
   postWrite:
     "REQUIRE_EXACT_PREVIOUS_PLAYLIST_PREFIX_PLUS_COMPLETE_EDITION_SUFFIX",
   duplicatePolicy: "NEVER_WRITE_IF_GATE3_REPORTS_ALREADY_QUEUED",
+  concurrencyGuard:
+    "CONTENT_FINGERPRINT_IS_AUTHORITATIVE_FOR_ORDERED_PLAYLIST_CONTENT; SNAPSHOT_IS_COMPLEMENTARY_PROVIDER_EVIDENCE",
   rollback: "NONE_AUTOMATIC; POST_WRITE_MISMATCH_IS_FATAL_AND_AUDITABLE",
 } as const;
 
@@ -24,6 +26,7 @@ export type AlbumQueueWriteAuthorization =
       reason:
         | "PREVIEW_NOT_READY"
         | "EXPECTED_SNAPSHOT_MISMATCH"
+        | "EXPECTED_CONTENT_FINGERPRINT_MISMATCH"
         | "CONFIRMATION_REQUIRED"
         | "CONFIRMATION_MISMATCH";
       expectedConfirmation: string;
@@ -47,6 +50,7 @@ export function confirmationTokenForAlbum(spotifyAlbumId: string): string {
 export function authorizeAlbumQueueWrite(input: {
   preview: AlbumQueuePreview;
   expectedSnapshotId: string;
+  expectedContentFingerprint: string;
   confirmation: string | null;
 }): AlbumQueueWriteAuthorization {
   const expectedConfirmation = confirmationTokenForAlbum(input.preview.spotifyAlbumId);
@@ -58,6 +62,13 @@ export function authorizeAlbumQueueWrite(input: {
     return {
       status: "ABSTAIN",
       reason: "EXPECTED_SNAPSHOT_MISMATCH",
+      expectedConfirmation,
+    };
+  }
+  if (input.preview.playlistContentFingerprint !== input.expectedContentFingerprint) {
+    return {
+      status: "ABSTAIN",
+      reason: "EXPECTED_CONTENT_FINGERPRINT_MISMATCH",
       expectedConfirmation,
     };
   }
