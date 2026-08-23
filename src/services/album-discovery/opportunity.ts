@@ -22,6 +22,14 @@ export const ALBUM_OPPORTUNITY_POLICY = {
     "Gate 2 ranks exact Spotify album editions read-only. DISCOVERY-01 remains authority for artist affinity; ALBUM-01 adds album coverage, recent album activity and album-specific negative evidence.",
 } as const;
 
+export type AlbumOpportunityMemoryState =
+  | "DISCOVERED"
+  | "RECOMMENDED"
+  | "QUEUED"
+  | "LISTENING"
+  | "COMPLETED"
+  | "DISMISSED";
+
 export type AlbumOpportunityReasonCode =
   | "HIGH_ARTIST_DEEPENING"
   | "NO_ALBUM_HISTORY"
@@ -33,7 +41,8 @@ export type AlbumOpportunityReasonCode =
   | "ELEVATED_ALBUM_SKIP_RATE"
   | "STRONG_ALBUM_SKIP_RATE"
   | "LABEL_ONLY_COVERAGE_EVIDENCE"
-  | "MIXED_COVERAGE_EVIDENCE";
+  | "MIXED_COVERAGE_EVIDENCE"
+  | "ALBUM_ALREADY_QUEUED";
 
 export type AlbumOpportunityReason = {
   code: AlbumOpportunityReasonCode;
@@ -56,6 +65,7 @@ export type AlbumOpportunityCandidate = {
   artistDeepeningScore: number;
   score: number;
   eligible: boolean;
+  memoryState: AlbumOpportunityMemoryState | null;
   coverage: AlbumCoverageFacts;
   components: AlbumOpportunityComponents;
   reasons: AlbumOpportunityReason[];
@@ -93,6 +103,7 @@ export function scoreAlbumOpportunity(input: {
     artistDeepeningScore: round1(input.artistDeepeningScore),
     score: round1(Math.max(0, weighted)),
     eligible: coverage.eligibleTrackCount > 0,
+    memoryState: null,
     coverage,
     components: {
       artistDeepening: round4(artistDeepening),
