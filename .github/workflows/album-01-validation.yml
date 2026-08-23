@@ -7,6 +7,7 @@ on:
     paths:
       - "src/services/album-discovery/**"
       - "src/services/spotify/album-catalog.ts"
+      - "src/app/dashboard/descobrir/**"
       - "scripts/report-album-discovery-*.ts"
       - "package.json"
       - ".github/workflows/album-01-validation.yml"
@@ -14,6 +15,7 @@ on:
     paths:
       - "src/services/album-discovery/**"
       - "src/services/spotify/album-catalog.ts"
+      - "src/app/dashboard/descobrir/**"
       - "scripts/report-album-discovery-*.ts"
       - "package.json"
       - ".github/workflows/album-01-validation.yml"
