@@ -19,13 +19,20 @@ import {
   type GeneratePlaylistsOptions,
   type GeneratePlaylistsResult,
 } from "./generate-playlists-incremental";
+import {
+  createTargetDiscoveryRuntimeState,
+  runWithTargetDiscoveryRuntimeState,
+  targetDiscoveryRuntimeSummary,
+  type TargetDiscoveryRuntimeState,
+} from "./target-discovery-runtime";
 
 export type { GeneratePlaylistsOptions, GeneratePlaylistsResult };
 
 /**
- * MUSIC-01 wrapper around the existing generator. Gate 4A also establishes a
- * fail-closed DISCOVERY runtime context, disabled by default and enabled only
- * when both the master flag and the per-user e-mail allowlist match.
+ * MUSIC-01 wrapper around the existing generator. Gate 4A establishes the
+ * fail-closed DISCOVERY runtime context. DISCOVER-DEST-01 Gate 5 adds a second,
+ * independently gated runtime context so per-target policy can be deployed
+ * without changing production behavior until its rollout flag is authorized.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -50,6 +57,39 @@ export async function generatePlaylists(
     asOf,
   });
 
+  const targetScope = opts.targetPlaylistIds
+    ? [...new Set(opts.targetPlaylistIds.filter(Boolean))]
+    : null;
+  const discoveryTargets = await prisma.targetPlaylist.findMany({
+    where: {
+      userId: opts.userId,
+      enabled: true,
+      ...(targetScope ? { id: { in: targetScope } } : {}),
+    },
+    orderBy: { priority: "asc" },
+    select: {
+      id: true,
+      name: true,
+      discoveryEnabled: true,
+      discoveryFamiliarEnabled: true,
+      discoveryRediscoveryEnabled: true,
+      discoveryNoveltyEnabled: true,
+      discoveryReleasesEnabled: true,
+      discoveryIntensity: true,
+    },
+  });
+  const targetDiscoveryState = createTargetDiscoveryRuntimeState({
+    userId: opts.userId,
+    userEmail: user?.email ?? null,
+    simulate,
+    baseDiscoveryEnabled: discoveryState.enabled,
+    targets: discoveryTargets.map((target) => ({
+      targetPlaylistId: target.id,
+      targetName: target.name,
+      persistedPolicy: target,
+    })),
+  });
+
   const state: MusicRepeatRunState = {
     userId: opts.userId,
     simulate,
@@ -65,7 +105,9 @@ export async function generatePlaylists(
 
   const result = await runWithMusicRepeatState(state, () =>
     runWithDiscoveryRuntimeState(discoveryState, () =>
-      generatePlaylistsIncremental(opts),
+      runWithTargetDiscoveryRuntimeState(targetDiscoveryState, () =>
+        generatePlaylistsIncremental(opts),
+      ),
     ),
   );
 
@@ -73,7 +115,12 @@ export async function generatePlaylists(
   // auxiliary observability cannot be appended afterwards, never turn a
   // successfully completed real write into an API-level failure/retry hazard.
   try {
-    await appendRuntimeSummary(result.runId, state, discoveryState);
+    await appendRuntimeSummary(
+      result.runId,
+      state,
+      discoveryState,
+      targetDiscoveryState,
+    );
   } catch (error) {
     try {
       await prisma.generationLog.create({
@@ -97,6 +144,7 @@ async function appendRuntimeSummary(
   runId: string,
   state: MusicRepeatRunState,
   discoveryState: DiscoveryRuntimeState,
+  targetDiscoveryState: TargetDiscoveryRuntimeState,
 ): Promise<void> {
   const run = await prisma.generationRun.findUnique({
     where: { id: runId },
@@ -118,6 +166,7 @@ async function appendRuntimeSummary(
         musicMissingTrackIdentitySkippedCount:
           state.missingTrackIdentitySkippedCount,
         discoveryRuntime: discoveryRuntimeSummary(discoveryState),
+        targetDiscoveryRuntime: targetDiscoveryRuntimeSummary(targetDiscoveryState),
       } as Prisma.InputJsonValue,
     },
   });
