@@ -25,7 +25,7 @@ async function main() {
 
   if (playlistResolution.status !== "RESOLVED" || !playlistResolution.playlist) {
     print({
-      gate: "ALBUM-01 Gate 4",
+      gate: "ALBUM-01 Gate 4B",
       policy: ALBUM_QUEUE_WRITE_POLICY,
       user: user.email ?? user.id,
       playlistResolution,
@@ -48,7 +48,7 @@ async function main() {
   }
   if (album.totalTracks !== tracks.length) {
     throw new Error(
-      `Spotify album ${album.id} reported ${album.totalTracks} tracks but Gate 4 read ${tracks.length}; write aborted`,
+      `Spotify album ${album.id} reported ${album.totalTracks} tracks but Gate 4B read ${tracks.length}; write aborted`,
     );
   }
 
@@ -66,12 +66,13 @@ async function main() {
   const authorization = authorizeAlbumQueueWrite({
     preview,
     expectedSnapshotId: args.expectedSnapshotId,
+    expectedContentFingerprint: args.expectedContentFingerprint,
     confirmation: args.confirmation,
   });
 
   if (authorization.status !== "AUTHORIZED") {
     print({
-      gate: "ALBUM-01 Gate 4",
+      gate: "ALBUM-01 Gate 4B",
       policy: ALBUM_QUEUE_WRITE_POLICY,
       user: user.email ?? user.id,
       playlist: playlistResolution.playlist,
@@ -79,6 +80,8 @@ async function main() {
       spotifyAlbumId: album.id,
       liveSnapshot: playlistState.snapshotId,
       expectedSnapshot: args.expectedSnapshotId,
+      liveContentFingerprint: preview.playlistContentFingerprint,
+      expectedContentFingerprint: args.expectedContentFingerprint,
       previewStatus: preview.status,
       authorization,
       result: "NO_WRITE",
@@ -97,13 +100,14 @@ async function main() {
   });
 
   const payload = {
-    gate: "ALBUM-01 Gate 4",
+    gate: "ALBUM-01 Gate 4B",
     policy: ALBUM_QUEUE_WRITE_POLICY,
     user: user.email ?? user.id,
     playlist: playlistResolution.playlist,
     album: `${album.artistNames.join(", ")} — ${album.name}`,
     spotifyAlbumId: album.id,
     snapshotBefore: playlistState.snapshotId,
+    contentFingerprintBefore: preview.playlistContentFingerprint,
     writerSnapshot,
     snapshotAfter: after.snapshotId,
     appendedTrackCount: preview.appendUris.length,
@@ -118,7 +122,7 @@ async function main() {
 
   print(payload);
   if (!verification.ok) {
-    throw new Error(`Gate 4 post-write verification failed: ${verification.reason}`);
+    throw new Error(`Gate 4B post-write verification failed: ${verification.reason}`);
   }
 }
 
@@ -127,6 +131,7 @@ type Args = {
   albumId: string;
   playlistName: string;
   expectedSnapshotId: string;
+  expectedContentFingerprint: string;
   confirmation: string | null;
 };
 
@@ -135,6 +140,7 @@ function parseArgs(argv: string[]): Args {
   let albumId = "";
   let playlistName = "Adicionar";
   let expectedSnapshotId = "";
+  let expectedContentFingerprint = "";
   let confirmation: string | null = null;
 
   for (const arg of argv) {
@@ -142,20 +148,29 @@ function parseArgs(argv: string[]): Args {
     else if (arg.startsWith("--album-id=")) albumId = arg.slice("--album-id=".length).trim();
     else if (arg.startsWith("--playlist=")) playlistName = arg.slice("--playlist=".length).trim();
     else if (arg.startsWith("--expected-snapshot=")) expectedSnapshotId = arg.slice("--expected-snapshot=".length).trim();
-    else if (arg.startsWith("--confirm=")) confirmation = arg.slice("--confirm=".length).trim();
+    else if (arg.startsWith("--expected-content-fingerprint=")) {
+      expectedContentFingerprint = arg.slice("--expected-content-fingerprint=".length).trim();
+    } else if (arg.startsWith("--confirm=")) confirmation = arg.slice("--confirm=".length).trim();
     else throw new Error(`Unknown argument: ${arg}`);
   }
 
-  if (!email || !albumId || !playlistName || !expectedSnapshotId) {
+  if (!email || !albumId || !playlistName || !expectedSnapshotId || !expectedContentFingerprint) {
     throw new Error(
-      "Usage: npm run album:queue-write -- --email=<user> --album-id=<spotifyAlbumId> --expected-snapshot=<snapshot> [--playlist=Adicionar] [--confirm=APPEND:<spotifyAlbumId>]",
+      "Usage: npm run album:queue-write -- --email=<user> --album-id=<spotifyAlbumId> --expected-snapshot=<snapshot> --expected-content-fingerprint=<sha256:...> [--playlist=Adicionar] [--confirm=APPEND:<spotifyAlbumId>]",
     );
   }
-  return { email, albumId, playlistName, expectedSnapshotId, confirmation };
+  return {
+    email,
+    albumId,
+    playlistName,
+    expectedSnapshotId,
+    expectedContentFingerprint,
+    confirmation,
+  };
 }
 
 function print(payload: Record<string, unknown>) {
-  console.log("========== ALBUM-01 — GATE 4 CONTROLLED QUEUE WRITER ==========");
+  console.log("========== ALBUM-01 — GATE 4B CONTROLLED QUEUE WRITER ==========");
   console.log(JSON.stringify(payload, null, 2));
 }
 
