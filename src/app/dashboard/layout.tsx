@@ -29,13 +29,22 @@ export default async function DashboardLayout({
         </div>
       ) : null}
       {children}
-      <Link
-        href="/dashboard/configuracao"
-        className="fixed bottom-5 right-5 z-50 inline-flex items-center gap-2 rounded-2xl border border-line-dark/70 bg-surface-elevated/95 px-4 py-3 text-sm font-black text-ink-inverse shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-brand-400/55 hover:bg-surface-subtle sm:bottom-7 sm:right-7"
-      >
-        <UiIcon name="settings" size={19} />
-        Configurar
-      </Link>
+      <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-2 sm:bottom-7 sm:right-7">
+        <Link
+          href="/dashboard/descobrir"
+          className="inline-flex items-center gap-2 rounded-2xl border border-brand-400/40 bg-brand/95 px-4 py-3 text-sm font-black text-white shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-brand-400"
+        >
+          <UiIcon name="music" size={19} />
+          Descobrir
+        </Link>
+        <Link
+          href="/dashboard/configuracao"
+          className="inline-flex items-center gap-2 rounded-2xl border border-line-dark/70 bg-surface-elevated/95 px-4 py-3 text-sm font-black text-ink-inverse shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-brand-400/55 hover:bg-surface-subtle"
+        >
+          <UiIcon name="settings" size={19} />
+          Configurar
+        </Link>
+      </div>
     </>
   );
 }
