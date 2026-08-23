@@ -10,6 +10,7 @@ export type SpotifyDiscoveryResolutionCandidate = {
   candidateType: "ARTIST" | "TRACK";
   artistName: string;
   trackName: string | null;
+  preferredSpotifyArtistId?: string | null;
 };
 
 export type SpotifyDiscoveryResolutionProvider = {
@@ -29,8 +30,10 @@ export type SpotifyDiscoveryResolution = {
     | "EXACT_TRACK_ARTIST_SAME_ISRC_VARIANTS"
     | "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK"
     | "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK"
+    | "PREFERRED_SPOTIFY_ARTIST_ID_MATCH"
     | "ARTIST_NOT_FOUND"
     | "ARTIST_AMBIGUOUS"
+    | "ARTIST_ID_CONFLICT"
     | "TRACK_NOT_FOUND"
     | "TRACK_AMBIGUOUS"
     | "REPRESENTATIVE_TRACK_NOT_FOUND";
@@ -147,7 +150,31 @@ async function resolveArtistCandidate(
   }
 
   if (exactArtists.length === 0) return empty(candidate, "NOT_FOUND", "ARTIST_NOT_FOUND");
+
+  const preferredSpotifyArtistId = candidate.preferredSpotifyArtistId?.trim() || null;
   if (exactArtists.length > 1) {
+    if (preferredSpotifyArtistId) {
+      const preferred = exactArtists.find((row) => row.id === preferredSpotifyArtistId);
+      if (preferred) {
+        return resolvedArtistWithRepresentativeTrack(
+          provider,
+          candidate,
+          preferred,
+          "PREFERRED_SPOTIFY_ARTIST_ID_MATCH",
+          exactArtists.filter((row) => row.id !== preferred.id).slice(0, 9),
+        );
+      }
+
+      return {
+        candidateKey: candidate.candidateKey,
+        status: "AMBIGUOUS",
+        reason: "ARTIST_ID_CONFLICT",
+        spotifyArtist: null,
+        spotifyTrack: null,
+        alternatives: exactArtists.slice(0, 10),
+      };
+    }
+
     return {
       candidateKey: candidate.candidateKey,
       status: "AMBIGUOUS",
@@ -159,6 +186,38 @@ async function resolveArtistCandidate(
   }
 
   const artist = exactArtists[0]!;
+  if (preferredSpotifyArtistId && artist.id !== preferredSpotifyArtistId) {
+    return {
+      candidateKey: candidate.candidateKey,
+      status: "AMBIGUOUS",
+      reason: "ARTIST_ID_CONFLICT",
+      spotifyArtist: null,
+      spotifyTrack: null,
+      alternatives: [artist],
+    };
+  }
+
+  return resolvedArtistWithRepresentativeTrack(
+    provider,
+    candidate,
+    artist,
+    usedControlledAlias
+      ? "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK"
+      : "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK",
+    [],
+  );
+}
+
+async function resolvedArtistWithRepresentativeTrack(
+  provider: SpotifyDiscoveryResolutionProvider,
+  candidate: SpotifyDiscoveryResolutionCandidate,
+  artist: SpotifyCatalogArtistSummary,
+  reason:
+    | "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK"
+    | "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK"
+    | "PREFERRED_SPOTIFY_ARTIST_ID_MATCH",
+  alternatives: SpotifyCatalogArtistSummary[],
+): Promise<SpotifyDiscoveryResolution> {
   const tracks = await provider.searchTracks({ artistName: artist.name, limit: 10 });
   const representative = tracks.find((track) =>
     track.artists.some((row) => row.id === artist.id),
@@ -170,19 +229,17 @@ async function resolveArtistCandidate(
       reason: "REPRESENTATIVE_TRACK_NOT_FOUND",
       spotifyArtist: artist,
       spotifyTrack: null,
-      alternatives: [],
+      alternatives,
     };
   }
 
   return {
     candidateKey: candidate.candidateKey,
     status: "RESOLVED",
-    reason: usedControlledAlias
-      ? "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK"
-      : "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK",
+    reason,
     spotifyArtist: artist,
     spotifyTrack: representative,
-    alternatives: [],
+    alternatives,
   };
 }
 
