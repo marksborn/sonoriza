@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AlbumOpportunityCandidate } from "./opportunity";
-import { suppressQueuedAlbumOpportunities } from "./queue-memory";
+import { isPersistentlyQueued, suppressQueuedAlbumOpportunities } from "./queue-memory";
 
 const baseCandidate: AlbumOpportunityCandidate = {
   spotifyAlbumId: "album1",
@@ -42,6 +42,12 @@ const baseCandidate: AlbumOpportunityCandidate = {
   },
   reasons: [],
 };
+
+test("QUEUED memory is authoritative for direct writer guard", () => {
+  assert.equal(isPersistentlyQueued({ state: "QUEUED" }), true);
+  assert.equal(isPersistentlyQueued({ state: "COMPLETED" }), false);
+  assert.equal(isPersistentlyQueued(null), false);
+});
 
 test("QUEUED exact edition is suppressed from ranking", () => {
   const result = suppressQueuedAlbumOpportunities([baseCandidate], [
