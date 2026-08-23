@@ -37,6 +37,7 @@
     "discovery:conversion": "tsx scripts/report-music-discovery-conversion.ts",
     "album:profile": "tsx scripts/report-album-discovery-profile.ts",
     "album:opportunity": "tsx scripts/report-album-discovery-opportunity.ts",
+    "album:queue-preview": "tsx scripts/report-album-queue-preview.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
