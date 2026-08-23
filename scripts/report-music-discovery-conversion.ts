@@ -86,6 +86,8 @@ async function main() {
         "NEVER_PLAYED is only counted after the policy maturity window; fresh discoveries remain pending rather than negative.",
       identity:
         "Exact Spotify track ID first, then ISRC, then artist/title only for id-less listening evidence.",
+      provenance:
+        "Mechanism breakdown is non-exclusive. Legacy Gate 5H summaries without persisted path metadata are reported as UNKNOWN_PROVENANCE rather than guessed.",
     },
   };
 
@@ -110,12 +112,22 @@ async function main() {
   console.log(
     `Long-term affinity:          ${report.longTermAffinityCount}/${report.matureLongTermEligibleCount} (${formatRate(report.longTermAffinityRateAmongMature)})`,
   );
+  console.log(
+    `Provenance coverage:          ${report.provenanceCoverageCount}/${report.uniqueDiscoveryCount} (${formatRate(report.provenanceCoverageRate)})`,
+  );
   console.log(`Policy:                       ${report.policy.version}`);
   console.log("Mode:                         READ_ONLY — no Spotify/database writes");
 
   if (report.candidates.length === 0) {
     console.log("\nNo applied Gate 5H discovery exposure found in this window.");
     return;
+  }
+
+  console.log("\nConversion by discovery mechanism (non-exclusive):");
+  for (const row of report.byPathLabel) {
+    console.log(
+      `  ${row.key}: candidates=${row.candidateCount}, played=${row.playedCount} (${formatRate(row.playedRate)}), replayed=${row.replayedCount} (${formatRate(row.replayedRate)}), artistExplored=${row.artistExploredCount} (${formatRate(row.artistExploredRate)}), longTerm=${row.longTermAffinityCount}/${row.matureLongTermEligibleCount}`,
+    );
   }
 
   console.log("\nDiscoveries:");
@@ -131,9 +143,9 @@ async function main() {
     console.log(
       `  ${String(index + 1).padStart(2)}. ${subject} — ${states.join(", ")}; exposures=${row.exposureCount}; targets=${row.targetNames.join("|") || "?"}; matches=${row.matchSources.join("|") || "none"}; first=${row.firstExposedAt.toISOString()}`,
     );
-    if (row.pathLabels.length > 0) {
-      console.log(`      provenance=${row.pathLabels.join(" | ")}`);
-    }
+    console.log(
+      `      provenance=${row.pathLabels.join(" | ") || "UNKNOWN_PROVENANCE"}; historyClass=${row.historyClasses.join(" | ") || "UNKNOWN_HISTORY_CLASS"}`,
+    );
   }
 }
 
