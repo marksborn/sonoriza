@@ -43,8 +43,14 @@ export async function GET() {
 /**
  * Manual / simulation trigger for the signed-in user.
  *
- *   POST /api/generate            → applies the playlists, subject to CONFIG-04
- *   POST /api/generate  { "simulate": true }  → plans without touching Spotify
+ *   POST /api/generate
+ *     → applies every enabled destination, subject to CONFIG-04
+ *
+ *   POST /api/generate { "simulate": true }
+ *     → plans every enabled destination without touching Spotify
+ *
+ *   POST /api/generate { "targetPlaylistIds": ["..."] }
+ *     → applies only those enabled destinations owned by the signed-in user
  */
 export async function POST(request: Request) {
   const session = await auth();
@@ -70,11 +76,66 @@ export async function POST(request: Request) {
   }
 
   let simulate = false;
+  let targetPlaylistIds: string[] | undefined;
   try {
-    const body = (await request.json()) as { simulate?: boolean };
+    const body = (await request.json()) as {
+      simulate?: unknown;
+      targetPlaylistIds?: unknown;
+    };
     simulate = Boolean(body?.simulate);
+
+    if (body?.targetPlaylistIds !== undefined) {
+      if (
+        !Array.isArray(body.targetPlaylistIds) ||
+        body.targetPlaylistIds.some(
+          (value) => typeof value !== "string" || !value.trim(),
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error: "Informe uma lista válida de destinos para a geração individual.",
+            code: "INVALID_TARGET_SCOPE",
+          },
+          { status: 400 },
+        );
+      }
+
+      targetPlaylistIds = [
+        ...new Set(body.targetPlaylistIds.map((value) => value.trim())),
+      ];
+      if (targetPlaylistIds.length === 0) {
+        return NextResponse.json(
+          {
+            error: "Selecione pelo menos um destino para a geração individual.",
+            code: "EMPTY_TARGET_SCOPE",
+          },
+          { status: 400 },
+        );
+      }
+    }
   } catch {
-    // No / invalid body → default to a real run.
+    // No / invalid body → preserve the existing default of a real general run.
+  }
+
+  if (targetPlaylistIds) {
+    const ownedTargets = await prisma.targetPlaylist.findMany({
+      where: {
+        userId: session.user.id,
+        enabled: true,
+        id: { in: targetPlaylistIds },
+      },
+      select: { id: true },
+    });
+
+    if (ownedTargets.length !== targetPlaylistIds.length) {
+      return NextResponse.json(
+        {
+          error: "Um ou mais destinos não existem, estão desabilitados ou não pertencem à sua conta.",
+          code: "TARGET_NOT_AVAILABLE",
+        },
+        { status: 404 },
+      );
+    }
   }
 
   const assessment = await assessConfiguration(session.user.id);
@@ -116,6 +177,7 @@ export async function POST(request: Request) {
     trigger: simulate ? "SIMULATION" : "MANUAL",
     simulate,
     musicOrderSimulationEvidence,
+    targetPlaylistIds,
   });
 
   const run = await prisma.generationRun.findFirst({
