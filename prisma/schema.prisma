@@ -45,6 +45,7 @@ model User {
   pushSubscriptions                PushSubscription[]
   pushDeliveries                   PushDelivery[]
   musicPreferenceSignals           MusicPreferenceSignal[]
+  albumRecommendationMemories      AlbumRecommendationMemory[]
 }
 
 model Account {
@@ -428,6 +429,42 @@ model SpotifyExtendedHistoryImportRun {
 
   @@index([userId, startedAt])
   @@index([userId, packageSha256, planHash])
+}
+
+// ---------------------------------------------------------------------------
+// ALBUM-01 — persistent album recommendation lifecycle memory.
+// Exact Spotify album editions are keyed by spotifyAlbumId.
+// ---------------------------------------------------------------------------
+
+enum AlbumRecommendationState {
+  DISCOVERED
+  RECOMMENDED
+  QUEUED
+  LISTENING
+  COMPLETED
+  DISMISSED
+}
+
+model AlbumRecommendationMemory {
+  id                       String                   @id @default(cuid())
+  userId                   String
+  spotifyAlbumId           String
+  state                    AlbumRecommendationState
+  artistName               String
+  albumName                String
+  queuedAt                 DateTime?
+  queuedPlaylistId         String?
+  queuedPlaylistName       String?
+  queuedWriterSnapshot     String?
+  queuedContentFingerprint String?
+  source                   String?
+  createdAt                DateTime                 @default(now())
+  updatedAt                DateTime                 @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, spotifyAlbumId])
+  @@index([userId, state, queuedAt])
 }
 
 // ---------------------------------------------------------------------------
