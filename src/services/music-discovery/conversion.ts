@@ -6,6 +6,8 @@ export const DISCOVERY_CONVERSION_POLICY = {
   longTermMinDistinctDays: 2,
   attributionRule:
     "CORRELATION_AFTER_FIRST_EXPOSURE__EXACT_TRACK_THEN_ISRC_THEN_IDLESS_TITLE_ARTIST",
+  breakdownRule:
+    "NON_EXCLUSIVE_BY_RECORDED_PROVENANCE__UNKNOWN_WHEN_LEGACY_SUMMARY_LACKS_METADATA",
 } as const;
 
 export type DiscoveryGenerationRunLike = {
@@ -74,6 +76,23 @@ export type DiscoveryConversionMatchSource =
   | "ISRC"
   | "IDLESS_TITLE_ARTIST";
 
+export type DiscoveryConversionBreakdown = {
+  key: string;
+  candidateCount: number;
+  playedCount: number;
+  replayedCount: number;
+  artistExploredCount: number;
+  matureNeverPlayedEligibleCount: number;
+  neverPlayedCount: number;
+  matureLongTermEligibleCount: number;
+  longTermAffinityCount: number;
+  playedRate: number | null;
+  replayedRate: number | null;
+  artistExploredRate: number | null;
+  neverPlayedRateAmongMature: number | null;
+  longTermAffinityRateAmongMature: number | null;
+};
+
 export type DiscoveryConversionReport = {
   policy: typeof DISCOVERY_CONVERSION_POLICY;
   generatedAt: Date;
@@ -91,6 +110,10 @@ export type DiscoveryConversionReport = {
   artistExploredRate: number | null;
   neverPlayedRateAmongMature: number | null;
   longTermAffinityRateAmongMature: number | null;
+  provenanceCoverageCount: number;
+  provenanceCoverageRate: number | null;
+  byPathLabel: DiscoveryConversionBreakdown[];
+  byHistoryClass: DiscoveryConversionBreakdown[];
   candidates: DiscoveryConversionCandidate[];
 };
 
@@ -163,6 +186,9 @@ export function measureDiscoveryConversion(input: {
   const neverPlayedCount = matureNeverPlayed.filter((row) => row.neverPlayed).length;
   const matureLongTerm = candidates.filter((row) => row.matureForLongTermAffinity);
   const longTermAffinityCount = matureLongTerm.filter((row) => row.longTermAffinity).length;
+  const provenanceCoverageCount = candidates.filter(
+    (row) => row.pathLabels.length > 0,
+  ).length;
 
   return {
     policy: DISCOVERY_CONVERSION_POLICY,
@@ -183,6 +209,18 @@ export function measureDiscoveryConversion(input: {
     longTermAffinityRateAmongMature: rate(
       longTermAffinityCount,
       matureLongTerm.length,
+    ),
+    provenanceCoverageCount,
+    provenanceCoverageRate: rate(provenanceCoverageCount, uniqueDiscoveryCount),
+    byPathLabel: buildBreakdown(
+      candidates,
+      (row) => row.pathLabels,
+      "UNKNOWN_PROVENANCE",
+    ),
+    byHistoryClass: buildBreakdown(
+      candidates,
+      (row) => row.historyClasses,
+      "UNKNOWN_HISTORY_CLASS",
     ),
     candidates,
   };
@@ -310,6 +348,62 @@ function matchListeningEvent(
   }
 
   return null;
+}
+
+function buildBreakdown(
+  candidates: DiscoveryConversionCandidate[],
+  keysFor: (candidate: DiscoveryConversionCandidate) => string[],
+  unknownKey: string,
+): DiscoveryConversionBreakdown[] {
+  const groups = new Map<string, DiscoveryConversionCandidate[]>();
+  for (const candidate of candidates) {
+    const keys = keysFor(candidate);
+    const effectiveKeys = keys.length > 0 ? [...new Set(keys)] : [unknownKey];
+    for (const key of effectiveKeys) {
+      const rows = groups.get(key);
+      if (rows) rows.push(candidate);
+      else groups.set(key, [candidate]);
+    }
+  }
+
+  return [...groups.entries()]
+    .map(([key, rows]) => breakdownRow(key, rows))
+    .sort(
+      (a, b) => b.candidateCount - a.candidateCount || a.key.localeCompare(b.key),
+    );
+}
+
+function breakdownRow(
+  key: string,
+  candidates: DiscoveryConversionCandidate[],
+): DiscoveryConversionBreakdown {
+  const playedCount = candidates.filter((row) => row.played).length;
+  const replayedCount = candidates.filter((row) => row.replayed).length;
+  const artistExploredCount = candidates.filter((row) => row.artistExplored).length;
+  const matureNeverPlayed = candidates.filter((row) => row.matureForNeverPlayed);
+  const neverPlayedCount = matureNeverPlayed.filter((row) => row.neverPlayed).length;
+  const matureLongTerm = candidates.filter((row) => row.matureForLongTermAffinity);
+  const longTermAffinityCount = matureLongTerm.filter((row) => row.longTermAffinity).length;
+
+  return {
+    key,
+    candidateCount: candidates.length,
+    playedCount,
+    replayedCount,
+    artistExploredCount,
+    matureNeverPlayedEligibleCount: matureNeverPlayed.length,
+    neverPlayedCount,
+    matureLongTermEligibleCount: matureLongTerm.length,
+    longTermAffinityCount,
+    playedRate: rate(playedCount, candidates.length),
+    replayedRate: rate(replayedCount, candidates.length),
+    artistExploredRate: rate(artistExploredCount, candidates.length),
+    neverPlayedRateAmongMature: rate(neverPlayedCount, matureNeverPlayed.length),
+    longTermAffinityRateAmongMature: rate(
+      longTermAffinityCount,
+      matureLongTerm.length,
+    ),
+  };
 }
 
 function exposureIdentity(exposure: DiscoveryExposure): string {
