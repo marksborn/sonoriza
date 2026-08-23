@@ -36,6 +36,7 @@
     "discovery:planner-preview:gate5g": "tsx scripts/report-music-discovery-planner-preview-gate5g.ts",
     "discovery:conversion": "tsx scripts/report-music-discovery-conversion.ts",
     "album:profile": "tsx scripts/report-album-discovery-profile.ts",
+    "album:opportunity": "tsx scripts/report-album-discovery-opportunity.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
