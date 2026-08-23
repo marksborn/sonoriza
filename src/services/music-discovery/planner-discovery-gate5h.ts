@@ -73,6 +73,8 @@ export function applyDiscoveryGate5H(input: {
   discoveries: Gate5FResolvedDiscoveryCandidate[];
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   keepFilledTargetIds?: ReadonlySet<string>;
+  /** DISCOVER-DEST-01 may lower, but never needs to raise, the validated cap. */
+  discoveryCeiling?: number;
 }): Gate5HApplyResult {
   const keepFilledTargetIds = input.keepFilledTargetIds ?? new Set<string>();
   const targetById = new Map(
@@ -105,12 +107,15 @@ export function applyDiscoveryGate5H(input: {
     };
   }
 
+  const discoveryCeiling = normalizeDiscoveryCeiling(
+    input.discoveryCeiling ?? DISCOVERY_GATE5H_POLICY.discoveryCeiling,
+  );
   const preview = previewSurgicalDiscoveryRun({
     baseline: { targets: eligibleBaselineTargets },
     targets: eligibleTargets,
     discoveries: input.discoveries,
     blockedMusicTrackIdsByTargetId: input.blockedMusicTrackIdsByTargetId,
-    discoveryCeiling: DISCOVERY_GATE5H_POLICY.discoveryCeiling,
+    discoveryCeiling,
     musicSpacing: DISCOVERY_GATE5H_POLICY.musicSpacing,
     maxDurationDeltaMs: DISCOVERY_GATE5H_POLICY.maxDurationDeltaMs,
   });
@@ -301,6 +306,15 @@ function duration(items: Array<{ durationMs: number }>): number {
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function normalizeDiscoveryCeiling(value: number): number {
+  if (!Number.isFinite(value) || value < 0 || value > DISCOVERY_GATE5H_POLICY.discoveryCeiling) {
+    throw new Error(
+      `DISCOVERY Gate 5H discoveryCeiling must be between 0 and ${DISCOVERY_GATE5H_POLICY.discoveryCeiling}`,
+    );
+  }
+  return value;
 }
 
 function normalizeEmail(value: string | null | undefined): string | null {
