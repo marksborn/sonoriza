@@ -5,6 +5,7 @@ import type { SpotifyAlbumCatalogTrack } from "@/services/spotify/album-catalog"
 import {
   buildAlbumQueuePreview,
   containsContiguousUriSequence,
+  fingerprintPlaylistContent,
   resolveAlbumQueuePlaylist,
 } from "./queue-preview";
 
@@ -29,6 +30,18 @@ test("Gate 3 refuses duplicate playlist names instead of guessing", () => {
   assert.equal(resolved.alternatives.length, 2);
 });
 
+test("content fingerprint preserves order and null playlist positions", () => {
+  const a = fingerprintPlaylistContent(["spotify:track:a", null, "spotify:track:b"]);
+  const same = fingerprintPlaylistContent(["spotify:track:a", null, "spotify:track:b"]);
+  const reordered = fingerprintPlaylistContent(["spotify:track:b", null, "spotify:track:a"]);
+  const withoutNull = fingerprintPlaylistContent(["spotify:track:a", "spotify:track:b"]);
+
+  assert.match(a, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(a, same);
+  assert.notEqual(a, reordered);
+  assert.notEqual(a, withoutNull);
+});
+
 test("contiguous edition detection preserves playlist positions including null items", () => {
   assert.equal(
     containsContiguousUriSequence(["spotify:track:a", "spotify:track:b"], ["spotify:track:a", "spotify:track:b"]),
@@ -44,6 +57,7 @@ test("contiguous edition detection preserves playlist positions including null i
 });
 
 test("Gate 3 appends the complete edition even when individual tracks overlap elsewhere", () => {
+  const playlistItemUris = ["spotify:track:a", "spotify:track:x"];
   const preview = buildAlbumQueuePreview({
     spotifyAlbumId: "album1",
     albumName: "Album",
@@ -51,11 +65,12 @@ test("Gate 3 appends the complete edition even when individual tracks overlap el
     releaseDate: "2026-01-01",
     playlist,
     playlistSnapshotId: "snap1",
-    playlistItemUris: ["spotify:track:a", "spotify:track:x"],
+    playlistItemUris,
     tracks: [track("a", 1), track("b", 2), track("c", 3)],
   });
 
   assert.equal(preview.status, "READY_TO_APPEND");
+  assert.equal(preview.playlistContentFingerprint, fingerprintPlaylistContent(playlistItemUris));
   assert.equal(preview.existingTrackOverlapCount, 1);
   assert.deepEqual(preview.appendUris, [
     "spotify:track:a",
