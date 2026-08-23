@@ -1,5 +1,13 @@
 import { prisma } from "@/lib/prisma";
-import { buildAlbumQueuePreview, resolveAlbumQueuePlaylist } from "@/services/album-discovery/queue-preview";
+import {
+  isPersistentlyQueued,
+  recordQueuedAlbumMemory,
+} from "@/services/album-discovery/queue-memory";
+import {
+  buildAlbumQueuePreview,
+  fingerprintPlaylistContent,
+  resolveAlbumQueuePlaylist,
+} from "@/services/album-discovery/queue-preview";
 import {
   ALBUM_QUEUE_WRITE_POLICY,
   authorizeAlbumQueueWrite,
@@ -18,6 +26,31 @@ async function main() {
   });
   if (!user) throw new Error(`Sonoriza user not found for ${args.email}`);
 
+  const persistedMemory = await prisma.albumRecommendationMemory.findUnique({
+    where: {
+      userId_spotifyAlbumId: {
+        userId: user.id,
+        spotifyAlbumId: args.albumId,
+      },
+    },
+  });
+  if (isPersistentlyQueued(persistedMemory)) {
+    print({
+      gate: "ALBUM-01 Gate 5",
+      user: user.email ?? user.id,
+      spotifyAlbumId: args.albumId,
+      persistedMemory,
+      authorization: {
+        status: "ABSTAIN",
+        reason: "PERSISTED_QUEUED_MEMORY",
+      },
+      result: "NO_WRITE",
+      spotifyWrites: 0,
+      databaseWrites: 0,
+    });
+    return;
+  }
+
   const queueClient = await SpotifyAlbumQueuePreviewClient.forUser(user.id);
   const albumCatalog = await SpotifyAlbumCatalogClient.forUser(user.id);
   const playlists = await queueClient.listCurrentUserPlaylists();
@@ -25,7 +58,7 @@ async function main() {
 
   if (playlistResolution.status !== "RESOLVED" || !playlistResolution.playlist) {
     print({
-      gate: "ALBUM-01 Gate 4B",
+      gate: "ALBUM-01 Gate 5",
       policy: ALBUM_QUEUE_WRITE_POLICY,
       user: user.email ?? user.id,
       playlistResolution,
@@ -33,6 +66,7 @@ async function main() {
       authorization: null,
       result: "ABSTAIN_PLAYLIST_UNRESOLVED",
       spotifyWrites: 0,
+      databaseWrites: 0,
     });
     return;
   }
@@ -48,7 +82,7 @@ async function main() {
   }
   if (album.totalTracks !== tracks.length) {
     throw new Error(
-      `Spotify album ${album.id} reported ${album.totalTracks} tracks but Gate 4B read ${tracks.length}; write aborted`,
+      `Spotify album ${album.id} reported ${album.totalTracks} tracks but Gate 5 read ${tracks.length}; write aborted`,
     );
   }
 
@@ -72,7 +106,7 @@ async function main() {
 
   if (authorization.status !== "AUTHORIZED") {
     print({
-      gate: "ALBUM-01 Gate 4B",
+      gate: "ALBUM-01 Gate 5",
       policy: ALBUM_QUEUE_WRITE_POLICY,
       user: user.email ?? user.id,
       playlist: playlistResolution.playlist,
@@ -86,6 +120,7 @@ async function main() {
       authorization,
       result: "NO_WRITE",
       spotifyWrites: 0,
+      databaseWrites: 0,
     });
     return;
   }
@@ -98,9 +133,66 @@ async function main() {
     afterItemUris: after.itemUris,
     appendedUris: preview.appendUris,
   });
+  const contentFingerprintAfter = fingerprintPlaylistContent(after.itemUris);
 
-  const payload = {
-    gate: "ALBUM-01 Gate 4B",
+  if (!verification.ok) {
+    print({
+      gate: "ALBUM-01 Gate 5",
+      policy: ALBUM_QUEUE_WRITE_POLICY,
+      user: user.email ?? user.id,
+      playlist: playlistResolution.playlist,
+      album: `${album.artistNames.join(", ")} — ${album.name}`,
+      spotifyAlbumId: album.id,
+      snapshotBefore: playlistState.snapshotId,
+      contentFingerprintBefore: preview.playlistContentFingerprint,
+      writerSnapshot,
+      snapshotAfter: after.snapshotId,
+      contentFingerprintAfter,
+      appendedTrackCount: preview.appendUris.length,
+      itemCountBefore: playlistState.itemUris.length,
+      itemCountAfter: after.itemUris.length,
+      authorization,
+      verification,
+      result: "POST_WRITE_VERIFICATION_FAILED",
+      spotifyWrites: 1,
+      databaseWrites: 0,
+    });
+    throw new Error(`Gate 5 post-write verification failed: ${verification.reason}`);
+  }
+
+  let memory;
+  try {
+    memory = await recordQueuedAlbumMemory({
+      userId: user.id,
+      spotifyAlbumId: album.id,
+      artistName: album.artistNames.join(", "),
+      albumName: album.name,
+      playlistId: preview.playlistId,
+      playlistName: preview.playlistName,
+      writerSnapshot,
+      contentFingerprint: contentFingerprintAfter,
+      source: "CONTROLLED_QUEUE_WRITER",
+    });
+  } catch (error) {
+    print({
+      gate: "ALBUM-01 Gate 5",
+      policy: ALBUM_QUEUE_WRITE_POLICY,
+      user: user.email ?? user.id,
+      playlist: playlistResolution.playlist,
+      album: `${album.artistNames.join(", ")} — ${album.name}`,
+      spotifyAlbumId: album.id,
+      writerSnapshot,
+      verification,
+      result: "MEMORY_PERSISTENCE_FAILED_AFTER_VERIFIED_SPOTIFY_WRITE",
+      memoryError: error instanceof Error ? error.message : String(error),
+      spotifyWrites: 1,
+      databaseWrites: 0,
+    });
+    throw error;
+  }
+
+  print({
+    gate: "ALBUM-01 Gate 5",
     policy: ALBUM_QUEUE_WRITE_POLICY,
     user: user.email ?? user.id,
     playlist: playlistResolution.playlist,
@@ -110,20 +202,17 @@ async function main() {
     contentFingerprintBefore: preview.playlistContentFingerprint,
     writerSnapshot,
     snapshotAfter: after.snapshotId,
+    contentFingerprintAfter,
     appendedTrackCount: preview.appendUris.length,
     itemCountBefore: playlistState.itemUris.length,
     itemCountAfter: after.itemUris.length,
     authorization,
     verification,
-    result: verification.ok ? "SUCCESS" : "POST_WRITE_VERIFICATION_FAILED",
+    memory,
+    result: "SUCCESS",
     spotifyWrites: 1,
-    databaseWrites: 0,
-  };
-
-  print(payload);
-  if (!verification.ok) {
-    throw new Error(`Gate 4B post-write verification failed: ${verification.reason}`);
-  }
+    databaseWrites: 1,
+  });
 }
 
 type Args = {
@@ -170,7 +259,7 @@ function parseArgs(argv: string[]): Args {
 }
 
 function print(payload: Record<string, unknown>) {
-  console.log("========== ALBUM-01 — GATE 4B CONTROLLED QUEUE WRITER ==========");
+  console.log("========== ALBUM-01 — GATE 5 CONTROLLED QUEUE WRITER ==========");
   console.log(JSON.stringify(payload, null, 2));
 }
 

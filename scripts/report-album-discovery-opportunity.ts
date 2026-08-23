@@ -10,6 +10,11 @@ import {
   type AlbumOpportunityCandidate,
 } from "@/services/album-discovery/opportunity";
 import { buildAlbumCoverageFacts, type AlbumHistoryEvent } from "@/services/album-discovery/profile";
+import {
+  ALBUM_QUEUE_MEMORY_POLICY,
+  loadAlbumRecommendationMemories,
+  suppressQueuedAlbumOpportunities,
+} from "@/services/album-discovery/queue-memory";
 import { SpotifyAlbumCatalogClient } from "@/services/spotify/album-catalog";
 import { SpotifyCatalogSearchClient } from "@/services/spotify/catalog-search";
 import {
@@ -31,9 +36,10 @@ async function main() {
   });
   if (!user) throw new Error(`Sonoriza user not found for ${args.email}`);
 
-  const [profile, trackIdentities] = await Promise.all([
+  const [profile, trackIdentities, albumMemories] = await Promise.all([
     getMusicDiscoveryProfile(user.id, { asOf: args.asOf, topN: PROFILE_POOL_SIZE }),
     getDiscoveryTrackIdentityEvidence(user.id),
+    loadAlbumRecommendationMemories(user.id),
   ]);
   const artists = uniqueArtists([
     ...profile.topArtistsHistorical,
@@ -150,14 +156,17 @@ async function main() {
     }
   }
 
-  const ranked = rankAlbumOpportunities(candidates);
+  const memoryApplied = suppressQueuedAlbumOpportunities(candidates, albumMemories);
+  const ranked = rankAlbumOpportunities(memoryApplied.candidates);
+  const queuedMemoryCount = albumMemories.filter((memory) => memory.state === "QUEUED").length;
   const payload = {
-    gate: "ALBUM-01 Gate 2",
+    gate: "ALBUM-01 Gate 5",
     mode: "READ_ONLY",
     generatedAt: new Date(),
     asOf: args.asOf,
     user: user.email ?? user.id,
     policy: ALBUM_OPPORTUNITY_POLICY,
+    queueMemoryPolicy: ALBUM_QUEUE_MEMORY_POLICY,
     discoveryProfile: {
       scoringVersion: discovery.version,
       note:
@@ -169,6 +178,12 @@ async function main() {
       catalogScope: "ALL_FULL_ALBUM_EDITIONS_FOR_RESOLVED_ARTISTS",
       editionIdentity: "SPOTIFY_ALBUM_ID",
       topOutput: args.top,
+    },
+    queueMemory: {
+      persistedRecordCount: albumMemories.length,
+      queuedCount: queuedMemoryCount,
+      suppressedAlbumCount: memoryApplied.suppressedAlbumIds.length,
+      suppressedAlbumIds: memoryApplied.suppressedAlbumIds,
     },
     artistReports,
     candidateCount: ranked.length,
@@ -192,13 +207,15 @@ async function main() {
     return;
   }
 
-  console.log("========== ALBUM-01 — GATE 2 OPPORTUNITY READ-ONLY ==========");
+  console.log("========== ALBUM-01 — GATE 5 OPPORTUNITY + QUEUED MEMORY READ-ONLY ==========");
   console.log(`User:                    ${payload.user}`);
   console.log(`As of:                   ${args.asOf.toISOString()}`);
   console.log(`Artists selected:        ${selectedArtists.length}/${args.artists}`);
-  console.log(`Eligible albums scored: ${ranked.length}`);
+  console.log(`Eligible albums ranked: ${ranked.length}`);
+  console.log(`Persisted QUEUED:        ${queuedMemoryCount}`);
+  console.log(`Suppressed by memory:    ${memoryApplied.suppressedAlbumIds.length}`);
   console.log(`Provider failures:       ${failures.length}`);
-  console.log(`Policy:                  ${ALBUM_OPPORTUNITY_POLICY.version}`);
+  console.log(`Policy:                  ${ALBUM_OPPORTUNITY_POLICY.version} + ${ALBUM_QUEUE_MEMORY_POLICY.version}`);
   console.log("Mode:                    READ_ONLY — zero Spotify/database/queue writes");
 
   console.log("\nArtist resolution:");
@@ -210,6 +227,11 @@ async function main() {
         ` spotify=${String(artist.resolutionStatus)}/${String(artist.resolutionReason)}` +
         ` albums=${String(artist.scoredAlbumCount)}/${String(artist.catalogAlbumCount)}`,
     );
+  }
+
+  if (memoryApplied.suppressedAlbumIds.length > 0) {
+    console.log("\nSuppressed exact editions (persisted QUEUED):");
+    for (const albumId of memoryApplied.suppressedAlbumIds) console.log(`  ${albumId}`);
   }
 
   console.log(`\nTop ${Math.min(args.top, ranked.length)} album opportunities:`);

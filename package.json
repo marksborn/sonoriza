@@ -39,6 +39,7 @@
     "album:opportunity": "tsx scripts/report-album-discovery-opportunity.ts",
     "album:queue-preview": "tsx scripts/report-album-queue-preview.ts",
     "album:queue-write": "tsx scripts/write-album-queue.ts",
+    "album:queue-memory": "tsx scripts/record-album-queue-memory.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
