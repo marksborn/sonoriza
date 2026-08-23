@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import {
+  buildHistoricalArtistIdentityEvidence,
+  type HistoricalArtistIdentityEvidence,
+} from "@/services/album-discovery/artist-identity";
+import {
   ALBUM_DISCOVERY_GATE1_POLICY,
   buildAlbumCoverageFacts,
   selectDiagnosticAlbumSample,
@@ -69,11 +73,17 @@ async function main() {
   const failures: Array<{ subject: string; error: string }> = [];
 
   for (const candidate of selectedArtists) {
+    const historicalArtistIdentity = await loadHistoricalArtistIdentity({
+      userId: user.id,
+      artistName: candidate.artistName,
+      asOf: args.asOf,
+    });
     const resolution = await resolveExternalDiscoveryCandidate(search, {
       candidateKey: `album-artist:${normalized(candidate.artistName)}`,
       candidateType: "ARTIST",
       artistName: candidate.artistName,
       trackName: null,
+      preferredSpotifyArtistId: historicalArtistIdentity.primaryArtistId,
     });
 
     if (resolution.status !== "RESOLVED" || !resolution.spotifyArtist) {
@@ -81,6 +91,7 @@ async function main() {
         artistName: candidate.artistName,
         deepeningScore: candidate.score,
         deepeningReasons: candidate.reasons.map((reason) => reason.code),
+        historicalArtistIdentity,
         resolutionStatus: resolution.status,
         resolutionReason: resolution.reason,
         spotifyArtist: null,
@@ -104,6 +115,7 @@ async function main() {
         artistName: candidate.artistName,
         deepeningScore: candidate.score,
         deepeningReasons: candidate.reasons.map((reason) => reason.code),
+        historicalArtistIdentity,
         resolutionStatus: resolution.status,
         resolutionReason: resolution.reason,
         spotifyArtist,
@@ -164,6 +176,7 @@ async function main() {
       artistName: candidate.artistName,
       deepeningScore: candidate.score,
       deepeningReasons: candidate.reasons.map((reason) => reason.code),
+      historicalArtistIdentity,
       resolutionStatus: resolution.status,
       resolutionReason: resolution.reason,
       spotifyArtist,
@@ -176,7 +189,7 @@ async function main() {
   }
 
   const payload = {
-    gate: "ALBUM-01 Gate 1",
+    gate: "ALBUM-01 Gate 1B",
     mode: "READ_ONLY",
     generatedAt: new Date(),
     asOf: args.asOf,
@@ -186,7 +199,7 @@ async function main() {
       scoringVersion: scoring.version,
       candidateUniverse: scoring.selectionPolicy.candidateUniverse,
       note:
-        "Gate 1 consumes DISCOVERY-01 deepening/artist scores. It does not create a second artist-affinity formula.",
+        "Gate 1B consumes DISCOVERY-01 deepening/artist scores. It does not create a second artist-affinity formula.",
     },
     scope: {
       requestedArtistCount: args.artists,
@@ -194,6 +207,7 @@ async function main() {
       maxAlbumsPerArtist: args.albumsPerArtist,
       catalogScope: "FULL_ALBUMS_ONLY",
       editionIdentity: "SPOTIFY_ALBUM_ID",
+      artistIdentityPolicy: "UNIQUE_HISTORICAL_PRIMARY_ARTIST_ID_OR_ABSTAIN",
       diagnosticOnly: true,
     },
     providerMetrics: {
@@ -215,7 +229,7 @@ async function main() {
     return;
   }
 
-  console.log("========== ALBUM-01 — GATE 1 PROFILE READ-ONLY ==========");
+  console.log("========== ALBUM-01 — GATE 1B PROFILE READ-ONLY ==========");
   console.log(`User:                    ${payload.user}`);
   console.log(`As of:                   ${args.asOf.toISOString()}`);
   console.log(`Artists analyzed:        ${selectedArtists.length}/${args.artists}`);
@@ -225,11 +239,17 @@ async function main() {
   console.log("Mode:                    READ_ONLY — zero Spotify/database writes");
 
   for (const artist of artistReports) {
+    const identity = artist.historicalArtistIdentity as HistoricalArtistIdentityEvidence;
     console.log("\n------------------------------------------------------------");
     console.log(`Artist:                   ${String(artist.artistName)}`);
     console.log(`Deepening score:          ${String(artist.deepeningScore)}`);
     console.log(
       `Reasons:                  ${(artist.deepeningReasons as string[]).join(", ") || "(none)"}`,
+    );
+    console.log(
+      `Historical artist ID:     ${identity.status}` +
+        `${identity.primaryArtistId ? ` / ${identity.primaryArtistId}` : ""}` +
+        ` / events=${identity.identifiedEventCount}`,
     );
     console.log(
       `Spotify resolution:       ${String(artist.resolutionStatus)} / ${String(artist.resolutionReason)}`,
@@ -273,6 +293,30 @@ async function main() {
       console.log(`  ${failure.subject}: ${failure.error}`);
     }
   }
+}
+
+async function loadHistoricalArtistIdentity(input: {
+  userId: string;
+  artistName: string;
+  asOf: Date;
+}): Promise<HistoricalArtistIdentityEvidence> {
+  const rows = await prisma.trackListeningEvent.groupBy({
+    by: ["primaryArtistId"],
+    where: {
+      userId: input.userId,
+      playedAt: { lte: input.asOf },
+      primaryArtistId: { not: null },
+      artistName: { equals: input.artistName, mode: "insensitive" },
+    },
+    _count: { _all: true },
+  });
+
+  return buildHistoricalArtistIdentityEvidence(
+    rows.map((row) => ({
+      primaryArtistId: row.primaryArtistId,
+      eventCount: row._count._all,
+    })),
+  );
 }
 
 async function loadArtistHistoryEvents(input: {
