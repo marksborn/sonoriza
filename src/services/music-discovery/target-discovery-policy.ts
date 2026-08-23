@@ -30,6 +30,15 @@ export type PersistedTargetDiscoveryPolicy = {
   discoveryIntensity?: string | null;
 };
 
+export type TargetDiscoveryPolicyPersistence = {
+  discoveryEnabled: boolean;
+  discoveryFamiliarEnabled: boolean;
+  discoveryRediscoveryEnabled: boolean;
+  discoveryNoveltyEnabled: boolean;
+  discoveryReleasesEnabled: boolean;
+  discoveryIntensity: TargetDiscoveryIntensity;
+};
+
 export const DEFAULT_TARGET_DISCOVERY_POLICY: TargetDiscoveryPolicy = {
   version: TARGET_DISCOVERY_POLICY_VERSION,
   enabled: false,
@@ -61,6 +70,19 @@ export function normalizeTargetDiscoveryPolicy(
     discoveryEnabled: persisted.discoveryNoveltyEnabled !== false,
     releasesEnabled: persisted.discoveryReleasesEnabled !== false,
     intensity: normalizeIntensity(persisted.discoveryIntensity),
+  };
+}
+
+export function serializeTargetDiscoveryPolicy(
+  policy: TargetDiscoveryPolicy,
+): TargetDiscoveryPolicyPersistence {
+  return {
+    discoveryEnabled: policy.enabled,
+    discoveryFamiliarEnabled: policy.familiarEnabled,
+    discoveryRediscoveryEnabled: policy.rediscoveryEnabled,
+    discoveryNoveltyEnabled: policy.discoveryEnabled,
+    discoveryReleasesEnabled: policy.releasesEnabled,
+    discoveryIntensity: policy.intensity,
   };
 }
 

@@ -7,6 +7,7 @@ import {
   allowedTargetDiscoveryFamilies,
   discoveryIntensityRank,
   normalizeTargetDiscoveryPolicy,
+  serializeTargetDiscoveryPolicy,
   targetAllowsDiscoveryFamily,
 } from "./target-discovery-policy";
 
@@ -17,6 +18,30 @@ test("defaults preserve existing target behavior with discovery disabled", () =>
   assert.equal(policy.intensity, "BALANCED");
   assert.deepEqual(allowedTargetDiscoveryFamilies(policy), []);
   assert.deepEqual(policy, DEFAULT_TARGET_DISCOVERY_POLICY);
+});
+
+test("default persistence keeps discovery globally disabled", () => {
+  assert.deepEqual(serializeTargetDiscoveryPolicy(DEFAULT_TARGET_DISCOVERY_POLICY), {
+    discoveryEnabled: false,
+    discoveryFamiliarEnabled: true,
+    discoveryRediscoveryEnabled: true,
+    discoveryNoveltyEnabled: true,
+    discoveryReleasesEnabled: true,
+    discoveryIntensity: "BALANCED",
+  });
+});
+
+test("persisted target policy round-trips without losing per-target choices", () => {
+  const policy = normalizeTargetDiscoveryPolicy({
+    discoveryEnabled: true,
+    discoveryFamiliarEnabled: false,
+    discoveryRediscoveryEnabled: true,
+    discoveryNoveltyEnabled: false,
+    discoveryReleasesEnabled: true,
+    discoveryIntensity: "EXPLORATORY",
+  });
+
+  assert.deepEqual(normalizeTargetDiscoveryPolicy(serializeTargetDiscoveryPolicy(policy)), policy);
 });
 
 test("enabling discovery exposes only the selected families", () => {
