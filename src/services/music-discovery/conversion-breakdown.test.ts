@@ -79,7 +79,7 @@ test("reports non-exclusive conversion breakdown by persisted discovery provenan
   });
 
   assert.equal(report.provenanceCoverageCount, 2);
-  assert.equal(report.provenanceCoverageRate, 2 / 3);
+  assert.equal(report.provenanceCoverageRate, 0.6667);
 
   const similarTrack = report.byPathLabel.find(
     (row) => row.key === "LASTFM_SIMILAR_TRACK",
