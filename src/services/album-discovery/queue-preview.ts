@@ -1,12 +1,15 @@
+import { createHash } from "node:crypto";
+
 import type { SpotifyAlbumCatalogTrack } from "@/services/spotify/album-catalog";
 
 export const ALBUM_QUEUE_PREVIEW_POLICY = {
-  version: "album-gate3-queue-preview-readonly-v1",
+  version: "album-gate3-queue-preview-readonly-v2",
   playlistResolution: "EXACT_NORMALIZED_NAME_UNIQUE_OR_ABSTAIN",
   editionIdentity: "SPOTIFY_ALBUM_ID",
   albumIntegrity: "APPEND_COMPLETE_PLAYABLE_EDITION_IN_DISC_TRACK_ORDER_OR_ABSTAIN",
   duplicatePolicy:
     "IF_EXACT_EDITION_URI_SEQUENCE_ALREADY_EXISTS_CONTIGUOUSLY_ABSTAIN; OTHERWISE_APPEND_FULL_EDITION_EVEN_IF_INDIVIDUAL_TRACKS_OVERLAP",
+  contentFingerprint: "SHA256_ORDERED_PLAYLIST_URI_OR_NULL_SEQUENCE",
   writes: "NONE",
 } as const;
 
@@ -50,6 +53,7 @@ export type AlbumQueuePreview = {
   playlistId: string;
   playlistName: string;
   playlistSnapshotId: string;
+  playlistContentFingerprint: string;
   playlistItemCountBefore: number;
   albumTrackCount: number;
   albumDurationMs: number;
@@ -149,6 +153,7 @@ export function buildAlbumQueuePreview(input: {
     playlistId: input.playlist.id,
     playlistName: input.playlist.name,
     playlistSnapshotId: input.playlistSnapshotId,
+    playlistContentFingerprint: fingerprintPlaylistContent(input.playlistItemUris),
     playlistItemCountBefore: input.playlistItemUris.length,
     albumTrackCount: orderedTracks.length,
     albumDurationMs,
@@ -165,6 +170,11 @@ export function buildAlbumQueuePreview(input: {
       isPlayable: track.isPlayable,
     })),
   };
+}
+
+export function fingerprintPlaylistContent(itemUris: Array<string | null>): string {
+  const encoded = JSON.stringify(itemUris);
+  return `sha256:${createHash("sha256").update(encoded, "utf8").digest("hex")}`;
 }
 
 export function containsContiguousUriSequence(
