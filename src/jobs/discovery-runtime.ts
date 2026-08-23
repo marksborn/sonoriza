@@ -366,22 +366,34 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
       surgical: applied.preview?.evidence ?? null,
       replacements:
         applied.preview?.targets.flatMap((target) =>
-          target.replacements.map((replacement) => ({
-            targetPlaylistId: target.targetPlaylistId,
-            targetName: target.name,
-            musicOrdinal: replacement.musicOrdinal,
-            overallPosition: replacement.overallPosition,
-            baselineUri: replacement.baseline.uri,
-            baselineTitle: replacement.baseline.title,
-            discoveryUri: replacement.discovery.uri,
-            discoveryTitle: replacement.discovery.title,
-            discoveryArtist:
-              replacement.discovery.primaryArtistName ??
-              replacement.discovery.subtitle ??
-              null,
-            adjustedScore: replacement.adjustedScore,
-            durationDeltaMs: replacement.durationDeltaMs,
-          })),
+          target.replacements.map((replacement) => {
+            const resolved = external.discoveries.find(
+              (candidate) => candidate.candidateKey === replacement.candidateKey,
+            );
+            return {
+              targetPlaylistId: target.targetPlaylistId,
+              targetName: target.name,
+              musicOrdinal: replacement.musicOrdinal,
+              overallPosition: replacement.overallPosition,
+              baselineUri: replacement.baseline.uri,
+              baselineTitle: replacement.baseline.title,
+              discoveryUri: replacement.discovery.uri,
+              discoveryTrackId: replacement.discovery.spotifyTrackId ?? null,
+              discoveryTitle: replacement.discovery.title,
+              discoveryArtist:
+                replacement.discovery.primaryArtistName ??
+                replacement.discovery.subtitle ??
+                null,
+              candidateKey: replacement.candidateKey,
+              historyClass: replacement.historyClass,
+              pathLabel: replacement.pathLabel,
+              resolutionReason: replacement.resolutionReason,
+              isrc: resolved?.isrc ?? null,
+              rawScore: replacement.rawScore,
+              adjustedScore: replacement.adjustedScore,
+              durationDeltaMs: replacement.durationDeltaMs,
+            };
+          }),
         ) ?? [],
     };
     if (!applied.invariantsPassed) {

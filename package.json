@@ -33,6 +33,7 @@
     "discovery:planner-preview": "tsx scripts/report-music-discovery-planner-preview-gate3c.ts",
     "discovery:planner-preview:gate5f": "tsx scripts/report-music-discovery-planner-preview-gate5f.ts",
     "discovery:planner-preview:gate5g": "tsx scripts/report-music-discovery-planner-preview-gate5g.ts",
+    "discovery:conversion": "tsx scripts/report-music-discovery-conversion.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
