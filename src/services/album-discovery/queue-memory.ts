@@ -6,6 +6,7 @@ export const ALBUM_QUEUE_MEMORY_POLICY = {
   identity: "USER_ID_PLUS_SPOTIFY_ALBUM_ID",
   persistedState: "QUEUED",
   rankingRule: "QUEUED_EXACT_EDITION_IS_SUPPRESSED_UNTIL_STATE_TRANSITIONS",
+  writerRule: "QUEUED_EXACT_EDITION_BLOCKS_DIRECT_REQUEUE_EVEN_IF_PLAYLIST_CONTENT_CHANGED",
   reconciliation:
     "EXISTING_PLAYLIST_CONTENT_MAY_BE_RECONCILED_ONLY_AFTER_EXACT_EDITION_SEQUENCE_IS_OBSERVED",
 } as const;
@@ -37,13 +38,19 @@ export type QueuedAlbumMemorySummary = {
   queuedAt: Date | null;
 };
 
+export function isPersistentlyQueued(
+  memory: { state: AlbumRecommendationMemoryState } | null | undefined,
+): boolean {
+  return memory?.state === "QUEUED";
+}
+
 export function suppressQueuedAlbumOpportunities(
   candidates: AlbumOpportunityCandidate[],
   memories: QueuedAlbumMemorySummary[],
 ): { candidates: AlbumOpportunityCandidate[]; suppressedAlbumIds: string[] } {
   const queuedIds = new Set(
     memories
-      .filter((memory) => memory.state === "QUEUED")
+      .filter((memory) => isPersistentlyQueued(memory))
       .map((memory) => memory.spotifyAlbumId),
   );
   const suppressedAlbumIds: string[] = [];
