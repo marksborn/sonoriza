@@ -10,7 +10,7 @@ const TABS = [
 ] as const;
 
 export function DiscoverTabs() {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
 
   return (
     <nav
