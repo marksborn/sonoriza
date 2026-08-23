@@ -412,7 +412,7 @@ model SpotifyExtendedHistoryImportRun {
   packageSha256     String
   planHash          String
   planVersion       Int                                 @default(1)
-  status            SpotifyExtendedHistoryImportStatus @default(RUNNING)
+  status             SpotifyExtendedHistoryImportStatus @default(RUNNING)
   uniqueMusicEvents Int
   insertPlanned     Int
   enrichPlanned     Int
@@ -538,6 +538,12 @@ enum MusicOrderMode {
   RANDOMIZED
 }
 
+enum TargetDiscoveryIntensity {
+  CONSERVATIVE
+  BALANCED
+  EXPLORATORY
+}
+
 enum TargetUpdatePolicy {
   MANUAL
   KEEP_FILLED
@@ -562,6 +568,12 @@ model TargetPlaylist {
   priority                         Int                           @default(0)
   compositionMode                  CompositionMode               @default(PROPORTION)
   musicOrderMode                   MusicOrderMode                @default(STANDARD)
+  discoveryEnabled                 Boolean                       @default(false)
+  discoveryFamiliarEnabled         Boolean                       @default(true)
+  discoveryRediscoveryEnabled      Boolean                       @default(true)
+  discoveryNoveltyEnabled          Boolean                       @default(true)
+  discoveryReleasesEnabled         Boolean                       @default(true)
+  discoveryIntensity               TargetDiscoveryIntensity      @default(BALANCED)
   durationMode                     DurationMode                  @default(FIXED)
   fixedDurationSeconds             Int?
   emptyCalendarBehavior            EmptyCalendarBehavior         @default(CLEAR)
@@ -578,8 +590,8 @@ model TargetPlaylist {
   updatePolicy                     TargetUpdatePolicy            @default(MANUAL)
   dailyScheduleMinutes             Int?
   scheduleTimezone                 String?
-  createdAt                        DateTime                      @default(now())
-  updatedAt                        DateTime                      @updatedAt
+  createdAt                        DateTime                       @default(now())
+  updatedAt                        DateTime                       @updatedAt
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   generationItems    GenerationItem[]
