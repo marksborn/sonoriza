@@ -14,10 +14,13 @@ const baseCandidate: AlbumOpportunityCandidate = {
   eligible: true,
   memoryState: null,
   coverage: {
+    policyVersion: "album-gate1-profile-readonly-v1",
     spotifyAlbumId: "album1",
     albumName: "Album One",
     releaseDate: "2026-01-01",
+    catalogTrackCount: 10,
     eligibleTrackCount: 10,
+    unavailableTrackCount: 0,
     canonicalObservedTrackCount: 2,
     labelOnlyObservedTrackCount: 0,
     observedTrackCount: 2,
