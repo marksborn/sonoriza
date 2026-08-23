@@ -70,19 +70,33 @@ export function projectTargetDiscoveryPlannerInput(input: {
   persistedPolicy: PersistedTargetDiscoveryPolicy | null | undefined;
   sourceEntries: DiscoveryPlannerPoolEntry[];
   externalDiscoveries?: Gate5FResolvedDiscoveryCandidate[];
+  rediscoveryCeiling?: number;
+  externalDiscoveryCeiling?: number;
 }): TargetDiscoveryPlannerProjection {
   const policy = normalizeTargetDiscoveryPolicy(input.persistedPolicy);
   const configuredFamilies = allowedTargetDiscoveryFamilies(policy);
   const effectiveFamilies = configuredFamilies.filter(
     (family) => family !== "RELEASE",
   );
-  const sourceProjection = projectSourceEntries(input.sourceEntries, policy);
+  const rediscoveryCeiling = normalizeCeiling(
+    input.rediscoveryCeiling ??
+      DISCOVERY_PLANNER_PREVIEW_POLICY_V1.rediscoveryCeiling,
+    "rediscoveryCeiling",
+  );
+  const sourceProjection = projectSourceEntries(
+    input.sourceEntries,
+    policy,
+    rediscoveryCeiling,
+  );
   const externalInput = input.externalDiscoveries ?? [];
   const externalDiscoveries =
     policy.enabled && policy.discoveryEnabled ? externalInput : [];
   const blend = blendResolvedDiscoveryIntoPlannerPool({
     baseline: sourceProjection.entries,
     discoveries: externalDiscoveries,
+    ...(input.externalDiscoveryCeiling == null
+      ? {}
+      : { discoveryCeiling: input.externalDiscoveryCeiling }),
   });
 
   return {
@@ -123,7 +137,7 @@ export function projectTargetDiscoveryPlannerInput(input: {
       releaseRequestedButUnavailable:
         policy.enabled && policy.releasesEnabled,
       albumCandidatesAccepted: 0,
-      rediscoveryCeiling: DISCOVERY_PLANNER_PREVIEW_POLICY_V1.rediscoveryCeiling,
+      rediscoveryCeiling,
       externalDiscoveryCeiling: blend.evidence.discoveryCeiling,
       forcedFill: false,
     },
@@ -133,6 +147,7 @@ export function projectTargetDiscoveryPlannerInput(input: {
 function projectSourceEntries(
   entries: DiscoveryPlannerPoolEntry[],
   policy: TargetDiscoveryPolicy,
+  rediscoveryCeiling: number,
 ): { entries: DiscoveryPlannerPoolEntry[]; demotedByPolicyCount: number } {
   let demotedByPolicyCount = 0;
   const rediscovery: DiscoveryPlannerPoolEntry[] = [];
@@ -169,7 +184,7 @@ function projectSourceEntries(
     entries: interleaveRediscovery(
       rediscovery,
       [...familiar, ...sourceFallback],
-      DISCOVERY_PLANNER_PREVIEW_POLICY_V1.rediscoveryCeiling,
+      rediscoveryCeiling,
     ),
     demotedByPolicyCount,
   };
@@ -248,4 +263,11 @@ export function targetDiscoveryCandidateIds(
 
 function candidateId(candidate: Candidate): string {
   return candidate.spotifyTrackId?.trim() || candidate.uri;
+}
+
+function normalizeCeiling(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${label} must be between 0 and 1`);
+  }
+  return value;
 }

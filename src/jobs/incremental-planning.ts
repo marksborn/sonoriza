@@ -1,3 +1,8 @@
+import { projectTargetDiscoveryPlannerInput } from "@/services/music-discovery/target-discovery-planner";
+import {
+  targetDiscoveryRuntimeCaps,
+  targetUsesSourceDiscovery,
+} from "@/services/music-discovery/target-discovery-runtime-policy";
 import {
   planRun,
   type Candidate,
@@ -16,6 +21,7 @@ import {
   MusicRepeatPreWriteBlockedError,
   revalidateMusicRepeatBeforeRealWrite,
 } from "./music-repeat-runtime";
+import { currentTargetDiscoveryRuntimeState } from "./target-discovery-runtime";
 
 export type IncrementalSourceKind = "MUSIC" | "PODCAST";
 
@@ -115,10 +121,22 @@ export async function collectIncrementally<
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
   const discoveryState = currentDiscoveryRuntimeState();
-  const discovery =
-    discoveryState?.enabled && relevantKinds.includes("MUSIC")
-      ? await prepareDiscoveryMusicForCurrentRun(sources)
-      : null;
+  const targetDiscoveryState = currentTargetDiscoveryRuntimeState();
+  const targetScopedRuntime = targetDiscoveryState?.enabled === true;
+  const hasTargetSourceDiscovery =
+    targetScopedRuntime &&
+    targets.some((target) => {
+      const policy = targetDiscoveryState.policies.get(target.targetPlaylistId);
+      return Boolean(policy && targetUsesSourceDiscovery(policy));
+    });
+  const shouldPrepareDiscoverySources = Boolean(
+    discoveryState?.enabled &&
+      relevantKinds.includes("MUSIC") &&
+      (!targetScopedRuntime || hasTargetSourceDiscovery),
+  );
+  const discovery = shouldPrepareDiscoverySources
+    ? await prepareDiscoveryMusicForCurrentRun(sources)
+    : null;
 
   if (discoveryState?.enabled && !relevantKinds.includes("MUSIC")) {
     discoveryState.evidence = { skipped: "NO_MUSIC_DEMAND" };
@@ -129,6 +147,59 @@ export async function collectIncrementally<
     music: discovery ? dedupeByUri(discovery.rankedMusic) : [],
     podcasts: [],
   };
+  let musicPoolByTargetId: Map<string, Candidate[]> | undefined;
+
+  if (discovery && targetScopedRuntime && targetDiscoveryState) {
+    musicPoolByTargetId = new Map<string, Candidate[]>();
+    const sourceProjections: unknown[] = [];
+
+    for (const target of targets) {
+      const policy = targetDiscoveryState.policies.get(target.targetPlaylistId);
+      const caps = targetDiscoveryRuntimeCaps(policy?.intensity ?? "BALANCED");
+      const projection = projectTargetDiscoveryPlannerInput({
+        targetPlaylistId: target.targetPlaylistId,
+        persistedPolicy: policy
+          ? {
+              discoveryEnabled: policy.enabled,
+              discoveryFamiliarEnabled: policy.familiarEnabled,
+              discoveryRediscoveryEnabled: policy.rediscoveryEnabled,
+              discoveryNoveltyEnabled: policy.discoveryEnabled,
+              discoveryReleasesEnabled: policy.releasesEnabled,
+              discoveryIntensity: policy.intensity,
+            }
+          : null,
+        sourceEntries: discovery.sourceEntries,
+        rediscoveryCeiling: caps.rediscoveryCeiling,
+      });
+      musicPoolByTargetId.set(
+        target.targetPlaylistId,
+        dedupeByUri(projection.sourceEntries.map((entry) => entry.candidate)),
+      );
+      sourceProjections.push({
+        targetPlaylistId: target.targetPlaylistId,
+        targetName: target.name,
+        policyEnabled: projection.policy.enabled,
+        intensity: projection.policy.intensity,
+        configuredFamilies: projection.configuredFamilies,
+        effectiveFamilies: projection.effectiveFamilies,
+        familiarPromotedCount: projection.evidence.familiarPromotedCount,
+        rediscoveryPromotedCount: projection.evidence.rediscoveryPromotedCount,
+        sourceFallbackCount: projection.evidence.sourceFallbackCount,
+        demotedByPolicyCount: projection.evidence.demotedByPolicyCount,
+        sourceCandidateCountPreserved:
+          projection.evidence.sourceCandidateCountPreserved,
+        rediscoveryCeiling: projection.evidence.rediscoveryCeiling,
+        forcedFill: false,
+      });
+    }
+
+    targetDiscoveryState.sourceProjectionApplied = true;
+    targetDiscoveryState.evidence = {
+      ...(targetDiscoveryState.evidence ?? {}),
+      sourceProjections,
+    };
+  }
+
   const attemptedSourceIds = new Set<string>(
     discovery?.completedMusicSourceIds ?? [],
   );
@@ -163,6 +234,7 @@ export async function collectIncrementally<
   let plan = planRun({
     pools,
     targets,
+    musicPoolByTargetId,
     preservedByTargetId: activePreservedByTargetId,
     blockedMusicTrackIdsByTargetId,
     initialReserved,
@@ -178,6 +250,7 @@ export async function collectIncrementally<
     plan = planRun({
       pools,
       targets,
+      musicPoolByTargetId,
       preservedByTargetId: activePreservedByTargetId,
       blockedMusicTrackIdsByTargetId,
       initialReserved,
@@ -192,6 +265,14 @@ export async function collectIncrementally<
 
   const repairAgainstLatestHistory = () => {
     pools.music = filterMusicBatchForCurrentRun(pools.music).candidates;
+    if (musicPoolByTargetId) {
+      musicPoolByTargetId = new Map(
+        [...musicPoolByTargetId.entries()].map(([targetId, candidates]) => [
+          targetId,
+          filterMusicBatchForCurrentRun(candidates).candidates,
+        ]),
+      );
+    }
 
     if (activePreservedByTargetId) {
       activePreservedByTargetId = new Map(

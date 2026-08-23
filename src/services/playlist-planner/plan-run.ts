@@ -21,6 +21,12 @@ export interface PlanRunInput {
   /** Candidate pools shared by every target (built from the user's sources). */
   pools: PlannerPools;
   targets: RunTarget[];
+  /**
+   * DISCOVER-DEST-01: optional MUSIC ordering keyed by target id. Podcasts and
+   * every other planner rule remain shared/authoritative. Missing entries fall
+   * back to the shared MUSIC pool, preserving every existing caller.
+   */
+  musicPoolByTargetId?: ReadonlyMap<string, Candidate[]>;
   /** SCHEDULE-01 valid remote items keyed by target id. */
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
   /**
@@ -58,6 +64,7 @@ export interface PlanRunResult {
 export function planRun({
   pools,
   targets,
+  musicPoolByTargetId,
   preservedByTargetId,
   blockedMusicTrackIdsByTargetId,
   initialReserved,
@@ -67,21 +74,27 @@ export function planRun({
   const results: PlanRunTargetResult[] = [];
 
   for (const target of ordered) {
+    const targetMusicPool =
+      musicPoolByTargetId?.get(target.targetPlaylistId) ?? pools.music;
+    const baseTargetPools: PlannerPools = {
+      ...pools,
+      music: targetMusicPool,
+    };
     const blockedMusicTrackIds = blockedMusicTrackIdsByTargetId?.get(
       target.targetPlaylistId,
     );
     const targetPools =
       blockedMusicTrackIds && blockedMusicTrackIds.size > 0
         ? {
-            ...pools,
-            music: pools.music.filter(
+            ...baseTargetPools,
+            music: baseTargetPools.music.filter(
               (candidate) =>
                 candidate.type !== "MUSIC" ||
                 !candidate.spotifyTrackId ||
                 !blockedMusicTrackIds.has(candidate.spotifyTrackId),
             ),
           }
-        : pools;
+        : baseTargetPools;
     const preserved = preservedByTargetId?.get(target.targetPlaylistId);
     const result = target.durationBlocks
       ? planSegmentedTarget({
