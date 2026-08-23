@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
@@ -20,7 +19,7 @@ export function DiscoverTabs() {
       {TABS.map((tab) => {
         const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
         return (
-          <Link
+          <a
             key={tab.href}
             href={tab.href}
             aria-current={active ? "page" : undefined}
@@ -31,7 +30,7 @@ export function DiscoverTabs() {
             }`}
           >
             {tab.label}
-          </Link>
+          </a>
         );
       })}
     </nav>
