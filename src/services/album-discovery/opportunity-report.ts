@@ -27,6 +27,17 @@ import { resolveExternalDiscoveryCandidate } from "@/services/music-discovery/sp
 import { getDiscoveryTrackIdentityEvidence } from "@/services/music-discovery/track-identity";
 
 const DEFAULT_PROFILE_POOL_SIZE = 100;
+const ALBUM_TRACK_CONCURRENCY = 6;
+const REPORT_CACHE_TTL_MS = 5 * 60_000;
+
+type AlbumOpportunityReport = Awaited<ReturnType<typeof computeAlbumOpportunityReport>>;
+
+type AlbumOpportunityReportCacheEntry = {
+  expiresAt: number;
+  promise: Promise<AlbumOpportunityReport>;
+};
+
+const reportCache = new Map<string, AlbumOpportunityReportCacheEntry>();
 
 export type AlbumOpportunityReportOptions = {
   asOf?: Date;
@@ -52,6 +63,44 @@ export type AlbumOpportunityProviderFailure = {
 };
 
 export async function getAlbumOpportunityReport(
+  userId: string,
+  options: AlbumOpportunityReportOptions = {},
+): Promise<AlbumOpportunityReport> {
+  if (options.asOf) {
+    return computeAlbumOpportunityReport(userId, options);
+  }
+
+  const artistLimit = clampInteger(options.artistLimit ?? 5, 1, 20);
+  const top = clampInteger(options.top ?? 20, 1, 100);
+  const profilePoolSize = clampInteger(
+    options.profilePoolSize ?? DEFAULT_PROFILE_POOL_SIZE,
+    20,
+    500,
+  );
+  const cacheKey = `${userId}:${artistLimit}:${top}:${profilePoolSize}`;
+  const now = Date.now();
+  const cached = reportCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.promise;
+  }
+
+  const promise = computeAlbumOpportunityReport(userId, {
+    artistLimit,
+    top,
+    profilePoolSize,
+  }).catch((error) => {
+    reportCache.delete(cacheKey);
+    throw error;
+  });
+
+  reportCache.set(cacheKey, {
+    expiresAt: now + REPORT_CACHE_TTL_MS,
+    promise,
+  });
+  return promise;
+}
+
+async function computeAlbumOpportunityReport(
   userId: string,
   options: AlbumOpportunityReportOptions = {},
 ) {
@@ -141,32 +190,49 @@ export async function getAlbumOpportunityReport(
           asOf,
         }),
       ]);
+
+      const albumResults = await mapWithConcurrency(
+        catalogAlbums,
+        ALBUM_TRACK_CONCURRENCY,
+        async (album) => {
+          try {
+            const albumTracks = await albumCatalog.getAlbumTracks(album.id);
+            const coverage = buildAlbumCoverageFacts({
+              album,
+              tracks: albumTracks,
+              events,
+              spotifyArtistId: spotifyArtist.id,
+              spotifyArtistName: spotifyArtist.name,
+              asOf,
+            });
+            return {
+              scored: scoreAlbumOpportunity({
+                artistName: artistCandidate.artistName,
+                artistDeepeningScore: artistCandidate.score,
+                coverage,
+              }),
+              failure: null,
+            };
+          } catch (error) {
+            return {
+              scored: null,
+              failure: {
+                subject: `${artistCandidate.artistName}:${album.name}:${album.id}`,
+                error: errorMessage(error),
+              } satisfies AlbumOpportunityProviderFailure,
+            };
+          }
+        },
+      );
+
       let scoredAlbumCount = 0;
-      for (const album of catalogAlbums) {
-        try {
-          const albumTracks = await albumCatalog.getAlbumTracks(album.id);
-          const coverage = buildAlbumCoverageFacts({
-            album,
-            tracks: albumTracks,
-            events,
-            spotifyArtistId: spotifyArtist.id,
-            spotifyArtistName: spotifyArtist.name,
-            asOf,
-          });
-          const scored = scoreAlbumOpportunity({
-            artistName: artistCandidate.artistName,
-            artistDeepeningScore: artistCandidate.score,
-            coverage,
-          });
-          candidates.push(scored);
-          if (scored.eligible) scoredAlbumCount += 1;
-        } catch (error) {
-          failures.push({
-            subject: `${artistCandidate.artistName}:${album.name}:${album.id}`,
-            error: errorMessage(error),
-          });
-        }
+      for (const result of albumResults) {
+        if (result.failure) failures.push(result.failure);
+        if (!result.scored) continue;
+        candidates.push(result.scored);
+        if (result.scored.eligible) scoredAlbumCount += 1;
       }
+
       artistReports.push({
         artistName: artistCandidate.artistName,
         artistDeepeningScore: artistCandidate.score,
@@ -286,6 +352,29 @@ async function loadArtistHistoryEvents(input: {
     },
     orderBy: { playedAt: "asc" },
   });
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const limit = Math.max(1, Math.min(items.length, Math.trunc(concurrency)));
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= items.length) return;
+      results[index] = await mapper(items[index]!, index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+  return results;
 }
 
 function uniqueArtists(rows: DiscoveryArtistProfile[]): DiscoveryArtistProfile[] {
