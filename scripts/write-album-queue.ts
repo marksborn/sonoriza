@@ -1,5 +1,8 @@
 import { prisma } from "@/lib/prisma";
-import { recordQueuedAlbumMemory } from "@/services/album-discovery/queue-memory";
+import {
+  isPersistentlyQueued,
+  recordQueuedAlbumMemory,
+} from "@/services/album-discovery/queue-memory";
 import {
   buildAlbumQueuePreview,
   fingerprintPlaylistContent,
@@ -22,6 +25,31 @@ async function main() {
     select: { id: true, email: true },
   });
   if (!user) throw new Error(`Sonoriza user not found for ${args.email}`);
+
+  const persistedMemory = await prisma.albumRecommendationMemory.findUnique({
+    where: {
+      userId_spotifyAlbumId: {
+        userId: user.id,
+        spotifyAlbumId: args.albumId,
+      },
+    },
+  });
+  if (isPersistentlyQueued(persistedMemory)) {
+    print({
+      gate: "ALBUM-01 Gate 5",
+      user: user.email ?? user.id,
+      spotifyAlbumId: args.albumId,
+      persistedMemory,
+      authorization: {
+        status: "ABSTAIN",
+        reason: "PERSISTED_QUEUED_MEMORY",
+      },
+      result: "NO_WRITE",
+      spotifyWrites: 0,
+      databaseWrites: 0,
+    });
+    return;
+  }
 
   const queueClient = await SpotifyAlbumQueuePreviewClient.forUser(user.id);
   const albumCatalog = await SpotifyAlbumCatalogClient.forUser(user.id);
