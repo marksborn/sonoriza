@@ -5,12 +5,12 @@ import { dirname, join } from "node:path";
 
 const CACHE_VERSION = 1;
 const DAY_MS = 86_400_000;
-const DEFAULT_REQUEST_BUDGET = 8;
+const DEFAULT_REQUEST_BUDGET = 4;
 const MAX_REQUEST_BUDGET = 100;
 
 export const SPOTIFY_CATALOG_CACHE_TTL = {
   search: 7 * DAY_MS,
-  artistAlbums: 24 * 60 * 60 * 1000,
+  artistAlbums: 7 * DAY_MS,
   albumTracks: 30 * DAY_MS,
 } as const;
 
