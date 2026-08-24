@@ -16,6 +16,10 @@ import {
   suppressQueuedAlbumOpportunities,
 } from "@/services/album-discovery/queue-memory";
 import { SpotifyAlbumCatalogClient } from "@/services/spotify/album-catalog";
+import {
+  SpotifyCatalogReadSession,
+  isSpotifyCatalogRequestBudgetExceededError,
+} from "@/services/spotify/catalog-read-session";
 import { SpotifyCatalogSearchClient } from "@/services/spotify/catalog-search";
 import { isSpotifyApiError } from "@/services/spotify/errors";
 import {
@@ -28,7 +32,7 @@ import { resolveExternalDiscoveryCandidate } from "@/services/music-discovery/sp
 import { getDiscoveryTrackIdentityEvidence } from "@/services/music-discovery/track-identity";
 
 const DEFAULT_PROFILE_POOL_SIZE = 100;
-const ALBUM_TRACK_CONCURRENCY = 6;
+const ALBUM_TRACK_CONCURRENCY = 1;
 const REPORT_CACHE_TTL_MS = 5 * 60_000;
 
 type AlbumOpportunityReport = Awaited<ReturnType<typeof computeAlbumOpportunityReport>>;
@@ -64,6 +68,7 @@ export type AlbumOpportunityProviderFailure = {
 };
 
 export function isAlbumOpportunityTerminalProviderError(error: unknown): boolean {
+  if (isSpotifyCatalogRequestBudgetExceededError(error)) return true;
   return (
     isSpotifyApiError(error) &&
     (error.kind === "RATE_LIMITED" || error.kind === "QUOTA_EXCEEDED")
@@ -152,8 +157,13 @@ async function computeAlbumOpportunityReport(
     candidateUniverse: "DIAGNOSTIC_PARTIAL",
   });
 
-  const search = await SpotifyCatalogSearchClient.forUser(userId);
-  const albumCatalog = await SpotifyAlbumCatalogClient.forUser(userId);
+  const catalogReadSession = new SpotifyCatalogReadSession(userId);
+  const search = await SpotifyCatalogSearchClient.forUser(userId, {
+    readSession: catalogReadSession,
+  });
+  const albumCatalog = await SpotifyAlbumCatalogClient.forUser(userId, {
+    readSession: catalogReadSession,
+  });
   const selectedArtists = discovery.deepeningCandidates.slice(0, artistLimit);
   const candidates: AlbumOpportunityCandidate[] = [];
   const artistReports: AlbumOpportunityArtistReport[] = [];
@@ -165,28 +175,46 @@ async function computeAlbumOpportunityReport(
       artistName: artistCandidate.artistName,
       asOf,
     });
-    const resolution = await resolveExternalDiscoveryCandidate(search, {
-      candidateKey: `album-opportunity:${normalized(artistCandidate.artistName)}`,
-      candidateType: "ARTIST",
-      artistName: artistCandidate.artistName,
-      trackName: null,
-      preferredSpotifyArtistId: identity.primaryArtistId,
-    });
 
-    if (resolution.status !== "RESOLVED" || !resolution.spotifyArtist) {
+    let resolutionStatus: string;
+    let resolutionReason: string;
+    let spotifyArtist: { id: string; name: string } | null = null;
+
+    if (identity.status === "UNIQUE" && identity.primaryArtistId) {
+      resolutionStatus = "RESOLVED";
+      resolutionReason = "HISTORICAL_PRIMARY_ARTIST_ID";
+      spotifyArtist = {
+        id: identity.primaryArtistId,
+        name: artistCandidate.artistName,
+      };
+    } else {
+      const resolution = await resolveExternalDiscoveryCandidate(search, {
+        candidateKey: `album-opportunity:${normalized(artistCandidate.artistName)}`,
+        candidateType: "ARTIST",
+        artistName: artistCandidate.artistName,
+        trackName: null,
+        preferredSpotifyArtistId: identity.primaryArtistId,
+      });
+      resolutionStatus = resolution.status;
+      resolutionReason = resolution.reason;
+      spotifyArtist = resolution.spotifyArtist
+        ? { id: resolution.spotifyArtist.id, name: resolution.spotifyArtist.name }
+        : null;
+    }
+
+    if (resolutionStatus !== "RESOLVED" || !spotifyArtist) {
       artistReports.push({
         artistName: artistCandidate.artistName,
         artistDeepeningScore: artistCandidate.score,
         historicalArtistIdentity: identity,
-        resolutionStatus: resolution.status,
-        resolutionReason: resolution.reason,
+        resolutionStatus,
+        resolutionReason,
         catalogAlbumCount: 0,
         scoredAlbumCount: 0,
       });
       continue;
     }
 
-    const spotifyArtist = resolution.spotifyArtist;
     try {
       const [catalogAlbums, events] = await Promise.all([
         albumCatalog.listArtistAlbums(spotifyArtist.id),
@@ -246,8 +274,8 @@ async function computeAlbumOpportunityReport(
         artistName: artistCandidate.artistName,
         artistDeepeningScore: artistCandidate.score,
         historicalArtistIdentity: identity,
-        resolutionStatus: resolution.status,
-        resolutionReason: resolution.reason,
+        resolutionStatus,
+        resolutionReason,
         spotifyArtist: { id: spotifyArtist.id, name: spotifyArtist.name },
         catalogAlbumCount: catalogAlbums.length,
         scoredAlbumCount,
@@ -294,6 +322,7 @@ async function computeAlbumOpportunityReport(
     providerMetrics: {
       search: search.getMetrics(),
       albumCatalog: albumCatalog.getMetrics(),
+      catalogRead: catalogReadSession.getMetrics(),
       failures,
     },
     safety: {
