@@ -1,8 +1,13 @@
+import { assertSpotifyBackoffInactive } from "./backoff";
+import {
+  SPOTIFY_CATALOG_CACHE_TTL,
+  type SpotifyCatalogReadSession,
+} from "./catalog-read-session";
 import { spotifyApiErrorFromResponse } from "./errors";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
-const MAX_RATE_LIMIT_RETRIES = 1;
+const MAX_RATE_LIMIT_RETRIES = 0;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
 const ARTIST_ALBUMS_PAGE_LIMIT = 10;
 const ALBUM_TRACKS_PAGE_LIMIT = 50;
@@ -51,11 +56,18 @@ export class SpotifyAlbumCatalogClient {
     retries: 0,
     retryWaitMs: 0,
   };
+  private accessTokenPromise: Promise<string> | null = null;
 
-  private constructor(private readonly accessToken: string) {}
+  private constructor(
+    private readonly userId: string,
+    private readonly readSession: SpotifyCatalogReadSession | null,
+  ) {}
 
-  static async forUser(userId: string): Promise<SpotifyAlbumCatalogClient> {
-    return new SpotifyAlbumCatalogClient(await getSpotifyAccessToken(userId));
+  static async forUser(
+    userId: string,
+    options: { readSession?: SpotifyCatalogReadSession } = {},
+  ): Promise<SpotifyAlbumCatalogClient> {
+    return new SpotifyAlbumCatalogClient(userId, options.readSession ?? null);
   }
 
   getMetrics(): SpotifyAlbumCatalogMetrics {
@@ -73,7 +85,10 @@ export class SpotifyAlbumCatalogClient {
       `/artists/${encodeURIComponent(artistId)}/albums?include_groups=album&market=from_token&limit=${ARTIST_ALBUMS_PAGE_LIMIT}`;
 
     while (url) {
-      const page: SpotifyPage<SpotifyAlbumResponse> = await this.request(url);
+      const page: SpotifyPage<SpotifyAlbumResponse> = await this.request(
+        url,
+        SPOTIFY_CATALOG_CACHE_TTL.artistAlbums,
+      );
       for (const raw of page.items ?? []) {
         const album = readAlbum(raw);
         if (!album) continue;
@@ -95,7 +110,10 @@ export class SpotifyAlbumCatalogClient {
       `/albums/${encodeURIComponent(albumId)}/tracks?market=from_token&limit=${ALBUM_TRACKS_PAGE_LIMIT}`;
 
     while (url) {
-      const page: SpotifyPage<SpotifyAlbumTrackResponse> = await this.request(url);
+      const page: SpotifyPage<SpotifyAlbumTrackResponse> = await this.request(
+        url,
+        SPOTIFY_CATALOG_CACHE_TTL.albumTracks,
+      );
       for (const raw of page.items ?? []) {
         const track = readAlbumTrack(raw);
         if (track) tracks.push(track);
@@ -108,18 +126,36 @@ export class SpotifyAlbumCatalogClient {
     );
   }
 
-  private async request<T>(path: string): Promise<T> {
+  private async getAccessToken(): Promise<string> {
+    this.accessTokenPromise ??= getSpotifyAccessToken(this.userId);
+    return this.accessTokenPromise;
+  }
+
+  private async request<T>(path: string, cacheTtlMs: number): Promise<T> {
+    if (this.readSession) {
+      const cached = await this.readSession.readCache<T>(path, cacheTtlMs);
+      if (cached !== null) return cached;
+    }
+
     let retries = 0;
     while (true) {
+      await assertSpotifyBackoffInactive();
+      this.readSession?.reserveNetworkRequest(path);
+      const accessToken = await this.getAccessToken();
       this.metrics.totalCalls += 1;
+
       const response = await fetch(`${API}${path}`, {
         headers: {
-          Authorization: `Bearer ${this.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
       });
 
-      if (response.ok) return (await response.json()) as T;
+      if (response.ok) {
+        const payload = (await response.json()) as T;
+        await this.readSession?.writeCache(path, payload);
+        return payload;
+      }
 
       this.metrics.failures += 1;
       const error = await spotifyApiErrorFromResponse(response, {

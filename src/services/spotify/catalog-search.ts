@@ -1,8 +1,13 @@
+import { assertSpotifyBackoffInactive } from "./backoff";
+import {
+  SPOTIFY_CATALOG_CACHE_TTL,
+  type SpotifyCatalogReadSession,
+} from "./catalog-read-session";
 import { spotifyApiErrorFromResponse } from "./errors";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
-const MAX_RATE_LIMIT_RETRIES = 1;
+const MAX_RATE_LIMIT_RETRIES = 0;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
 const SPOTIFY_SEARCH_MAX_LIMIT = 10;
 
@@ -41,11 +46,18 @@ export class SpotifyCatalogSearchClient {
     retries: 0,
     retryWaitMs: 0,
   };
+  private accessTokenPromise: Promise<string> | null = null;
 
-  private constructor(private readonly accessToken: string) {}
+  private constructor(
+    private readonly userId: string,
+    private readonly readSession: SpotifyCatalogReadSession | null,
+  ) {}
 
-  static async forUser(userId: string): Promise<SpotifyCatalogSearchClient> {
-    return new SpotifyCatalogSearchClient(await getSpotifyAccessToken(userId));
+  static async forUser(
+    userId: string,
+    options: { readSession?: SpotifyCatalogReadSession } = {},
+  ): Promise<SpotifyCatalogSearchClient> {
+    return new SpotifyCatalogSearchClient(userId, options.readSession ?? null);
   }
 
   getMetrics(): SpotifyCatalogSearchMetrics {
@@ -79,6 +91,11 @@ export class SpotifyCatalogSearchClient {
       .filter((row): row is SpotifyCatalogTrackSummary => Boolean(row));
   }
 
+  private async getAccessToken(): Promise<string> {
+    this.accessTokenPromise ??= getSpotifyAccessToken(this.userId);
+    return this.accessTokenPromise;
+  }
+
   private async search(input: {
     q: string;
     type: "artist" | "track";
@@ -91,18 +108,34 @@ export class SpotifyCatalogSearchClient {
       limit: String(limit),
     });
     const path = `/search?${params.toString()}`;
-    let retries = 0;
 
+    if (this.readSession) {
+      const cached = await this.readSession.readCache<SpotifySearchResponse>(
+        path,
+        SPOTIFY_CATALOG_CACHE_TTL.search,
+      );
+      if (cached !== null) return cached;
+    }
+
+    let retries = 0;
     while (true) {
+      await assertSpotifyBackoffInactive();
+      this.readSession?.reserveNetworkRequest(path);
+      const accessToken = await this.getAccessToken();
       this.metrics.totalCalls += 1;
+
       const response = await fetch(`${API}${path}`, {
         headers: {
-          Authorization: `Bearer ${this.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
       });
 
-      if (response.ok) return (await response.json()) as SpotifySearchResponse;
+      if (response.ok) {
+        const payload = (await response.json()) as SpotifySearchResponse;
+        await this.readSession?.writeCache(path, payload);
+        return payload;
+      }
 
       this.metrics.failures += 1;
       const error = await spotifyApiErrorFromResponse(response, {
