@@ -7,7 +7,7 @@ import { spotifyApiErrorFromResponse } from "./errors";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
-const MAX_RATE_LIMIT_RETRIES = 1;
+const MAX_RATE_LIMIT_RETRIES = 0;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
 const SPOTIFY_SEARCH_MAX_LIMIT = 10;
 
