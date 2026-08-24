@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { BrandLogo } from "@/components/BrandLogo";
+import { TargetRunButton } from "@/components/TargetRunButton";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -87,17 +88,20 @@ export default async function GeneratedPlaylistPage({
               </p>
             </div>
 
-            {spotifyUrl ? (
-              <a
-                href={spotifyUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex w-fit items-center gap-2 rounded-2xl bg-accent px-4 py-2.5 text-sm font-black text-brand-900 shadow-action transition hover:bg-accent-400"
-              >
-                <UiIcon name="play" size={18} />
-                Abrir no Spotify
-              </a>
-            ) : null}
+            <div className="flex flex-col items-start gap-3 sm:items-end">
+              <TargetRunButton targetId={target.id} targetName={target.name} />
+              {spotifyUrl ? (
+                <a
+                  href={spotifyUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex w-fit items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-bold text-ink-inverse backdrop-blur-sm transition hover:bg-white/15"
+                >
+                  <UiIcon name="play" size={18} />
+                  Abrir no Spotify
+                </a>
+              ) : null}
+            </div>
           </div>
         </section>
 
