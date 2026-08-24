@@ -144,8 +144,18 @@ test("snapshot refresh rejects provider outage disguised as an empty recommendat
       assertAlbumOpportunitySnapshotRefreshUsable({
         candidateCount: 0,
         providerFailureCount: 4,
+        providerFailures: [
+          { subject: "artist-a:catalog", error: "HTTP 500" },
+          { subject: "artist-b:album-1", error: "invalid payload" },
+        ],
       }),
-    /provider failure\(s\) and no candidates/,
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /provider failure\(s\) and no candidates/);
+      assert.match(error.message, /artist-a:catalog: HTTP 500/);
+      assert.match(error.message, /artist-b:album-1: invalid payload/);
+      return true;
+    },
   );
 
   assert.doesNotThrow(() =>
