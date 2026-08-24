@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { LastFmSimilarityClient } from "@/services/lastfm/similarity";
 
-import { getBatchedCompleteMusicDiscoveryProfile } from "./complete-profile-batched";
+import { getBatchedRetainedCompleteMusicDiscoveryProfile } from "./complete-profile-batched";
 import {
   acquireLastFmExternalDiscovery,
   evaluateExternalDiscoveryCandidates,
@@ -87,7 +87,7 @@ export async function getForYouReport(
   );
 
   const [profile, trackIdentities] = await Promise.all([
-    getBatchedCompleteMusicDiscoveryProfile(userId),
+    getBatchedRetainedCompleteMusicDiscoveryProfile(userId),
     getDiscoveryTrackIdentityEvidence(userId),
   ]);
 
@@ -274,20 +274,23 @@ async function buildExternalRecommendations(input: {
             : "Nenhuma descoberta nova ultrapassou os critérios de qualidade agora.",
       },
     };
-  } catch (error) {
+  } catch {
     return {
       recommendations: [],
       status: {
         status: "UNAVAILABLE",
         providerFailures: 1,
-        note: `Descoberta externa indisponível agora: ${errorMessage(error)}`,
+        note: "O radar de descoberta externa não respondeu agora. Familiaridade e Redescoberta continuam disponíveis normalmente.",
       },
     };
   }
 }
 
 export function forYouReasonTexts(
-  recommendation: Pick<ForYouRecommendation, "category" | "reasonCodes" | "seedArtistName" | "seedTrackName">,
+  recommendation: Pick<
+    ForYouRecommendation,
+    "category" | "reasonCodes" | "seedArtistName" | "seedTrackName"
+  >,
   max = 2,
 ): string[] {
   const messages = recommendation.reasonCodes.flatMap((code) => {
@@ -509,8 +512,4 @@ function boundedLimit(value: number): number {
     throw new Error("limitPerCategory must be an integer between 1 and 12");
   }
   return value;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
