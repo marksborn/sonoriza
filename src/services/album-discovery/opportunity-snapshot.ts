@@ -68,10 +68,16 @@ export type RefreshAlbumOpportunitySnapshotResult = {
 export function assertAlbumOpportunitySnapshotRefreshUsable(input: {
   candidateCount: number;
   providerFailureCount: number;
+  providerFailures?: Array<{ subject: string; error: string }>;
 }): void {
   if (input.candidateCount === 0 && input.providerFailureCount > 0) {
+    const details = (input.providerFailures ?? [])
+      .slice(0, 3)
+      .map((failure) => `${failure.subject}: ${failure.error}`)
+      .join(" | ");
+    const suffix = details ? ` Sample: ${details}` : "";
     throw new Error(
-      `Album opportunity snapshot refresh rejected: ${input.providerFailureCount} provider failure(s) and no candidates; preserving the previous snapshot.`,
+      `Album opportunity snapshot refresh rejected: ${input.providerFailureCount} provider failure(s) and no candidates; preserving the previous snapshot.${suffix}`,
     );
   }
 }
@@ -91,6 +97,7 @@ export async function refreshAlbumOpportunitySnapshot(
   assertAlbumOpportunitySnapshotRefreshUsable({
     candidateCount: report.candidateCount,
     providerFailureCount,
+    providerFailures: report.providerMetrics.failures,
   });
 
   const payload = serializeAlbumOpportunitySnapshotPayload({
