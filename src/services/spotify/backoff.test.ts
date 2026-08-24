@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 
 import {
   getActiveSpotifyBackoff,
+  isSpotifyBackoffActive,
   recordSpotifyBackoff,
   retryAfterSecondsRemaining,
   SpotifyBackoffActiveError,
@@ -33,6 +34,29 @@ test("remaining seconds and API payload use blockedUntil as source of truth", ()
     blockedUntil: "2026-08-10T15:24:16.000Z",
     retryAfterSecondsRemaining: 21178,
   });
+});
+
+test("backoff activity is decided by absolute Node timestamps", () => {
+  const state = {
+    blockedUntil: new Date("2026-08-24T08:51:18.712Z"),
+  };
+
+  assert.equal(
+    isSpotifyBackoffActive(state, new Date("2026-08-24T08:51:18.711Z")),
+    true,
+  );
+  assert.equal(
+    isSpotifyBackoffActive(state, new Date("2026-08-24T08:51:18.712Z")),
+    false,
+  );
+  assert.equal(
+    isSpotifyBackoffActive(state, new Date("2026-08-24T09:47:00.000Z")),
+    false,
+  );
+  assert.equal(
+    retryAfterSecondsRemaining(state, new Date("2026-08-24T09:47:00.000Z")),
+    0,
+  );
 });
 
 const databaseTest = process.env.SPOTIFY_BACKOFF_DB_TEST === "1" ? test : test.skip;
@@ -65,6 +89,27 @@ databaseTest("persisted provider backoff keeps the longest concurrent Retry-Afte
     assert.equal(active.reason, "QUOTA_EXCEEDED");
     assert.equal(active.operation, "playlist-metadata");
     assert.equal(active.blockedUntil.toISOString(), "2026-08-10T15:24:16.000Z");
+  } finally {
+    await clearBackoff();
+  }
+});
+
+databaseTest("persisted provider backoff becomes inactive after blockedUntil", async () => {
+  await clearBackoff();
+
+  try {
+    await recordSpotifyBackoff({
+      reason: "RATE_LIMITED",
+      operation: "recently-played",
+      retryAfterSeconds: 1,
+      observedAt: now,
+    });
+
+    const active = await getActiveSpotifyBackoff(new Date(now.getTime() + 500));
+    assert.ok(active);
+
+    const expired = await getActiveSpotifyBackoff(new Date(now.getTime() + 2_000));
+    assert.equal(expired, null);
   } finally {
     await clearBackoff();
   }
