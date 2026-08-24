@@ -106,16 +106,18 @@ export async function getForYouReport(
     profile.topTracksHistorical.map((track) => [track.spotifyTrackId, track] as const),
   );
 
-  const familiar = scoring.familiarCandidates
-    .slice(0, limitPerCategory)
-    .map((candidate) =>
+  const familiar = dedupeForYouRecommendations(
+    scoring.familiarCandidates.map((candidate) =>
       localRecommendation(candidate, trackById.get(candidate.spotifyTrackId) ?? null),
-    );
-  const rediscovery = scoring.rediscoveryCandidates
-    .slice(0, limitPerCategory)
-    .map((candidate) =>
+    ),
+    limitPerCategory,
+  );
+  const rediscovery = dedupeForYouRecommendations(
+    scoring.rediscoveryCandidates.map((candidate) =>
       localRecommendation(candidate, trackById.get(candidate.spotifyTrackId) ?? null),
-    );
+    ),
+    limitPerCategory,
+  );
 
   const external = await buildExternalRecommendations({
     userId,
@@ -139,6 +141,26 @@ export async function getForYouReport(
     discovery: external.recommendations,
     external: external.status,
   };
+}
+
+export function dedupeForYouRecommendations(
+  rows: ForYouRecommendation[],
+  limit: number = rows.length,
+): ForYouRecommendation[] {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error("For You recommendation limit must be a positive integer");
+  }
+
+  const seen = new Set<string>();
+  const result: ForYouRecommendation[] = [];
+  for (const row of rows) {
+    const recordingLabel = artistTrackKey(row.artistName, row.trackName);
+    if (seen.has(recordingLabel)) continue;
+    seen.add(recordingLabel);
+    result.push(row);
+    if (result.length >= limit) break;
+  }
+  return result;
 }
 
 function localRecommendation(
@@ -225,28 +247,30 @@ async function buildExternalRecommendations(input: {
       topN: Math.max(input.limit * 4, 16),
     });
 
-    const recommendations = evaluation.eligible
-      .filter(
-        (candidate): candidate is typeof candidate & { trackName: string } =>
-          candidate.candidateType === "TRACK" && Boolean(candidate.trackName),
-      )
-      .slice(0, input.limit)
-      .map<ForYouRecommendation>((candidate) => ({
-        key: `DESCOBERTA:${candidate.candidateKey}`,
-        category: "DESCOBERTA",
-        artistName: candidate.artistName,
-        trackName: candidate.trackName,
-        albumName: null,
-        spotifyTrackId: null,
-        score: candidate.scoreCard.score,
-        reasonCodes: candidate.scoreCard.reasons.map((reason) => reason.code),
-        provenance: candidate.source,
-        playCount: null,
-        plays30d: null,
-        lastPlayedAt: null,
-        seedArtistName: candidate.seedArtistName,
-        seedTrackName: candidate.seedTrackName,
-      }));
+    const recommendations = dedupeForYouRecommendations(
+      evaluation.eligible
+        .filter(
+          (candidate): candidate is typeof candidate & { trackName: string } =>
+            candidate.candidateType === "TRACK" && Boolean(candidate.trackName),
+        )
+        .map<ForYouRecommendation>((candidate) => ({
+          key: `DESCOBERTA:${candidate.candidateKey}`,
+          category: "DESCOBERTA",
+          artistName: candidate.artistName,
+          trackName: candidate.trackName,
+          albumName: null,
+          spotifyTrackId: null,
+          score: candidate.scoreCard.score,
+          reasonCodes: candidate.scoreCard.reasons.map((reason) => reason.code),
+          provenance: candidate.source,
+          playCount: null,
+          plays30d: null,
+          lastPlayedAt: null,
+          seedArtistName: candidate.seedArtistName,
+          seedTrackName: candidate.seedTrackName,
+        })),
+      input.limit,
+    );
 
     const providerFailures = acquisition.failures.length;
     if (recommendations.length > 0) {
