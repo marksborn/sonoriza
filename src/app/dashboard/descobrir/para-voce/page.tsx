@@ -90,7 +90,7 @@ export default async function ForYouPage() {
           <RecommendationSection
             eyebrow="Descoberta"
             title="Algo novo para você"
-            description="Faixas novas no seu histórico, relacionadas a referências pelas quais você já demonstrou afinidade."
+            description="Faixas ainda não observadas no seu histórico, relacionadas a referências pelas quais você já demonstrou afinidade."
             icon="plus"
             rows={report.discovery}
             emptyText="Nenhuma faixa nova ultrapassou os critérios de qualidade neste momento."
@@ -155,8 +155,8 @@ function RecommendationSection({
         </div>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
-          {rows.map((row, index) => (
-            <RecommendationCard key={row.key} row={row} icon={icon} featured={index === 0} />
+          {rows.map((row) => (
+            <RecommendationCard key={row.key} row={row} icon={icon} />
           ))}
         </div>
       )}
@@ -167,19 +167,15 @@ function RecommendationSection({
 function RecommendationCard({
   row,
   icon,
-  featured,
 }: {
   row: ForYouRecommendation;
   icon: UiIconName;
-  featured: boolean;
 }) {
   const reasons = forYouReasonTexts(row, 2);
   const href = spotifyHref(row);
 
   return (
-    <article
-      className={`product-panel flex flex-col p-5 sm:p-6 ${featured ? "lg:col-span-1" : ""}`}
-    >
+    <article className="product-panel flex flex-col p-5 sm:p-6">
       <div className="flex items-start gap-4">
         <span className="product-icon-tile h-11 w-11 shrink-0">
           <UiIcon name={icon} size={20} />
@@ -206,7 +202,10 @@ function RecommendationCard({
       <div className="mt-5 space-y-2">
         {reasons.map((reason) => (
           <p key={reason} className="flex gap-2 text-sm leading-5 text-muted-inverse">
-            <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-accent-400" />
+            <span
+              aria-hidden="true"
+              className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-accent-400"
+            />
             <span>{reason}</span>
           </p>
         ))}
