@@ -53,14 +53,11 @@ export class SpotifyCatalogCacheWriteError extends Error {
 
 export function isSpotifyCatalogRequestBudgetExceededError(
   error: unknown,
-): error is SpotifyCatalogRequestBudgetExceededError {
-  return error instanceof SpotifyCatalogRequestBudgetExceededError;
-}
-
-export function isSpotifyCatalogCacheWriteError(
-  error: unknown,
-): error is SpotifyCatalogCacheWriteError {
-  return error instanceof SpotifyCatalogCacheWriteError;
+): error is SpotifyCatalogRequestBudgetExceededError | SpotifyCatalogCacheWriteError {
+  return (
+    error instanceof SpotifyCatalogRequestBudgetExceededError ||
+    error instanceof SpotifyCatalogCacheWriteError
+  );
 }
 
 type CacheEnvelope<T> = {
