@@ -29,9 +29,13 @@ export class SpotifyCatalogRequestBudgetExceededError extends Error {
   constructor(
     readonly requestBudget: number,
     readonly networkRequests: number,
+    readonly nextRequestPath: string | null = null,
   ) {
+    const nextMiss = nextRequestPath
+      ? ` Next cache miss: ${nextRequestPath}.`
+      : "";
     super(
-      `Spotify catalog request budget exhausted after ${networkRequests}/${requestBudget} network request(s); partial catalog progress remains cached for the next refresh.`,
+      `Spotify catalog request budget exhausted after ${networkRequests}/${requestBudget} network request(s); partial catalog progress remains cached for the next refresh.${nextMiss}`,
     );
     this.name = "SpotifyCatalogRequestBudgetExceededError";
   }
@@ -127,11 +131,12 @@ export class SpotifyCatalogReadSession {
     }
   }
 
-  reserveNetworkRequest(): void {
+  reserveNetworkRequest(nextRequestPath?: string): void {
     if (this.networkRequests >= this.requestBudget) {
       throw new SpotifyCatalogRequestBudgetExceededError(
         this.requestBudget,
         this.networkRequests,
+        nextRequestPath?.trim() || null,
       );
     }
     this.networkRequests += 1;
