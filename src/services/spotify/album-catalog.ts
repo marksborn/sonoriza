@@ -56,9 +56,10 @@ export class SpotifyAlbumCatalogClient {
     retries: 0,
     retryWaitMs: 0,
   };
+  private accessTokenPromise: Promise<string> | null = null;
 
   private constructor(
-    private readonly accessToken: string,
+    private readonly userId: string,
     private readonly readSession: SpotifyCatalogReadSession | null,
   ) {}
 
@@ -66,10 +67,7 @@ export class SpotifyAlbumCatalogClient {
     userId: string,
     options: { readSession?: SpotifyCatalogReadSession } = {},
   ): Promise<SpotifyAlbumCatalogClient> {
-    return new SpotifyAlbumCatalogClient(
-      await getSpotifyAccessToken(userId),
-      options.readSession ?? null,
-    );
+    return new SpotifyAlbumCatalogClient(userId, options.readSession ?? null);
   }
 
   getMetrics(): SpotifyAlbumCatalogMetrics {
@@ -128,6 +126,11 @@ export class SpotifyAlbumCatalogClient {
     );
   }
 
+  private async getAccessToken(): Promise<string> {
+    this.accessTokenPromise ??= getSpotifyAccessToken(this.userId);
+    return this.accessTokenPromise;
+  }
+
   private async request<T>(path: string, cacheTtlMs: number): Promise<T> {
     if (this.readSession) {
       const cached = await this.readSession.readCache<T>(path, cacheTtlMs);
@@ -138,11 +141,12 @@ export class SpotifyAlbumCatalogClient {
     while (true) {
       await assertSpotifyBackoffInactive();
       this.readSession?.reserveNetworkRequest();
+      const accessToken = await this.getAccessToken();
       this.metrics.totalCalls += 1;
 
       const response = await fetch(`${API}${path}`, {
         headers: {
-          Authorization: `Bearer ${this.accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
       });
