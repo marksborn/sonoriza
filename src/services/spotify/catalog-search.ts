@@ -1,3 +1,8 @@
+import { assertSpotifyBackoffInactive } from "./backoff";
+import {
+  SPOTIFY_CATALOG_CACHE_TTL,
+  type SpotifyCatalogReadSession,
+} from "./catalog-read-session";
 import { spotifyApiErrorFromResponse } from "./errors";
 import { getSpotifyAccessToken } from "./token";
 
@@ -42,10 +47,19 @@ export class SpotifyCatalogSearchClient {
     retryWaitMs: 0,
   };
 
-  private constructor(private readonly accessToken: string) {}
+  private constructor(
+    private readonly accessToken: string,
+    private readonly readSession: SpotifyCatalogReadSession | null,
+  ) {}
 
-  static async forUser(userId: string): Promise<SpotifyCatalogSearchClient> {
-    return new SpotifyCatalogSearchClient(await getSpotifyAccessToken(userId));
+  static async forUser(
+    userId: string,
+    options: { readSession?: SpotifyCatalogReadSession } = {},
+  ): Promise<SpotifyCatalogSearchClient> {
+    return new SpotifyCatalogSearchClient(
+      await getSpotifyAccessToken(userId),
+      options.readSession ?? null,
+    );
   }
 
   getMetrics(): SpotifyCatalogSearchMetrics {
@@ -91,10 +105,21 @@ export class SpotifyCatalogSearchClient {
       limit: String(limit),
     });
     const path = `/search?${params.toString()}`;
-    let retries = 0;
 
+    if (this.readSession) {
+      const cached = await this.readSession.readCache<SpotifySearchResponse>(
+        path,
+        SPOTIFY_CATALOG_CACHE_TTL.search,
+      );
+      if (cached !== null) return cached;
+    }
+
+    let retries = 0;
     while (true) {
+      await assertSpotifyBackoffInactive();
+      this.readSession?.reserveNetworkRequest();
       this.metrics.totalCalls += 1;
+
       const response = await fetch(`${API}${path}`, {
         headers: {
           Authorization: `Bearer ${this.accessToken}`,
@@ -102,7 +127,11 @@ export class SpotifyCatalogSearchClient {
         },
       });
 
-      if (response.ok) return (await response.json()) as SpotifySearchResponse;
+      if (response.ok) {
+        const payload = (await response.json()) as SpotifySearchResponse;
+        await this.readSession?.writeCache(path, payload);
+        return payload;
+      }
 
       this.metrics.failures += 1;
       const error = await spotifyApiErrorFromResponse(response, {
