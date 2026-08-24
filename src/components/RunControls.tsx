@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { UiIcon } from "@/components/UiIcon";
+import { spotifyBackoffRemainingMs } from "@/services/spotify/backoff-ui";
 
 type State = {
   status: "idle" | "running" | "done" | "error";
@@ -83,8 +84,21 @@ export function RunControls() {
   useEffect(() => {
     const blockedUntil = gate.spotifyBackoff?.blockedUntil;
     if (!blockedUntil) return;
-    const delay = Math.max(250, Date.parse(blockedUntil) - Date.now() + 250);
-    const timer = window.setTimeout(() => window.location.reload(), delay);
+
+    const remainingMs = spotifyBackoffRemainingMs(blockedUntil);
+    const clearExpiredBackoff = () => {
+      setGate((current) => {
+        if (current.spotifyBackoff?.blockedUntil !== blockedUntil) return current;
+        return { ...current, spotifyBackoff: null };
+      });
+    };
+
+    if (remainingMs === null || remainingMs === 0) {
+      clearExpiredBackoff();
+      return;
+    }
+
+    const timer = window.setTimeout(clearExpiredBackoff, remainingMs + 250);
     return () => window.clearTimeout(timer);
   }, [gate.spotifyBackoff?.blockedUntil]);
 
