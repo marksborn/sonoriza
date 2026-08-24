@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { SpotifyCatalogRequestBudgetExceededError } from "@/services/spotify/catalog-read-session";
 import { SpotifyApiError } from "@/services/spotify/errors";
 
 import type { AlbumOpportunityCandidate } from "./opportunity";
@@ -162,13 +163,19 @@ test("snapshot refresh rejects provider outage disguised as an empty recommendat
   );
 });
 
-test("album opportunity report treats Spotify quota/rate-limit as terminal", () => {
+test("album opportunity report treats provider quota and local request budget as terminal", () => {
   assert.equal(
     isAlbumOpportunityTerminalProviderError(spotifyError("QUOTA_EXCEEDED")),
     true,
   );
   assert.equal(
     isAlbumOpportunityTerminalProviderError(spotifyError("RATE_LIMITED")),
+    true,
+  );
+  assert.equal(
+    isAlbumOpportunityTerminalProviderError(
+      new SpotifyCatalogRequestBudgetExceededError(8, 8),
+    ),
     true,
   );
   assert.equal(
