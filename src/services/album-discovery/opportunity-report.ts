@@ -15,7 +15,10 @@ import {
   loadAlbumRecommendationMemories,
   suppressQueuedAlbumOpportunities,
 } from "@/services/album-discovery/queue-memory";
-import { SpotifyAlbumCatalogClient } from "@/services/spotify/album-catalog";
+import {
+  SpotifyAlbumCatalogClient,
+  type SpotifyAlbumCatalogSummary,
+} from "@/services/spotify/album-catalog";
 import {
   SpotifyCatalogReadSession,
   isSpotifyCatalogRequestBudgetExceededError,
@@ -168,7 +171,20 @@ async function computeAlbumOpportunityReport(
   const candidates: AlbumOpportunityCandidate[] = [];
   const artistReports: AlbumOpportunityArtistReport[] = [];
   const failures: AlbumOpportunityProviderFailure[] = [];
+  const preparedArtists: Array<{
+    artistCandidate: (typeof selectedArtists)[number];
+    identity: HistoricalArtistIdentityEvidence;
+    resolutionStatus: string;
+    resolutionReason: string;
+    spotifyArtist: { id: string; name: string };
+    catalogAlbums: SpotifyAlbumCatalogSummary[];
+    events: AlbumHistoryEvent[];
+  }> = [];
 
+  // Phase 1: resolve identities and populate the cheap artist-album catalog first.
+  // With a small request budget, repeated refreshes therefore finish all artist
+  // lists before spending quota on per-album tracklists. Successful pages remain
+  // cached across runs, so a budget stop is resumable without changing ranking.
   for (const artistCandidate of selectedArtists) {
     const identity = await loadHistoricalArtistIdentity({
       userId,
@@ -227,6 +243,39 @@ async function computeAlbumOpportunityReport(
         }),
       ]);
 
+      preparedArtists.push({
+        artistCandidate,
+        identity,
+        resolutionStatus,
+        resolutionReason,
+        spotifyArtist,
+        catalogAlbums,
+        events,
+      });
+    } catch (error) {
+      if (isAlbumOpportunityTerminalProviderError(error)) throw error;
+      failures.push({
+        subject: `${artistCandidate.artistName}:catalog`,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  // Phase 2: only after every resolvable artist catalog is available do we
+  // enrich exact album editions with tracklists. This preserves the existing
+  // full-ranking semantics while making quota-limited progress deterministic.
+  for (const prepared of preparedArtists) {
+    const {
+      artistCandidate,
+      identity,
+      resolutionStatus,
+      resolutionReason,
+      spotifyArtist,
+      catalogAlbums,
+      events,
+    } = prepared;
+
+    try {
       const albumResults = await mapWithConcurrency(
         catalogAlbums,
         ALBUM_TRACK_CONCURRENCY,
@@ -283,7 +332,7 @@ async function computeAlbumOpportunityReport(
     } catch (error) {
       if (isAlbumOpportunityTerminalProviderError(error)) throw error;
       failures.push({
-        subject: `${artistCandidate.artistName}:catalog`,
+        subject: `${artistCandidate.artistName}:tracklists`,
         error: errorMessage(error),
       });
     }
