@@ -24,7 +24,7 @@ test("catalog read session persists successful reads across refresh runs", async
       now: () => now,
     });
     assert.equal(await first.readCache(path, 60_000), null);
-    first.reserveNetworkRequest();
+    first.reserveNetworkRequest(path);
     await first.writeCache(path, { items: [{ id: "track-1" }] });
 
     const second = new SpotifyCatalogReadSession("user-1", {
@@ -42,38 +42,45 @@ test("catalog read session persists successful reads across refresh runs", async
   }
 });
 
-test("catalog request budget stops locally before another network request", () => {
+test("catalog request budget stops locally and exposes the next cache miss", () => {
   const session = new SpotifyCatalogReadSession("user-1", {
     requestBudget: 2,
     cacheDir: "/tmp/unused-sonoriza-cache-test",
   });
 
-  session.reserveNetworkRequest();
-  session.reserveNetworkRequest();
+  session.reserveNetworkRequest("/first");
+  session.reserveNetworkRequest("/second");
+  const nextPath = "/artists/artist-3/albums?include_groups=album&limit=10";
 
   assert.throws(
-    () => session.reserveNetworkRequest(),
+    () => session.reserveNetworkRequest(nextPath),
     (error: unknown) => {
       assert.ok(error instanceof SpotifyCatalogRequestBudgetExceededError);
       assert.equal(error.requestBudget, 2);
       assert.equal(error.networkRequests, 2);
+      assert.equal(error.nextRequestPath, nextPath);
+      assert.match(error.message, /Next cache miss:/);
+      assert.match(error.message, /artist-3/);
       return true;
     },
   );
 });
 
-test("zero request budget enables a strict cache-only session", () => {
+test("zero request budget enables a strict cache-only session with dry-run path", () => {
   const session = new SpotifyCatalogReadSession("user-1", {
     requestBudget: 0,
     cacheDir: "/tmp/unused-sonoriza-cache-only-test",
   });
+  const nextPath = "/artists/artist-1/albums?include_groups=album&limit=10";
 
   assert.throws(
-    () => session.reserveNetworkRequest(),
+    () => session.reserveNetworkRequest(nextPath),
     (error: unknown) => {
       assert.ok(error instanceof SpotifyCatalogRequestBudgetExceededError);
       assert.equal(error.requestBudget, 0);
       assert.equal(error.networkRequests, 0);
+      assert.equal(error.nextRequestPath, nextPath);
+      assert.match(error.message, /Next cache miss:/);
       return true;
     },
   );
