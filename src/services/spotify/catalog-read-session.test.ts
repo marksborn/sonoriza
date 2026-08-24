@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
+  SpotifyCatalogCacheWriteError,
   SpotifyCatalogReadSession,
   SpotifyCatalogRequestBudgetExceededError,
+  isSpotifyCatalogRequestBudgetExceededError,
   normalizeRequestBudget,
 } from "./catalog-read-session";
 
@@ -76,6 +78,35 @@ test("zero request budget enables a strict cache-only session", () => {
     },
   );
   assert.equal(session.getMetrics().networkRequests, 0);
+});
+
+test("catalog cache write failure is terminal and visible", async () => {
+  const root = await mkdtemp(join(tmpdir(), "sonoriza-catalog-cache-write-"));
+  const blocker = join(root, "not-a-directory");
+  await writeFile(blocker, "block cache directory creation", "utf8");
+
+  try {
+    const session = new SpotifyCatalogReadSession("user-1", {
+      cacheDir: blocker,
+      requestBudget: 1,
+    });
+
+    await assert.rejects(
+      session.writeCache("/artists/artist-1/albums", { items: [] }),
+      (error: unknown) => {
+        assert.ok(error instanceof SpotifyCatalogCacheWriteError);
+        assert.equal(error.code, "SPOTIFY_CATALOG_CACHE_WRITE_FAILED");
+        assert.equal(isSpotifyCatalogRequestBudgetExceededError(error), true);
+        assert.match(error.message, /cache write failed/i);
+        return true;
+      },
+    );
+
+    assert.equal(session.getMetrics().cacheWrites, 0);
+    assert.equal(session.getMetrics().cacheWriteFailures, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("catalog request budget is clamped conservatively", () => {
