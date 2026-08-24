@@ -7,6 +7,8 @@ on:
     paths:
       - "src/services/album-discovery/**"
       - "src/services/spotify/album-catalog.ts"
+      - "src/jobs/refresh-album-opportunity-snapshots.ts"
+      - "src/app/api/cron/refresh-album-opportunities/**"
       - "src/app/dashboard/descobrir/**"
       - "scripts/report-album-discovery-*.ts"
       - "package.json"
@@ -15,6 +17,8 @@ on:
     paths:
       - "src/services/album-discovery/**"
       - "src/services/spotify/album-catalog.ts"
+      - "src/jobs/refresh-album-opportunity-snapshots.ts"
+      - "src/app/api/cron/refresh-album-opportunities/**"
       - "src/app/dashboard/descobrir/**"
       - "scripts/report-album-discovery-*.ts"
       - "package.json"
