@@ -17,6 +17,7 @@ import {
 } from "@/services/album-discovery/queue-memory";
 import { SpotifyAlbumCatalogClient } from "@/services/spotify/album-catalog";
 import { SpotifyCatalogSearchClient } from "@/services/spotify/catalog-search";
+import { isSpotifyApiError } from "@/services/spotify/errors";
 import {
   getMusicDiscoveryProfile,
   type DiscoveryArtistProfile,
@@ -61,6 +62,13 @@ export type AlbumOpportunityProviderFailure = {
   subject: string;
   error: string;
 };
+
+export function isAlbumOpportunityTerminalProviderError(error: unknown): boolean {
+  return (
+    isSpotifyApiError(error) &&
+    (error.kind === "RATE_LIMITED" || error.kind === "QUOTA_EXCEEDED")
+  );
+}
 
 export async function getAlbumOpportunityReport(
   userId: string,
@@ -214,6 +222,7 @@ async function computeAlbumOpportunityReport(
               failure: null,
             };
           } catch (error) {
+            if (isAlbumOpportunityTerminalProviderError(error)) throw error;
             return {
               scored: null,
               failure: {
@@ -244,6 +253,7 @@ async function computeAlbumOpportunityReport(
         scoredAlbumCount,
       });
     } catch (error) {
+      if (isAlbumOpportunityTerminalProviderError(error)) throw error;
       failures.push({
         subject: `${artistCandidate.artistName}:catalog`,
         error: errorMessage(error),
