@@ -46,6 +46,13 @@ type ProviderBackoffRow = {
   updatedAt: Date;
 };
 
+export function isSpotifyBackoffActive(
+  state: Pick<SpotifyBackoffState, "blockedUntil">,
+  now = new Date(),
+): boolean {
+  return state.blockedUntil.getTime() > now.getTime();
+}
+
 export async function getActiveSpotifyBackoff(
   now = new Date(),
 ): Promise<SpotifyBackoffState | null> {
@@ -60,7 +67,6 @@ export async function getActiveSpotifyBackoff(
       "updatedAt"
     FROM "ProviderBackoff"
     WHERE "provider" = ${PROVIDER}
-      AND "blockedUntil" > ${now}
     LIMIT 1
   `);
 
@@ -70,7 +76,7 @@ export async function getActiveSpotifyBackoff(
     return null;
   }
 
-  return {
+  const state: SpotifyBackoffState = {
     provider: "spotify",
     reason: row.reason,
     operation: row.operation,
@@ -79,6 +85,8 @@ export async function getActiveSpotifyBackoff(
     observedAt: row.observedAt,
     updatedAt: row.updatedAt,
   };
+
+  return isSpotifyBackoffActive(state, now) ? state : null;
 }
 
 export async function assertSpotifyBackoffInactive(
