@@ -37,10 +37,30 @@ export class SpotifyCatalogRequestBudgetExceededError extends Error {
   }
 }
 
+export class SpotifyCatalogCacheWriteError extends Error {
+  readonly code = "SPOTIFY_CATALOG_CACHE_WRITE_FAILED";
+
+  constructor(
+    readonly filePath: string,
+    readonly originalError: unknown,
+  ) {
+    super(
+      `Spotify catalog cache write failed for ${filePath}: ${errorMessage(originalError)}`,
+    );
+    this.name = "SpotifyCatalogCacheWriteError";
+  }
+}
+
 export function isSpotifyCatalogRequestBudgetExceededError(
   error: unknown,
 ): error is SpotifyCatalogRequestBudgetExceededError {
   return error instanceof SpotifyCatalogRequestBudgetExceededError;
+}
+
+export function isSpotifyCatalogCacheWriteError(
+  error: unknown,
+): error is SpotifyCatalogCacheWriteError {
+  return error instanceof SpotifyCatalogCacheWriteError;
 }
 
 type CacheEnvelope<T> = {
@@ -137,9 +157,10 @@ export class SpotifyCatalogReadSession {
       });
       await rename(tempPath, filePath);
       this.cacheWrites += 1;
-    } catch {
+    } catch (error) {
       this.cacheWriteFailures += 1;
       await rm(tempPath, { force: true }).catch(() => undefined);
+      throw new SpotifyCatalogCacheWriteError(filePath, error);
     }
   }
 
@@ -163,4 +184,8 @@ function requestBudgetFromEnv(): number {
   const raw = process.env.ALBUM_OPPORTUNITY_SPOTIFY_REQUEST_BUDGET?.trim();
   if (!raw) return DEFAULT_REQUEST_BUDGET;
   return Number(raw);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
