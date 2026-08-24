@@ -4,6 +4,7 @@ import test from "node:test";
 import type { AlbumOpportunityCandidate } from "./opportunity";
 import {
   ALBUM_OPPORTUNITY_SNAPSHOT_POLICY,
+  assertAlbumOpportunitySnapshotRefreshUsable,
   hydrateAlbumOpportunitySnapshotCandidates,
   selectSnapshotCandidates,
   serializeAlbumOpportunitySnapshotPayload,
@@ -118,4 +119,29 @@ test("snapshot UI selection never mutates candidate ranking state", () => {
   selectSnapshotCandidates(rows, new Set(["album-1"]), 1);
 
   assert.deepEqual(rows, before);
+});
+
+test("snapshot refresh rejects provider outage disguised as an empty recommendation set", () => {
+  assert.throws(
+    () =>
+      assertAlbumOpportunitySnapshotRefreshUsable({
+        candidateCount: 0,
+        providerFailureCount: 4,
+      }),
+    /provider failure\(s\) and no candidates/,
+  );
+
+  assert.doesNotThrow(() =>
+    assertAlbumOpportunitySnapshotRefreshUsable({
+      candidateCount: 0,
+      providerFailureCount: 0,
+    }),
+  );
+
+  assert.doesNotThrow(() =>
+    assertAlbumOpportunitySnapshotRefreshUsable({
+      candidateCount: 3,
+      providerFailureCount: 1,
+    }),
+  );
 });
