@@ -65,6 +65,17 @@ export type RefreshAlbumOpportunitySnapshotResult = {
   filePath: string;
 };
 
+export function assertAlbumOpportunitySnapshotRefreshUsable(input: {
+  candidateCount: number;
+  providerFailureCount: number;
+}): void {
+  if (input.candidateCount === 0 && input.providerFailureCount > 0) {
+    throw new Error(
+      `Album opportunity snapshot refresh rejected: ${input.providerFailureCount} provider failure(s) and no candidates; preserving the previous snapshot.`,
+    );
+  }
+}
+
 export async function refreshAlbumOpportunitySnapshot(
   userId: string,
   input: { asOf?: Date } = {},
@@ -75,12 +86,18 @@ export async function refreshAlbumOpportunitySnapshot(
     artistLimit: 5,
     top: ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.persistedCandidateCount,
   });
+  const providerFailureCount = report.providerMetrics.failures.length;
+
+  assertAlbumOpportunitySnapshotRefreshUsable({
+    candidateCount: report.candidateCount,
+    providerFailureCount,
+  });
 
   const payload = serializeAlbumOpportunitySnapshotPayload({
     generatedAt: report.generatedAt,
     asOf: report.asOf,
     candidateCount: report.candidateCount,
-    providerFailureCount: report.providerMetrics.failures.length,
+    providerFailureCount,
     ranked: report.ranked,
   });
   const filePath = await writeSnapshot(userId, payload);
