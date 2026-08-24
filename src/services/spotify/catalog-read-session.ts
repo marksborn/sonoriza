@@ -155,7 +155,7 @@ export function normalizeRequestBudget(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_REQUEST_BUDGET;
   return Math.min(
     MAX_REQUEST_BUDGET,
-    Math.max(1, Math.trunc(value)),
+    Math.max(0, Math.trunc(value)),
   );
 }
 
