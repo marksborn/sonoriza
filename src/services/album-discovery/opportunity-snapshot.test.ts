@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { SpotifyApiError } from "@/services/spotify/errors";
+
 import type { AlbumOpportunityCandidate } from "./opportunity";
+import { isAlbumOpportunityTerminalProviderError } from "./opportunity-report";
 import {
   ALBUM_OPPORTUNITY_SNAPSHOT_POLICY,
   assertAlbumOpportunitySnapshotRefreshUsable,
@@ -63,6 +66,19 @@ function candidate(
     ],
     ...overrides,
   };
+}
+
+function spotifyError(kind: "RATE_LIMITED" | "QUOTA_EXCEEDED" | "HTTP_ERROR") {
+  return new SpotifyApiError({
+    kind,
+    status: kind === "HTTP_ERROR" ? 500 : 429,
+    method: "GET",
+    operation: "spotify-api",
+    reason: kind === "QUOTA_EXCEEDED" ? "QUOTA_EXCEEDED" : null,
+    retryAfterSeconds: kind === "HTTP_ERROR" ? null : 60,
+    retryable: kind !== "QUOTA_EXCEEDED",
+    message: kind,
+  });
 }
 
 test("snapshot serialization preserves ALBUM-01 candidate facts and restores Date fields", () => {
@@ -144,4 +160,20 @@ test("snapshot refresh rejects provider outage disguised as an empty recommendat
       providerFailureCount: 1,
     }),
   );
+});
+
+test("album opportunity report treats Spotify quota/rate-limit as terminal", () => {
+  assert.equal(
+    isAlbumOpportunityTerminalProviderError(spotifyError("QUOTA_EXCEEDED")),
+    true,
+  );
+  assert.equal(
+    isAlbumOpportunityTerminalProviderError(spotifyError("RATE_LIMITED")),
+    true,
+  );
+  assert.equal(
+    isAlbumOpportunityTerminalProviderError(spotifyError("HTTP_ERROR")),
+    false,
+  );
+  assert.equal(isAlbumOpportunityTerminalProviderError(new Error("local")), false);
 });
