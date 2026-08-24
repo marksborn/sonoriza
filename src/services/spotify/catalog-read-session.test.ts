@@ -5,12 +5,15 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  SPOTIFY_CATALOG_CACHE_TTL,
   SpotifyCatalogCacheWriteError,
   SpotifyCatalogReadSession,
   SpotifyCatalogRequestBudgetExceededError,
   isSpotifyCatalogRequestBudgetExceededError,
   normalizeRequestBudget,
 } from "./catalog-read-session";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 test("catalog read session persists successful reads across refresh runs", async () => {
   const root = await mkdtemp(join(tmpdir(), "sonoriza-catalog-cache-"));
@@ -40,6 +43,12 @@ test("catalog read session persists successful reads across refresh runs", async
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("catalog cache policy keeps artist album pages warm across snapshot refreshes", () => {
+  assert.equal(SPOTIFY_CATALOG_CACHE_TTL.search, 7 * DAY_MS);
+  assert.equal(SPOTIFY_CATALOG_CACHE_TTL.artistAlbums, 7 * DAY_MS);
+  assert.equal(SPOTIFY_CATALOG_CACHE_TTL.albumTracks, 30 * DAY_MS);
 });
 
 test("catalog request budget stops locally and exposes the next cache miss", () => {
@@ -117,7 +126,7 @@ test("catalog cache write failure is terminal and visible", async () => {
 });
 
 test("catalog request budget is clamped conservatively", () => {
-  assert.equal(normalizeRequestBudget(Number.NaN), 8);
+  assert.equal(normalizeRequestBudget(Number.NaN), 4);
   assert.equal(normalizeRequestBudget(0), 0);
   assert.equal(normalizeRequestBudget(-5), 0);
   assert.equal(normalizeRequestBudget(8.9), 8);
