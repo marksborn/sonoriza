@@ -267,11 +267,13 @@ async function readAlbumOpportunitySnapshot(
     throw error;
   }
 
-  const parsed: unknown = JSON.parse(raw);
-  if (!isSnapshotPayload(parsed)) {
-    throw new Error(`Invalid ALBUM-01 snapshot payload at ${filePath}`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
   }
-  return parsed;
+  return isSnapshotPayload(parsed) ? parsed : null;
 }
 
 async function writeSnapshot(
