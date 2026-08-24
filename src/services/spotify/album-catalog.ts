@@ -140,7 +140,7 @@ export class SpotifyAlbumCatalogClient {
     let retries = 0;
     while (true) {
       await assertSpotifyBackoffInactive();
-      this.readSession?.reserveNetworkRequest();
+      this.readSession?.reserveNetworkRequest(path);
       const accessToken = await this.getAccessToken();
       this.metrics.totalCalls += 1;
 
