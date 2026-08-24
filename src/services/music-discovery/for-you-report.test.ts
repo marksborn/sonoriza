@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  dedupeForYouRecommendations,
   forYouReasonTexts,
   forYouStrengthLabel,
   type ForYouRecommendation,
@@ -59,4 +60,38 @@ test("forYouStrengthLabel keeps score presentation simple", () => {
   assert.equal(forYouStrengthLabel(85), "Afinidade alta");
   assert.equal(forYouStrengthLabel(70), "Boa compatibilidade");
   assert.equal(forYouStrengthLabel(55), "Vale explorar");
+});
+
+test("dedupeForYouRecommendations keeps one visible recording label and backfills the limit", () => {
+  const result = dedupeForYouRecommendations(
+    [
+      recommendation({
+        key: "FAMILIAR:release-a",
+        artistName: "Mushroomhead",
+        trackName: "Sun Doesn't Rise",
+        spotifyTrackId: "release-a",
+        score: 80.9,
+      }),
+      recommendation({
+        key: "FAMILIAR:release-b",
+        artistName: " mushroomhead ",
+        trackName: "  Sun Doesn't Rise ",
+        spotifyTrackId: "release-b",
+        score: 75.2,
+      }),
+      recommendation({
+        key: "FAMILIAR:track-3",
+        artistName: "In Flames",
+        trackName: "Versus Terminus",
+        spotifyTrackId: "track-3",
+        score: 74.2,
+      }),
+    ],
+    2,
+  );
+
+  assert.deepEqual(
+    result.map((row) => row.spotifyTrackId),
+    ["release-a", "track-3"],
+  );
 });
