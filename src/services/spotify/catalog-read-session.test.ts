@@ -60,9 +60,28 @@ test("catalog request budget stops locally before another network request", () =
   );
 });
 
+test("zero request budget enables a strict cache-only session", () => {
+  const session = new SpotifyCatalogReadSession("user-1", {
+    requestBudget: 0,
+    cacheDir: "/tmp/unused-sonoriza-cache-only-test",
+  });
+
+  assert.throws(
+    () => session.reserveNetworkRequest(),
+    (error: unknown) => {
+      assert.ok(error instanceof SpotifyCatalogRequestBudgetExceededError);
+      assert.equal(error.requestBudget, 0);
+      assert.equal(error.networkRequests, 0);
+      return true;
+    },
+  );
+  assert.equal(session.getMetrics().networkRequests, 0);
+});
+
 test("catalog request budget is clamped conservatively", () => {
   assert.equal(normalizeRequestBudget(Number.NaN), 8);
-  assert.equal(normalizeRequestBudget(0), 1);
+  assert.equal(normalizeRequestBudget(0), 0);
+  assert.equal(normalizeRequestBudget(-5), 0);
   assert.equal(normalizeRequestBudget(8.9), 8);
   assert.equal(normalizeRequestBudget(500), 100);
 });
