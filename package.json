@@ -28,6 +28,7 @@
     "liked:inventory": "tsx scripts/report-liked-track-inventory.ts",
     "liked:affinity": "tsx scripts/report-liked-track-affinity.ts",
     "liked:similarity": "tsx scripts/report-liked-artist-similarity.ts",
+    "liked:shadow-discovery": "tsx scripts/report-liked-shadow-discovery.ts",
     "discovery:profile": "tsx scripts/report-music-discovery-profile.ts",
     "discovery:score": "tsx scripts/report-music-discovery-score.ts",
     "discovery:external": "tsx scripts/report-music-discovery-external.ts",
