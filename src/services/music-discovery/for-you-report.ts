@@ -76,6 +76,12 @@ export type ForYouReport = {
 
 export type ForYouReportOptions = {
   limitPerCategory?: number;
+  /**
+   * Keeps provider acquisition/evaluation budgets anchored to the product baseline
+   * while allowing a deeper output pool for read-only shadow diagnostics.
+   * Defaults to limitPerCategory, preserving every existing caller.
+   */
+  externalReferenceLimit?: number;
 };
 
 export async function getForYouReport(
@@ -84,6 +90,9 @@ export async function getForYouReport(
 ): Promise<ForYouReport> {
   const limitPerCategory = boundedLimit(
     options.limitPerCategory ?? DEFAULT_LIMIT_PER_CATEGORY,
+  );
+  const externalReferenceLimit = boundedLimit(
+    options.externalReferenceLimit ?? limitPerCategory,
   );
 
   const [profile, trackIdentities] = await Promise.all([
@@ -123,6 +132,7 @@ export async function getForYouReport(
     userId,
     scoring,
     limit: limitPerCategory,
+    referenceLimit: externalReferenceLimit,
   });
 
   return {
@@ -186,10 +196,23 @@ function localRecommendation(
   };
 }
 
+export function getForYouExternalDiscoveryLimits(
+  outputLimit: number,
+  referenceLimit: number = outputLimit,
+): { maxCandidates: number; evaluationTopN: number } {
+  boundedLimit(outputLimit);
+  const reference = boundedLimit(referenceLimit);
+  return {
+    maxCandidates: Math.max(reference * 12, 48),
+    evaluationTopN: Math.max(reference * 4, 16),
+  };
+}
+
 async function buildExternalRecommendations(input: {
   userId: string;
   scoring: ReturnType<typeof buildDiscoveryGate22ScoringReport>;
   limit: number;
+  referenceLimit: number;
 }): Promise<{
   recommendations: ForYouRecommendation[];
   status: ForYouReport["external"];
@@ -232,19 +255,23 @@ async function buildExternalRecommendations(input: {
         trackAffinity: row.score / 100,
       }));
 
+    const externalLimits = getForYouExternalDiscoveryLimits(
+      input.limit,
+      input.referenceLimit,
+    );
     const acquisition = await acquireLastFmExternalDiscovery({
       provider: new LastFmSimilarityClient({ apiKey }),
       artistSeeds,
       trackSeeds,
       perSeed: EXTERNAL_PER_SEED,
-      maxCandidates: Math.max(input.limit * 12, 48),
+      maxCandidates: externalLimits.maxCandidates,
     });
 
     const history = await getKnownHistory(input.userId, acquisition.candidates);
     const evaluation = evaluateExternalDiscoveryCandidates({
       candidates: acquisition.candidates,
       historyEvidence: (candidate) => historyEvidenceFor(candidate, history),
-      topN: Math.max(input.limit * 4, 16),
+      topN: externalLimits.evaluationTopN,
     });
 
     const recommendations = dedupeForYouRecommendations(

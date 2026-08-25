@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   dedupeForYouRecommendations,
+  getForYouExternalDiscoveryLimits,
   forYouReasonTexts,
   forYouStrengthLabel,
   type ForYouRecommendation,
@@ -94,4 +95,13 @@ test("dedupeForYouRecommendations keeps one visible recording label and backfill
     result.map((row) => row.spotifyTrackId),
     ["release-a", "track-3"],
   );
+});
+
+
+test("external discovery budgets can stay UI-equivalent while shadow output pool grows", () => {
+  const ui = getForYouExternalDiscoveryLimits(4, 4);
+  const shadowPool = getForYouExternalDiscoveryLimits(12, 4);
+
+  assert.deepEqual(shadowPool, ui);
+  assert.deepEqual(ui, { maxCandidates: 48, evaluationTopN: 16 });
 });

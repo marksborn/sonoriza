@@ -274,3 +274,31 @@ test("boost calibration remains bounded", () => {
   assert.equal(similarityAffinityBoost(1, 5), 6);
   assert.equal(similarityAffinityBoost(0.5, 1), 2);
 });
+
+
+test("uncapped shadow ranking preserves affinity above the display score ceiling", () => {
+  const report = buildLikedShadowDiscoveryComparison({
+    baseline: baseline({
+      discovery: [
+        recommendation("d1", "DESCOBERTA", "Baseline 100", 100),
+        recommendation("d2", "DESCOBERTA", "Liked 99", 99),
+      ],
+    }),
+    directAffinities: [
+      { spotifyArtistId: "liked-99", artistName: "Liked 99", likedTrackCount: 64 },
+    ],
+    similarityEdges: [],
+    activeSeedCount: 0,
+    poolPerCategory: 2,
+    topPerCategory: 2,
+  });
+
+  assert.deepEqual(
+    report.categories.discovery.shadow.map((row) => row.artistName),
+    ["Liked 99", "Baseline 100"],
+  );
+  const liked = report.categories.discovery.shadow[0]!;
+  assert.equal(liked.shadowScore, 100);
+  assert.equal(liked.shadowRankingScore, 111);
+  assert.equal(liked.boost, 12);
+});
