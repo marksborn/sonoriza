@@ -1,68 +1,66 @@
-export type TargetCalendarScopeMode = "EXPLICIT" | "LEGACY_GLOBAL";
+export type TargetCalendarScopeMode =
+  | "SELECTED"
+  | "ALL_QUERYABLE"
+  | "LEGACY_GLOBAL";
 
 export type TargetCalendarScope = {
   mode: TargetCalendarScopeMode;
   calendarIds: string[];
 };
 
-/**
- * CALENDAR #127 compatibility seam.
- *
- * Gate 1 persists an optional CalendarSelection relation on TargetPlaylist but
- * deliberately does not change generation yet. Gate 2 will call this seam:
- *
- * - an explicitly bound target reads only its own Google calendar;
- * - a pre-existing target with no binding keeps the exact legacy global set;
- * - no implicit default calendar is invented.
- *
- * Keeping the legacy fallback explicit in the type makes it possible to remove
- * it later, after every existing calendar-driven target has been migrated by
- * the user.
- */
-export function resolveTargetCalendarScope(
-  explicitGoogleCalendarId: string | null | undefined,
-  legacyDurationCalendarIds: readonly string[],
-): TargetCalendarScope {
-  const explicit = explicitGoogleCalendarId?.trim();
-  if (explicit) {
-    return {
-      mode: "EXPLICIT",
-      calendarIds: [explicit],
-    };
-  }
-
-  return {
-    mode: "LEGACY_GLOBAL",
-    calendarIds: [...legacyDurationCalendarIds],
-  };
+export function normalizeTargetCalendarSelectionIds(
+  values: readonly string[],
+): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort();
 }
 
 /**
- * Only a target that was already calendar-driven and unbound before Gate 2 may
- * remain on the legacy global calendar set. This prevents creating new legacy
- * state when a FIXED target is switched to CALENDAR after per-target selection
- * became available.
+ * CALENDAR #127 Gate 3 scope resolver.
+ *
+ * SELECTED uses exactly the calendars linked to this destination.
+ * ALL_QUERYABLE dynamically follows every CalendarSelection marked selected.
+ * LEGACY_GLOBAL exists only for old calendar-driven targets not migrated yet.
+ *
+ * The resolver deliberately does not invent a fallback when SELECTED or
+ * ALL_QUERYABLE resolve to an empty set; callers must fail closed instead.
  */
-export function canPreserveLegacyTargetCalendar(input: {
-  durationMode: "FIXED" | "CALENDAR";
-  calendarSelectionId: string | null | undefined;
-} | null): boolean {
-  return Boolean(
-    input?.durationMode === "CALENDAR" && !input.calendarSelectionId?.trim(),
+export function resolveTargetCalendarScope(input: {
+  mode: TargetCalendarScopeMode;
+  selectedGoogleCalendarIds: readonly string[];
+  queryableCalendarIds: readonly string[];
+  legacyDurationCalendarIds: readonly string[];
+}): TargetCalendarScope {
+  const calendarIds =
+    input.mode === "SELECTED"
+      ? normalizeTargetCalendarSelectionIds(input.selectedGoogleCalendarIds)
+      : input.mode === "ALL_QUERYABLE"
+        ? normalizeTargetCalendarSelectionIds(input.queryableCalendarIds)
+        : normalizeTargetCalendarSelectionIds(input.legacyDurationCalendarIds);
+
+  return { mode: input.mode, calendarIds };
+}
+
+export function targetCalendarScopesEqual(
+  left: TargetCalendarScope,
+  right: TargetCalendarScope,
+): boolean {
+  return (
+    left.mode === right.mode &&
+    left.calendarIds.length === right.calendarIds.length &&
+    left.calendarIds.every((id, index) => id === right.calendarIds[index])
   );
 }
 
 /**
- * New CALENDAR targets must choose a calendar explicitly. Existing targets are
- * allowed to remain unbound during the compatibility window so deployment of
- * Gate 1 cannot silently change their current duration calculation.
+ * A target may remain LEGACY_GLOBAL only if it was already CALENDAR + legacy
+ * before this save. FIXED targets and already-migrated targets cannot create a
+ * new legacy fallback.
  */
-export function requiresExplicitTargetCalendar(input: {
+export function canPreserveLegacyTargetCalendar(input: {
   durationMode: "FIXED" | "CALENDAR";
-  isNewTarget: boolean;
-  calendarSelectionId: string | null | undefined;
-}): boolean {
-  if (input.durationMode !== "CALENDAR") return false;
-  if (!input.isNewTarget) return false;
-  return !input.calendarSelectionId?.trim();
+  calendarMode: TargetCalendarScopeMode;
+} | null): boolean {
+  return Boolean(
+    input?.durationMode === "CALENDAR" && input.calendarMode === "LEGACY_GLOBAL",
+  );
 }

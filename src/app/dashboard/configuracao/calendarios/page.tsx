@@ -262,7 +262,7 @@ export default async function CalendarSettingsPage({
                           defaultChecked={usedForDuration}
                           className="h-5 w-5 accent-accent"
                         />
-                        Duração
+                        Duração legado
                       </label>
                     </article>
                   );
@@ -272,7 +272,7 @@ export default async function CalendarSettingsPage({
 
             <div className="product-card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
               <p className="max-w-2xl text-sm leading-6 text-muted-inverse">
-                “Consultar” define as agendas disponíveis para cada destino. “Duração legado” só alimenta playlists antigas que ainda não foram migradas para um calendário próprio.
+                “Consultar” define as agendas disponíveis para seleção por destino e para o modo “Todos os calendários consultáveis”. “Duração legado” só alimenta playlists antigas ainda não migradas.
               </p>
               <button
                 type="submit"

@@ -56,7 +56,8 @@ export type ConfigurationAssessment = {
     priority: number;
     durationMode: "FIXED" | "CALENDAR";
     fixedDurationSeconds: number | null;
-    calendarSelectionId: string | null;
+    calendarMode: "LEGACY_GLOBAL" | "SELECTED" | "ALL_QUERYABLE";
+    calendarSelectionIds: string[];
     emptyCalendarBehavior: "CLEAR" | "KEEP" | "SKIP";
     calendarEventFilterMode: "ALL" | "MARKER";
     calendarEventMarker: string | null;
@@ -114,6 +115,10 @@ function scopeIncludes(scope: string | null | undefined, expected: string): bool
   return new Set((scope ?? "").split(/\s+/).filter(Boolean)).has(expected);
 }
 
+function normalizeCalendarIds(values: readonly string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort();
+}
+
 export async function assessConfiguration(
   userId: string,
 ): Promise<ConfigurationAssessment> {
@@ -156,7 +161,10 @@ export async function assessConfiguration(
           priority: true,
           durationMode: true,
           fixedDurationSeconds: true,
-          calendarSelectionId: true,
+          calendarMode: true,
+          calendarSelections: {
+            select: { calendarSelectionId: true },
+          },
           emptyCalendarBehavior: true,
           calendarEventFilterMode: true,
           calendarEventMarker: true,
@@ -225,7 +233,10 @@ export async function assessConfiguration(
     priority: target.priority,
     durationMode: target.durationMode,
     fixedDurationSeconds: target.fixedDurationSeconds,
-    calendarSelectionId: target.calendarSelectionId,
+    calendarMode: target.calendarMode,
+    calendarSelectionIds: normalizeCalendarIds(
+      target.calendarSelections.map((entry) => entry.calendarSelectionId),
+    ),
     emptyCalendarBehavior: target.emptyCalendarBehavior,
     calendarEventFilterMode: target.calendarEventFilterMode,
     calendarEventMarker: target.calendarEventMarker,
@@ -277,7 +288,10 @@ export async function assessConfiguration(
     (target) => target.durationMode === "CALENDAR",
   );
   const legacyCalendarTargets = calendarTargets.filter(
-    (target) => !target.calendarSelectionId,
+    (target) => target.calendarMode === "LEGACY_GLOBAL",
+  );
+  const allQueryableCalendarTargets = calendarTargets.filter(
+    (target) => target.calendarMode === "ALL_QUERYABLE",
   );
   const durationCalendars = calendars.filter((calendar) => calendar.usedForDuration);
   const selectedCalendarSelectionIds = new Set(
@@ -295,19 +309,36 @@ export async function assessConfiguration(
   if (legacyCalendarTargets.length > 0 && durationCalendars.length === 0) {
     pushIssue({
       code: "DURATION_CALENDAR_REQUIRED",
-      message: "Há destinos legados sem calendário próprio. Habilite ao menos um calendário global para duração ou migre esses destinos para uma agenda explícita.",
+      message: "Há destinos legados sem seleção própria. Habilite ao menos um calendário global para duração ou migre esses destinos.",
+      href: "/dashboard/configuracao/calendarios",
+    });
+  }
+
+  if (allQueryableCalendarTargets.length > 0 && calendars.length === 0) {
+    pushIssue({
+      code: "QUERYABLE_CALENDAR_REQUIRED",
+      message: "Há destinos configurados para usar todos os calendários consultáveis, mas nenhuma agenda está marcada para consulta.",
       href: "/dashboard/configuracao/calendarios",
     });
   }
 
   for (const target of calendarTargets) {
-    if (
-      target.calendarSelectionId &&
-      !selectedCalendarSelectionIds.has(target.calendarSelectionId)
-    ) {
+    if (target.calendarMode !== "SELECTED") continue;
+    if (target.calendarSelectionIds.length === 0) {
+      pushIssue({
+        code: `TARGET_CALENDAR_REQUIRED:${target.id}`,
+        message: `Destino "${target.name}": selecione pelo menos um calendário ou use todos os calendários consultáveis.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+      continue;
+    }
+    const unavailable = target.calendarSelectionIds.filter(
+      (calendarSelectionId) => !selectedCalendarSelectionIds.has(calendarSelectionId),
+    );
+    if (unavailable.length > 0) {
       pushIssue({
         code: `TARGET_CALENDAR_UNAVAILABLE:${target.id}`,
-        message: `Destino "${target.name}": o calendário escolhido não está mais habilitado para consulta. Escolha outro calendário ou reative-o no CONFIG-01.`,
+        message: `Destino "${target.name}": um ou mais calendários escolhidos não estão mais habilitados para consulta. Revise a seleção.`,
         href: "/dashboard/configuracao/destinos",
       });
     }
@@ -553,7 +584,14 @@ export async function assessConfiguration(
     providers: [...providers]
       .filter((provider) => provider === "google" || provider === "spotify")
       .sort(),
-    durationCalendars: durationCalendars.map((calendar) => calendar.id).sort(),
+    legacyDurationCalendars:
+      legacyCalendarTargets.length > 0
+        ? durationCalendars.map((calendar) => calendar.id).sort()
+        : [],
+    allQueryableCalendars:
+      allQueryableCalendarTargets.length > 0
+        ? calendars.map((calendar) => calendar.id).sort()
+        : [],
     musicRepeatPolicy: {
       enabled: musicRepeatPolicy.enabled,
       windowValue: musicRepeatPolicy.enabled ? musicRepeatPolicy.windowValue : null,
@@ -578,7 +616,12 @@ export async function assessConfiguration(
       priority: target.priority,
       durationMode: target.durationMode,
       fixedDurationSeconds: target.fixedDurationSeconds,
-      calendarSelectionId: target.calendarSelectionId,
+      calendarMode:
+        target.durationMode === "CALENDAR" ? target.calendarMode : null,
+      calendarSelectionIds:
+        target.durationMode === "CALENDAR" && target.calendarMode === "SELECTED"
+          ? target.calendarSelectionIds
+          : null,
       emptyCalendarBehavior: target.emptyCalendarBehavior,
       calendarEventFilterMode: target.calendarEventFilterMode,
       calendarEventMarker: target.calendarEventMarker,

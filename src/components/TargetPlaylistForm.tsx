@@ -12,6 +12,7 @@ type DurationMode = "FIXED" | "CALENDAR";
 type EmptyCalendarBehavior = "CLEAR" | "KEEP" | "SKIP";
 type CalendarEventFilterMode = "ALL" | "MARKER";
 type CalendarDurationStrategy = "SUMMED" | "PER_EVENT";
+type TargetCalendarMode = "LEGACY_GLOBAL" | "SELECTED" | "ALL_QUERYABLE";
 type PodcastEpisodeMaxDurationMode = "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";
 
 export type SpotifyDestinationOption = {
@@ -31,7 +32,8 @@ export type TargetPlaylistFormInitial = {
   enabled: boolean;
   durationMode: DurationMode;
   fixedDurationMinutes: number;
-  calendarSelectionId: string | null;
+  calendarMode: TargetCalendarMode;
+  calendarSelectionIds: string[];
   allowLegacyCalendar: boolean;
   emptyCalendarBehavior: EmptyCalendarBehavior;
   calendarEventFilterMode: CalendarEventFilterMode;
@@ -99,6 +101,10 @@ export function TargetPlaylistForm({
   submitLabel,
 }: TargetPlaylistFormProps) {
   const [durationMode, setDurationMode] = useState<DurationMode>(initial.durationMode);
+  const [calendarMode, setCalendarMode] = useState<TargetCalendarMode>(initial.calendarMode);
+  const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>(
+    initial.calendarSelectionIds,
+  );
   const [calendarEventFilterMode, setCalendarEventFilterMode] =
     useState<CalendarEventFilterMode>(initial.calendarEventFilterMode);
   const [calendarDurationStrategy, setCalendarDurationStrategy] =
@@ -337,7 +343,7 @@ export function TargetPlaylistForm({
             />
             <span className="block font-black text-ink-inverse">Baseada no calendário</span>
             <span className="mt-1 block text-xs leading-5 text-muted-inverse/70">
-              Usa somente o calendário escolhido para esta playlist, exceto destinos legados ainda não migrados.
+              Cada playlist pode usar uma ou várias agendas, ou acompanhar automaticamente todas as agendas consultáveis.
             </span>
           </label>
         </div>
@@ -360,38 +366,124 @@ export function TargetPlaylistForm({
         </label>
       ) : (
         <div className="space-y-4">
-          <label className={`block max-w-xl ${fieldLabelClass}`}>
-            Calendário desta playlist
-            <select
-              className={inputClass}
-              name="calendarSelectionId"
-              required={!initial.allowLegacyCalendar}
-              defaultValue={initial.calendarSelectionId ?? ""}
-            >
-              <option value="">
-                {initial.allowLegacyCalendar
-                  ? "Compatibilidade: manter calendários globais atuais"
-                  : "Escolha um calendário"}
-              </option>
-              {calendarOptions.map((calendar) => (
-                <option key={calendar.id} value={calendar.id}>
-                  {calendar.name}
-                </option>
-              ))}
-            </select>
-            <span className={helperClass}>
-              Cada destino baseado no calendário passa a consultar somente esta agenda. O ID técnico do Google continua oculto da configuração.
-            </span>
-          </label>
+          <fieldset className={sectionClass}>
+            <legend className="px-1 text-sm font-black text-ink-inverse">
+              Calendários desta playlist
+            </legend>
+            <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
+              Escolha uma ou várias agendas, ou faça este destino acompanhar automaticamente todos os calendários marcados para consulta no CONFIG-01.
+            </p>
 
-          {initial.allowLegacyCalendar && !initial.calendarSelectionId && (
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <label className={optionClass(calendarMode === "SELECTED")}>
+                <input
+                  type="radio"
+                  name="calendarMode"
+                  value="SELECTED"
+                  checked={calendarMode === "SELECTED"}
+                  onChange={() => setCalendarMode("SELECTED")}
+                  className="mr-2 accent-accent"
+                />
+                <span className="font-black text-ink-inverse">Escolher calendários</span>
+                <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                  Use exatamente as agendas marcadas abaixo. Pode ser uma, três, cinco ou qualquer combinação.
+                </span>
+              </label>
+
+              <label className={optionClass(calendarMode === "ALL_QUERYABLE")}>
+                <input
+                  type="radio"
+                  name="calendarMode"
+                  value="ALL_QUERYABLE"
+                  checked={calendarMode === "ALL_QUERYABLE"}
+                  onChange={() => setCalendarMode("ALL_QUERYABLE")}
+                  className="mr-2 accent-accent"
+                />
+                <span className="font-black text-ink-inverse">Todos os calendários consultáveis</span>
+                <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                  É dinâmico: se uma nova agenda for marcada para consulta depois, ela passa a entrar automaticamente neste destino.
+                </span>
+              </label>
+            </div>
+
+            {calendarMode === "SELECTED" && (
+              <div className="mt-4">
+                {calendarOptions.length > 0 ? (
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {calendarOptions.map((calendar) => {
+                      const checked = selectedCalendarIds.includes(calendar.id);
+                      return (
+                        <label
+                          key={calendar.id}
+                          className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 text-sm font-bold transition ${
+                            checked ? optionActiveClass : optionIdleClass
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            name="calendarSelectionIds"
+                            value={calendar.id}
+                            checked={checked}
+                            onChange={(event) =>
+                              setSelectedCalendarIds((current) =>
+                                event.target.checked
+                                  ? [...new Set([...current, calendar.id])]
+                                  : current.filter((id) => id !== calendar.id),
+                              )
+                            }
+                            className="h-4 w-4 shrink-0 accent-accent"
+                          />
+                          <span>{calendar.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="status-warning flex items-start gap-2 rounded-xl border p-3 text-xs font-semibold leading-5">
+                    <UiIcon name="warning" size={16} className="mt-0.5 shrink-0" />
+                    Nenhum calendário está marcado para consulta no CONFIG-01.
+                  </p>
+                )}
+                <p className="mt-2 text-xs leading-5 text-muted-inverse/65">
+                  {selectedCalendarIds.length === 0
+                    ? "Selecione pelo menos um calendário."
+                    : `${selectedCalendarIds.length} calendário${selectedCalendarIds.length === 1 ? "" : "s"} selecionado${selectedCalendarIds.length === 1 ? "" : "s"}.`}
+                </p>
+              </div>
+            )}
+
+            {calendarMode === "ALL_QUERYABLE" && (
+              <p className="status-info mt-4 rounded-xl border p-3 text-xs font-semibold leading-5">
+                Este destino usará todos os {calendarOptions.length} calendário{calendarOptions.length === 1 ? "" : "s"} atualmente consultável{calendarOptions.length === 1 ? "" : "is"}. A lista acompanha o CONFIG-01 automaticamente.
+              </p>
+            )}
+
+            {initial.allowLegacyCalendar && (
+              <label className={`mt-4 block ${optionClass(calendarMode === "LEGACY_GLOBAL")}`}>
+                <input
+                  type="radio"
+                  name="calendarMode"
+                  value="LEGACY_GLOBAL"
+                  checked={calendarMode === "LEGACY_GLOBAL"}
+                  onChange={() => setCalendarMode("LEGACY_GLOBAL")}
+                  className="mr-2 accent-accent"
+                />
+                <span className="font-black text-ink-inverse">Compatibilidade temporária (legado)</span>
+                <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                  Mantém o conjunto global antigo somente até este destino ser migrado. Depois de salvar como seleção própria ou “Todos”, esta opção não volta.
+                </span>
+              </label>
+            )}
+          </fieldset>
+
+          {initial.allowLegacyCalendar && calendarMode === "LEGACY_GLOBAL" && (
             <div
               className={`${sectionClass} ${
                 durationCalendarNames.length > 0 ? "" : "status-warning"
               }`}
             >
               <p className="text-sm font-black text-ink-inverse">
-                Compatibilidade temporária com calendários globais
+                Calendários globais usados por este destino legado
               </p>
               {durationCalendarNames.length > 0 ? (
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -405,13 +497,10 @@ export function TargetPlaylistForm({
                 <p className="mt-2 flex items-start gap-2 text-xs font-semibold leading-5">
                   <UiIcon name="warning" size={16} className="mt-0.5 shrink-0" />
                   <span>
-                    Este destino ainda está em modo legado, mas nenhum calendário global está marcado para duração no CONFIG-01. Escolha um calendário próprio para migrá-lo.
+                    Nenhum calendário global está marcado para duração no CONFIG-01. Migre este destino para uma seleção própria.
                   </span>
                 </p>
               )}
-              <p className="mt-2 text-xs leading-5 text-muted-inverse/65">
-                Ao escolher um calendário acima e salvar, este destino sai definitivamente do modo legado.
-              </p>
             </div>
           )}
 
