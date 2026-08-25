@@ -44,6 +44,7 @@ export type LikedShadowRankedRecommendation = ForYouRecommendation & {
   shadowRank: number;
   baselineScore: number;
   shadowScore: number;
+  shadowRankingScore: number;
   boost: number;
   signalKind: LikedShadowSignalKind;
   explanation: string | null;
@@ -170,6 +171,7 @@ type EnrichedRecommendation = {
   recommendation: ForYouRecommendation;
   baselineRank: number;
   shadowScore: number;
+  shadowRankingScore: number;
   boost: number;
   signalKind: LikedShadowSignalKind;
   explanation: string | null;
@@ -195,7 +197,13 @@ export async function getLikedShadowDiscoveryComparison(
   // Keep the heavy DISCOVERY profile calculation isolated. LIKED state is loaded
   // only after the compact For You report exists, avoiding the old high-RSS pattern
   // of materializing independent large universes in parallel.
-  const baseline = await getForYouReport(userId, { limitPerCategory: poolPerCategory });
+  const baseline = await getForYouReport(userId, {
+    limitPerCategory: poolPerCategory,
+    // The product UI renders top 4. A deeper shadow output pool must not change
+    // Last.fm acquisition/evaluation budgets, otherwise its baseline stops being
+    // comparable with the UI baseline.
+    externalReferenceLimit: LIKED_SHADOW_DISCOVERY_POLICY.topPerCategory,
+  });
 
   const [directAffinities, activeSeeds, similarityEdges] = await Promise.all([
     prisma.artistAffinityState.findMany({
@@ -359,7 +367,9 @@ function buildCategoryComparison(
     ),
   );
   const rankedShadow = [...enriched].sort((left, right) => {
-    if (left.shadowScore !== right.shadowScore) return right.shadowScore - left.shadowScore;
+    if (left.shadowRankingScore !== right.shadowRankingScore) {
+      return right.shadowRankingScore - left.shadowRankingScore;
+    }
     if (left.recommendation.score !== right.recommendation.score) {
       return right.recommendation.score - left.recommendation.score;
     }
@@ -450,6 +460,7 @@ function enrichRecommendation(
     recommendation,
     baselineRank,
     shadowScore: rounded(Math.min(100, recommendation.score + boost), 3),
+    shadowRankingScore: rounded(recommendation.score + boost, 3),
     boost,
     signalKind,
     explanation,
@@ -479,6 +490,7 @@ function materializeRanked(
     shadowRank,
     baselineScore: row.recommendation.score,
     shadowScore: row.shadowScore,
+    shadowRankingScore: row.shadowRankingScore,
     boost: row.boost,
     signalKind: row.signalKind,
     explanation: row.explanation,
