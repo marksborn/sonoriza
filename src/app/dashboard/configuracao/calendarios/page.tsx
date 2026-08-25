@@ -149,7 +149,7 @@ export default async function CalendarSettingsPage({
               Calendários do Google
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-inverse sm:text-base">
-              Escolha quais calendários o Sonoriza consulta e quais deles podem contribuir com eventos para calcular a duração das playlists.
+              Escolha quais calendários o Sonoriza pode consultar. A coluna de duração global permanece apenas para destinos legados ainda sem calendário próprio.
             </p>
           </div>
 
@@ -207,7 +207,7 @@ export default async function CalendarSettingsPage({
               <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b border-line-dark/50 px-4 py-4 text-xs font-black uppercase tracking-[0.13em] text-brand-400 sm:px-6">
                 <span>Calendário</span>
                 <span className="text-center">Consultar</span>
-                <span className="text-center">Duração</span>
+                <span className="text-center">Duração legado</span>
               </div>
 
               <div className="divide-y divide-line-dark/45">
@@ -272,7 +272,7 @@ export default async function CalendarSettingsPage({
 
             <div className="product-card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
               <p className="max-w-2xl text-sm leading-6 text-muted-inverse">
-                Um calendário habilitado para duração só será considerado quando também estiver marcado para consulta. Essa regra é garantida novamente no servidor ao salvar.
+                “Consultar” define as agendas disponíveis para cada destino. “Duração legado” só alimenta playlists antigas que ainda não foram migradas para um calendário próprio.
               </p>
               <button
                 type="submit"

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import {
   TargetPlaylistForm,
+  type CalendarOption,
   type SpotifyDestinationOption,
 } from "@/components/TargetPlaylistForm";
 import { UiIcon } from "@/components/UiIcon";
@@ -14,6 +15,7 @@ import {
   parseSequencePattern,
   type ContentType,
 } from "@/services/playlist-planner";
+import { canPreserveLegacyTargetCalendar } from "@/services/target-calendar-selection";
 import {
   SpotifyClient,
   type SpotifyPlaylistSummary,
@@ -145,6 +147,9 @@ async function saveTarget(formData: FormData) {
   const calendarDurationStrategy = String(
     formData.get("calendarDurationStrategy") ?? "SUMMED",
   ).trim();
+  const calendarSelectionId = String(
+    formData.get("calendarSelectionId") ?? "",
+  ).trim();
   const podcastEpisodeMaxDurationMode = String(
     formData.get("podcastEpisodeMaxDurationMode") ?? "NONE",
   ).trim();
@@ -273,22 +278,40 @@ async function saveTarget(formData: FormData) {
     fail("episode-duration");
   }
 
-  if (durationMode === "CALENDAR") {
-    const durationCalendarCount = await prisma.calendarSelection.count({
-      where: {
-        userId,
-        selected: true,
-        usedForDuration: true,
-      },
-    });
-    if (durationCalendarCount === 0) fail("calendar");
-  }
-
   const existingTarget = id
     ? await prisma.targetPlaylist.findFirst({ where: { id, userId } })
     : null;
 
   if (id && !existingTarget) fail("invalid");
+
+  let normalizedCalendarSelectionId: string | null = null;
+  if (durationMode === "CALENDAR") {
+    const allowLegacyCalendar = canPreserveLegacyTargetCalendar(existingTarget);
+
+    if (!calendarSelectionId) {
+      if (!allowLegacyCalendar) fail("calendar-selection");
+
+      const durationCalendarCount = await prisma.calendarSelection.count({
+        where: {
+          userId,
+          selected: true,
+          usedForDuration: true,
+        },
+      });
+      if (durationCalendarCount === 0) fail("calendar");
+    } else {
+      const calendarSelection = await prisma.calendarSelection.findFirst({
+        where: {
+          id: calendarSelectionId,
+          userId,
+          selected: true,
+        },
+        select: { id: true },
+      });
+      if (!calendarSelection) fail("calendar-selection");
+      normalizedCalendarSelectionId = calendarSelection.id;
+    }
+  }
 
   let spotifyPlaylistId = existingTarget?.spotifyPlaylistId ?? null;
 
@@ -344,6 +367,8 @@ async function saveTarget(formData: FormData) {
     durationMode,
     fixedDurationSeconds:
       durationMode === "FIXED" ? fixedDurationMinutes! * 60 : null,
+    calendarSelectionId:
+      durationMode === "CALENDAR" ? normalizedCalendarSelectionId : null,
     emptyCalendarBehavior:
       durationMode === "CALENDAR" ? normalizedEmptyBehavior! : "CLEAR",
     calendarEventFilterMode:
@@ -606,12 +631,24 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
           orderBy: { startedAt: "desc" },
           take: 1,
         },
+        calendarSelection: {
+          select: {
+            id: true,
+            summary: true,
+            googleCalendarId: true,
+          },
+        },
       },
     }),
     prisma.calendarSelection.findMany({
-      where: { userId, selected: true, usedForDuration: true },
-      orderBy: { summary: "asc" },
-      select: { googleCalendarId: true, summary: true },
+      where: { userId, selected: true },
+      orderBy: [{ usedForDuration: "desc" }, { summary: "asc" }],
+      select: {
+        id: true,
+        googleCalendarId: true,
+        summary: true,
+        usedForDuration: true,
+      },
     }),
     prisma.sourcePlaylist.findMany({
       where: {
@@ -641,9 +678,14 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
   const playlistNameById = new Map(
     ownedPlaylists.map((playlist) => [playlist.id, playlist.name]),
   );
-  const durationCalendarNames = durationCalendars.map(
-    (calendar) => calendar.summary?.trim() || "Calendário",
-  );
+  const durationCalendarNames = durationCalendars
+    .filter((calendar) => calendar.usedForDuration)
+    .map((calendar) => calendar.summary?.trim() || "Calendário");
+  const calendarOptions: CalendarOption[] = durationCalendars.map((calendar) => ({
+    id: calendar.id,
+    googleCalendarId: calendar.googleCalendarId,
+    name: calendar.summary?.trim() || "Calendário",
+  }));
 
   function spotifyOptions(currentTargetSpotifyId?: string | null): SpotifyDestinationOption[] {
     return ownedPlaylists
@@ -657,8 +699,10 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
 
   const errorMessage =
     params.error === "calendar"
-      ? "Para usar duração baseada no calendário, habilite ao menos um calendário para duração no CONFIG-01."
-      : params.error === "marker"
+      ? "Este destino ainda usa compatibilidade global. Habilite ao menos um calendário para duração no CONFIG-01 ou escolha um calendário próprio."
+      : params.error === "calendar-selection"
+        ? "Escolha um calendário disponível para este destino. Destinos novos não usam fallback global silencioso."
+        : params.error === "marker"
         ? "Informe um marcador de evento com até 80 caracteres."
         : params.error === "duration"
           ? "Informe uma duração fixa entre 1 minuto e 24 horas."
@@ -732,14 +776,14 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 Duração baseada no calendário
               </p>
               <h2 className="mt-1 text-xl font-black text-ink-inverse">
-                Calendários que podem entrar no cálculo
+                Calendário escolhido em cada destino
               </h2>
-              {durationCalendarNames.length > 0 ? (
+              {calendarOptions.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {durationCalendarNames.map((name) => (
-                    <span key={name} className="product-badge">
+                  {calendarOptions.map((calendar) => (
+                    <span key={calendar.id} className="product-badge">
                       <UiIcon name="calendar" size={15} />
-                      {name}
+                      {calendar.name}
                     </span>
                   ))}
                 </div>
@@ -747,10 +791,13 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 <div className="status-warning mt-3 flex max-w-3xl items-start gap-3 rounded-2xl border px-4 py-3 text-sm leading-6">
                   <UiIcon name="warning" size={18} className="mt-0.5 shrink-0" />
                   <span>
-                    Nenhum calendário está habilitado para duração. Destinos baseados no calendário só poderão ser salvos depois dessa definição.
+                    Nenhum calendário está habilitado para consulta. Ative pelo menos um calendário no CONFIG-01 antes de criar um destino baseado em calendário.
                   </span>
                 </div>
               )}
+              <p className="mt-3 max-w-3xl text-xs leading-5 text-muted-inverse/65">
+                A marcação global “Duração” permanece somente para destinos legados ainda sem calendário próprio.
+              </p>
             </div>
             <Link
               href="/dashboard/configuracao/calendarios"
@@ -834,11 +881,14 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 submitLabel="Criar destino"
                 spotifyOptions={spotifyOptions()}
                 durationCalendarNames={durationCalendarNames}
+                calendarOptions={calendarOptions}
                 initial={{
                   name: "",
                   enabled: true,
                   durationMode: "FIXED",
                   fixedDurationMinutes: 45,
+                  calendarSelectionId: null,
+                  allowLegacyCalendar: false,
                   emptyCalendarBehavior: "KEEP",
                   calendarEventFilterMode: "ALL",
                   calendarEventMarker: "",
@@ -935,7 +985,12 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                                 100 - target.podcastPercent
                               }% música`}
                           {target.durationMode === "CALENDAR"
-                            ? ` · eventos: ${
+                            ? ` · calendário: ${
+                                target.calendarSelection?.summary?.trim() ||
+                                (target.calendarSelectionId
+                                  ? "seleção indisponível"
+                                  : "globais (legado)")
+                              } · eventos: ${
                                 target.calendarEventFilterMode === "MARKER"
                                   ? `marcador ${
                                       target.calendarEventMarker ?? "não informado"
@@ -1020,6 +1075,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           submitLabel="Salvar alterações"
                           spotifyOptions={spotifyOptions(target.spotifyPlaylistId)}
                           durationCalendarNames={durationCalendarNames}
+                          calendarOptions={calendarOptions}
                           initial={{
                             id: target.id,
                             name: target.name,
@@ -1029,6 +1085,10 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               1,
                               Math.round((target.fixedDurationSeconds ?? 45 * 60) / 60),
                             ),
+                            calendarSelectionId: target.calendarSelectionId,
+                            allowLegacyCalendar:
+                              target.durationMode === "CALENDAR" &&
+                              !target.calendarSelectionId,
                             emptyCalendarBehavior: target.emptyCalendarBehavior,
                             calendarEventFilterMode: target.calendarEventFilterMode,
                             calendarEventMarker: target.calendarEventMarker ?? "",

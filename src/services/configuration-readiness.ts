@@ -56,6 +56,7 @@ export type ConfigurationAssessment = {
     priority: number;
     durationMode: "FIXED" | "CALENDAR";
     fixedDurationSeconds: number | null;
+    calendarSelectionId: string | null;
     emptyCalendarBehavior: "CLEAR" | "KEEP" | "SKIP";
     calendarEventFilterMode: "ALL" | "MARKER";
     calendarEventMarker: string | null;
@@ -126,6 +127,7 @@ export async function assessConfiguration(
         where: { userId, selected: true },
         orderBy: [{ usedForDuration: "desc" }, { summary: "asc" }],
         select: {
+          id: true,
           googleCalendarId: true,
           summary: true,
           usedForDuration: true,
@@ -154,6 +156,7 @@ export async function assessConfiguration(
           priority: true,
           durationMode: true,
           fixedDurationSeconds: true,
+          calendarSelectionId: true,
           emptyCalendarBehavior: true,
           calendarEventFilterMode: true,
           calendarEventMarker: true,
@@ -222,6 +225,7 @@ export async function assessConfiguration(
     priority: target.priority,
     durationMode: target.durationMode,
     fixedDurationSeconds: target.fixedDurationSeconds,
+    calendarSelectionId: target.calendarSelectionId,
     emptyCalendarBehavior: target.emptyCalendarBehavior,
     calendarEventFilterMode: target.calendarEventFilterMode,
     calendarEventMarker: target.calendarEventMarker,
@@ -272,7 +276,13 @@ export async function assessConfiguration(
   const calendarTargets = targets.filter(
     (target) => target.durationMode === "CALENDAR",
   );
+  const legacyCalendarTargets = calendarTargets.filter(
+    (target) => !target.calendarSelectionId,
+  );
   const durationCalendars = calendars.filter((calendar) => calendar.usedForDuration);
+  const selectedCalendarSelectionIds = new Set(
+    calendarsRaw.map((calendar) => calendar.id),
+  );
 
   if (calendarTargets.length > 0 && !hasGoogle) {
     pushIssue({
@@ -282,12 +292,25 @@ export async function assessConfiguration(
     });
   }
 
-  if (calendarTargets.length > 0 && durationCalendars.length === 0) {
+  if (legacyCalendarTargets.length > 0 && durationCalendars.length === 0) {
     pushIssue({
       code: "DURATION_CALENDAR_REQUIRED",
-      message: "Habilite pelo menos um calendário para entrar no cálculo de duração.",
+      message: "Há destinos legados sem calendário próprio. Habilite ao menos um calendário global para duração ou migre esses destinos para uma agenda explícita.",
       href: "/dashboard/configuracao/calendarios",
     });
+  }
+
+  for (const target of calendarTargets) {
+    if (
+      target.calendarSelectionId &&
+      !selectedCalendarSelectionIds.has(target.calendarSelectionId)
+    ) {
+      pushIssue({
+        code: `TARGET_CALENDAR_UNAVAILABLE:${target.id}`,
+        message: `Destino "${target.name}": o calendário escolhido não está mais habilitado para consulta. Escolha outro calendário ou reative-o no CONFIG-01.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+    }
   }
 
   const needsMusic = targets.some((target) =>
@@ -555,6 +578,7 @@ export async function assessConfiguration(
       priority: target.priority,
       durationMode: target.durationMode,
       fixedDurationSeconds: target.fixedDurationSeconds,
+      calendarSelectionId: target.calendarSelectionId,
       emptyCalendarBehavior: target.emptyCalendarBehavior,
       calendarEventFilterMode: target.calendarEventFilterMode,
       calendarEventMarker: target.calendarEventMarker,

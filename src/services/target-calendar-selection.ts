@@ -38,6 +38,21 @@ export function resolveTargetCalendarScope(
 }
 
 /**
+ * Only a target that was already calendar-driven and unbound before Gate 2 may
+ * remain on the legacy global calendar set. This prevents creating new legacy
+ * state when a FIXED target is switched to CALENDAR after per-target selection
+ * became available.
+ */
+export function canPreserveLegacyTargetCalendar(input: {
+  durationMode: "FIXED" | "CALENDAR";
+  calendarSelectionId: string | null | undefined;
+} | null): boolean {
+  return Boolean(
+    input?.durationMode === "CALENDAR" && !input.calendarSelectionId?.trim(),
+  );
+}
+
+/**
  * New CALENDAR targets must choose a calendar explicitly. Existing targets are
  * allowed to remain unbound during the compatibility window so deployment of
  * Gate 1 cannot silently change their current duration calculation.
