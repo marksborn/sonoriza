@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  canPreserveLegacyTargetCalendar,
   requiresExplicitTargetCalendar,
   resolveTargetCalendarScope,
 } from "@/services/target-calendar-selection";
@@ -68,4 +69,29 @@ test("existing targets may remain legacy and fixed targets need no calendar", ()
     }),
     false,
   );
+});
+
+test("only an already-calendar unbound target is eligible for legacy compatibility", () => {
+  assert.equal(
+    canPreserveLegacyTargetCalendar({
+      durationMode: "CALENDAR",
+      calendarSelectionId: null,
+    }),
+    true,
+  );
+  assert.equal(
+    canPreserveLegacyTargetCalendar({
+      durationMode: "FIXED",
+      calendarSelectionId: null,
+    }),
+    false,
+  );
+  assert.equal(
+    canPreserveLegacyTargetCalendar({
+      durationMode: "CALENDAR",
+      calendarSelectionId: "selection-1",
+    }),
+    false,
+  );
+  assert.equal(canPreserveLegacyTargetCalendar(null), false);
 });

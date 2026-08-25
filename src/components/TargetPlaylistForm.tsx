@@ -19,12 +19,20 @@ export type SpotifyDestinationOption = {
   name: string;
 };
 
+export type CalendarOption = {
+  id: string;
+  googleCalendarId: string;
+  name: string;
+};
+
 export type TargetPlaylistFormInitial = {
   id?: string;
   name: string;
   enabled: boolean;
   durationMode: DurationMode;
   fixedDurationMinutes: number;
+  calendarSelectionId: string | null;
+  allowLegacyCalendar: boolean;
   emptyCalendarBehavior: EmptyCalendarBehavior;
   calendarEventFilterMode: CalendarEventFilterMode;
   calendarEventMarker: string;
@@ -50,6 +58,7 @@ type TargetPlaylistFormProps = {
   initial: TargetPlaylistFormInitial;
   spotifyOptions: SpotifyDestinationOption[];
   durationCalendarNames: string[];
+  calendarOptions: CalendarOption[];
   saveAction: (formData: FormData) => void | Promise<void>;
   submitLabel: string;
 };
@@ -85,6 +94,7 @@ export function TargetPlaylistForm({
   initial,
   spotifyOptions,
   durationCalendarNames,
+  calendarOptions,
   saveAction,
   submitLabel,
 }: TargetPlaylistFormProps) {
@@ -327,7 +337,7 @@ export function TargetPlaylistForm({
             />
             <span className="block font-black text-ink-inverse">Baseada no calendário</span>
             <span className="mt-1 block text-xs leading-5 text-muted-inverse/70">
-              Soma a duração dos eventos elegíveis dos calendários habilitados no CONFIG-01.
+              Usa somente o calendário escolhido para esta playlist, exceto destinos legados ainda não migrados.
             </span>
           </label>
         </div>
@@ -350,29 +360,60 @@ export function TargetPlaylistForm({
         </label>
       ) : (
         <div className="space-y-4">
-          <div
-            className={`${sectionClass} ${
-              durationCalendarNames.length > 0 ? "" : "status-warning"
-            }`}
-          >
-            <p className="text-sm font-black text-ink-inverse">Calendários usados na duração</p>
-            {durationCalendarNames.length > 0 ? (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {durationCalendarNames.map((name) => (
-                  <span key={name} className="product-badge">
-                    {name}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-2 flex items-start gap-2 text-xs font-semibold leading-5">
-                <UiIcon name="warning" size={16} className="mt-0.5 shrink-0" />
-                <span>
-                  Nenhum calendário está habilitado para duração. Configure isso no CONFIG-01 antes de salvar este modo.
-                </span>
+          <label className={`block max-w-xl ${fieldLabelClass}`}>
+            Calendário desta playlist
+            <select
+              className={inputClass}
+              name="calendarSelectionId"
+              required={!initial.allowLegacyCalendar}
+              defaultValue={initial.calendarSelectionId ?? ""}
+            >
+              <option value="">
+                {initial.allowLegacyCalendar
+                  ? "Compatibilidade: manter calendários globais atuais"
+                  : "Escolha um calendário"}
+              </option>
+              {calendarOptions.map((calendar) => (
+                <option key={calendar.id} value={calendar.id}>
+                  {calendar.name}
+                </option>
+              ))}
+            </select>
+            <span className={helperClass}>
+              Cada destino baseado no calendário passa a consultar somente esta agenda. O ID técnico do Google continua oculto da configuração.
+            </span>
+          </label>
+
+          {initial.allowLegacyCalendar && !initial.calendarSelectionId && (
+            <div
+              className={`${sectionClass} ${
+                durationCalendarNames.length > 0 ? "" : "status-warning"
+              }`}
+            >
+              <p className="text-sm font-black text-ink-inverse">
+                Compatibilidade temporária com calendários globais
               </p>
-            )}
-          </div>
+              {durationCalendarNames.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {durationCalendarNames.map((name) => (
+                    <span key={name} className="product-badge">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 flex items-start gap-2 text-xs font-semibold leading-5">
+                  <UiIcon name="warning" size={16} className="mt-0.5 shrink-0" />
+                  <span>
+                    Este destino ainda está em modo legado, mas nenhum calendário global está marcado para duração no CONFIG-01. Escolha um calendário próprio para migrá-lo.
+                  </span>
+                </p>
+              )}
+              <p className="mt-2 text-xs leading-5 text-muted-inverse/65">
+                Ao escolher um calendário acima e salvar, este destino sai definitivamente do modo legado.
+              </p>
+            </div>
+          )}
 
           <fieldset className={sectionClass}>
             <legend className="px-1 text-sm font-black text-ink-inverse">

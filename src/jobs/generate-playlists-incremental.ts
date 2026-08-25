@@ -2,6 +2,7 @@ import type { RunStatus, RunTrigger, TargetPlaylist } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
+import { resolveTargetCalendarScope } from "@/services/target-calendar-selection";
 import {
   computeCalendarDuration,
   type CalendarDurationResult,
@@ -147,6 +148,15 @@ export async function generatePlaylists(
         ...(targetScope ? { id: { in: targetScope } } : {}),
       },
       orderBy: { priority: "asc" },
+      include: {
+        calendarSelection: {
+          select: {
+            googleCalendarId: true,
+            selected: true,
+            userId: true,
+          },
+        },
+      },
     });
     if (targetScope && targets.length !== targetScope.length) {
       throw new Error(
@@ -154,7 +164,7 @@ export async function generatePlaylists(
       );
     }
     summary.resolvedTargetIds = targets.map((target) => target.id);
-    const durationCalendarIds = (
+    const legacyDurationCalendarIds = (
       await prisma.calendarSelection.findMany({
         where: { userId, selected: true, usedForDuration: true },
       })
@@ -163,12 +173,42 @@ export async function generatePlaylists(
     const runTargets: RunTarget[] = [];
     const skipped: TargetPlaylist[] = [];
     const resolvedDurationByTargetId = new Map<string, ResolvedTargetDuration>();
+    const calendarScopeByTargetId = new Map<
+      string,
+      ReturnType<typeof resolveTargetCalendarScope>
+    >();
 
     for (const target of targets) {
+      let targetCalendarIds = legacyDurationCalendarIds;
+      if (target.durationMode === "CALENDAR") {
+        if (
+          target.calendarSelectionId &&
+          (!target.calendarSelection ||
+            target.calendarSelection.userId !== userId ||
+            !target.calendarSelection.selected)
+        ) {
+          throw new Error(
+            `Target "${target.name}" has an unavailable explicit calendar selection`,
+          );
+        }
+
+        const calendarScope = resolveTargetCalendarScope(
+          target.calendarSelection?.googleCalendarId,
+          legacyDurationCalendarIds,
+        );
+        calendarScopeByTargetId.set(target.id, calendarScope);
+        targetCalendarIds = calendarScope.calendarIds;
+        log({
+          level: "INFO",
+          message: `Calendar scope for "${target.name}": ${calendarScope.mode} → ${calendarScope.calendarIds.length} calendar(s)`,
+          data: calendarScope,
+        });
+      }
+
       const resolved = await resolveTargetDuration(
         userId,
         target,
-        durationCalendarIds,
+        targetCalendarIds,
         date,
         log,
       );
@@ -205,6 +245,13 @@ export async function generatePlaylists(
         ),
       );
     }
+
+    summary.calendarScopes = Object.fromEntries(
+      [...calendarScopeByTargetId.entries()].map(([targetId, scope]) => [
+        targetId,
+        scope,
+      ]),
+    );
 
     const sources = (await prisma.sourcePlaylist.findMany({
       where: { userId, enabled: true },
@@ -611,10 +658,42 @@ export async function generatePlaylists(
           name: true,
           maxTracksPerArtist: true,
           maxTracksPerAlbum: true,
+          calendarSelectionId: true,
+          calendarSelection: {
+            select: {
+              googleCalendarId: true,
+              selected: true,
+              userId: true,
+            },
+          },
         },
       });
       const originalTargetById = new Map(targets.map((target) => [target.id, target]));
       const liveTargetById = new Map(liveTargets.map((target) => [target.id, target]));
+
+      const targetCalendarConfigurationChanges = targets.flatMap((target) => {
+        const live = liveTargetById.get(target.id);
+        if (!live) return [];
+        const changed =
+          live.calendarSelectionId !== target.calendarSelectionId ||
+          live.calendarSelection?.googleCalendarId !==
+            target.calendarSelection?.googleCalendarId ||
+          live.calendarSelection?.selected !== target.calendarSelection?.selected ||
+          live.calendarSelection?.userId !== target.calendarSelection?.userId;
+        return changed
+          ? [{ targetPlaylistId: target.id, targetName: target.name }]
+          : [];
+      });
+
+      if (targetCalendarConfigurationChanges.length > 0) {
+        summary.targetCalendarConfigurationChanges = targetCalendarConfigurationChanges;
+        const error =
+          "A geração foi bloqueada antes de alterar o Spotify porque o calendário de um destino mudou durante o planejamento. Simule novamente antes de publicar.";
+        log({ level: "ERROR", message: error, data: targetCalendarConfigurationChanges });
+        await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+
       const musicDiversityConfigurationChanges: Array<{
         targetPlaylistId: string;
         targetName: string;
@@ -834,6 +913,7 @@ export async function generatePlaylists(
       const podcastEpisodeMaxDurationMs =
         resolvedDuration?.podcastEpisodeMaxDurationMs ?? null;
       const musicOrderEvidence = musicOrderEvidenceByTargetId.get(target.id) ?? null;
+      const calendarScope = calendarScopeByTargetId.get(target.id) ?? null;
 
       const targetSummary: Record<string, unknown> = {
         targetPlaylistId: target.id,
@@ -849,6 +929,8 @@ export async function generatePlaylists(
         scheduledPolicy: opts.scheduledPolicyByTargetId?.[target.id] ?? null,
         targetDurationMs: resolvedDuration?.durationMs ?? 0,
         calendarDurationStrategy: target.calendarDurationStrategy,
+        calendarScopeMode: calendarScope?.mode ?? null,
+        calendarIds: calendarScope?.calendarIds ?? [],
         sequencePattern: parseSequencePattern(target.sequencePattern),
         ...stats,
         musicCount: items.filter((item) => item.type === "MUSIC").length,
