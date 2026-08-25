@@ -1,0 +1,127 @@
+name: Apply LIKED-01 Gate 3 schema
+
+on:
+  push:
+    branches:
+      - feat/liked-01-gate3
+    paths:
+      - .github/workflows/apply-liked-01-gate3-schema.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate3
+          fetch-depth: 0
+      - name: Patch Prisma schema
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("prisma/schema.prisma")
+          text = path.read_text()
+
+          old_relations = """  likedTrackPreferences             LikedTrackPreference[]
+  artistAffinityStates              ArtistAffinityState[]
+  albumRecommendationMemories      AlbumRecommendationMemory[]
+"""
+          new_relations = """  likedTrackPreferences             LikedTrackPreference[]
+  artistAffinityStates              ArtistAffinityState[]
+  artistSimilaritySeeds             ArtistSimilaritySeedState[]
+  artistSimilarityEdges             ArtistSimilarityEdge[]
+  albumRecommendationMemories      AlbumRecommendationMemory[]
+"""
+          if "artistSimilaritySeeds" not in text:
+              if old_relations not in text:
+                  raise SystemExit("User relation anchor not found")
+              text = text.replace(old_relations, new_relations, 1)
+
+          marker = """// ---------------------------------------------------------------------------
+// MUSIC-05 — inferred skip preference signals.
+"""
+          models = """// ---------------------------------------------------------------------------
+// LIKED-01 Gate 3 — similar-artist expansion derived from explicit affinity.
+//
+// These rows remain shadow-only in Gate 3. Last.fm is the similarity provider;
+// no planner/discovery consumer reads these models yet and no Spotify write is
+// performed. A per-seed cache keeps provider load bounded and resumable.
+// ---------------------------------------------------------------------------
+
+enum ArtistSimilarityProvider {
+  LASTFM
+}
+
+model ArtistSimilaritySeedState {
+  id                      String                   @id @default(cuid())
+  userId                  String
+  provider                ArtistSimilarityProvider
+  sourceSpotifyArtistId   String
+  sourceArtistName        String
+  active                  Boolean                  @default(true)
+  lastFetchedAt           DateTime?
+  refreshAfter            DateTime?
+  candidateCount          Int                      @default(0)
+  lastError               String?                  @db.Text
+  lastErrorAt             DateTime?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+
+  user  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  edges ArtistSimilarityEdge[]
+
+  @@unique([userId, provider, sourceSpotifyArtistId])
+  @@index([userId, provider, active, refreshAfter])
+}
+
+model ArtistSimilarityEdge {
+  id                    String                   @id @default(cuid())
+  userId                String
+  seedStateId           String
+  provider              ArtistSimilarityProvider
+  sourceSpotifyArtistId String
+  sourceArtistName      String
+  candidateKey          String
+  candidateArtistName   String
+  candidateArtistMbid   String?
+  candidateArtistUrl    String?                  @db.Text
+  similarity            Float
+  active                Boolean                  @default(true)
+  firstObservedAt       DateTime                 @default(now())
+  lastObservedAt        DateTime
+  removedAt             DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  user      User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seedState ArtistSimilaritySeedState @relation(fields: [seedStateId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider, sourceSpotifyArtistId, candidateKey])
+  @@index([userId, active, similarity])
+  @@index([userId, candidateKey, active])
+  @@index([seedStateId, active])
+}
+
+"""
+          if "model ArtistSimilaritySeedState" not in text:
+              if marker not in text:
+                  raise SystemExit("MUSIC-05 anchor not found")
+              text = text.replace(marker, models + marker, 1)
+
+          path.write_text(text)
+          PY
+      - name: Commit schema
+        run: |
+          if git diff --quiet -- prisma/schema.prisma; then
+            echo "Schema already patched"
+            exit 0
+          fi
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add prisma/schema.prisma
+          git commit -m "feat(liked): map Gate 3 similarity schema"
+          git push origin HEAD:feat/liked-01-gate3
