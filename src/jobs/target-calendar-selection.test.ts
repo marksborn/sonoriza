@@ -3,95 +3,114 @@ import test from "node:test";
 
 import {
   canPreserveLegacyTargetCalendar,
-  requiresExplicitTargetCalendar,
+  normalizeTargetCalendarSelectionIds,
   resolveTargetCalendarScope,
+  targetCalendarScopesEqual,
 } from "@/services/target-calendar-selection";
 
-test("explicit target calendar ignores the legacy global duration set", () => {
+test("selected mode uses one or many explicit calendars and deduplicates identity", () => {
   assert.deepEqual(
-    resolveTargetCalendarScope("calendar-work", ["calendar-personal", "calendar-trip"]),
+    resolveTargetCalendarScope({
+      mode: "SELECTED",
+      selectedGoogleCalendarIds: ["work", "personal", "work"],
+      queryableCalendarIds: ["work", "personal", "travel"],
+      legacyDurationCalendarIds: ["legacy"],
+    }),
     {
-      mode: "EXPLICIT",
-      calendarIds: ["calendar-work"],
+      mode: "SELECTED",
+      calendarIds: ["personal", "work"],
     },
   );
 });
 
-test("unbound target preserves the legacy global duration calendars", () => {
-  const legacy = ["calendar-personal", "calendar-trip"];
-
-  assert.deepEqual(resolveTargetCalendarScope(null, legacy), {
-    mode: "LEGACY_GLOBAL",
-    calendarIds: legacy,
-  });
-});
-
-test("compatibility seam never invents a default calendar", () => {
-  assert.deepEqual(resolveTargetCalendarScope(undefined, []), {
-    mode: "LEGACY_GLOBAL",
-    calendarIds: [],
-  });
-});
-
-test("new calendar target requires an explicit calendar selection", () => {
-  assert.equal(
-    requiresExplicitTargetCalendar({
-      durationMode: "CALENDAR",
-      isNewTarget: true,
-      calendarSelectionId: null,
+test("all-queryable mode dynamically follows the complete queryable set", () => {
+  assert.deepEqual(
+    resolveTargetCalendarScope({
+      mode: "ALL_QUERYABLE",
+      selectedGoogleCalendarIds: ["work"],
+      queryableCalendarIds: ["travel", "personal", "work"],
+      legacyDurationCalendarIds: ["legacy"],
     }),
-    true,
-  );
-  assert.equal(
-    requiresExplicitTargetCalendar({
-      durationMode: "CALENDAR",
-      isNewTarget: true,
-      calendarSelectionId: "selection-1",
-    }),
-    false,
+    {
+      mode: "ALL_QUERYABLE",
+      calendarIds: ["personal", "travel", "work"],
+    },
   );
 });
 
-test("existing targets may remain legacy and fixed targets need no calendar", () => {
-  assert.equal(
-    requiresExplicitTargetCalendar({
-      durationMode: "CALENDAR",
-      isNewTarget: false,
-      calendarSelectionId: null,
+test("legacy mode preserves only the old global duration set", () => {
+  assert.deepEqual(
+    resolveTargetCalendarScope({
+      mode: "LEGACY_GLOBAL",
+      selectedGoogleCalendarIds: ["work"],
+      queryableCalendarIds: ["work", "personal"],
+      legacyDurationCalendarIds: ["legacy-b", "legacy-a"],
     }),
-    false,
-  );
-  assert.equal(
-    requiresExplicitTargetCalendar({
-      durationMode: "FIXED",
-      isNewTarget: true,
-      calendarSelectionId: null,
-    }),
-    false,
+    {
+      mode: "LEGACY_GLOBAL",
+      calendarIds: ["legacy-a", "legacy-b"],
+    },
   );
 });
 
-test("only an already-calendar unbound target is eligible for legacy compatibility", () => {
+test("explicit modes never invent legacy fallback when their set is empty", () => {
+  assert.deepEqual(
+    resolveTargetCalendarScope({
+      mode: "SELECTED",
+      selectedGoogleCalendarIds: [],
+      queryableCalendarIds: ["queryable"],
+      legacyDurationCalendarIds: ["legacy"],
+    }),
+    { mode: "SELECTED", calendarIds: [] },
+  );
+  assert.deepEqual(
+    resolveTargetCalendarScope({
+      mode: "ALL_QUERYABLE",
+      selectedGoogleCalendarIds: ["selected"],
+      queryableCalendarIds: [],
+      legacyDurationCalendarIds: ["legacy"],
+    }),
+    { mode: "ALL_QUERYABLE", calendarIds: [] },
+  );
+});
+
+test("only an already calendar-driven legacy target may preserve legacy mode", () => {
   assert.equal(
     canPreserveLegacyTargetCalendar({
       durationMode: "CALENDAR",
-      calendarSelectionId: null,
+      calendarMode: "LEGACY_GLOBAL",
     }),
     true,
   );
   assert.equal(
     canPreserveLegacyTargetCalendar({
       durationMode: "FIXED",
-      calendarSelectionId: null,
+      calendarMode: "LEGACY_GLOBAL",
     }),
     false,
   );
   assert.equal(
     canPreserveLegacyTargetCalendar({
       durationMode: "CALENDAR",
-      calendarSelectionId: "selection-1",
+      calendarMode: "SELECTED",
     }),
     false,
   );
   assert.equal(canPreserveLegacyTargetCalendar(null), false);
+});
+
+test("scope comparison is deterministic regardless of original selection order", () => {
+  const left = resolveTargetCalendarScope({
+    mode: "SELECTED",
+    selectedGoogleCalendarIds: ["b", "a"],
+    queryableCalendarIds: [],
+    legacyDurationCalendarIds: [],
+  });
+  const right = resolveTargetCalendarScope({
+    mode: "SELECTED",
+    selectedGoogleCalendarIds: normalizeTargetCalendarSelectionIds(["a", "b"]),
+    queryableCalendarIds: [],
+    legacyDurationCalendarIds: [],
+  });
+  assert.equal(targetCalendarScopesEqual(left, right), true);
 });

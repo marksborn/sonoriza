@@ -2,7 +2,10 @@ import type { RunStatus, RunTrigger, TargetPlaylist } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
-import { resolveTargetCalendarScope } from "@/services/target-calendar-selection";
+import {
+  resolveTargetCalendarScope,
+  targetCalendarScopesEqual,
+} from "@/services/target-calendar-selection";
 import {
   computeCalendarDuration,
   type CalendarDurationResult,
@@ -149,11 +152,16 @@ export async function generatePlaylists(
       },
       orderBy: { priority: "asc" },
       include: {
-        calendarSelection: {
+        calendarSelections: {
           select: {
-            googleCalendarId: true,
-            selected: true,
-            userId: true,
+            calendarSelectionId: true,
+            calendarSelection: {
+              select: {
+                googleCalendarId: true,
+                selected: true,
+                userId: true,
+              },
+            },
           },
         },
       },
@@ -164,11 +172,16 @@ export async function generatePlaylists(
       );
     }
     summary.resolvedTargetIds = targets.map((target) => target.id);
-    const legacyDurationCalendarIds = (
-      await prisma.calendarSelection.findMany({
-        where: { userId, selected: true, usedForDuration: true },
-      })
-    ).map((calendar) => calendar.googleCalendarId);
+    const queryableCalendars = await prisma.calendarSelection.findMany({
+      where: { userId, selected: true },
+      select: { googleCalendarId: true, usedForDuration: true },
+    });
+    const queryableCalendarIds = queryableCalendars.map(
+      (calendar) => calendar.googleCalendarId,
+    );
+    const legacyDurationCalendarIds = queryableCalendars
+      .filter((calendar) => calendar.usedForDuration)
+      .map((calendar) => calendar.googleCalendarId);
 
     const runTargets: RunTarget[] = [];
     const skipped: TargetPlaylist[] = [];
@@ -181,21 +194,44 @@ export async function generatePlaylists(
     for (const target of targets) {
       let targetCalendarIds = legacyDurationCalendarIds;
       if (target.durationMode === "CALENDAR") {
+        const linkedCalendars = target.calendarSelections.map(
+          (entry) => entry.calendarSelection,
+        );
+
+        if (target.calendarMode === "SELECTED") {
+          if (linkedCalendars.length === 0) {
+            throw new Error(
+              `Target "${target.name}" has SELECTED calendar mode without calendars`,
+            );
+          }
+          const unavailable = linkedCalendars.find(
+            (calendar) => calendar.userId !== userId || !calendar.selected,
+          );
+          if (unavailable) {
+            throw new Error(
+              `Target "${target.name}" has an unavailable selected calendar`,
+            );
+          }
+        }
+
+        const calendarScope = resolveTargetCalendarScope({
+          mode: target.calendarMode,
+          selectedGoogleCalendarIds: linkedCalendars.map(
+            (calendar) => calendar.googleCalendarId,
+          ),
+          queryableCalendarIds,
+          legacyDurationCalendarIds,
+        });
+
         if (
-          target.calendarSelectionId &&
-          (!target.calendarSelection ||
-            target.calendarSelection.userId !== userId ||
-            !target.calendarSelection.selected)
+          calendarScope.mode !== "LEGACY_GLOBAL" &&
+          calendarScope.calendarIds.length === 0
         ) {
           throw new Error(
-            `Target "${target.name}" has an unavailable explicit calendar selection`,
+            `Target "${target.name}" resolved an empty ${calendarScope.mode} calendar scope`,
           );
         }
 
-        const calendarScope = resolveTargetCalendarScope(
-          target.calendarSelection?.googleCalendarId,
-          legacyDurationCalendarIds,
-        );
         calendarScopeByTargetId.set(target.id, calendarScope);
         targetCalendarIds = calendarScope.calendarIds;
         log({
@@ -656,39 +692,88 @@ export async function generatePlaylists(
         select: {
           id: true,
           name: true,
+          durationMode: true,
+          calendarMode: true,
           maxTracksPerArtist: true,
           maxTracksPerAlbum: true,
-          calendarSelectionId: true,
-          calendarSelection: {
+          calendarSelections: {
             select: {
-              googleCalendarId: true,
-              selected: true,
-              userId: true,
+              calendarSelection: {
+                select: {
+                  googleCalendarId: true,
+                  selected: true,
+                  userId: true,
+                },
+              },
             },
           },
         },
       });
+      const liveQueryableCalendars = await prisma.calendarSelection.findMany({
+        where: { userId, selected: true },
+        select: { googleCalendarId: true, usedForDuration: true },
+      });
+      const liveQueryableCalendarIds = liveQueryableCalendars.map(
+        (calendar) => calendar.googleCalendarId,
+      );
+      const liveLegacyDurationCalendarIds = liveQueryableCalendars
+        .filter((calendar) => calendar.usedForDuration)
+        .map((calendar) => calendar.googleCalendarId);
       const originalTargetById = new Map(targets.map((target) => [target.id, target]));
       const liveTargetById = new Map(liveTargets.map((target) => [target.id, target]));
 
       const targetCalendarConfigurationChanges = targets.flatMap((target) => {
         const live = liveTargetById.get(target.id);
         if (!live) return [];
-        const changed =
-          live.calendarSelectionId !== target.calendarSelectionId ||
-          live.calendarSelection?.googleCalendarId !==
-            target.calendarSelection?.googleCalendarId ||
-          live.calendarSelection?.selected !== target.calendarSelection?.selected ||
-          live.calendarSelection?.userId !== target.calendarSelection?.userId;
-        return changed
-          ? [{ targetPlaylistId: target.id, targetName: target.name }]
-          : [];
+
+        if (live.durationMode !== target.durationMode) {
+          return [{ targetPlaylistId: target.id, targetName: target.name }];
+        }
+        if (target.durationMode !== "CALENDAR") return [];
+
+        const originalScope = calendarScopeByTargetId.get(target.id);
+        if (!originalScope) {
+          return [{ targetPlaylistId: target.id, targetName: target.name }];
+        }
+
+        const liveLinkedCalendars = live.calendarSelections.map(
+          (entry) => entry.calendarSelection,
+        );
+        if (
+          live.calendarMode === "SELECTED" &&
+          (liveLinkedCalendars.length === 0 ||
+            liveLinkedCalendars.some(
+              (calendar) => calendar.userId !== userId || !calendar.selected,
+            ))
+        ) {
+          return [{ targetPlaylistId: target.id, targetName: target.name }];
+        }
+
+        const liveScope = resolveTargetCalendarScope({
+          mode: live.calendarMode,
+          selectedGoogleCalendarIds: liveLinkedCalendars.map(
+            (calendar) => calendar.googleCalendarId,
+          ),
+          queryableCalendarIds: liveQueryableCalendarIds,
+          legacyDurationCalendarIds: liveLegacyDurationCalendarIds,
+        });
+
+        if (
+          liveScope.mode !== "LEGACY_GLOBAL" &&
+          liveScope.calendarIds.length === 0
+        ) {
+          return [{ targetPlaylistId: target.id, targetName: target.name }];
+        }
+
+        return targetCalendarScopesEqual(originalScope, liveScope)
+          ? []
+          : [{ targetPlaylistId: target.id, targetName: target.name }];
       });
 
       if (targetCalendarConfigurationChanges.length > 0) {
         summary.targetCalendarConfigurationChanges = targetCalendarConfigurationChanges;
         const error =
-          "A geração foi bloqueada antes de alterar o Spotify porque o calendário de um destino mudou durante o planejamento. Simule novamente antes de publicar.";
+          "A geração foi bloqueada antes de alterar o Spotify porque o conjunto de calendários de um destino mudou durante o planejamento. Simule novamente antes de publicar.";
         log({ level: "ERROR", message: error, data: targetCalendarConfigurationChanges });
         await finalizeRun(run.id, "FAILED", logs, summary, error);
         return { runId: run.id, status: "FAILED" };

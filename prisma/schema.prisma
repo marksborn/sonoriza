@@ -100,8 +100,8 @@ model CalendarSelection {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  targetPlaylists TargetPlaylist[]
+  user                    User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetPlaylistCalendars TargetPlaylistCalendar[]
 
   @@unique([userId, googleCalendarId])
   @@index([userId])
@@ -523,6 +523,12 @@ enum CalendarDurationStrategy {
   PER_EVENT
 }
 
+enum TargetCalendarMode {
+  LEGACY_GLOBAL
+  SELECTED
+  ALL_QUERYABLE
+}
+
 enum PodcastEpisodeMaxDurationMode {
   NONE
   FIXED
@@ -577,7 +583,7 @@ model TargetPlaylist {
   discoveryIntensity               TargetDiscoveryIntensity      @default(BALANCED)
   durationMode                     DurationMode                  @default(FIXED)
   fixedDurationSeconds             Int?
-  calendarSelectionId              String?
+  calendarMode                     TargetCalendarMode             @default(LEGACY_GLOBAL)
   emptyCalendarBehavior            EmptyCalendarBehavior         @default(CLEAR)
   calendarEventFilterMode          CalendarEventFilterMode       @default(ALL)
   calendarEventMarker              String?
@@ -595,12 +601,23 @@ model TargetPlaylist {
   createdAt                        DateTime                       @default(now())
   updatedAt                        DateTime                       @updatedAt
 
-  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  calendarSelection  CalendarSelection?  @relation(fields: [calendarSelectionId], references: [id], onDelete: SetNull)
+  user               User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  calendarSelections TargetPlaylistCalendar[]
   generationItems    GenerationItem[]
   targetScheduleRuns TargetScheduleRun[]
 
   @@index([userId, priority])
+}
+
+model TargetPlaylistCalendar {
+  targetPlaylistId    String
+  calendarSelectionId String
+  createdAt           DateTime @default(now())
+
+  targetPlaylist    TargetPlaylist    @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)
+  calendarSelection CalendarSelection @relation(fields: [calendarSelectionId], references: [id], onDelete: Cascade)
+
+  @@id([targetPlaylistId, calendarSelectionId])
   @@index([calendarSelectionId])
 }
 

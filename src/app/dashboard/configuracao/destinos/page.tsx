@@ -15,7 +15,10 @@ import {
   parseSequencePattern,
   type ContentType,
 } from "@/services/playlist-planner";
-import { canPreserveLegacyTargetCalendar } from "@/services/target-calendar-selection";
+import {
+  canPreserveLegacyTargetCalendar,
+  normalizeTargetCalendarSelectionIds,
+} from "@/services/target-calendar-selection";
 import {
   SpotifyClient,
   type SpotifyPlaylistSummary,
@@ -147,9 +150,14 @@ async function saveTarget(formData: FormData) {
   const calendarDurationStrategy = String(
     formData.get("calendarDurationStrategy") ?? "SUMMED",
   ).trim();
-  const calendarSelectionId = String(
-    formData.get("calendarSelectionId") ?? "",
+  const calendarMode = String(
+    formData.get("calendarMode") ?? "SELECTED",
   ).trim();
+  const calendarSelectionIds = normalizeTargetCalendarSelectionIds(
+    formData
+      .getAll("calendarSelectionIds")
+      .map((value) => String(value)),
+  );
   const podcastEpisodeMaxDurationMode = String(
     formData.get("podcastEpisodeMaxDurationMode") ?? "NONE",
   ).trim();
@@ -279,18 +287,35 @@ async function saveTarget(formData: FormData) {
   }
 
   const existingTarget = id
-    ? await prisma.targetPlaylist.findFirst({ where: { id, userId } })
+    ? await prisma.targetPlaylist.findFirst({
+        where: { id, userId },
+        include: {
+          calendarSelections: {
+            select: { calendarSelectionId: true },
+          },
+        },
+      })
     : null;
 
   if (id && !existingTarget) fail("invalid");
 
-  let normalizedCalendarSelectionId: string | null = null;
+  let normalizedCalendarMode: "LEGACY_GLOBAL" | "SELECTED" | "ALL_QUERYABLE" =
+    "LEGACY_GLOBAL";
+  let normalizedCalendarSelectionIds: string[] = [];
+
   if (durationMode === "CALENDAR") {
-    const allowLegacyCalendar = canPreserveLegacyTargetCalendar(existingTarget);
+    if (
+      calendarMode !== "LEGACY_GLOBAL" &&
+      calendarMode !== "SELECTED" &&
+      calendarMode !== "ALL_QUERYABLE"
+    ) {
+      fail("calendar-selection");
+    }
 
-    if (!calendarSelectionId) {
-      if (!allowLegacyCalendar) fail("calendar-selection");
-
+    if (calendarMode === "LEGACY_GLOBAL") {
+      if (!canPreserveLegacyTargetCalendar(existingTarget)) {
+        fail("calendar-selection");
+      }
       const durationCalendarCount = await prisma.calendarSelection.count({
         where: {
           userId,
@@ -299,17 +324,34 @@ async function saveTarget(formData: FormData) {
         },
       });
       if (durationCalendarCount === 0) fail("calendar");
+      normalizedCalendarMode = "LEGACY_GLOBAL";
+    } else if (calendarMode === "ALL_QUERYABLE") {
+      const queryableCalendarCount = await prisma.calendarSelection.count({
+        where: { userId, selected: true },
+      });
+      if (queryableCalendarCount === 0) fail("calendar-selection");
+      normalizedCalendarMode = "ALL_QUERYABLE";
     } else {
-      const calendarSelection = await prisma.calendarSelection.findFirst({
+      if (calendarSelectionIds.length === 0) fail("calendar-selection");
+      const availableCalendars = await prisma.calendarSelection.findMany({
         where: {
-          id: calendarSelectionId,
+          id: { in: calendarSelectionIds },
           userId,
           selected: true,
         },
         select: { id: true },
       });
-      if (!calendarSelection) fail("calendar-selection");
-      normalizedCalendarSelectionId = calendarSelection.id;
+      const availableIds = normalizeTargetCalendarSelectionIds(
+        availableCalendars.map((calendar) => calendar.id),
+      );
+      if (
+        availableIds.length !== calendarSelectionIds.length ||
+        availableIds.some((calendarId, index) => calendarId !== calendarSelectionIds[index])
+      ) {
+        fail("calendar-selection");
+      }
+      normalizedCalendarMode = "SELECTED";
+      normalizedCalendarSelectionIds = availableIds;
     }
   }
 
@@ -367,8 +409,8 @@ async function saveTarget(formData: FormData) {
     durationMode,
     fixedDurationSeconds:
       durationMode === "FIXED" ? fixedDurationMinutes! * 60 : null,
-    calendarSelectionId:
-      durationMode === "CALENDAR" ? normalizedCalendarSelectionId : null,
+    calendarMode:
+      durationMode === "CALENDAR" ? normalizedCalendarMode : "LEGACY_GLOBAL",
     emptyCalendarBehavior:
       durationMode === "CALENDAR" ? normalizedEmptyBehavior! : "CLEAR",
     calendarEventFilterMode:
@@ -399,9 +441,26 @@ async function saveTarget(formData: FormData) {
   } as const;
 
   if (existingTarget) {
-    await prisma.targetPlaylist.update({
-      where: { id: existingTarget.id },
-      data,
+    await prisma.$transaction(async (tx) => {
+      await tx.targetPlaylist.update({
+        where: { id: existingTarget.id },
+        data,
+      });
+      await tx.targetPlaylistCalendar.deleteMany({
+        where: { targetPlaylistId: existingTarget.id },
+      });
+      if (
+        durationMode === "CALENDAR" &&
+        normalizedCalendarMode === "SELECTED" &&
+        normalizedCalendarSelectionIds.length > 0
+      ) {
+        await tx.targetPlaylistCalendar.createMany({
+          data: normalizedCalendarSelectionIds.map((calendarSelectionId) => ({
+            targetPlaylistId: existingTarget.id,
+            calendarSelectionId,
+          })),
+        });
+      }
     });
   } else {
     const maxPriority = await prisma.targetPlaylist.aggregate({
@@ -409,12 +468,27 @@ async function saveTarget(formData: FormData) {
       _max: { priority: true },
     });
 
-    await prisma.targetPlaylist.create({
-      data: {
-        userId,
-        priority: (maxPriority._max.priority ?? -1) + 1,
-        ...data,
-      },
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.targetPlaylist.create({
+        data: {
+          userId,
+          priority: (maxPriority._max.priority ?? -1) + 1,
+          ...data,
+        },
+        select: { id: true },
+      });
+      if (
+        durationMode === "CALENDAR" &&
+        normalizedCalendarMode === "SELECTED" &&
+        normalizedCalendarSelectionIds.length > 0
+      ) {
+        await tx.targetPlaylistCalendar.createMany({
+          data: normalizedCalendarSelectionIds.map((calendarSelectionId) => ({
+            targetPlaylistId: created.id,
+            calendarSelectionId,
+          })),
+        });
+      }
     });
   }
 
@@ -631,11 +705,18 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
           orderBy: { startedAt: "desc" },
           take: 1,
         },
-        calendarSelection: {
+        calendarSelections: {
+          orderBy: { createdAt: "asc" },
           select: {
-            id: true,
-            summary: true,
-            googleCalendarId: true,
+            calendarSelectionId: true,
+            calendarSelection: {
+              select: {
+                id: true,
+                summary: true,
+                googleCalendarId: true,
+                selected: true,
+              },
+            },
           },
         },
       },
@@ -701,7 +782,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
     params.error === "calendar"
       ? "Este destino ainda usa compatibilidade global. Habilite ao menos um calendário para duração no CONFIG-01 ou escolha um calendário próprio."
       : params.error === "calendar-selection"
-        ? "Escolha um calendário disponível para este destino. Destinos novos não usam fallback global silencioso."
+        ? "Escolha pelo menos um calendário, ou use “Todos os calendários consultáveis”. Destinos novos não usam fallback global silencioso."
         : params.error === "marker"
         ? "Informe um marcador de evento com até 80 caracteres."
         : params.error === "duration"
@@ -776,7 +857,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 Duração baseada no calendário
               </p>
               <h2 className="mt-1 text-xl font-black text-ink-inverse">
-                Calendário escolhido em cada destino
+                Calendários escolhidos em cada destino
               </h2>
               {calendarOptions.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -796,7 +877,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 </div>
               )}
               <p className="mt-3 max-w-3xl text-xs leading-5 text-muted-inverse/65">
-                A marcação global “Duração” permanece somente para destinos legados ainda sem calendário próprio.
+                Cada destino pode usar uma ou várias agendas, ou acompanhar todas as agendas consultáveis. A marcação global “Duração” permanece somente para destinos legados.
               </p>
             </div>
             <Link
@@ -887,7 +968,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   enabled: true,
                   durationMode: "FIXED",
                   fixedDurationMinutes: 45,
-                  calendarSelectionId: null,
+                  calendarMode: "SELECTED",
+                  calendarSelectionIds: [],
                   allowLegacyCalendar: false,
                   emptyCalendarBehavior: "KEEP",
                   calendarEventFilterMode: "ALL",
@@ -986,10 +1068,16 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               }% música`}
                           {target.durationMode === "CALENDAR"
                             ? ` · calendário: ${
-                                target.calendarSelection?.summary?.trim() ||
-                                (target.calendarSelectionId
-                                  ? "seleção indisponível"
-                                  : "globais (legado)")
+                                target.calendarMode === "ALL_QUERYABLE"
+                                  ? "todos os consultáveis"
+                                  : target.calendarMode === "SELECTED"
+                                    ? target.calendarSelections
+                                        .map((entry) =>
+                                          entry.calendarSelection.summary?.trim() ||
+                                          "Calendário",
+                                        )
+                                        .join(", ") || "seleção indisponível"
+                                    : "globais (legado)"
                               } · eventos: ${
                                 target.calendarEventFilterMode === "MARKER"
                                   ? `marcador ${
@@ -1085,10 +1173,16 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               1,
                               Math.round((target.fixedDurationSeconds ?? 45 * 60) / 60),
                             ),
-                            calendarSelectionId: target.calendarSelectionId,
+                            calendarMode:
+                              target.durationMode === "CALENDAR"
+                                ? target.calendarMode
+                                : "SELECTED",
+                            calendarSelectionIds: target.calendarSelections.map(
+                              (entry) => entry.calendarSelectionId,
+                            ),
                             allowLegacyCalendar:
                               target.durationMode === "CALENDAR" &&
-                              !target.calendarSelectionId,
+                              target.calendarMode === "LEGACY_GLOBAL",
                             emptyCalendarBehavior: target.emptyCalendarBehavior,
                             calendarEventFilterMode: target.calendarEventFilterMode,
                             calendarEventMarker: target.calendarEventMarker ?? "",
