@@ -18,7 +18,7 @@ export const LIKED_SHADOW_DISCOVERY_POLICY = {
   similarBoostSupportPerExtraSeed: 0.5,
   similarBoostSupportMax: 2,
   similarBoostMax: 6,
-} as const;
+};
 
 export type LikedDirectAffinitySignal = {
   spotifyArtistId: string;
