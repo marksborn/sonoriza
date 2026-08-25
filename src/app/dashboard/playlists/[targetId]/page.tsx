@@ -29,7 +29,7 @@ export default async function GeneratedPlaylistPage({
 
   if (!target) notFound();
 
-  const [run, recentCandidates] = await Promise.all([
+  const [run, recentRuns] = await Promise.all([
     prisma.generationRun.findFirst({
       where: {
         userId: session.user.id,
@@ -47,44 +47,8 @@ export default async function GeneratedPlaylistPage({
         },
       },
     }),
-    prisma.generationRun.findMany({
-      where: {
-        userId: session.user.id,
-        simulation: false,
-      },
-      orderBy: { startedAt: "desc" },
-      take: 40,
-      select: {
-        id: true,
-        trigger: true,
-        status: true,
-        startedAt: true,
-        finishedAt: true,
-        error: true,
-        summary: true,
-        items: {
-          where: { targetPlaylistId: target.id },
-          select: { id: true },
-          take: 1,
-        },
-        scheduleRuns: {
-          where: { targetPlaylistId: target.id },
-          orderBy: { startedAt: "desc" },
-          select: { status: true, reason: true, attempt: true },
-          take: 1,
-        },
-      },
-    }),
+    loadRecentTargetRuns(session.user.id, target.id),
   ]);
-
-  const recentRuns = recentCandidates
-    .filter(
-      (candidate) =>
-        candidate.items.length > 0 ||
-        candidate.scheduleRuns.length > 0 ||
-        runSummaryMentionsTarget(candidate.summary, target.id),
-    )
-    .slice(0, 8);
 
   const items = run?.items ?? [];
   const musicCount = items.filter((item) => item.contentType === "MUSIC").length;
@@ -402,6 +366,67 @@ function triggerLabel(trigger: string): string {
   if (trigger === "SCHEDULED") return "Agendada";
   if (trigger === "MANUAL") return "Manual";
   return trigger;
+}
+
+async function loadRecentRunBatch(userId: string, targetId: string, skip: number) {
+  return prisma.generationRun.findMany({
+    where: {
+      userId,
+      simulation: false,
+    },
+    orderBy: { startedAt: "desc" },
+    skip,
+    take: 40,
+    select: {
+      id: true,
+      trigger: true,
+      status: true,
+      startedAt: true,
+      finishedAt: true,
+      error: true,
+      summary: true,
+      items: {
+        where: { targetPlaylistId: targetId },
+        select: { id: true },
+        take: 1,
+      },
+      scheduleRuns: {
+        where: { targetPlaylistId: targetId },
+        orderBy: { startedAt: "desc" },
+        select: { status: true, reason: true, attempt: true },
+        take: 1,
+      },
+    },
+  });
+}
+
+type RecentRunCandidate = Awaited<ReturnType<typeof loadRecentRunBatch>>[number];
+
+async function loadRecentTargetRuns(
+  userId: string,
+  targetId: string,
+): Promise<RecentRunCandidate[]> {
+  const matches: RecentRunCandidate[] = [];
+  let skip = 0;
+
+  while (matches.length < 8) {
+    const batch = await loadRecentRunBatch(userId, targetId, skip);
+    for (const candidate of batch) {
+      if (
+        candidate.items.length > 0 ||
+        candidate.scheduleRuns.length > 0 ||
+        runSummaryMentionsTarget(candidate.summary, targetId)
+      ) {
+        matches.push(candidate);
+        if (matches.length >= 8) break;
+      }
+    }
+
+    if (batch.length < 40) break;
+    skip += batch.length;
+  }
+
+  return matches.slice(0, 8);
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

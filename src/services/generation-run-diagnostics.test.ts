@@ -40,8 +40,12 @@ test("summarizes a partial 502 source read without exposing raw provider payload
   assert.equal(diagnostic.partialRead, true);
 });
 
-test("target membership is recovered from targetScope or target summaries", () => {
+test("target membership is recovered from explicit scope, resolved scope or target summaries", () => {
   assert.equal(runSummaryMentionsTarget({ targetScope: ["target-a"] }, "target-a"), true);
+  assert.equal(
+    runSummaryMentionsTarget({ resolvedTargetIds: ["target-early"] }, "target-early"),
+    true,
+  );
   assert.equal(
     runSummaryMentionsTarget({ targets: [{ targetPlaylistId: "target-b" }] }, "target-b"),
     true,

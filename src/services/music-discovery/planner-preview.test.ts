@@ -156,6 +156,57 @@ test("Gate 3B dedupes MUSIC URIs only after every source cursor completes", asyn
   assert.equal(universe.evidence.sources.every((source) => source.done), true);
 });
 
+test("Gate 3B recovery discards partial candidates from a degraded source", async () => {
+  const partial = music("partial", "Partial Artist", "Partial Track");
+  const healthy = music("healthy", "Healthy Artist", "Healthy Track");
+  let calls = 0;
+  const degraded: DiscoveryPreviewSource = {
+    id: "degraded",
+    label: "degraded",
+    kind: "MUSIC",
+    get done() {
+      return false;
+    },
+    async readNext() {
+      calls += 1;
+      if (calls === 1) return { candidates: [partial], done: false };
+      throw new Error("HTTP 502");
+    },
+  };
+
+  const universe = await collectCompleteDiscoverySourceUniverse(
+    [degraded, sourceWithPages("healthy", "MUSIC", [[healthy]])],
+    { recoverSourceFailure: (_source, error) => String(error).includes("502") },
+  );
+
+  assert.deepEqual(universe.music.map((candidate) => candidate.spotifyTrackId), ["healthy"]);
+  assert.equal(universe.degradedFailures.length, 1);
+  assert.equal(universe.degradedFailures[0]?.source.id, "degraded");
+  assert.equal(universe.evidence.degradedSourceCount, 1);
+  assert.deepEqual(universe.evidence.sources.map((source) => source.id), ["healthy"]);
+});
+
+test("Gate 3B keeps non-recoverable source failures fail-closed", async () => {
+  const broken: DiscoveryPreviewSource = {
+    id: "non-recoverable",
+    label: "non-recoverable",
+    kind: "MUSIC",
+    get done() {
+      return false;
+    },
+    async readNext() {
+      throw new Error("HTTP 503");
+    },
+  };
+
+  await assert.rejects(
+    collectCompleteDiscoverySourceUniverse([broken], {
+      recoverSourceFailure: () => false,
+    }),
+    /503/,
+  );
+});
+
 test("Gate 3B refuses a cursor that claims a finished batch without actually closing", async () => {
   const broken: DiscoveryPreviewSource = {
     id: "broken",

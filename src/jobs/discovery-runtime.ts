@@ -179,11 +179,17 @@ export function currentDiscoveryRuntimeState(): DiscoveryRuntimeState | null {
 
 export async function prepareDiscoveryMusicForCurrentRun<
   TSource extends RuntimeSource,
->(sources: TSource[]): Promise<{
+>(
+  sources: TSource[],
+  options: {
+    recoverSourceFailure?: (source: TSource, error: unknown) => boolean;
+  } = {},
+): Promise<{
   rankedMusic: Candidate[];
   sourceEntries: DiscoveryPlannerPoolEntry[];
   podcastSources: TSource[];
   completedMusicSourceIds: string[];
+  degradedFailures: Array<{ source: TSource; error: unknown }>;
 } | null> {
   const state = currentDiscoveryRuntimeState();
   if (!state?.enabled) return null;
@@ -206,7 +212,7 @@ export async function prepareDiscoveryMusicForCurrentRun<
     checkpoint("after-profile");
     const trackIdentities = await getDiscoveryTrackIdentityEvidence(state.userId);
     checkpoint("after-identities");
-    const sourceUniverse = await collectCompleteDiscoverySourceUniverse(musicSources);
+    const sourceUniverse = await collectCompleteDiscoverySourceUniverse(musicSources, options);
     checkpoint("after-source-universe");
 
     const repeatFiltered = filterMusicBatchForCurrentRun(sourceUniverse.music);
@@ -245,6 +251,8 @@ export async function prepareDiscoveryMusicForCurrentRun<
       historyTrackCount: profile.tracks.length,
       musicSourceCount: sourceUniverse.evidence.musicSourceCount,
       musicSourceReadCalls: sourceUniverse.evidence.readCalls,
+      degradedMusicSourceCount: sourceUniverse.evidence.degradedSourceCount,
+      degradedMusicSources: sourceUniverse.evidence.degradedSources,
       sourceMusicBeforeMusic01: sourceUniverse.music.length,
       sourceMusicAfterMusic01: repeatFiltered.candidates.length,
       sourceMusicAfterCooldownReconciliation: safeMusic.length,
@@ -270,6 +278,7 @@ export async function prepareDiscoveryMusicForCurrentRun<
       sourceEntries: selection.plannerPool.entries,
       podcastSources,
       completedMusicSourceIds: sourceUniverse.evidence.sources.map((source) => source.id),
+      degradedFailures: sourceUniverse.degradedFailures,
     };
   } catch (error) {
     state.failure = error instanceof Error ? error.message : String(error);

@@ -18,6 +18,11 @@ export function runSummaryMentionsTarget(summary: unknown, targetId: string): bo
   const targetScope = Array.isArray(root.targetScope) ? root.targetScope : [];
   if (targetScope.some((entry) => entry === targetId)) return true;
 
+  const resolvedTargetIds = Array.isArray(root.resolvedTargetIds)
+    ? root.resolvedTargetIds
+    : [];
+  if (resolvedTargetIds.some((entry) => entry === targetId)) return true;
+
   const targets = recordArray(root.targets);
   return targets.some((target) => target.targetPlaylistId === targetId);
 }

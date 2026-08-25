@@ -139,7 +139,7 @@ export async function collectIncrementally<
       (!targetScopedRuntime || hasTargetSourceDiscovery),
   );
   const discovery = shouldPrepareDiscoverySources
-    ? await prepareDiscoveryMusicForCurrentRun(sources)
+    ? await prepareDiscoveryMusicForCurrentRun(sources, { recoverSourceFailure })
     : null;
 
   if (discoveryState?.enabled && !relevantKinds.includes("MUSIC")) {
@@ -148,8 +148,12 @@ export async function collectIncrementally<
 
   const activeSources: TSource[] = discovery ? discovery.podcastSources : sources;
   const activeSourceById = new Map(activeSources.map((source) => [source.id, source]));
-  const degradedSourceIds = new Set<string>();
-  const degradedFailures: IncrementalSourceFailure<TSource>[] = [];
+  const degradedFailures: IncrementalSourceFailure<TSource>[] = [
+    ...(discovery?.degradedFailures ?? []),
+  ];
+  const degradedSourceIds = new Set<string>(
+    degradedFailures.map((failure) => failure.source.id),
+  );
   const sourceCandidatesById = new Map<string, Candidate[]>();
   const pools: PlannerPools = {
     music: discovery ? dedupeByUri(discovery.rankedMusic) : [],
@@ -225,9 +229,10 @@ export async function collectIncrementally<
     pools.podcasts = podcasts;
   };
 
-  const attemptedSourceIds = new Set<string>(
-    discovery?.completedMusicSourceIds ?? [],
-  );
+  const attemptedSourceIds = new Set<string>([
+    ...(discovery?.completedMusicSourceIds ?? []),
+    ...degradedFailures.map((failure) => failure.source.id),
+  ]);
   const readSourceIds = new Set<string>(discovery?.completedMusicSourceIds ?? []);
   const effectiveReplanAfterEachSourceRead = discovery
     ? true

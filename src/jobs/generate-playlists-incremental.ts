@@ -153,6 +153,7 @@ export async function generatePlaylists(
         "Um ou mais destinos agendados foram desabilitados ou removidos antes do planejamento.",
       );
     }
+    summary.resolvedTargetIds = targets.map((target) => target.id);
     const durationCalendarIds = (
       await prisma.calendarSelection.findMany({
         where: { userId, selected: true, usedForDuration: true },
