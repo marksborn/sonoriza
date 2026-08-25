@@ -1,0 +1,51 @@
+name: Patch LIKED-01 Gate 3 policy
+
+on:
+  push:
+    branches:
+      - feat/liked-01-gate3
+    paths:
+      - ".github/workflows/patch-liked-01-gate3-policy.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate3
+          fetch-depth: 0
+      - name: Align Gate 3 defaults and validation paths
+        shell: python
+        run: |
+          from pathlib import Path
+
+          service = Path("src/services/music-preference/liked-artist-similarity.ts")
+          text = service.read_text()
+          old = "  sourceBudget: 20,"
+          if old not in text:
+              raise SystemExit("sourceBudget marker not found")
+          service.write_text(text.replace(old, "  sourceBudget: 25,", 1))
+
+          cli = Path("scripts/report-liked-artist-similarity.ts")
+          text = cli.read_text()
+          cli.write_text(text.replace("[--budget=20]", "[--budget=25]"))
+
+          workflow = Path(".github/workflows/liked-01-validation.yml")
+          text = workflow.read_text()
+          marker = '      - "scripts/report-liked-track-affinity.ts"\n'
+          replacement = marker + '      - "scripts/report-liked-artist-similarity.ts"\n'
+          if text.count(marker) != 2:
+              raise SystemExit("LIKED workflow marker count changed")
+          workflow.write_text(text.replace(marker, replacement))
+      - name: Commit aligned Gate 3 policy
+        run: |
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add src/services/music-preference/liked-artist-similarity.ts scripts/report-liked-artist-similarity.ts .github/workflows/liked-01-validation.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "chore(liked): align Gate 3 conservative budget"
+          git push origin HEAD:feat/liked-01-gate3
