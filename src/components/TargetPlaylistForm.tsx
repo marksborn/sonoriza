@@ -454,7 +454,7 @@ export function TargetPlaylistForm({
 
             {calendarMode === "ALL_QUERYABLE" && (
               <p className="status-info mt-4 rounded-xl border p-3 text-xs font-semibold leading-5">
-                Este destino usará todos os {calendarOptions.length} calendário{calendarOptions.length === 1 ? "" : "s"} atualmente consultável{calendarOptions.length === 1 ? "" : "is"}. A lista acompanha o CONFIG-01 automaticamente.
+                Este destino usará {calendarOptions.length === 1 ? "o calendário atualmente consultável" : `todos os ${calendarOptions.length} calendários atualmente consultáveis`}. A lista acompanha o CONFIG-01 automaticamente.
               </p>
             )}
 
