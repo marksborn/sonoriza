@@ -15,6 +15,15 @@ jobs:
   fix-and-validate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_pr183?schema=public
+      NEXTAUTH_SECRET: pr183-review-validation
+      AUTH_SECRET: pr183-review-validation
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
     steps:
       - uses: actions/checkout@v4
         with:
