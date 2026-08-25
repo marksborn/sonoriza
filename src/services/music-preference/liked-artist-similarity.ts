@@ -7,7 +7,7 @@ import {
 } from "@/services/lastfm/similarity";
 
 export const LIKED_ARTIST_SIMILARITY_POLICY = {
-  sourceBudget: 20,
+  sourceBudget: 25,
   maxSourceBudget: 200,
   perSeed: 10,
   maxPerSeed: 50,

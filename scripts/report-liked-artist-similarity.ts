@@ -26,7 +26,7 @@ async function main() {
   const email = argValue("email");
   if (!email) {
     throw new Error(
-      "Uso: npm run liked:similarity -- --email=usuario@exemplo.com [--budget=20] [--per-seed=10] [--apply] [--json]",
+      "Uso: npm run liked:similarity -- --email=usuario@exemplo.com [--budget=25] [--per-seed=10] [--apply] [--json]",
     );
   }
 
