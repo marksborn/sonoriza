@@ -45,6 +45,8 @@ model User {
   pushSubscriptions                PushSubscription[]
   pushDeliveries                   PushDelivery[]
   musicPreferenceSignals           MusicPreferenceSignal[]
+  likedTrackPreferences             LikedTrackPreference[]
+  artistAffinityStates              ArtistAffinityState[]
   albumRecommendationMemories      AlbumRecommendationMemory[]
 }
 
@@ -707,6 +709,100 @@ model GenerationItem {
 
   @@index([runId])
   @@index([targetPlaylistId])
+}
+
+// ---------------------------------------------------------------------------
+// LIKED-01 — canonical explicit liked-track state and artist affinity.
+//
+// Gate 2 is shadow-only: planner/discovery do not consume these models yet.
+// A liked track is durable explicit preference evidence. Artist affinity is
+// derived from the canonical primary artist and remains independently auditable
+// so an unlike can remove one supporting track without erasing other evidence.
+// ---------------------------------------------------------------------------
+
+enum LikedTrackPreferenceProvenance {
+  LIKED_TRACK_BACKFILL
+  LIKED_TRACK_SYNC
+}
+
+enum LikedTrackAvailability {
+  AVAILABLE
+  UNAVAILABLE
+  INVALID
+}
+
+enum ArtistAffinityEvidenceType {
+  LIKED_TRACK
+}
+
+model LikedTrackPreference {
+  id                String                         @id @default(cuid())
+  userId            String
+  spotifyTrackId    String
+  spotifyUri        String?
+  trackName         String?
+  primaryArtistId   String?
+  primaryArtistName String?
+  albumId           String?
+  albumName         String?
+  addedAt           DateTime?
+  isLiked           Boolean                        @default(true)
+  availability      LikedTrackAvailability
+  firstProvenance   LikedTrackPreferenceProvenance
+  lastProvenance    LikedTrackPreferenceProvenance
+  firstObservedAt   DateTime                       @default(now())
+  lastObservedAt    DateTime
+  unlikedAt         DateTime?
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  affinityEvidence ArtistAffinityEvidence[]
+
+  @@unique([userId, spotifyTrackId])
+  @@index([userId, isLiked])
+  @@index([userId, primaryArtistId, isLiked])
+}
+
+model ArtistAffinityEvidence {
+  id                String                         @id @default(cuid())
+  userId            String
+  spotifyTrackId    String
+  spotifyArtistId   String
+  artistName        String?
+  type              ArtistAffinityEvidenceType     @default(LIKED_TRACK)
+  active            Boolean                        @default(true)
+  firstProvenance   LikedTrackPreferenceProvenance
+  lastProvenance    LikedTrackPreferenceProvenance
+  firstObservedAt   DateTime                       @default(now())
+  lastChangedAt     DateTime
+  removedAt         DateTime?
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+
+  likedTrack LikedTrackPreference @relation(fields: [userId, spotifyTrackId], references: [userId, spotifyTrackId], onDelete: Cascade)
+
+  @@unique([userId, type, spotifyTrackId, spotifyArtistId])
+  @@index([userId, spotifyArtistId, active])
+  @@index([userId, spotifyTrackId, active])
+}
+
+model ArtistAffinityState {
+  id                String   @id @default(cuid())
+  userId            String
+  spotifyArtistId   String
+  artistName        String?
+  likedTrackCount   Int      @default(0)
+  active            Boolean  @default(false)
+  firstObservedAt   DateTime @default(now())
+  lastChangedAt     DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, spotifyArtistId])
+  @@index([userId, active, likedTrackCount])
 }
 
 // ---------------------------------------------------------------------------
