@@ -15,6 +15,20 @@ jobs:
   fix-and-validate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_pr183
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_pr183"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_pr183?schema=public
       NEXTAUTH_SECRET: pr183-review-validation
@@ -42,6 +56,9 @@ jobs:
 
       - name: Validate Prisma schema
         run: npx prisma validate
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
 
       - name: Incremental regressions
         run: npm run test:incremental
