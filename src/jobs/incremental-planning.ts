@@ -74,6 +74,7 @@ export type IncrementalPlanningResult<
   rounds: number;
   stoppedEarly: boolean;
   failure: IncrementalSourceFailure<TSource> | null;
+  degradedFailures: IncrementalSourceFailure<TSource>[];
 };
 
 type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
@@ -100,6 +101,8 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
    * source reads. Defaults 0, preserving current production behavior.
    */
   sequenceTerminalUnderfillToleranceMs?: number;
+  /** Caller-owned fail-open policy for an isolated source read. Defaults false. */
+  recoverSourceFailure?: (source: TSource, error: unknown) => boolean;
 };
 
 const MAX_MUSIC_REPEAT_PREWRITE_REPLANS = 2;
@@ -117,6 +120,7 @@ export async function collectIncrementally<
   revalidateBeforeWrite = revalidateMusicRepeatBeforeRealWrite,
   replanAfterEachSourceRead = false,
   sequenceTerminalUnderfillToleranceMs = 0,
+  recoverSourceFailure = () => false,
 }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
@@ -135,7 +139,7 @@ export async function collectIncrementally<
       (!targetScopedRuntime || hasTargetSourceDiscovery),
   );
   const discovery = shouldPrepareDiscoverySources
-    ? await prepareDiscoveryMusicForCurrentRun(sources)
+    ? await prepareDiscoveryMusicForCurrentRun(sources, { recoverSourceFailure })
     : null;
 
   if (discoveryState?.enabled && !relevantKinds.includes("MUSIC")) {
@@ -143,10 +147,19 @@ export async function collectIncrementally<
   }
 
   const activeSources: TSource[] = discovery ? discovery.podcastSources : sources;
+  const activeSourceById = new Map(activeSources.map((source) => [source.id, source]));
+  const degradedFailures: IncrementalSourceFailure<TSource>[] = [
+    ...(discovery?.degradedFailures ?? []),
+  ];
+  const degradedSourceIds = new Set<string>(
+    degradedFailures.map((failure) => failure.source.id),
+  );
+  const sourceCandidatesById = new Map<string, Candidate[]>();
   const pools: PlannerPools = {
     music: discovery ? dedupeByUri(discovery.rankedMusic) : [],
     podcasts: [],
   };
+  const baseMusicPool = [...pools.music];
   let musicPoolByTargetId: Map<string, Candidate[]> | undefined;
 
   if (discovery && targetScopedRuntime && targetDiscoveryState) {
@@ -200,9 +213,26 @@ export async function collectIncrementally<
     };
   }
 
-  const attemptedSourceIds = new Set<string>(
-    discovery?.completedMusicSourceIds ?? [],
-  );
+  const rebuildPoolsFromActiveSourceContributions = () => {
+    const music = [...baseMusicPool];
+    const podcasts: Candidate[] = [];
+
+    for (const [sourceId, candidates] of sourceCandidatesById) {
+      if (degradedSourceIds.has(sourceId)) continue;
+      const source = activeSourceById.get(sourceId);
+      if (!source) continue;
+      if (source.kind === "MUSIC") music.push(...candidates);
+      else podcasts.push(...candidates);
+    }
+
+    pools.music = dedupeByUri(filterMusicBatchForCurrentRun(music).candidates);
+    pools.podcasts = podcasts;
+  };
+
+  const attemptedSourceIds = new Set<string>([
+    ...(discovery?.completedMusicSourceIds ?? []),
+    ...degradedFailures.map((failure) => failure.source.id),
+  ]);
   const readSourceIds = new Set<string>(discovery?.completedMusicSourceIds ?? []);
   const effectiveReplanAfterEachSourceRead = discovery
     ? true
@@ -328,7 +358,12 @@ export async function collectIncrementally<
     if (requestedKinds.size === 0) {
       requestedKinds = new Set(
         relevantKinds.filter((kind) =>
-          activeSources.some((source) => source.kind === kind && !source.done),
+          activeSources.some(
+            (source) =>
+              source.kind === kind &&
+              !source.done &&
+              !degradedSourceIds.has(source.id),
+          ),
         ),
       );
     }
@@ -344,12 +379,16 @@ export async function collectIncrementally<
       rounds,
       stoppedEarly: activeSources.some((source) => !source.done),
       failure: null,
+      degradedFailures,
     };
   }
 
   while (requestedKinds.size > 0) {
     const readable = activeSources.filter(
-      (source) => !source.done && requestedKinds.has(source.kind),
+      (source) =>
+        !source.done &&
+        !degradedSourceIds.has(source.id) &&
+        requestedKinds.has(source.kind),
     );
     if (readable.length === 0) break;
 
@@ -362,6 +401,16 @@ export async function collectIncrementally<
       try {
         batch = await source.readNext();
       } catch (error) {
+        if (recoverSourceFailure(source, error)) {
+          degradedSourceIds.add(source.id);
+          degradedFailures.push({ source, error });
+          sourceCandidatesById.delete(source.id);
+          rebuildPoolsFromActiveSourceContributions();
+          rebuildPlan();
+          refreshRequestedKinds();
+          continue;
+        }
+
         return {
           pools,
           plan,
@@ -371,6 +420,7 @@ export async function collectIncrementally<
           rounds,
           stoppedEarly: false,
           failure: { source, error },
+          degradedFailures,
         };
       }
 
@@ -387,6 +437,11 @@ export async function collectIncrementally<
             filtered.missingTrackIdentitySkippedCount,
         };
       }
+
+      sourceCandidatesById.set(source.id, [
+        ...(sourceCandidatesById.get(source.id) ?? []),
+        ...batch.candidates,
+      ]);
 
       readSourceIds.add(source.id);
       if (source.kind === "MUSIC") {
@@ -410,6 +465,7 @@ export async function collectIncrementally<
               (candidateSource) => !candidateSource.done,
             ),
             failure: null,
+            degradedFailures,
           };
         }
         refreshRequestedKinds();
@@ -435,6 +491,7 @@ export async function collectIncrementally<
         rounds,
         stoppedEarly: activeSources.some((source) => !source.done),
         failure: null,
+        degradedFailures,
       };
     }
 
@@ -454,6 +511,7 @@ export async function collectIncrementally<
     rounds,
     stoppedEarly: false,
     failure: null,
+    degradedFailures,
   };
 }
 

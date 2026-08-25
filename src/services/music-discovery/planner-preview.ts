@@ -33,10 +33,20 @@ export type DiscoveryPreviewSource = {
   readNext(): Promise<DiscoveryPreviewSourceBatch>;
 };
 
-export type CompleteDiscoverySourceUniverse = {
+export type DiscoveryPreviewSourceFailure<
+  TSource extends DiscoveryPreviewSource = DiscoveryPreviewSource,
+> = {
+  source: TSource;
+  error: unknown;
+};
+
+export type CompleteDiscoverySourceUniverse<
+  TSource extends DiscoveryPreviewSource = DiscoveryPreviewSource,
+> = {
   universe: "COMPLETE";
   music: Candidate[];
   podcasts: Candidate[];
+  degradedFailures: DiscoveryPreviewSourceFailure<TSource>[];
   evidence: {
     sourceCount: number;
     musicSourceCount: number;
@@ -45,6 +55,12 @@ export type CompleteDiscoverySourceUniverse = {
     cacheBatchCount: number;
     unavailableMusicSkippedCount: number;
     duplicateMusicUriDroppedCount: number;
+    degradedSourceCount: number;
+    degradedSources: Array<{
+      id: string;
+      label: string;
+      kind: DiscoveryPreviewSourceKind;
+    }>;
     sources: Array<{
       id: string;
       label: string;
@@ -99,12 +115,19 @@ const MAX_SOURCE_READ_CALLS = 10_000;
  * This is the opposite of the production incremental early-stop path: the
  * preview must prove that candidateUniverse=COMPLETE is factual, not inferred.
  */
-export async function collectCompleteDiscoverySourceUniverse(
-  sources: DiscoveryPreviewSource[],
-): Promise<CompleteDiscoverySourceUniverse> {
+export async function collectCompleteDiscoverySourceUniverse<
+  TSource extends DiscoveryPreviewSource,
+>(
+  sources: TSource[],
+  options: {
+    recoverSourceFailure?: (source: TSource, error: unknown) => boolean;
+  } = {},
+): Promise<CompleteDiscoverySourceUniverse<TSource>> {
   const rawMusic: Candidate[] = [];
   const podcasts: Candidate[] = [];
-  const sourceEvidence: CompleteDiscoverySourceUniverse["evidence"]["sources"] = [];
+  const sourceEvidence: CompleteDiscoverySourceUniverse<TSource>["evidence"]["sources"] = [];
+  const degradedFailures: DiscoveryPreviewSourceFailure<TSource>[] = [];
+  const recoverSourceFailure = options.recoverSourceFailure ?? (() => false);
   let readCalls = 0;
   let cacheBatchCount = 0;
   let unavailableMusicSkippedCount = 0;
@@ -112,31 +135,43 @@ export async function collectCompleteDiscoverySourceUniverse(
   for (const source of sources) {
     let sourceReadCalls = 0;
     let candidateCount = 0;
+    const sourceMusic: Candidate[] = [];
+    const sourcePodcasts: Candidate[] = [];
 
-    while (!source.done) {
-      if (readCalls >= MAX_SOURCE_READ_CALLS) {
-        throw new Error(
-          `DISCOVERY Gate 3B source collection exceeded ${MAX_SOURCE_READ_CALLS} read calls before every cursor completed`,
-        );
+    try {
+      while (!source.done) {
+        if (readCalls >= MAX_SOURCE_READ_CALLS) {
+          throw new Error(
+            `DISCOVERY Gate 3B source collection exceeded ${MAX_SOURCE_READ_CALLS} read calls before every cursor completed`,
+          );
+        }
+
+        const batch = await source.readNext();
+        readCalls += 1;
+        sourceReadCalls += 1;
+        candidateCount += batch.candidates.length;
+        if (batch.fromCache) cacheBatchCount += 1;
+        unavailableMusicSkippedCount += batch.unavailableMusicSkippedCount ?? 0;
+
+        if (source.kind === "MUSIC") sourceMusic.push(...batch.candidates);
+        else sourcePodcasts.push(...batch.candidates);
+
+        if (batch.done && !source.done) {
+          throw new Error(
+            `DISCOVERY Gate 3B source ${source.id} reported batch.done=true while its cursor remained open`,
+          );
+        }
       }
-
-      const batch = await source.readNext();
-      readCalls += 1;
-      sourceReadCalls += 1;
-      candidateCount += batch.candidates.length;
-      if (batch.fromCache) cacheBatchCount += 1;
-      unavailableMusicSkippedCount += batch.unavailableMusicSkippedCount ?? 0;
-
-      if (source.kind === "MUSIC") rawMusic.push(...batch.candidates);
-      else podcasts.push(...batch.candidates);
-
-      if (batch.done && !source.done) {
-        throw new Error(
-          `DISCOVERY Gate 3B source ${source.id} reported batch.done=true while its cursor remained open`,
-        );
-      }
+    } catch (error) {
+      if (!recoverSourceFailure(source, error)) throw error;
+      degradedFailures.push({ source, error });
+      continue;
     }
 
+    // Commit candidates only after the source cursor completes. This makes a
+    // recovered 502 atomic: pages read before the failure never enter ranking.
+    rawMusic.push(...sourceMusic);
+    podcasts.push(...sourcePodcasts);
     sourceEvidence.push({
       id: source.id,
       label: source.label,
@@ -153,6 +188,7 @@ export async function collectCompleteDiscoverySourceUniverse(
     universe: "COMPLETE",
     music: dedupedMusic.candidates,
     podcasts,
+    degradedFailures,
     evidence: {
       sourceCount: sources.length,
       musicSourceCount: sources.filter((source) => source.kind === "MUSIC").length,
@@ -161,6 +197,12 @@ export async function collectCompleteDiscoverySourceUniverse(
       cacheBatchCount,
       unavailableMusicSkippedCount,
       duplicateMusicUriDroppedCount: dedupedMusic.droppedCount,
+      degradedSourceCount: degradedFailures.length,
+      degradedSources: degradedFailures.map(({ source }) => ({
+        id: source.id,
+        label: source.label,
+        kind: source.kind,
+      })),
       sources: sourceEvidence,
     },
   };

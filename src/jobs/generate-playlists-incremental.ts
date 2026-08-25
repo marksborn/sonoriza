@@ -54,6 +54,7 @@ import {
   type IncrementalPlanningRound,
 } from "./incremental-planning";
 import { revalidateMusicRepeatBeforeRealWrite } from "./music-repeat-runtime";
+import { isDegradableSpotifySourceFailure } from "./source-failure-policy";
 
 export interface GeneratePlaylistsOptions {
   userId: string;
@@ -152,6 +153,7 @@ export async function generatePlaylists(
         "Um ou mais destinos agendados foram desabilitados ou removidos antes do planejamento.",
       );
     }
+    summary.resolvedTargetIds = targets.map((target) => target.id);
     const durationCalendarIds = (
       await prisma.calendarSelection.findMany({
         where: { userId, selected: true, usedForDuration: true },
@@ -298,6 +300,8 @@ export async function generatePlaylists(
       preservedByTargetId: new Map(Object.entries(opts.preservedByTargetId ?? {})),
       blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
+      recoverSourceFailure: (_source, error) =>
+        isDegradableSpotifySourceFailure(error),
       onBatch(source, batch) {
         musicUnavailableSkippedCount += batch.unavailableMusicSkippedCount ?? 0;
         genericPodcastSuppressedCount += batch.genericPodcastSuppressedCount ?? 0;
@@ -314,7 +318,16 @@ export async function generatePlaylists(
           incremental.failure.error,
         )
       : null;
-    const failures = readFailure ? [readFailure] : [];
+    const degradedFailures = incremental.degradedFailures.map((failure) =>
+      sourceFailureFromCursor(
+        failure.source as SpotifyIncrementalCandidateSource,
+        failure.error,
+      ),
+    );
+    const failures = [
+      ...degradedFailures,
+      ...(readFailure ? [readFailure] : []),
+    ];
     const exhaustedSourceCount = sourceCursors.filter((source) => source.done).length;
     const spotifyMetrics = reader.getRequestMetrics();
     const sourceCollection = buildSourceCollectionDiagnosticSummary({
@@ -329,6 +342,7 @@ export async function generatePlaylists(
     summary.sourceCollection = {
       ...sourceCollection,
       exhaustedSourceCount,
+      degradedSourceCount: degradedFailures.length,
       stoppedEarly: incremental.stoppedEarly,
       planningRounds: incremental.rounds,
     };
@@ -342,6 +356,16 @@ export async function generatePlaylists(
     summary.spotifyApi = spotifyMetrics;
     summary.musicUnavailableSkippedCount = musicUnavailableSkippedCount;
     summary.genericPodcastSuppressedCount = genericPodcastSuppressedCount;
+
+    if (degradedFailures.length > 0) {
+      log({
+        level: "WARN",
+        message:
+          `Continuing with ${degradedFailures.length} source(s) degraded by HTTP 502; ` +
+          "all candidates previously read from those sources were discarded.",
+        data: degradedFailures,
+      });
+    }
 
     if (readFailure) {
       summary.inconclusive = true;
@@ -1072,7 +1096,8 @@ export async function generatePlaylists(
       writer?.getRequestMetrics() ?? null,
     );
 
-    const status: RunStatus = anyFailed ? "PARTIAL" : "SUCCESS";
+    const status: RunStatus =
+      anyFailed || degradedFailures.length > 0 ? "PARTIAL" : "SUCCESS";
     await finalizeRun(run.id, status, logs, summary);
     return { runId: run.id, status };
   } catch (error) {
