@@ -5,7 +5,7 @@ on:
     branches:
       - feat/calendar-127-gate2
     paths:
-      - patches/calendar-127-gate2.patch
+      - scripts/apply-calendar-127-gate2.py
       - .github/workflows/apply-calendar-127-gate2.yml
 
 permissions:
@@ -19,11 +19,8 @@ jobs:
         with:
           ref: feat/calendar-127-gate2
           fetch-depth: 0
-      - name: Apply source patch
-        run: |
-          sed -i 's/^ diff --git/diff --git/' patches/calendar-127-gate2.patch
-          git apply --check patches/calendar-127-gate2.patch
-          git apply patches/calendar-127-gate2.patch
+      - name: Apply deterministic source transformations
+        run: python3 scripts/apply-calendar-127-gate2.py
       - name: Commit generated source changes
         run: |
           git config user.name "github-actions[bot]"
