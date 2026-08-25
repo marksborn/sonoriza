@@ -47,6 +47,8 @@ model User {
   musicPreferenceSignals           MusicPreferenceSignal[]
   likedTrackPreferences             LikedTrackPreference[]
   artistAffinityStates              ArtistAffinityState[]
+  artistSimilaritySeeds             ArtistSimilaritySeedState[]
+  artistSimilarityEdges             ArtistSimilarityEdge[]
   albumRecommendationMemories      AlbumRecommendationMemory[]
 }
 
@@ -803,6 +805,68 @@ model ArtistAffinityState {
 
   @@unique([userId, spotifyArtistId])
   @@index([userId, active, likedTrackCount])
+}
+
+// ---------------------------------------------------------------------------
+// LIKED-01 Gate 3 — similar-artist expansion derived from explicit affinity.
+//
+// These rows remain shadow-only in Gate 3. Last.fm is the similarity provider;
+// no planner/discovery consumer reads these models yet and no Spotify write is
+// performed. A per-seed cache keeps provider load bounded and resumable.
+// ---------------------------------------------------------------------------
+
+enum ArtistSimilarityProvider {
+  LASTFM
+}
+
+model ArtistSimilaritySeedState {
+  id                    String                   @id @default(cuid())
+  userId                String
+  provider              ArtistSimilarityProvider
+  sourceSpotifyArtistId String
+  sourceArtistName      String
+  active                Boolean                  @default(true)
+  lastFetchedAt         DateTime?
+  refreshAfter          DateTime?
+  candidateCount        Int                      @default(0)
+  lastError             String?                  @db.Text
+  lastErrorAt           DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  user  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  edges ArtistSimilarityEdge[]
+
+  @@unique([userId, provider, sourceSpotifyArtistId])
+  @@index([userId, provider, active, refreshAfter])
+}
+
+model ArtistSimilarityEdge {
+  id                    String                   @id @default(cuid())
+  userId                String
+  seedStateId           String
+  provider              ArtistSimilarityProvider
+  sourceSpotifyArtistId String
+  sourceArtistName      String
+  candidateKey          String
+  candidateArtistName   String
+  candidateArtistMbid   String?
+  candidateArtistUrl    String?                  @db.Text
+  similarity            Float
+  active                Boolean                  @default(true)
+  firstObservedAt       DateTime                 @default(now())
+  lastObservedAt        DateTime
+  removedAt             DateTime?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  user      User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seedState ArtistSimilaritySeedState @relation(fields: [seedStateId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider, sourceSpotifyArtistId, candidateKey])
+  @@index([userId, active, similarity])
+  @@index([userId, candidateKey, active])
+  @@index([seedStateId, active])
 }
 
 // ---------------------------------------------------------------------------
