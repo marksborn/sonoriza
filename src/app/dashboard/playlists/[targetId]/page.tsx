@@ -6,6 +6,10 @@ import { TargetRunButton } from "@/components/TargetRunButton";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import {
+  runSummaryMentionsTarget,
+  summarizeGenerationRunDiagnostic,
+} from "@/services/generation-run-diagnostics";
 
 export default async function GeneratedPlaylistPage({
   params,
@@ -25,23 +29,62 @@ export default async function GeneratedPlaylistPage({
 
   if (!target) notFound();
 
-  const run = await prisma.generationRun.findFirst({
-    where: {
-      userId: session.user.id,
-      simulation: false,
-      status: { in: ["SUCCESS", "PARTIAL"] },
-      items: {
-        some: { targetPlaylistId: target.id },
+  const [run, recentCandidates] = await Promise.all([
+    prisma.generationRun.findFirst({
+      where: {
+        userId: session.user.id,
+        simulation: false,
+        status: { in: ["SUCCESS", "PARTIAL"] },
+        items: {
+          some: { targetPlaylistId: target.id },
+        },
       },
-    },
-    orderBy: { startedAt: "desc" },
-    include: {
-      items: {
-        where: { targetPlaylistId: target.id },
-        orderBy: { position: "asc" },
+      orderBy: { startedAt: "desc" },
+      include: {
+        items: {
+          where: { targetPlaylistId: target.id },
+          orderBy: { position: "asc" },
+        },
       },
-    },
-  });
+    }),
+    prisma.generationRun.findMany({
+      where: {
+        userId: session.user.id,
+        simulation: false,
+      },
+      orderBy: { startedAt: "desc" },
+      take: 40,
+      select: {
+        id: true,
+        trigger: true,
+        status: true,
+        startedAt: true,
+        finishedAt: true,
+        error: true,
+        summary: true,
+        items: {
+          where: { targetPlaylistId: target.id },
+          select: { id: true },
+          take: 1,
+        },
+        scheduleRuns: {
+          where: { targetPlaylistId: target.id },
+          orderBy: { startedAt: "desc" },
+          select: { status: true, reason: true, attempt: true },
+          take: 1,
+        },
+      },
+    }),
+  ]);
+
+  const recentRuns = recentCandidates
+    .filter(
+      (candidate) =>
+        candidate.items.length > 0 ||
+        candidate.scheduleRuns.length > 0 ||
+        runSummaryMentionsTarget(candidate.summary, target.id),
+    )
+    .slice(0, 8);
 
   const items = run?.items ?? [];
   const musicCount = items.filter((item) => item.contentType === "MUSIC").length;
@@ -216,9 +259,149 @@ export default async function GeneratedPlaylistPage({
             </section>
           </>
         )}
+
+        <section className="product-panel overflow-hidden">
+          <div className="border-b border-line-dark/55 px-5 py-5 sm:px-6">
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
+              Histórico operacional
+            </p>
+            <h2 className="mt-1 text-xl font-black tracking-tight text-ink-inverse">
+              Execuções recentes
+            </h2>
+            <p className="mt-1 text-sm text-muted-inverse">
+              Sucessos, execuções parciais e falhas deste destino. Nenhuma consulta extra ao Spotify é feita para montar este histórico.
+            </p>
+          </div>
+
+          {recentRuns.length === 0 ? (
+            <div className="px-5 py-8 text-center text-sm text-muted-inverse sm:px-6">
+              Nenhuma execução real deste destino foi registrada ainda.
+            </div>
+          ) : (
+            <div className="divide-y divide-line-dark/45">
+              {recentRuns.map((recentRun) => {
+                const schedule = recentRun.scheduleRuns[0] ?? null;
+                const diagnostic = summarizeGenerationRunDiagnostic({
+                  summary: recentRun.summary,
+                  error: recentRun.error,
+                  scheduleReason: schedule?.reason ?? null,
+                });
+
+                return (
+                  <article key={recentRun.id} className="px-5 py-5 sm:px-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${runStatusClass(recentRun.status)}`}
+                          >
+                            <UiIcon
+                              name={recentRun.status === "SUCCESS" ? "check" : "warning"}
+                              size={13}
+                            />
+                            {runStatusLabel(recentRun.status)}
+                          </span>
+                          <span className="text-xs font-bold text-muted-inverse">
+                            {triggerLabel(recentRun.trigger)}
+                          </span>
+                          {schedule && schedule.attempt > 1 ? (
+                            <span className="text-xs font-semibold text-muted-inverse">
+                              tentativa {schedule.attempt}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-2 font-black text-ink-inverse">
+                          {formatRunDate(recentRun.startedAt)}
+                        </p>
+                        <p className="mt-1 break-all text-xs text-muted-inverse">
+                          Run <code className="text-ink-inverse">{recentRun.id}</code>
+                        </p>
+                      </div>
+
+                      {recentRun.finishedAt ? (
+                        <span className="text-xs font-semibold text-muted-inverse">
+                          finalizada {formatRunDate(recentRun.finishedAt)}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {diagnostic ? (
+                      <details
+                        className={`mt-4 rounded-2xl border p-4 ${
+                          recentRun.status === "FAILED"
+                            ? "border-red-400/25 bg-red-500/10"
+                            : "border-amber-400/20 bg-amber-400/5"
+                        }`}
+                        open={recentRun.status === "FAILED"}
+                      >
+                        <summary className="cursor-pointer list-none font-black text-ink-inverse">
+                          {diagnostic.headline}
+                        </summary>
+                        <p className="mt-2 text-sm leading-6 text-muted-inverse">
+                          {diagnostic.detail}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-muted-inverse">
+                          {diagnostic.source ? (
+                            <span className="rounded-full border border-line-dark/70 px-2.5 py-1">
+                              {diagnostic.source}
+                            </span>
+                          ) : null}
+                          {diagnostic.operation ? (
+                            <span className="rounded-full border border-line-dark/70 px-2.5 py-1">
+                              {diagnostic.operation}
+                            </span>
+                          ) : null}
+                          {diagnostic.providerStatus !== null ? (
+                            <span className="rounded-full border border-line-dark/70 px-2.5 py-1">
+                              HTTP {diagnostic.providerStatus}
+                            </span>
+                          ) : null}
+                          {diagnostic.pagesRead !== null ? (
+                            <span className="rounded-full border border-line-dark/70 px-2.5 py-1">
+                              {diagnostic.pagesRead} página{diagnostic.pagesRead === 1 ? "" : "s"} lida{diagnostic.pagesRead === 1 ? "" : "s"}
+                            </span>
+                          ) : null}
+                          {diagnostic.partialRead ? (
+                            <span className="rounded-full border border-line-dark/70 px-2.5 py-1">
+                              leitura parcial descartada
+                            </span>
+                          ) : null}
+                          {diagnostic.retryAfterSeconds !== null ? (
+                            <span className="rounded-full border border-line-dark/70 px-2.5 py-1">
+                              retry após {diagnostic.retryAfterSeconds}s
+                            </span>
+                          ) : null}
+                        </div>
+                      </details>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );
+}
+
+function runStatusClass(status: string): string {
+  if (status === "SUCCESS") return "status-success";
+  if (status === "PARTIAL") return "status-warning";
+  return "border-red-400/30 bg-red-500/10 text-red-200";
+}
+
+function runStatusLabel(status: string): string {
+  if (status === "SUCCESS") return "SUCESSO";
+  if (status === "PARTIAL") return "PARCIAL";
+  if (status === "FAILED") return "FALHA";
+  return status;
+}
+
+function triggerLabel(trigger: string): string {
+  if (trigger === "SCHEDULED") return "Agendada";
+  if (trigger === "MANUAL") return "Manual";
+  return trigger;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

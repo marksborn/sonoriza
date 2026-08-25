@@ -182,6 +182,50 @@ test("returns the exact source failure instead of planning with a known partial 
   assert.equal(result.qualityFailures.length > 0, true);
 });
 
+test("recoverable source failure discards its partial pool and continues with substitutes", async () => {
+  const music = fakeSource({
+    id: "music-degraded",
+    kind: "MUSIC",
+    batches: [
+      { candidates: [candidate("spotify:track:degraded", "MUSIC", 600_000)], done: true },
+    ],
+  });
+  const flaky = fakeSource({
+    id: "podcast-flaky",
+    kind: "PODCAST",
+    batches: [
+      { candidates: [candidate("spotify:episode:must-disappear", "PODCAST", 100_000, "show-flaky")], done: false },
+      new Error("HTTP 502"),
+    ],
+  });
+  const fallback = fakeSource({
+    id: "podcast-fallback",
+    kind: "PODCAST",
+    batches: [
+      { candidates: [candidate("spotify:episode:fallback-1", "PODCAST", 100_000, "show-ok-1")], done: false },
+      { candidates: [candidate("spotify:episode:fallback-2", "PODCAST", 500_000, "show-ok-2")], done: true },
+    ],
+  });
+
+  const result = await collectIncrementally({
+    sources: [music, flaky, fallback],
+    targets: [target(1_200_000)],
+    recoverSourceFailure: (source, error) =>
+      source.id === "podcast-flaky" && String(error).includes("502"),
+  });
+
+  assert.equal(result.failure, null);
+  assert.equal(result.degradedFailures.length, 1);
+  assert.equal(result.degradedFailures[0]?.source.id, "podcast-flaky");
+  assert.equal(flaky.calls, 2);
+  assert.equal(fallback.calls, 2);
+  assert.equal(
+    result.pools.podcasts.some((item) => item.uri === "spotify:episode:must-disappear"),
+    false,
+  );
+  assert.equal(result.qualityFailures.length, 0);
+});
+
 test("exhausts the necessary kind before declaring a conclusive quality failure", async () => {
   const music = fakeSource({
     id: "music",
