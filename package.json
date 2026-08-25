@@ -25,6 +25,7 @@
     "test:spotify-history": "tsx --test src/services/spotify-extended-history/*.test.ts",
     "history:lastfm": "tsx scripts/import-lastfm-history.ts",
     "history:spotify": "tsx scripts/import-spotify-extended-history.ts",
+    "liked:inventory": "tsx scripts/report-liked-track-inventory.ts",
     "discovery:profile": "tsx scripts/report-music-discovery-profile.ts",
     "discovery:score": "tsx scripts/report-music-discovery-score.ts",
     "discovery:external": "tsx scripts/report-music-discovery-external.ts",
