@@ -100,7 +100,8 @@ model CalendarSelection {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetPlaylists TargetPlaylist[]
 
   @@unique([userId, googleCalendarId])
   @@index([userId])
@@ -576,6 +577,7 @@ model TargetPlaylist {
   discoveryIntensity               TargetDiscoveryIntensity      @default(BALANCED)
   durationMode                     DurationMode                  @default(FIXED)
   fixedDurationSeconds             Int?
+  calendarSelectionId              String?
   emptyCalendarBehavior            EmptyCalendarBehavior         @default(CLEAR)
   calendarEventFilterMode          CalendarEventFilterMode       @default(ALL)
   calendarEventMarker              String?
@@ -594,10 +596,12 @@ model TargetPlaylist {
   updatedAt                        DateTime                       @updatedAt
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  calendarSelection  CalendarSelection?  @relation(fields: [calendarSelectionId], references: [id], onDelete: SetNull)
   generationItems    GenerationItem[]
   targetScheduleRuns TargetScheduleRun[]
 
   @@index([userId, priority])
+  @@index([calendarSelectionId])
 }
 
 // ---------------------------------------------------------------------------
