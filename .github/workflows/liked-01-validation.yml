@@ -6,6 +6,7 @@ on:
       - "prisma/**"
       - "src/services/music-preference/**"
       - "scripts/report-liked-track-affinity.ts"
+      - "scripts/report-liked-artist-similarity.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
   push:
@@ -15,6 +16,7 @@ on:
       - "prisma/**"
       - "src/services/music-preference/**"
       - "scripts/report-liked-track-affinity.ts"
+      - "scripts/report-liked-artist-similarity.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
 
