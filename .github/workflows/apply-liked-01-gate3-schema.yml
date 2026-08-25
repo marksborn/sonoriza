@@ -19,94 +19,30 @@ jobs:
           ref: feat/liked-01-gate3
           fetch-depth: 0
       - name: Patch Prisma schema
+        env:
+          OLD_REL_B64: ICBsaWtlZFRyYWNrUHJlZmVyZW5jZXMgICAgICAgICAgICAgTGlrZWRUcmFja1ByZWZlcmVuY2VbXQogIGFydGlzdEFmZmluaXR5U3RhdGVzICAgICAgICAgICAgICBBcnRpc3RBZmZpbml0eVN0YXRlW10KICBhbGJ1bVJlY29tbWVuZGF0aW9uTWVtb3JpZXMgICAgICBBbGJ1bVJlY29tbWVuZGF0aW9uTWVtb3J5W10K
+          NEW_REL_B64: ICBsaWtlZFRyYWNrUHJlZmVyZW5jZXMgICAgICAgICAgICAgTGlrZWRUcmFja1ByZWZlcmVuY2VbXQogIGFydGlzdEFmZmluaXR5U3RhdGVzICAgICAgICAgICAgICBBcnRpc3RBZmZpbml0eVN0YXRlW10KICBhcnRpc3RTaW1pbGFyaXR5U2VlZHMgICAgICAgICAgICAgQXJ0aXN0U2ltaWxhcml0eVNlZWRTdGF0ZVtdCiAgYXJ0aXN0U2ltaWxhcml0eUVkZ2VzICAgICAgICAgICAgIEFydGlzdFNpbWlsYXJpdHlFZGdlW10KICBhbGJ1bVJlY29tbWVuZGF0aW9uTWVtb3JpZXMgICAgICBBbGJ1bVJlY29tbWVuZGF0aW9uTWVtb3J5W10K
+          MARKER_B64: Ly8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCi8vIE1VU0lDLTA1IOKAlCBpbmZlcnJlZCBza2lwIHByZWZlcmVuY2Ugc2lnbmFscy4K
+          MODELS_B64: Ly8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCi8vIExJS0VELTAxIEdhdGUgMyDigJQgc2ltaWxhci1hcnRpc3QgZXhwYW5zaW9uIGRlcml2ZWQgZnJvbSBleHBsaWNpdCBhZmZpbml0eS4KLy8KLy8gVGhlc2Ugcm93cyByZW1haW4gc2hhZG93LW9ubHkgaW4gR2F0ZSAzLiBMYXN0LmZtIGlzIHRoZSBzaW1pbGFyaXR5IHByb3ZpZGVyOwovLyBubyBwbGFubmVyL2Rpc2NvdmVyeSBjb25zdW1lciByZWFkcyB0aGVzZSBtb2RlbHMgeWV0IGFuZCBubyBTcG90aWZ5IHdyaXRlIGlzCi8vIHBlcmZvcm1lZC4gQSBwZXItc2VlZCBjYWNoZSBrZWVwcyBwcm92aWRlciBsb2FkIGJvdW5kZWQgYW5kIHJlc3VtYWJsZS4KLy8gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCgplbnVtIEFydGlzdFNpbWlsYXJpdHlQcm92aWRlciB7CiAgTEFTVEZNCn0KCm1vZGVsIEFydGlzdFNpbWlsYXJpdHlTZWVkU3RhdGUgewogIGlkICAgICAgICAgICAgICAgICAgICBTdHJpbmcgICAgICAgICAgICAgICAgICAgQGlkIEBkZWZhdWx0KGN1aWQoKSkKICB1c2VySWQgICAgICAgICAgICAgICAgU3RyaW5nCiAgcHJvdmlkZXIgICAgICAgICAgICAgIEFydGlzdFNpbWlsYXJpdHlQcm92aWRlcgogIHNvdXJjZVNwb3RpZnlBcnRpc3RJZCBTdHJpbmcKICBzb3VyY2VBcnRpc3ROYW1lICAgICAgU3RyaW5nCiAgYWN0aXZlICAgICAgICAgICAgICAgIEJvb2xlYW4gICAgICAgICAgICAgICAgICBAZGVmYXVsdCh0cnVlKQogIGxhc3RGZXRjaGVkQXQgICAgICAgICBEYXRlVGltZT8KICByZWZyZXNoQWZ0ZXIgICAgICAgICAgRGF0ZVRpbWU/CiAgY2FuZGlkYXRlQ291bnQgICAgICAgIEludCAgICAgICAgICAgICAgICAgICAgICBAZGVmYXVsdCgwKQogIGxhc3RFcnJvciAgICAgICAgICAgICBTdHJpbmc/ICAgICAgICAgICAgICAgICAgQGRiLlRleHQKICBsYXN0RXJyb3JBdCAgICAgICAgICAgRGF0ZVRpbWU/CiAgY3JlYXRlZEF0ICAgICAgICAgICAgIERhdGVUaW1lICAgICAgICAgICAgICAgICBAZGVmYXVsdChub3coKSkKICB1cGRhdGVkQXQgICAgICAgICAgICAgRGF0ZVRpbWUgICAgICAgICAgICAgICAgIEB1cGRhdGVkQXQKCiAgdXNlciAgVXNlciAgICAgICAgICAgICAgICAgICBAcmVsYXRpb24oZmllbGRzOiBbdXNlcklkXSwgcmVmZXJlbmNlczogW2lkXSwgb25EZWxldGU6IENhc2NhZGUpCiAgZWRnZXMgQXJ0aXN0U2ltaWxhcml0eUVkZ2VbXQoKICBAQHVuaXF1ZShbdXNlcklkLCBwcm92aWRlciwgc291cmNlU3BvdGlmeUFydGlzdElkXSkKICBAQGluZGV4KFt1c2VySWQsIHByb3ZpZGVyLCBhY3RpdmUsIHJlZnJlc2hBZnRlcl0pCn0KCm1vZGVsIEFydGlzdFNpbWlsYXJpdHlFZGdlIHsKICBpZCAgICAgICAgICAgICAgICAgICAgU3RyaW5nICAgICAgICAgICAgICAgICAgIEBpZCBAZGVmYXVsdChjdWlkKCkpCiAgdXNlcklkICAgICAgICAgICAgICAgIFN0cmluZwogIHNlZWRTdGF0ZUlkICAgICAgICAgICBTdHJpbmcKICBwcm92aWRlciAgICAgICAgICAgICAgQXJ0aXN0U2ltaWxhcml0eVByb3ZpZGVyCiAgc291cmNlU3BvdGlmeUFydGlzdElkIFN0cmluZwogIHNvdXJjZUFydGlzdE5hbWUgICAgICBTdHJpbmcKICBjYW5kaWRhdGVLZXkgICAgICAgICAgU3RyaW5nCiAgY2FuZGlkYXRlQXJ0aXN0TmFtZSAgIFN0cmluZwogIGNhbmRpZGF0ZUFydGlzdE1iaWQgICBTdHJpbmc/CiAgY2FuZGlkYXRlQXJ0aXN0VXJsICAgIFN0cmluZz8gICAgICAgICAgICAgICAgICBAZGIuVGV4dAogIHNpbWlsYXJpdHkgICAgICAgICAgICBGbG9hdAogIGFjdGl2ZSAgICAgICAgICAgICAgICBCb29sZWFuICAgICAgICAgICAgICAgICAgQGRlZmF1bHQodHJ1ZSkKICBmaXJzdE9ic2VydmVkQXQgICAgICAgRGF0ZVRpbWUgICAgICAgICAgICAgICAgIEBkZWZhdWx0KG5vdygpKQogIGxhc3RPYnNlcnZlZEF0ICAgICAgICBEYXRlVGltZQogIHJlbW92ZWRBdCAgICAgICAgICAgICBEYXRlVGltZT8KICBjcmVhdGVkQXQgICAgICAgICAgICAgRGF0ZVRpbWUgICAgICAgICAgICAgICAgIEBkZWZhdWx0KG5vdygpKQogIHVwZGF0ZWRBdCAgICAgICAgICAgICBEYXRlVGltZSAgICAgICAgICAgICAgICAgQHVwZGF0ZWRBdAoKICB1c2VyICAgICAgVXNlciAgICAgICAgICAgICAgICAgICAgICBAcmVsYXRpb24oZmllbGRzOiBbdXNlcklkXSwgcmVmZXJlbmNlczogW2lkXSwgb25EZWxldGU6IENhc2NhZGUpCiAgc2VlZFN0YXRlIEFydGlzdFNpbWlsYXJpdHlTZWVkU3RhdGUgQHJlbGF0aW9uKGZpZWxkczogW3NlZWRTdGF0ZUlkXSwgcmVmZXJlbmNlczogW2lkXSwgb25EZWxldGU6IENhc2NhZGUpCgogIEBAdW5pcXVlKFt1c2VySWQsIHByb3ZpZGVyLCBzb3VyY2VTcG90aWZ5QXJ0aXN0SWQsIGNhbmRpZGF0ZUtleV0pCiAgQEBpbmRleChbdXNlcklkLCBhY3RpdmUsIHNpbWlsYXJpdHldKQogIEBAaW5kZXgoW3VzZXJJZCwgY2FuZGlkYXRlS2V5LCBhY3RpdmVdKQogIEBAaW5kZXgoW3NlZWRTdGF0ZUlkLCBhY3RpdmVdKQp9Cgo=
         run: |
           python3 - <<'PY'
+          import base64
+          import os
           from pathlib import Path
 
+          decode = lambda name: base64.b64decode(os.environ[name]).decode()
           path = Path("prisma/schema.prisma")
           text = path.read_text()
+          old_rel = decode("OLD_REL_B64")
+          new_rel = decode("NEW_REL_B64")
+          marker = decode("MARKER_B64")
+          models = decode("MODELS_B64")
 
-          old_relations = """  likedTrackPreferences             LikedTrackPreference[]
-  artistAffinityStates              ArtistAffinityState[]
-  albumRecommendationMemories      AlbumRecommendationMemory[]
-"""
-          new_relations = """  likedTrackPreferences             LikedTrackPreference[]
-  artistAffinityStates              ArtistAffinityState[]
-  artistSimilaritySeeds             ArtistSimilaritySeedState[]
-  artistSimilarityEdges             ArtistSimilarityEdge[]
-  albumRecommendationMemories      AlbumRecommendationMemory[]
-"""
           if "artistSimilaritySeeds" not in text:
-              if old_relations not in text:
+              if old_rel not in text:
                   raise SystemExit("User relation anchor not found")
-              text = text.replace(old_relations, new_relations, 1)
+              text = text.replace(old_rel, new_rel, 1)
 
-          marker = """// ---------------------------------------------------------------------------
-// MUSIC-05 — inferred skip preference signals.
-"""
-          models = """// ---------------------------------------------------------------------------
-// LIKED-01 Gate 3 — similar-artist expansion derived from explicit affinity.
-//
-// These rows remain shadow-only in Gate 3. Last.fm is the similarity provider;
-// no planner/discovery consumer reads these models yet and no Spotify write is
-// performed. A per-seed cache keeps provider load bounded and resumable.
-// ---------------------------------------------------------------------------
-
-enum ArtistSimilarityProvider {
-  LASTFM
-}
-
-model ArtistSimilaritySeedState {
-  id                      String                   @id @default(cuid())
-  userId                  String
-  provider                ArtistSimilarityProvider
-  sourceSpotifyArtistId   String
-  sourceArtistName        String
-  active                  Boolean                  @default(true)
-  lastFetchedAt           DateTime?
-  refreshAfter            DateTime?
-  candidateCount          Int                      @default(0)
-  lastError               String?                  @db.Text
-  lastErrorAt             DateTime?
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
-
-  user  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  edges ArtistSimilarityEdge[]
-
-  @@unique([userId, provider, sourceSpotifyArtistId])
-  @@index([userId, provider, active, refreshAfter])
-}
-
-model ArtistSimilarityEdge {
-  id                    String                   @id @default(cuid())
-  userId                String
-  seedStateId           String
-  provider              ArtistSimilarityProvider
-  sourceSpotifyArtistId String
-  sourceArtistName      String
-  candidateKey          String
-  candidateArtistName   String
-  candidateArtistMbid   String?
-  candidateArtistUrl    String?                  @db.Text
-  similarity            Float
-  active                Boolean                  @default(true)
-  firstObservedAt       DateTime                 @default(now())
-  lastObservedAt        DateTime
-  removedAt             DateTime?
-  createdAt             DateTime                 @default(now())
-  updatedAt             DateTime                 @updatedAt
-
-  user      User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  seedState ArtistSimilaritySeedState @relation(fields: [seedStateId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, provider, sourceSpotifyArtistId, candidateKey])
-  @@index([userId, active, similarity])
-  @@index([userId, candidateKey, active])
-  @@index([seedStateId, active])
-}
-
-"""
           if "model ArtistSimilaritySeedState" not in text:
               if marker not in text:
                   raise SystemExit("MUSIC-05 anchor not found")
