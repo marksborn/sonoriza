@@ -27,7 +27,7 @@ jobs:
               path = Path(path_str)
               text = path.read_text()
               if text.count(old) != 1:
-                  raise SystemExit(f"expected exactly one marker in {path}: {old[:80]!r}")
+                  raise SystemExit(f"expected exactly one marker in {path}: {old[:120]!r}")
               path.write_text(text.replace(old, new, 1))
 
           for_you = "src/services/music-discovery/for-you-report.ts"
@@ -60,13 +60,13 @@ jobs:
           liked = "src/services/music-preference/liked-shadow-discovery.ts"
           replace_once(
               liked,
-              '''  shadowScore: number;\n  boost: number;''',
-              '''  shadowScore: number;\n  shadowRankingScore: number;\n  boost: number;''',
+              '''export type LikedShadowRankedRecommendation = ForYouRecommendation & {\n  baselineRank: number;\n  shadowRank: number;\n  baselineScore: number;\n  shadowScore: number;\n  boost: number;''',
+              '''export type LikedShadowRankedRecommendation = ForYouRecommendation & {\n  baselineRank: number;\n  shadowRank: number;\n  baselineScore: number;\n  shadowScore: number;\n  shadowRankingScore: number;\n  boost: number;''',
           )
           replace_once(
               liked,
-              '''  shadowScore: number;\n  boost: number;\n  signalKind: LikedShadowSignalKind;''',
-              '''  shadowScore: number;\n  shadowRankingScore: number;\n  boost: number;\n  signalKind: LikedShadowSignalKind;''',
+              '''type EnrichedRecommendation = {\n  recommendation: ForYouRecommendation;\n  baselineRank: number;\n  shadowScore: number;\n  boost: number;''',
+              '''type EnrichedRecommendation = {\n  recommendation: ForYouRecommendation;\n  baselineRank: number;\n  shadowScore: number;\n  shadowRankingScore: number;\n  boost: number;''',
           )
           replace_once(
               liked,
@@ -95,17 +95,17 @@ jobs:
               '''  dedupeForYouRecommendations,\n  forYouReasonTexts,''',
               '''  dedupeForYouRecommendations,\n  getForYouExternalDiscoveryLimits,\n  forYouReasonTexts,''',
           )
-          path = Path(for_you_test)
-          text = path.read_text()
-          test_block = '''\n\ntest("external discovery budgets can stay UI-equivalent while shadow output pool grows", () => {\n  const ui = getForYouExternalDiscoveryLimits(4, 4);\n  const shadowPool = getForYouExternalDiscoveryLimits(12, 4);\n\n  assert.deepEqual(shadowPool, ui);\n  assert.deepEqual(ui, { maxCandidates: 48, evaluationTopN: 16 });\n});\n'''
-          if test_block.strip() not in text:
-              path.write_text(text + test_block)
+          p = Path(for_you_test)
+          t = p.read_text()
+          block = '''\n\ntest("external discovery budgets can stay UI-equivalent while shadow output pool grows", () => {\n  const ui = getForYouExternalDiscoveryLimits(4, 4);\n  const shadowPool = getForYouExternalDiscoveryLimits(12, 4);\n\n  assert.deepEqual(shadowPool, ui);\n  assert.deepEqual(ui, { maxCandidates: 48, evaluationTopN: 16 });\n});\n'''
+          if block.strip() not in t:
+              p.write_text(t + block)
 
-          liked_test = Path("src/services/music-preference/liked-shadow-discovery.test.ts")
-          text = liked_test.read_text()
-          test_block = '''\n\ntest("uncapped shadow ranking preserves affinity above the display score ceiling", () => {\n  const report = buildLikedShadowDiscoveryComparison({\n    baseline: baseline({\n      discovery: [\n        recommendation("d1", "DESCOBERTA", "Baseline 100", 100),\n        recommendation("d2", "DESCOBERTA", "Liked 99", 99),\n      ],\n    }),\n    directAffinities: [\n      { spotifyArtistId: "liked-99", artistName: "Liked 99", likedTrackCount: 64 },\n    ],\n    similarityEdges: [],\n    activeSeedCount: 0,\n    poolPerCategory: 2,\n    topPerCategory: 2,\n  });\n\n  assert.deepEqual(\n    report.categories.discovery.shadow.map((row) => row.artistName),\n    ["Liked 99", "Baseline 100"],\n  );\n  const liked = report.categories.discovery.shadow[0]!;\n  assert.equal(liked.shadowScore, 100);\n  assert.equal(liked.shadowRankingScore, 111);\n  assert.equal(liked.boost, 12);\n});\n'''
-          if test_block.strip() not in text:
-              liked_test.write_text(text + test_block)
+          p = Path("src/services/music-preference/liked-shadow-discovery.test.ts")
+          t = p.read_text()
+          block = '''\n\ntest("uncapped shadow ranking preserves affinity above the display score ceiling", () => {\n  const report = buildLikedShadowDiscoveryComparison({\n    baseline: baseline({\n      discovery: [\n        recommendation("d1", "DESCOBERTA", "Baseline 100", 100),\n        recommendation("d2", "DESCOBERTA", "Liked 99", 99),\n      ],\n    }),\n    directAffinities: [\n      { spotifyArtistId: "liked-99", artistName: "Liked 99", likedTrackCount: 64 },\n    ],\n    similarityEdges: [],\n    activeSeedCount: 0,\n    poolPerCategory: 2,\n    topPerCategory: 2,\n  });\n\n  assert.deepEqual(\n    report.categories.discovery.shadow.map((row) => row.artistName),\n    ["Liked 99", "Baseline 100"],\n  );\n  const liked = report.categories.discovery.shadow[0]!;\n  assert.equal(liked.shadowScore, 100);\n  assert.equal(liked.shadowRankingScore, 111);\n  assert.equal(liked.boost, 12);\n});\n'''
+          if block.strip() not in t:
+              p.write_text(t + block)
 
       - name: Commit fixes
         run: |
