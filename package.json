@@ -40,6 +40,7 @@
     "discovery:external:arbitration": "tsx scripts/report-music-discovery-external-arbitration.ts",
     "discovery:external:spotify-resolution": "tsx scripts/report-music-discovery-spotify-resolution.ts",
     "discovery:track-version-shadow": "tsx scripts/report-music-discovery-track-version-shadow.ts",
+    "discovery:track-version-score-shadow": "tsx scripts/report-music-discovery-track-version-score-shadow.ts",
     "discovery:planner-preview": "tsx scripts/report-music-discovery-planner-preview-gate3c.ts",
     "discovery:planner-preview:gate5f": "tsx scripts/report-music-discovery-planner-preview-gate5f.ts",
     "discovery:planner-preview:gate5g": "tsx scripts/report-music-discovery-planner-preview-gate5g.ts",
