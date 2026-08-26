@@ -10,6 +10,7 @@ on:
       - "scripts/report-liked-shadow-discovery.ts"
       - "scripts/report-liked-artist-similarity-backfill.ts"
       - "scripts/report-liked-discovery-expansion-shadow.ts"
+      - "scripts/report-liked-discovery-calibration-shadow.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
   push:
@@ -23,6 +24,7 @@ on:
       - "scripts/report-liked-shadow-discovery.ts"
       - "scripts/report-liked-artist-similarity-backfill.ts"
       - "scripts/report-liked-discovery-expansion-shadow.ts"
+      - "scripts/report-liked-discovery-calibration-shadow.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
 
