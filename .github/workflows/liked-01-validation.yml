@@ -5,12 +5,15 @@ on:
     paths:
       - "prisma/**"
       - "src/services/music-preference/**"
+      - "src/services/music-discovery/**"
+      - "src/jobs/discovery-runtime.ts"
       - "scripts/report-liked-track-affinity.ts"
       - "scripts/report-liked-artist-similarity.ts"
       - "scripts/report-liked-shadow-discovery.ts"
       - "scripts/report-liked-artist-similarity-backfill.ts"
       - "scripts/report-liked-discovery-expansion-shadow.ts"
       - "scripts/report-liked-discovery-calibration-shadow.ts"
+      - "scripts/report-liked-discovery-pilot-runtime.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
   push:
@@ -19,12 +22,15 @@ on:
     paths:
       - "prisma/**"
       - "src/services/music-preference/**"
+      - "src/services/music-discovery/**"
+      - "src/jobs/discovery-runtime.ts"
       - "scripts/report-liked-track-affinity.ts"
       - "scripts/report-liked-artist-similarity.ts"
       - "scripts/report-liked-shadow-discovery.ts"
       - "scripts/report-liked-artist-similarity-backfill.ts"
       - "scripts/report-liked-discovery-expansion-shadow.ts"
       - "scripts/report-liked-discovery-calibration-shadow.ts"
+      - "scripts/report-liked-discovery-pilot-runtime.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
 
