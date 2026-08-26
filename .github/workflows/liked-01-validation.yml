@@ -41,6 +41,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           service = Path('src/services/music-preference/liked-discovery-expansion-shadow.ts')
           text = service.read_text()
@@ -73,20 +74,22 @@ jobs:
               raise SystemExit('resolved type anchor not found')
           text = text.replace(old, new, 1)
 
-          old = '''      resolvedCandidates.push({
-                ...candidate,
-                spotifyArtistId: resolution.spotifyArtist.id,
-                spotifyTrackId: resolution.spotifyTrack.id,
-                trackName: resolution.spotifyTrack.name,
-                albumName: resolution.spotifyTrack.albumName,
-                resolutionReason: resolution.reason,
-              });'''
-          new = '''      resolvedCandidates.push(
-                materializeResolvedExpansionCandidate(candidate, resolution),
-              );'''
-          if old not in text:
-              raise SystemExit('resolved push anchor not found')
-          text = text.replace(old, new, 1)
+          pattern = re.compile(
+              r'''(?m)^\s{6}resolvedCandidates\.push\(\{\n'''
+              r'''\s+\.\.\.candidate,\n'''
+              r'''\s+spotifyArtistId: resolution\.spotifyArtist\.id,\n'''
+              r'''\s+spotifyTrackId: resolution\.spotifyTrack\.id,\n'''
+              r'''\s+trackName: resolution\.spotifyTrack\.name,\n'''
+              r'''\s+albumName: resolution\.spotifyTrack\.albumName,\n'''
+              r'''\s+resolutionReason: resolution\.reason,\n'''
+              r'''\s+\}\);'''
+          )
+          replacement = '''      resolvedCandidates.push(
+            materializeResolvedExpansionCandidate(candidate, resolution),
+          );'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'resolved push anchor matches={count}')
 
           anchor = '''export function isResolvedDirectAffinityArtist(
             spotifyArtistId: string,
