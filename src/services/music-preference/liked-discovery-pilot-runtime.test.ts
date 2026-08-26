@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Gate5FResolvedDiscoveryCandidate } from "@/services/music-discovery/planner-discovery-gate5f";
+import type { SpotifyDiscoveryResolution } from "@/services/music-discovery/spotify-resolution";
 
 import {
   discoveriesForPilotTarget,
@@ -10,7 +11,7 @@ import {
   resolveLikedDiscoveryPilotPolicy,
   toGate5FDiscoveryCandidate,
 } from "./liked-discovery-pilot-runtime";
-import type { LikedDiscoveryCalibrationShadowReport } from "./liked-discovery-calibration-shadow";
+import type { LikedExpansionResolvedCandidate } from "./liked-discovery-expansion-shadow";
 
 function standard(trackId: string): Gate5FResolvedDiscoveryCandidate {
   return {
@@ -34,7 +35,7 @@ function standard(trackId: string): Gate5FResolvedDiscoveryCandidate {
   };
 }
 
-function pilotFixture(): LikedDiscoveryCalibrationShadowReport["pilotCandidates"][number] {
+function sourceFixture(): LikedExpansionResolvedCandidate {
   return {
     candidateKey: "candidate:choldra",
     providerArtistName: "Choldra",
@@ -68,15 +69,48 @@ function pilotFixture(): LikedDiscoveryCalibrationShadowReport["pilotCandidates"
     },
     spotifyArtistId: "spotify-choldra",
     spotifyTrackId: "spotify-track-choldra",
-    spotifyUri: "spotify:track:spotify-track-choldra",
-    durationMs: 201000,
-    isrc: "BRTEST000001",
     trackName: "Casulo",
-    albumId: "album-choldra",
     albumName: "Casulo",
     resolutionReason: "EXACT_ARTIST_WITH_REPRESENTATIVE_TRACK",
-    calibratedScore: 74.485,
   };
+}
+
+function revalidationFixture(overrides: {
+  artistId?: string;
+  trackId?: string;
+} = {}): SpotifyDiscoveryResolution {
+  const artist = {
+    id: overrides.artistId ?? "spotify-choldra",
+    name: "Choldra",
+    uri: `spotify:artist:${overrides.artistId ?? "spotify-choldra"}`,
+    spotifyUrl: null,
+  };
+  return {
+    candidateKey: "liked-pilot:candidate:choldra",
+    status: "RESOLVED",
+    reason: "EXACT_TRACK_ARTIST_MATCH",
+    spotifyArtist: artist,
+    spotifyTrack: {
+      id: overrides.trackId ?? "spotify-track-choldra",
+      name: "Casulo",
+      uri: `spotify:track:${overrides.trackId ?? "spotify-track-choldra"}`,
+      spotifyUrl: null,
+      isrc: "BRTEST000001",
+      artists: [artist],
+      albumId: "album-choldra",
+      albumName: "Casulo",
+      durationMs: 201000,
+    },
+    alternatives: [],
+  };
+}
+
+function likedCandidate(): Gate5FResolvedDiscoveryCandidate {
+  return toGate5FDiscoveryCandidate({
+    source: sourceFixture(),
+    calibratedScore: 74.485,
+    resolution: revalidationFixture(),
+  });
 }
 
 test("Gate 6C is fail-closed until base runtime, master, user and target allowlists all agree", () => {
@@ -125,15 +159,15 @@ test("Gate 6C is fail-closed until base runtime, master, user and target allowli
     userEmail: " PILOT@example.com ",
     masterEnabled: "true",
     allowlistedEmails: "pilot@example.com",
-    allowlistedTargetIds: "target-a,target-b",
+    allowlistedTargetIds: "target-a,target-b,target-a",
   });
   assert.equal(enabled.enabled, true);
   assert.equal(enabled.reason, "ENABLED");
   assert.deepEqual(new Set(enabled.targetIds), new Set(["target-a", "target-b"]));
 });
 
-test("Gate 6C materializes exactly the calibrated Spotify identity for Gate 5H", () => {
-  const discovery = toGate5FDiscoveryCandidate(pilotFixture());
+test("Gate 6C hands the exact revalidated Spotify identity to Gate 5H", () => {
+  const discovery = likedCandidate();
   assert.equal(discovery.candidateKey, "liked:candidate:choldra");
   assert.equal(discovery.adjustedScore, 74.485);
   assert.equal(discovery.rawScore, 98.3);
@@ -146,8 +180,26 @@ test("Gate 6C materializes exactly the calibrated Spotify identity for Gate 5H",
   assert.equal(isLikedDiscoveryPilotCandidate(discovery), true);
 });
 
+test("Gate 6C refuses to materialize unresolved revalidation evidence", () => {
+  const resolution: SpotifyDiscoveryResolution = {
+    candidateKey: "liked-pilot:candidate:choldra",
+    status: "NOT_FOUND",
+    reason: "TRACK_NOT_FOUND",
+    spotifyArtist: null,
+    spotifyTrack: null,
+    alternatives: [],
+  };
+  assert.throws(() =>
+    toGate5FDiscoveryCandidate({
+      source: sourceFixture(),
+      calibratedScore: 74.485,
+      resolution,
+    }),
+  );
+});
+
 test("Gate 6C LIKED candidates are visible only to explicitly allowlisted targets", () => {
-  const liked = toGate5FDiscoveryCandidate(pilotFixture());
+  const liked = likedCandidate();
   const normal = standard("normal-1");
   const pool = [normal, liked];
   assert.deepEqual(
@@ -165,7 +217,7 @@ test("Gate 6C LIKED candidates are visible only to explicitly allowlisted target
 });
 
 test("Gate 6C never duplicates a track already resolved by standard discovery", () => {
-  const liked = toGate5FDiscoveryCandidate(pilotFixture());
+  const liked = likedCandidate();
   const duplicate = standard("spotify-track-choldra");
   const suppressed = mergeLikedPilotWithStandardDiscovery({
     standard: [duplicate],
