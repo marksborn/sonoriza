@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { LikedDirectAffinitySignal, LikedSimilaritySignal } from "./liked-shadow-discovery";
+import type { LikedDirectAffinitySignal } from "./liked-shadow-discovery";
 import {
+  buildDiverseHistoryProbe,
   buildLikedExpandedDiscoveryTop,
+  buildLikedExpansionHistoryCounts,
+  isResolvedDirectAffinityArtist,
   likedTrackCountAffinity,
   rankLikedExpansionAggregates,
   selectLikedExpansionResolutionCandidates,
   type LikedExpansionResolvedCandidate,
+  type LikedExpansionSimilaritySignal,
 } from "./liked-discovery-expansion-shadow";
 
 const direct: LikedDirectAffinitySignal[] = [
@@ -29,10 +33,12 @@ function edge(
   sourceSpotifyArtistId: string,
   sourceArtistName: string,
   similarity: number,
-): LikedSimilaritySignal {
+  candidateArtistMbid: string | null = null,
+): LikedExpansionSimilaritySignal {
   return {
     candidateKey,
     candidateArtistName,
+    candidateArtistMbid,
     sourceSpotifyArtistId,
     sourceArtistName,
     similarity,
@@ -113,6 +119,58 @@ test("known history is rejected before Spotify resolution and dominant-seed dive
   assert.ok(!selected.selected.some((row) => row.artistName === "Known"));
 });
 
+test("persisted candidate MBID rejects renamed historical artists before Spotify resolution", () => {
+  const report = rankLikedExpansionAggregates({
+    directAffinities: direct,
+    similarityEdges: [
+      edge("mbid:artist-1", "Current Alias", "seed-a", "Seed A", 0.9, "ARTIST-MBID-1"),
+    ],
+  });
+  const candidate = report.rows[0]!;
+  assert.equal(candidate.candidateArtistMbid, "artist-mbid-1");
+
+  const history = buildLikedExpansionHistoryCounts([candidate], [
+    { artistName: "Old Artist Name", artistMbid: "artist-mbid-1", count: 8 },
+  ]);
+  const selected = selectLikedExpansionResolutionCandidates({
+    rows: [candidate],
+    historyByNormalizedArtistName: history,
+    budget: 1,
+    maxPerDominantSeed: 1,
+  });
+
+  assert.equal(history.get("current alias"), 8);
+  assert.equal(selected.rejectedKnownHistoryArtistNames, 1);
+  assert.equal(selected.selected.length, 0);
+});
+
+test("history probe round-robin preserves seed diversity before truncation", () => {
+  const report = rankLikedExpansionAggregates({
+    directAffinities: direct,
+    similarityEdges: [
+      edge("candidate:a1", "A1", "seed-a", "Seed A", 1),
+      edge("candidate:a2", "A2", "seed-a", "Seed A", 0.99),
+      edge("candidate:a3", "A3", "seed-a", "Seed A", 0.98),
+      edge("candidate:a4", "A4", "seed-a", "Seed A", 0.97),
+      edge("candidate:b1", "B1", "seed-b", "Seed B", 0.7),
+    ],
+  });
+  const probes = buildDiverseHistoryProbe(report.rows, 3);
+
+  assert.equal(probes.length, 3);
+  assert.ok(probes.some((row) => row.dominantSeed.spotifyArtistId === "seed-b"));
+  assert.equal(
+    probes.filter((row) => row.dominantSeed.spotifyArtistId === "seed-a").length,
+    2,
+  );
+});
+
+test("resolved Spotify identity cannot re-enter a directly liked artist through an alias", () => {
+  const directIds = new Set(["spotify-direct"]);
+  assert.equal(isResolvedDirectAffinityArtist("spotify-direct", directIds), true);
+  assert.equal(isResolvedDirectAffinityArtist("spotify-new", directIds), false);
+});
+
 test("expanded discovery can introduce resolved related artists without mutating current pool rows", () => {
   const currentTop = [
     {
@@ -144,6 +202,7 @@ test("expanded discovery can introduce resolved related artists without mutating
   ];
   const expansion: LikedExpansionResolvedCandidate = {
     candidateKey: "candidate:new",
+    candidateArtistMbid: null,
     artistName: "New Artist",
     normalizedArtistName: "new artist",
     maxSimilarity: 1,

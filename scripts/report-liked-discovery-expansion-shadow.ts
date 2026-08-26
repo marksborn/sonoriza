@@ -81,6 +81,10 @@ async function main() {
   p("  resolved:", report.resolution.resolved);
   p("  ambiguous:", report.resolution.ambiguous);
   p("  not found:", report.resolution.notFound);
+  p(
+    "  rejected resolved direct artists:",
+    report.resolution.rejectedResolvedDirectArtists,
+  );
   p("  provider failures:", report.resolution.failures.length);
   p("  Spotify catalog calls:", report.resolution.spotifyCatalogCalls);
   p("  Spotify failures:", report.resolution.spotifyFailures);

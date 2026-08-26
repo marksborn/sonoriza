@@ -29,8 +29,13 @@ export const LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY = {
   likedArtistAffinityMax: 1,
 } as const;
 
+export type LikedExpansionSimilaritySignal = LikedSimilaritySignal & {
+  candidateArtistMbid?: string | null;
+};
+
 export type LikedExpansionAggregate = {
   candidateKey: string;
+  candidateArtistMbid: string | null;
   artistName: string;
   normalizedArtistName: string;
   maxSimilarity: number;
@@ -113,6 +118,7 @@ export type LikedDiscoveryExpansionShadowReport = {
     resolved: number;
     ambiguous: number;
     notFound: number;
+    rejectedResolvedDirectArtists: number;
     failures: Array<{ candidateKey: string; error: string }>;
     spotifyCatalogCalls: number;
     spotifyFailures: number;
@@ -131,6 +137,7 @@ export type LikedDiscoveryExpansionShadowReport = {
 
 type MutableAggregate = {
   candidateKeys: Set<string>;
+  candidateArtistMbids: Set<string>;
   artistName: string;
   normalizedArtistName: string;
   maxSimilarity: number;
@@ -172,6 +179,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
       select: {
         candidateKey: true,
         candidateArtistName: true,
+        candidateArtistMbid: true,
         sourceSpotifyArtistId: true,
         sourceArtistName: true,
         similarity: true,
@@ -197,14 +205,14 @@ export async function getLikedDiscoveryExpansionShadowReport(
     similarityEdges,
     representedArtistNames,
   });
-  const probes = ranked.rows.slice(
-    0,
+  // Build the history probe from the full ranked graph with seed round-robin
+  // diversity before truncation. Otherwise one prolific seed can consume the
+  // whole probe window and hide strong candidates from other affinity paths.
+  const probes = buildDiverseHistoryProbe(
+    ranked.rows,
     LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.historyProbeLimit,
   );
-  const history = await getArtistHistoryCounts(
-    userId,
-    probes.map((row) => row.artistName),
-  );
+  const history = await getArtistHistoryCounts(userId, probes);
   const selection = selectLikedExpansionResolutionCandidates({
     rows: probes,
     historyByNormalizedArtistName: history,
@@ -213,6 +221,9 @@ export async function getLikedDiscoveryExpansionShadowReport(
   });
 
   const spotify = await SpotifyCatalogSearchClient.forUser(userId);
+  const directSpotifyArtistIds = new Set(
+    directAffinities.map((row) => row.spotifyArtistId),
+  );
   const baselineTrackIds = new Set(
     baseline.discovery
       .map((row) => row.spotifyTrackId)
@@ -224,6 +235,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
   let attempted = 0;
   let ambiguous = 0;
   let notFound = 0;
+  let rejectedResolvedDirectArtists = 0;
 
   for (const candidate of selection.selected) {
     if (
@@ -249,6 +261,18 @@ export async function getLikedDiscoveryExpansionShadowReport(
         continue;
       }
       if (!resolution.spotifyArtist || !resolution.spotifyTrack) continue;
+      // Name aliases are only an acquisition hint. Canonical Spotify identity is
+      // authoritative after resolution, so a directly liked artist can never be
+      // reintroduced as exploratory under another spelling (for example The X/X).
+      if (
+        isResolvedDirectAffinityArtist(
+          resolution.spotifyArtist.id,
+          directSpotifyArtistIds,
+        )
+      ) {
+        rejectedResolvedDirectArtists += 1;
+        continue;
+      }
       if (baselineTrackIds.has(resolution.spotifyTrack.id)) continue;
       if (seenTrackIds.has(resolution.spotifyTrack.id)) continue;
       seenTrackIds.add(resolution.spotifyTrack.id);
@@ -313,6 +337,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
       resolved: resolvedCandidates.length,
       ambiguous,
       notFound,
+      rejectedResolvedDirectArtists,
       failures,
       spotifyCatalogCalls: spotifyMetrics.totalCalls,
       spotifyFailures: spotifyMetrics.failures,
@@ -332,7 +357,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
 
 export function rankLikedExpansionAggregates(input: {
   directAffinities: LikedDirectAffinitySignal[];
-  similarityEdges: LikedSimilaritySignal[];
+  similarityEdges: LikedExpansionSimilaritySignal[];
   representedArtistNames?: Set<string>;
 }): {
   rows: LikedExpansionAggregate[];
@@ -369,6 +394,7 @@ export function rankLikedExpansionAggregates(input: {
     };
     const current = aggregates.get(key) ?? {
       candidateKeys: new Set<string>(),
+      candidateArtistMbids: new Set<string>(),
       artistName: edge.candidateArtistName,
       normalizedArtistName: key,
       maxSimilarity: 0,
@@ -376,6 +402,9 @@ export function rankLikedExpansionAggregates(input: {
       bestSeed: null,
     };
     current.candidateKeys.add(edge.candidateKey);
+    if (edge.candidateArtistMbid?.trim()) {
+      current.candidateArtistMbids.add(edge.candidateArtistMbid.trim().toLowerCase());
+    }
     current.maxSimilarity = Math.max(current.maxSimilarity, edge.similarity);
     current.seedArtistNames.set(source.spotifyArtistId, source.artistName);
     if (!current.bestSeed || betterSeed(seed, current.bestSeed)) current.bestSeed = seed;
@@ -388,7 +417,10 @@ export function rankLikedExpansionAggregates(input: {
   const rows: LikedExpansionAggregate[] = [];
 
   for (const aggregate of aggregates.values()) {
-    if (aggregate.candidateKeys.size !== 1) {
+    if (
+      aggregate.candidateKeys.size !== 1 ||
+      aggregate.candidateArtistMbids.size > 1
+    ) {
       ambiguousSimilarityArtistNames += 1;
       continue;
     }
@@ -416,6 +448,10 @@ export function rankLikedExpansionAggregates(input: {
     });
     rows.push({
       candidateKey,
+      candidateArtistMbid:
+        aggregate.candidateArtistMbids.size === 1
+          ? [...aggregate.candidateArtistMbids][0]!
+          : null,
       artistName: aggregate.artistName,
       normalizedArtistName: aggregate.normalizedArtistName,
       maxSimilarity: aggregate.maxSimilarity,
@@ -563,24 +599,98 @@ export function likedTrackCountAffinity(likedTrackCount: number): number {
   );
 }
 
+export function buildDiverseHistoryProbe(
+  rows: LikedExpansionAggregate[],
+  limit: number,
+): LikedExpansionAggregate[] {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error("history probe limit must be a positive integer");
+  }
+  const groups = new Map<string, LikedExpansionAggregate[]>();
+  for (const row of rows) {
+    const seedId = row.dominantSeed.spotifyArtistId;
+    const group = groups.get(seedId) ?? [];
+    group.push(row);
+    groups.set(seedId, group);
+  }
+  const queues = [...groups.values()].map((group) => [...group]);
+  const selected: LikedExpansionAggregate[] = [];
+  while (selected.length < limit) {
+    let progressed = false;
+    for (const queue of queues) {
+      const row = queue.shift();
+      if (!row) continue;
+      selected.push(row);
+      progressed = true;
+      if (selected.length >= limit) break;
+    }
+    if (!progressed) break;
+  }
+  return selected;
+}
+
+export function buildLikedExpansionHistoryCounts(
+  candidates: LikedExpansionAggregate[],
+  historyRows: Array<{ artistName: string; artistMbid: string | null; count: number }>,
+): Map<string, number> {
+  const byName = new Map<string, number>();
+  const byMbid = new Map<string, number>();
+  for (const row of historyRows) {
+    const name = normalized(row.artistName);
+    byName.set(name, (byName.get(name) ?? 0) + row.count);
+    if (row.artistMbid?.trim()) {
+      const mbid = row.artistMbid.trim().toLowerCase();
+      byMbid.set(mbid, (byMbid.get(mbid) ?? 0) + row.count);
+    }
+  }
+  return new Map(
+    candidates.map((candidate) => {
+      const nameCount = byName.get(candidate.normalizedArtistName) ?? 0;
+      const mbidCount = candidate.candidateArtistMbid
+        ? byMbid.get(candidate.candidateArtistMbid.toLowerCase()) ?? 0
+        : 0;
+      return [candidate.normalizedArtistName, Math.max(nameCount, mbidCount)] as const;
+    }),
+  );
+}
+
 async function getArtistHistoryCounts(
   userId: string,
-  artistNames: string[],
+  candidates: LikedExpansionAggregate[],
 ): Promise<Map<string, number>> {
-  if (artistNames.length === 0) return new Map();
+  if (candidates.length === 0) return new Map();
+  const artistNames = [...new Set(candidates.map((row) => row.artistName))];
+  const artistMbids = [
+    ...new Set(
+      candidates
+        .map((row) => row.candidateArtistMbid)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  const orFilters = [
+    { artistName: { in: artistNames, mode: "insensitive" as const } },
+    ...(artistMbids.length > 0 ? [{ artistMbid: { in: artistMbids } }] : []),
+  ];
   const rows = await prisma.trackListeningEvent.groupBy({
-    by: ["artistName"],
-    where: {
-      userId,
-      artistName: { in: artistNames, mode: "insensitive" },
-    },
+    by: ["artistName", "artistMbid"],
+    where: { userId, OR: orFilters },
     _count: { _all: true },
   });
-  return new Map(
-    rows
-      .filter((row) => Boolean(row.artistName))
-      .map((row) => [normalized(row.artistName ?? ""), row._count._all] as const),
+  return buildLikedExpansionHistoryCounts(
+    candidates,
+    rows.map((row) => ({
+      artistName: row.artistName,
+      artistMbid: row.artistMbid,
+      count: row._count._all,
+    })),
   );
+}
+
+export function isResolvedDirectAffinityArtist(
+  spotifyArtistId: string,
+  directSpotifyArtistIds: ReadonlySet<string>,
+): boolean {
+  return directSpotifyArtistIds.has(spotifyArtistId);
 }
 
 function betterSeed(
