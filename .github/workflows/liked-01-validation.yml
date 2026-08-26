@@ -27,6 +27,44 @@ on:
       - ".github/workflows/liked-01-validation.yml"
 
 jobs:
+  format-canonical-call:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/liked-01-gate6a'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate6a
+      - name: Normalize resolved candidate call formatting
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/services/music-preference/liked-discovery-expansion-shadow.ts')
+          text = path.read_text()
+          old = '''      resolvedCandidates.push(
+            materializeResolvedExpansionCandidate(candidate, resolution),
+          );'''
+          # The previous automation produced a semantically valid but under-indented
+          # variant because YAML block indentation was stripped from the replacement.
+          under_indented = '''      resolvedCandidates.push(
+  materializeResolvedExpansionCandidate(candidate, resolution),
+);'''
+          if under_indented in text:
+              text = text.replace(under_indented, old, 1)
+          elif old in text:
+              raise SystemExit('already normalized')
+          else:
+              raise SystemExit('canonical call anchor not found')
+          path.write_text(text)
+          PY
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add src/services/music-preference/liked-discovery-expansion-shadow.ts
+          git commit -m "style: normalize LIKED resolved candidate call"
+          git push origin HEAD:feat/liked-01-gate6a
+
   validate:
     runs-on: ubuntu-latest
     services:
