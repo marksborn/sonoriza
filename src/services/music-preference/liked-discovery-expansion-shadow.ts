@@ -305,8 +305,9 @@ export async function getLikedDiscoveryExpansionShadowReport(
       }
       const resolvedArtistName = normalized(resolution.spotifyArtist.name);
       // Reapply baseline artist exclusion after Spotify canonicalizes aliases.
-      // This prevents "The X" from entering when current discovery already has "X".
-      if (representedArtistNames.has(resolvedArtistName)) {
+      // Controlled leading-article equivalence is symmetric: both X -> The X
+      // and The X -> X must remain the same discovery identity.
+      if (hasEquivalentArtistName(representedArtistNames, resolvedArtistName)) {
         rejectedResolvedRepresentedArtists += 1;
         continue;
       }
@@ -755,8 +756,34 @@ export function isResolvedHistoricalArtist(
 ): boolean {
   return (
     historicalSpotifyArtistIds.has(spotifyArtistId) ||
-    historicalNormalizedArtistNames.has(normalizedSpotifyArtistName)
+    hasEquivalentArtistName(
+      historicalNormalizedArtistNames,
+      normalizedSpotifyArtistName,
+    )
   );
+}
+
+export function hasEquivalentArtistName(
+  normalizedArtistNames: ReadonlySet<string>,
+  normalizedArtistName: string,
+): boolean {
+  for (const form of controlledArtistIdentityForms(normalizedArtistName)) {
+    if (normalizedArtistNames.has(form)) return true;
+  }
+  return false;
+}
+
+export function controlledArtistIdentityForms(value: string): string[] {
+  const clean = normalized(value);
+  if (!clean) return [];
+  const forms = new Set<string>([clean]);
+  if (/^the\s+/.test(clean)) {
+    const alias = clean.replace(/^the\s+/, "").trim();
+    if (alias.length >= 2) forms.add(alias);
+  } else if (clean.length >= 2) {
+    forms.add(`the ${clean}`);
+  }
+  return [...forms];
 }
 
 function betterSeed(

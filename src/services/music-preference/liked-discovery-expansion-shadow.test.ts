@@ -6,6 +6,8 @@ import {
   buildDiverseHistoryProbe,
   buildLikedExpandedDiscoveryTop,
   buildLikedExpansionHistoryCounts,
+  controlledArtistIdentityForms,
+  hasEquivalentArtistName,
   isResolvedDirectAffinityArtist,
   isResolvedHistoricalArtist,
   likedTrackCountAffinity,
@@ -195,6 +197,15 @@ test("resolved Spotify identity cannot re-enter a historically known artist thro
   );
   assert.equal(
     isResolvedHistoricalArtist(
+      "spotify-missing-id",
+      "the known canonical name",
+      historicalIds,
+      historicalNames,
+    ),
+    true,
+  );
+  assert.equal(
+    isResolvedHistoricalArtist(
       "spotify-new",
       "new canonical name",
       historicalIds,
@@ -202,6 +213,20 @@ test("resolved Spotify identity cannot re-enter a historically known artist thro
     ),
     false,
   );
+});
+
+test("controlled leading-article aliases compare symmetrically after resolution", () => {
+  assert.deepEqual(
+    new Set(controlledArtistIdentityForms("The X")),
+    new Set(["the x", "x"]),
+  );
+  assert.deepEqual(
+    new Set(controlledArtistIdentityForms("X")),
+    new Set(["x", "the x"]),
+  );
+  assert.equal(hasEquivalentArtistName(new Set(["x"]), "the x"), true);
+  assert.equal(hasEquivalentArtistName(new Set(["the x"]), "x"), true);
+  assert.equal(hasEquivalentArtistName(new Set(["y"]), "x"), false);
 });
 
 test("resolved canonical artist name re-applies represented baseline exclusion", () => {
