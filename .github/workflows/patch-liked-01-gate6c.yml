@@ -1,0 +1,180 @@
+name: Patch LIKED-01 Gate 6C runtime
+
+on:
+  push:
+    branches:
+      - feat/liked-01-gate6c
+    paths:
+      - ".github/workflows/patch-liked-01-gate6c.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate6c
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+      - name: Patch Gate 6C integration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"anchor not found in {path}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          # Gate 6A keeps enough canonical Spotify identity for a real runtime candidate.
+          replace_once(
+              "src/services/music-preference/liked-discovery-expansion-shadow.ts",
+              '''  spotifyArtistId: string;\n  spotifyTrackId: string;\n  trackName: string;\n  albumName: string | null;\n  resolutionReason: string;\n''',
+              '''  spotifyArtistId: string;\n  spotifyTrackId: string;\n  spotifyUri: string;\n  durationMs: number;\n  isrc: string | null;\n  trackName: string;\n  albumId: string | null;\n  albumName: string | null;\n  resolutionReason: string;\n''',
+          )
+          replace_once(
+              "src/services/music-preference/liked-discovery-expansion-shadow.ts",
+              '''    spotifyArtistId: resolution.spotifyArtist.id,\n    spotifyTrackId: resolution.spotifyTrack.id,\n    trackName: resolution.spotifyTrack.name,\n    albumName: resolution.spotifyTrack.albumName,\n    resolutionReason: resolution.reason,\n''',
+              '''    spotifyArtistId: resolution.spotifyArtist.id,\n    spotifyTrackId: resolution.spotifyTrack.id,\n    spotifyUri: resolution.spotifyTrack.uri,\n    durationMs: resolution.spotifyTrack.durationMs,\n    isrc: resolution.spotifyTrack.isrc,\n    trackName: resolution.spotifyTrack.name,\n    albumId: resolution.spotifyTrack.albumId,\n    albumName: resolution.spotifyTrack.albumName,\n    resolutionReason: resolution.reason,\n''',
+          )
+
+          # Gate 6B exposes the exact one-slot calibrated candidate to Gate 6C.
+          replace_once(
+              "src/services/music-preference/liked-discovery-calibration-shadow.ts",
+              '''export type LikedNearDuplicateDiagnostic = {\n''',
+              '''export type LikedCalibratedPilotCandidate = LikedExpansionResolvedCandidate & {\n  calibratedScore: number;\n};\n\nexport type LikedNearDuplicateDiagnostic = {\n''',
+          )
+          replace_once(
+              "src/services/music-preference/liked-discovery-calibration-shadow.ts",
+              '''  nearDuplicates: {\n    quarantined: number;\n    rows: LikedNearDuplicateDiagnostic[];\n  };\n  calibratedTop: LikedCalibratedDiscoveryTopEntry[];\n''',
+              '''  nearDuplicates: {\n    quarantined: number;\n    rows: LikedNearDuplicateDiagnostic[];\n  };\n  pilotCandidates: LikedCalibratedPilotCandidate[];\n  calibratedTop: LikedCalibratedDiscoveryTopEntry[];\n''',
+          )
+          replace_once(
+              "src/services/music-preference/liked-discovery-calibration-shadow.ts",
+              '''  const ambiguityRate =\n''',
+              '''  const resolvedByTrackId = new Map(\n    expansion.resolvedCandidates.map((row) => [row.spotifyTrackId, row] as const),\n  );\n  const pilotCandidates = calibratedTop\n    .filter(\n      (row): row is LikedCalibratedDiscoveryTopEntry & { spotifyTrackId: string } =>\n        row.source === "LIKED_EXPANSION" && Boolean(row.spotifyTrackId),\n    )\n    .map((row) => {\n      const resolved = resolvedByTrackId.get(row.spotifyTrackId);\n      return resolved ? { ...resolved, calibratedScore: row.calibratedScore } : null;\n    })\n    .filter((row): row is LikedCalibratedPilotCandidate => Boolean(row));\n\n  const ambiguityRate =\n''',
+          )
+          replace_once(
+              "src/services/music-preference/liked-discovery-calibration-shadow.ts",
+              '''    calibratedTop,\n    mix: {\n''',
+              '''    pilotCandidates,\n    calibratedTop,\n    mix: {\n''',
+          )
+
+          # Existing fixtures get the canonical fields now retained by Gate 6A.
+          replace_once(
+              "src/services/music-preference/liked-discovery-calibration-shadow.test.ts",
+              '''    spotifyTrackId,\n    trackName,\n    albumName: null,\n''',
+              '''    spotifyTrackId,\n    spotifyUri: `spotify:track:${spotifyTrackId}`,\n    durationMs: 180000,\n    isrc: null,\n    trackName,\n    albumId: null,\n    albumName: null,\n''',
+          )
+          replace_once(
+              "src/services/music-preference/liked-discovery-expansion-shadow.test.ts",
+              '''    spotifyTrackId: "track-new",\n    trackName: "New Track",\n    albumName: "New Album",\n''',
+              '''    spotifyTrackId: "track-new",\n    spotifyUri: "spotify:track:track-new",\n    durationMs: 180000,\n    isrc: null,\n    trackName: "New Track",\n    albumId: "album-new",\n    albumName: "New Album",\n''',
+          )
+
+          # Pilot service exposes the configured target set for the target-scoped Gate 5H path.
+          replace_once(
+              "src/services/music-preference/liked-discovery-pilot-runtime.ts",
+              '''export function isLikedDiscoveryPilotCandidate(\n''',
+              '''export function likedDiscoveryPilotTargetIds(\n  value: string | null | undefined = process.env.LIKED_DISCOVERY_PILOT_TARGET_IDS,\n): ReadonlySet<string> {\n  return parseTargetIds(value);\n}\n\nexport function isLikedDiscoveryPilotCandidate(\n''',
+          )
+
+          # External discovery acquisition appends at most one calibrated LIKED candidate.
+          replace_once(
+              "src/services/music-discovery/external-discovery-runtime.ts",
+              '''import type { Candidate } from "@/services/playlist-planner";\n\n''',
+              '''import type { Candidate } from "@/services/playlist-planner";\nimport {\n  mergeLikedPilotWithStandardDiscovery,\n  resolveLikedDiscoveryPilotRuntime,\n  type LikedDiscoveryPilotEvidence,\n} from "@/services/music-preference/liked-discovery-pilot-runtime";\n\n''',
+          )
+          replace_once(
+              "src/services/music-discovery/external-discovery-runtime.ts",
+              '''  providerFailureCount: number;\n};\n''',
+              '''  providerFailureCount: number;\n  likedPilot: LikedDiscoveryPilotEvidence;\n};\n''',
+          )
+          replace_once(
+              "src/services/music-discovery/external-discovery-runtime.ts",
+              '''export async function resolveRuntimeExternalDiscovery(input: {\n  userId: string;\n  asOf: Date;\n}): Promise<RuntimeExternalDiscoveryResult> {\n''',
+              '''export async function resolveRuntimeExternalDiscovery(input: {\n  userId: string;\n  asOf: Date;\n  userEmail?: string | null;\n  likedPilotTargetRuntimeEnabled?: boolean;\n}): Promise<RuntimeExternalDiscoveryResult> {\n''',
+          )
+          replace_once(
+              "src/services/music-discovery/external-discovery-runtime.ts",
+              '''  return {\n    discoveries,\n    evidence: {\n''',
+              '''  const likedPilot = await resolveLikedDiscoveryPilotRuntime({\n    userId: input.userId,\n    userEmail: input.userEmail,\n    baseDiscoveryEnabled: input.likedPilotTargetRuntimeEnabled === true,\n    masterEnabled: process.env.LIKED_DISCOVERY_PILOT_ENABLED,\n    allowlistedEmails: process.env.LIKED_DISCOVERY_PILOT_USER_EMAILS,\n    allowlistedTargetIds: process.env.LIKED_DISCOVERY_PILOT_TARGET_IDS,\n  });\n  const merged = mergeLikedPilotWithStandardDiscovery({\n    standard: discoveries,\n    pilot: likedPilot.discovery,\n  });\n  const likedPilotEvidence = {\n    ...likedPilot.evidence,\n    duplicateSuppressedAgainstStandardDiscovery: merged.duplicateSuppressed,\n  };\n\n  return {\n    discoveries: merged.discoveries,\n    evidence: {\n''',
+          )
+          replace_once(
+              "src/services/music-discovery/external-discovery-runtime.ts",
+              '''      providerFailureCount: batch.failures.length,\n    },\n''',
+              '''      providerFailureCount: batch.failures.length,\n      likedPilot: likedPilotEvidence,\n    },\n''',
+          )
+
+          # Target-scoped runtime passes LIKED only to explicitly allowlisted destinations.
+          replace_once(
+              "src/jobs/discovery-runtime.ts",
+              '''import { getDiscoveryTrackIdentityEvidence } from "@/services/music-discovery/track-identity";\n''',
+              '''import { getDiscoveryTrackIdentityEvidence } from "@/services/music-discovery/track-identity";\nimport {\n  discoveriesForPilotTarget,\n  likedDiscoveryPilotTargetIds,\n} from "@/services/music-preference/liked-discovery-pilot-runtime";\n''',
+          )
+          replace_once(
+              "src/jobs/discovery-runtime.ts",
+              '''    external = await resolveRuntimeExternalDiscovery({\n      userId: state.userId,\n      asOf: state.asOf,\n    });\n''',
+              '''    external = await resolveRuntimeExternalDiscovery({\n      userId: state.userId,\n      asOf: state.asOf,\n      userEmail: state.userEmail,\n      likedPilotTargetRuntimeEnabled: targetScoped,\n    });\n''',
+          )
+          replace_once(
+              "src/jobs/discovery-runtime.ts",
+              '''  const targetById = new Map(\n    input.targets.map((target) => [target.targetPlaylistId, target] as const),\n  );\n\n  for (const planned of input.baseline.targets) {\n''',
+              '''  const targetById = new Map(\n    input.targets.map((target) => [target.targetPlaylistId, target] as const),\n  );\n  const likedPilotTargets = likedDiscoveryPilotTargetIds();\n\n  for (const planned of input.baseline.targets) {\n''',
+          )
+          replace_once(
+              "src/jobs/discovery-runtime.ts",
+              '''    const applied = applyDiscoveryGate5H({\n      baseline: { targets: [current] },\n      targets: [target],\n      discoveries: remaining,\n''',
+              '''    const targetDiscoveries = discoveriesForPilotTarget(\n      remaining,\n      planned.targetPlaylistId,\n      likedPilotTargets,\n    );\n    const applied = applyDiscoveryGate5H({\n      baseline: { targets: [current] },\n      targets: [target],\n      discoveries: targetDiscoveries,\n''',
+          )
+          replace_once(
+              "src/jobs/discovery-runtime.ts",
+              '''      discoveryCeiling: caps.externalDiscoveryCeiling,\n      applied: applied.applied,\n''',
+              '''      discoveryCeiling: caps.externalDiscoveryCeiling,\n      likedPilotAllowed: likedPilotTargets.has(planned.targetPlaylistId),\n      likedPilotCandidateAvailable: targetDiscoveries.some(\n        (row) => row.pathLabel === "LIKED_SIMILAR_EXPLORATORY",\n      ),\n      applied: applied.applied,\n''',
+          )
+
+          # Operational command + CI path coverage.
+          replace_once(
+              "package.json",
+              '''    "liked:calibrate-shadow": "tsx scripts/report-liked-discovery-calibration-shadow.ts",\n''',
+              '''    "liked:calibrate-shadow": "tsx scripts/report-liked-discovery-calibration-shadow.ts",\n    "liked:pilot-runtime": "tsx scripts/report-liked-discovery-pilot-runtime.ts",\n''',
+          )
+          wf = Path(".github/workflows/liked-01-validation.yml")
+          text = wf.read_text()
+          needle = '      - "scripts/report-liked-discovery-calibration-shadow.ts"\n'
+          if text.count(needle) != 2:
+              raise SystemExit("unexpected LIKED workflow anchors")
+          text = text.replace(
+              needle,
+              needle + '      - "scripts/report-liked-discovery-pilot-runtime.ts"\n',
+          )
+          wf.write_text(text)
+          PY
+
+      - name: Commit product patch and remove helper
+        shell: bash
+        run: |
+          git config user.name "marksborn"
+          git config user.email "1066412+marksborn@users.noreply.github.com"
+          git rm .github/workflows/patch-liked-01-gate6c.yml
+          git add \
+            src/services/music-preference/liked-discovery-expansion-shadow.ts \
+            src/services/music-preference/liked-discovery-expansion-shadow.test.ts \
+            src/services/music-preference/liked-discovery-calibration-shadow.ts \
+            src/services/music-preference/liked-discovery-calibration-shadow.test.ts \
+            src/services/music-preference/liked-discovery-pilot-runtime.ts \
+            src/services/music-discovery/external-discovery-runtime.ts \
+            src/jobs/discovery-runtime.ts \
+            scripts/report-liked-discovery-pilot-runtime.ts \
+            package.json \
+            .github/workflows/liked-01-validation.yml
+          git commit -m "feat: wire LIKED Gate 6C controlled runtime pilot"
+          git push origin HEAD:feat/liked-01-gate6c
