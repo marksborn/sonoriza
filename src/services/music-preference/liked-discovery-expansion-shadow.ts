@@ -1,10 +1,7 @@
 import { ArtistSimilarityProvider } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import {
-  getForYouReport,
-  type ForYouRecommendation,
-} from "@/services/music-discovery/for-you-report";
+import { getForYouReport } from "@/services/music-discovery/for-you-report";
 import {
   scoreExternalDiscoveryCandidate,
   type ExternalDiscoveryCandidateScore,
@@ -346,9 +343,7 @@ export function rankLikedExpansionAggregates(input: {
   };
 } {
   const directById = new Map(
-    input.directAffinities
-      .filter((row) => row.active !== false)
-      .map((row) => [row.spotifyArtistId, row] as const),
+    input.directAffinities.map((row) => [row.spotifyArtistId, row] as const),
   );
   const directNames = new Set(
     input.directAffinities
