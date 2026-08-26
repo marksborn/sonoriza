@@ -79,7 +79,17 @@ function pilotFixture(): LikedDiscoveryCalibrationShadowReport["pilotCandidates"
   };
 }
 
-test("Gate 6C is fail-closed until master, user and target allowlists all agree", () => {
+test("Gate 6C is fail-closed until base runtime, master, user and target allowlists all agree", () => {
+  assert.equal(
+    resolveLikedDiscoveryPilotPolicy({
+      baseDiscoveryEnabled: false,
+      userEmail: "pilot@example.com",
+      masterEnabled: "1",
+      allowlistedEmails: "pilot@example.com",
+      allowlistedTargetIds: "target-a",
+    }).reason,
+    "BASE_DISCOVERY_DISABLED",
+  );
   assert.equal(
     resolveLikedDiscoveryPilotPolicy({
       baseDiscoveryEnabled: true,
