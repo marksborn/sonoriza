@@ -440,10 +440,14 @@ export async function runLikedArtistSimilarityBackfill(
   const after = await deps.loadSnapshot(userId, deps.now());
   if (after.pendingSources === 0) {
     status = "COMPLETE";
-  } else if (!status && batches.length >= maxBatches) {
-    status = "PARTIAL_MAX_BATCHES";
   } else if (!status) {
-    status = deriveBlockedStatus(after);
+    const blockedStatus = deriveBlockedStatus(after);
+    status =
+      blockedStatus !== "READY"
+        ? blockedStatus
+        : batches.length >= maxBatches
+          ? "PARTIAL_MAX_BATCHES"
+          : "READY";
   }
 
   return materializeReport({
@@ -529,8 +533,9 @@ function materializeReport(input: {
       plannerInfluence: false,
       spotifyWrites: false,
       previewProviderCalls: 0,
-      databaseWrites:
-        input.mode === "APPLY" && input.batches.some((row) => row.selectedSources > 0),
+      // Any executed APPLY batch may reconcile seed metadata/deactivations even
+      // if a concurrent state change leaves zero selected provider sources.
+      databaseWrites: input.mode === "APPLY" && input.batches.length > 0,
     },
   };
 }

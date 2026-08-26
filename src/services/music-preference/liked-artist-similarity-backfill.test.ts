@@ -294,6 +294,47 @@ test("retryable failures never mix with stale successful refreshes", async () =>
   assert.equal(report.safety.databaseWrites, false);
 });
 
+test("final batch reports cooldown blocker instead of masking it as max-batches exhaustion", async () => {
+  const before = snapshot({
+    successfulActiveSeeds: 922,
+    pendingSources: 10,
+    priorityReadySources: 10,
+  });
+  const after = snapshot({
+    successfulActiveSeeds: 931,
+    pendingSources: 1,
+    priorityReadySources: 0,
+    cooldownBlockedSources: 1,
+    activeSeedRows: 932,
+  });
+  let loads = 0;
+
+  const report = await runLikedArtistSimilarityBackfill(
+    "user-1",
+    { mode: "APPLY", batchBudget: 100, maxBatches: 1, batchPauseMs: 0 },
+    {
+      now: () => NOW,
+      loadSnapshot: async () => (loads++ < 2 ? before : after),
+      executeBatch: async () => ({
+        selectedSources: 10,
+        providerCalls: 10,
+        successfulSources: 9,
+        failedSources: 1,
+        beforeActiveSeeds: 922,
+        afterActiveSeeds: 932,
+        beforeActiveEdges: 9_220,
+        afterActiveEdges: 9_310,
+        failures: [],
+      }),
+      sleep: async () => undefined,
+    },
+  );
+
+  assert.equal(report.status, "BLOCKED_COOLDOWN");
+  assert.equal(report.totals.failedSources, 1);
+  assert.equal(report.safety.databaseWrites, true);
+});
+
 test("a completed backfill is idempotent and performs zero provider calls", async () => {
   const complete = snapshot({
     successfulActiveSeeds: 932,
