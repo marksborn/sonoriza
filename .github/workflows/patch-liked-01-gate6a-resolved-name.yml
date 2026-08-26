@@ -1,0 +1,121 @@
+name: Patch LIKED-01 Gate 6A resolved-name guards
+
+on:
+  push:
+    branches:
+      - feat/liked-01-gate6a
+    paths:
+      - ".github/workflows/patch-liked-01-gate6a-resolved-name.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate6a
+          fetch-depth: 0
+      - name: Add canonical-name exclusion guards
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one marker, got {count}")
+              return text.replace(old, new, 1)
+
+          service = Path("src/services/music-preference/liked-discovery-expansion-shadow.ts")
+          text = service.read_text()
+
+          text = replace_once(
+              text,
+              '''    rejectedResolvedDirectArtists: number;\n    rejectedResolvedHistoricalArtists: number;''',
+              '''    rejectedResolvedDirectArtists: number;\n    rejectedResolvedRepresentedArtists: number;\n    rejectedResolvedHistoricalArtists: number;''',
+              "resolution metrics",
+          )
+
+          text = replace_once(
+              text,
+              '''    similarityEdges,\n    historicalSpotifyArtists,\n  ] = await Promise.all([''',
+              '''    similarityEdges,\n    historicalSpotifyArtists,\n    historicalArtistNames,\n  ] = await Promise.all([''',
+              "promise destructuring",
+          )
+
+          text = replace_once(
+              text,
+              '''    prisma.trackListeningEvent.findMany({\n      where: { userId, primaryArtistId: { not: null } },\n      select: { primaryArtistId: true },\n      distinct: ["primaryArtistId"],\n    }),\n  ]);''',
+              '''    prisma.trackListeningEvent.findMany({\n      where: { userId, primaryArtistId: { not: null } },\n      select: { primaryArtistId: true },\n      distinct: ["primaryArtistId"],\n    }),\n    prisma.trackListeningEvent.findMany({\n      where: { userId },\n      select: { artistName: true },\n      distinct: ["artistName"],\n    }),\n  ]);''',
+              "historical names query",
+          )
+
+          text = replace_once(
+              text,
+              '''  const historicalSpotifyArtistIds = new Set(\n    historicalSpotifyArtists\n      .map((row) => row.primaryArtistId)\n      .filter((value): value is string => Boolean(value)),\n  );\n  const baselineTrackIds = new Set(''',
+              '''  const historicalSpotifyArtistIds = new Set(\n    historicalSpotifyArtists\n      .map((row) => row.primaryArtistId)\n      .filter((value): value is string => Boolean(value)),\n  );\n  const historicalNormalizedArtistNames = new Set(\n    historicalArtistNames\n      .map((row) => normalized(row.artistName))\n      .filter(Boolean),\n  );\n  const baselineTrackIds = new Set(''',
+              "historical names set",
+          )
+
+          text = replace_once(
+              text,
+              '''  let rejectedResolvedDirectArtists = 0;\n  let rejectedResolvedHistoricalArtists = 0;''',
+              '''  let rejectedResolvedDirectArtists = 0;\n  let rejectedResolvedRepresentedArtists = 0;\n  let rejectedResolvedHistoricalArtists = 0;''',
+              "counters",
+          )
+
+          text = replace_once(
+              text,
+              '''      // Last.fm names/MBIDs are pre-resolution evidence. Once Spotify gives us\n      // canonical identity, reject any artist already present in canonical\n      // listening history even if an alias or missing MBID escaped the probe.\n      if (\n        isResolvedHistoricalArtist(\n          resolution.spotifyArtist.id,\n          historicalSpotifyArtistIds,\n        )\n      ) {\n        rejectedResolvedHistoricalArtists += 1;\n        continue;\n      }\n      if (baselineTrackIds.has(resolution.spotifyTrack.id)) continue;''',
+              '''      const resolvedArtistName = normalized(resolution.spotifyArtist.name);\n      // Reapply baseline artist exclusion after Spotify canonicalizes aliases.\n      // This prevents "The X" from entering when current discovery already has "X".\n      if (representedArtistNames.has(resolvedArtistName)) {\n        rejectedResolvedRepresentedArtists += 1;\n        continue;\n      }\n      // Last.fm names/MBIDs are pre-resolution evidence. Once Spotify gives us\n      // canonical identity, reject any artist already present in canonical\n      // listening history by Spotify ID or canonicalized name. The name fallback\n      // protects older history rows that do not have primaryArtistId populated.\n      if (\n        isResolvedHistoricalArtist(\n          resolution.spotifyArtist.id,\n          resolvedArtistName,\n          historicalSpotifyArtistIds,\n          historicalNormalizedArtistNames,\n        )\n      ) {\n        rejectedResolvedHistoricalArtists += 1;\n        continue;\n      }\n      if (baselineTrackIds.has(resolution.spotifyTrack.id)) continue;''',
+              "post-resolution guards",
+          )
+
+          text = replace_once(
+              text,
+              '''      rejectedResolvedDirectArtists,\n      rejectedResolvedHistoricalArtists,\n      failures,''',
+              '''      rejectedResolvedDirectArtists,\n      rejectedResolvedRepresentedArtists,\n      rejectedResolvedHistoricalArtists,\n      failures,''',
+              "return metrics",
+          )
+
+          text = replace_once(
+              text,
+              '''export function isResolvedHistoricalArtist(\n  spotifyArtistId: string,\n  historicalSpotifyArtistIds: ReadonlySet<string>,\n): boolean {\n  return historicalSpotifyArtistIds.has(spotifyArtistId);\n}''',
+              '''export function isResolvedHistoricalArtist(\n  spotifyArtistId: string,\n  normalizedSpotifyArtistName: string,\n  historicalSpotifyArtistIds: ReadonlySet<string>,\n  historicalNormalizedArtistNames: ReadonlySet<string>,\n): boolean {\n  return (\n    historicalSpotifyArtistIds.has(spotifyArtistId) ||\n    historicalNormalizedArtistNames.has(normalizedSpotifyArtistName)\n  );\n}''',
+              "historical helper",
+          )
+          service.write_text(text)
+
+          cli = Path("scripts/report-liked-discovery-expansion-shadow.ts")
+          cli_text = cli.read_text()
+          cli_text = replace_once(
+              cli_text,
+              '''  p(\n    "  rejected resolved direct artists:",\n    report.resolution.rejectedResolvedDirectArtists,\n  );\n  p(\n    "  rejected resolved historical artists:",''',
+              '''  p(\n    "  rejected resolved direct artists:",\n    report.resolution.rejectedResolvedDirectArtists,\n  );\n  p(\n    "  rejected resolved represented artists:",\n    report.resolution.rejectedResolvedRepresentedArtists,\n  );\n  p(\n    "  rejected resolved historical artists:",''',
+              "cli metric",
+          )
+          cli.write_text(cli_text)
+
+          tests_path = Path("src/services/music-preference/liked-discovery-expansion-shadow.test.ts")
+          tests = tests_path.read_text()
+          tests = replace_once(
+              tests,
+              '''test("resolved Spotify identity cannot re-enter a historically known artist through an alias without MBID", () => {\n  const historicalIds = new Set(["spotify-known-history"]);\n  assert.equal(\n    isResolvedHistoricalArtist("spotify-known-history", historicalIds),\n    true,\n  );\n  assert.equal(isResolvedHistoricalArtist("spotify-new", historicalIds), false);\n});''',
+              '''test("resolved Spotify identity cannot re-enter a historically known artist through an alias without MBID", () => {\n  const historicalIds = new Set(["spotify-known-history"]);\n  const historicalNames = new Set(["known canonical name"]);\n  assert.equal(\n    isResolvedHistoricalArtist(\n      "spotify-known-history",\n      "unrelated alias",\n      historicalIds,\n      historicalNames,\n    ),\n    true,\n  );\n  assert.equal(\n    isResolvedHistoricalArtist(\n      "spotify-missing-id",\n      "known canonical name",\n      historicalIds,\n      historicalNames,\n    ),\n    true,\n  );\n  assert.equal(\n    isResolvedHistoricalArtist(\n      "spotify-new",\n      "new canonical name",\n      historicalIds,\n      historicalNames,\n    ),\n    false,\n  );\n});\n\ntest("resolved canonical artist name re-applies represented baseline exclusion", () => {\n  const representedArtistNames = new Set(["x"]);\n  assert.equal(representedArtistNames.has("x"), true);\n  assert.equal(representedArtistNames.has("the x"), false);\n});''',
+              "history regression",
+          )
+          tests_path.write_text(tests)
+
+      - name: Commit patch
+        run: |
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add src/services/music-preference/liked-discovery-expansion-shadow.ts \
+                  src/services/music-preference/liked-discovery-expansion-shadow.test.ts \
+                  scripts/report-liked-discovery-expansion-shadow.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: reapply canonical artist exclusions after resolution"
+          git push origin HEAD:feat/liked-01-gate6a
