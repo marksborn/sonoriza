@@ -406,7 +406,10 @@ export function rankLikedExpansionAggregates(input: {
       candidateKey,
       artistName: aggregate.artistName,
       source: "LASTFM_SIMILAR_ARTIST",
-      similarity: aggregate.maxSimilarity,
+      // Do not synthesize a stronger path by combining similarity from one
+      // seed with explicit affinity from another. The dominant evidence path
+      // supplies both terms; multi-seed support remains an audit/tie-break signal.
+      similarity: aggregate.bestSeed.similarity,
       seedArtistAffinity: aggregate.bestSeed.affinity,
       sourceConfidence: LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.sourceConfidence,
       knownHistoricalPlayCount: 0,
@@ -464,7 +467,7 @@ export function selectLikedExpansionResolutionCandidates(input: {
           candidateKey: row.candidateKey,
           artistName: row.artistName,
           source: "LASTFM_SIMILAR_ARTIST",
-          similarity: row.maxSimilarity,
+          similarity: row.dominantSeed.similarity,
           seedArtistAffinity: row.dominantSeed.affinity,
           sourceConfidence: LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.sourceConfidence,
           knownHistoricalPlayCount,

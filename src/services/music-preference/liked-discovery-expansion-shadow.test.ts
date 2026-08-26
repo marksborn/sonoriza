@@ -80,7 +80,9 @@ test("multiple LIKED seeds aggregate without multiplying candidates and stronges
   assert.equal(row.dominantSeed.artistName, "Seed A");
   assert.equal(row.dominantSeed.affinity, 1);
   assert.equal(row.scoreCard.eligible, true);
-  assert.equal(row.scoreCard.score, 99);
+  // Seed A wins the existing external-discovery path score using its own
+  // similarity (0.8) and affinity (1.0); similarity=1.0 from Seed B is not stacked.
+  assert.equal(row.scoreCard.score, 89);
 });
 
 test("known history is rejected before Spotify resolution and dominant-seed diversity is bounded", () => {
