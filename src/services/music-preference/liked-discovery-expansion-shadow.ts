@@ -238,6 +238,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
         candidateKey: candidate.candidateKey,
         candidateType: "ARTIST",
         artistName: candidate.artistName,
+        trackName: null,
       });
       if (resolution.status === "AMBIGUOUS") {
         ambiguous += 1;
