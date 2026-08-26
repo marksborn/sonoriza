@@ -31,6 +31,7 @@
     "liked:shadow-discovery": "tsx scripts/report-liked-shadow-discovery.ts",
     "liked:backfill": "tsx scripts/report-liked-artist-similarity-backfill.ts",
     "liked:expand-shadow": "tsx scripts/report-liked-discovery-expansion-shadow.ts",
+    "ci:gate6a-trigger": "node -e \"process.exit(0)\"",
     "discovery:profile": "tsx scripts/report-music-discovery-profile.ts",
     "discovery:score": "tsx scripts/report-music-discovery-score.ts",
     "discovery:external": "tsx scripts/report-music-discovery-external.ts",
