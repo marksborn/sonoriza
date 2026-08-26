@@ -1,0 +1,44 @@
+name: Patch LIKED-01 Gate 6A typing
+
+on:
+  push:
+    branches:
+      - feat/liked-01-gate6a
+    paths:
+      - ".github/workflows/patch-liked-01-gate6a.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate6a
+          fetch-depth: 0
+      - name: Patch typing cleanup
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path("src/services/music-preference/liked-discovery-expansion-shadow.ts")
+          text = path.read_text()
+          old = '''import {\n  getForYouReport,\n  type ForYouRecommendation,\n} from "@/services/music-discovery/for-you-report";'''
+          new = '''import { getForYouReport } from "@/services/music-discovery/for-you-report";'''
+          if text.count(old) != 1:
+              raise SystemExit("for-you import marker not found exactly once")
+          text = text.replace(old, new, 1)
+          old = '''  const directById = new Map(\n    input.directAffinities\n      .filter((row) => row.active !== false)\n      .map((row) => [row.spotifyArtistId, row] as const),\n  );'''
+          new = '''  const directById = new Map(\n    input.directAffinities.map((row) => [row.spotifyArtistId, row] as const),\n  );'''
+          if text.count(old) != 1:
+              raise SystemExit("directById marker not found exactly once")
+          path.write_text(text.replace(old, new, 1))
+      - name: Commit patch
+        run: |
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add src/services/music-preference/liked-discovery-expansion-shadow.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: clean LIKED Gate 6A typing"
+          git push origin HEAD:feat/liked-01-gate6a
