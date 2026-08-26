@@ -7,7 +7,13 @@ on:
       - "src/services/music-preference/**"
       - "src/services/music-discovery/**"
       - "src/jobs/discovery-runtime.ts"
-      - "scripts/**"
+      - "scripts/report-liked-track-affinity.ts"
+      - "scripts/report-liked-artist-similarity.ts"
+      - "scripts/report-liked-shadow-discovery.ts"
+      - "scripts/report-liked-artist-similarity-backfill.ts"
+      - "scripts/report-liked-discovery-expansion-shadow.ts"
+      - "scripts/report-liked-discovery-calibration-shadow.ts"
+      - "scripts/report-liked-discovery-pilot-runtime.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
   push:
@@ -18,31 +24,52 @@ on:
       - "src/services/music-preference/**"
       - "src/services/music-discovery/**"
       - "src/jobs/discovery-runtime.ts"
-      - "scripts/**"
+      - "scripts/report-liked-track-affinity.ts"
+      - "scripts/report-liked-artist-similarity.ts"
+      - "scripts/report-liked-shadow-discovery.ts"
+      - "scripts/report-liked-artist-similarity-backfill.ts"
+      - "scripts/report-liked-discovery-expansion-shadow.ts"
+      - "scripts/report-liked-discovery-calibration-shadow.ts"
+      - "scripts/report-liked-discovery-pilot-runtime.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
 
-permissions:
-  contents: write
-
 jobs:
-  gate6c_patch:
-    if: github.event_name == 'pull_request' && github.head_ref == 'feat/liked-01-gate6c'
+  validate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sonoriza_test?schema=public
+      AUTH_SECRET: test-secret-for-ci-only
+      AUTH_URL: http://localhost:3000
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: feat/liked-01-gate6c
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24.19.0
-      - name: Apply Gate 6C integration once
-        run: python scripts/patch-liked-gate6c.py
-      - name: Commit product integration
-        run: |
-          git config user.name "marksborn"
-          git config user.email "1066412+marksborn@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: wire LIKED Gate 6C controlled runtime pilot"
-          git push origin HEAD:feat/liked-01-gate6c
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npm run test:music-preference
+      - run: npm run typecheck
+      - run: npm run build
