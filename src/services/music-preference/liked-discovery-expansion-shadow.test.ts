@@ -174,11 +174,40 @@ test("resolved Spotify identity cannot re-enter a directly liked artist through 
 
 test("resolved Spotify identity cannot re-enter a historically known artist through an alias without MBID", () => {
   const historicalIds = new Set(["spotify-known-history"]);
+  const historicalNames = new Set(["known canonical name"]);
   assert.equal(
-    isResolvedHistoricalArtist("spotify-known-history", historicalIds),
+    isResolvedHistoricalArtist(
+      "spotify-known-history",
+      "unrelated alias",
+      historicalIds,
+      historicalNames,
+    ),
     true,
   );
-  assert.equal(isResolvedHistoricalArtist("spotify-new", historicalIds), false);
+  assert.equal(
+    isResolvedHistoricalArtist(
+      "spotify-missing-id",
+      "known canonical name",
+      historicalIds,
+      historicalNames,
+    ),
+    true,
+  );
+  assert.equal(
+    isResolvedHistoricalArtist(
+      "spotify-new",
+      "new canonical name",
+      historicalIds,
+      historicalNames,
+    ),
+    false,
+  );
+});
+
+test("resolved canonical artist name re-applies represented baseline exclusion", () => {
+  const representedArtistNames = new Set(["x"]);
+  assert.equal(representedArtistNames.has("x"), true);
+  assert.equal(representedArtistNames.has("the x"), false);
 });
 
 test("expanded discovery can introduce resolved related artists without mutating current pool rows", () => {

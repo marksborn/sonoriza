@@ -86,6 +86,10 @@ async function main() {
     report.resolution.rejectedResolvedDirectArtists,
   );
   p(
+    "  rejected resolved represented artists:",
+    report.resolution.rejectedResolvedRepresentedArtists,
+  );
+  p(
     "  rejected resolved historical artists:",
     report.resolution.rejectedResolvedHistoricalArtists,
   );
