@@ -217,22 +217,22 @@ test("resolved Spotify identity cannot re-enter a historically known artist thro
 
 test("controlled leading-article aliases compare symmetrically after resolution", () => {
   assert.deepEqual(
-    new Set(controlledArtistIdentityForms("The X")),
-    new Set(["the x", "x"]),
+    new Set(controlledArtistIdentityForms("The Doors")),
+    new Set(["the doors", "doors"]),
   );
   assert.deepEqual(
-    new Set(controlledArtistIdentityForms("X")),
-    new Set(["x", "the x"]),
+    new Set(controlledArtistIdentityForms("Doors")),
+    new Set(["doors", "the doors"]),
   );
-  assert.equal(hasEquivalentArtistName(new Set(["x"]), "the x"), true);
-  assert.equal(hasEquivalentArtistName(new Set(["the x"]), "x"), true);
-  assert.equal(hasEquivalentArtistName(new Set(["y"]), "x"), false);
+  assert.equal(hasEquivalentArtistName(new Set(["doors"]), "the doors"), true);
+  assert.equal(hasEquivalentArtistName(new Set(["the doors"]), "doors"), true);
+  assert.equal(hasEquivalentArtistName(new Set(["blur"]), "doors"), false);
 });
 
 test("resolved canonical artist name re-applies represented baseline exclusion", () => {
-  const representedArtistNames = new Set(["x"]);
-  assert.equal(representedArtistNames.has("x"), true);
-  assert.equal(representedArtistNames.has("the x"), false);
+  const representedArtistNames = new Set(["doors"]);
+  assert.equal(hasEquivalentArtistName(representedArtistNames, "the doors"), true);
+  assert.equal(hasEquivalentArtistName(representedArtistNames, "blur"), false);
 });
 
 test("expanded discovery can introduce resolved related artists without mutating current pool rows", () => {
