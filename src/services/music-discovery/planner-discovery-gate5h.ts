@@ -11,6 +11,7 @@ import {
   previewSurgicalDiscoveryRun,
   type Gate5GRunPreview,
 } from "./planner-discovery-gate5g";
+import { applyTrackVersionScoresToResolvedDiscoveries } from "./track-version-score-runtime";
 
 export const DISCOVERY_GATE5H_POLICY = {
   version: "gate5h-production-runtime-v1",
@@ -110,10 +111,13 @@ export function applyDiscoveryGate5H(input: {
   const discoveryCeiling = normalizeDiscoveryCeiling(
     input.discoveryCeiling ?? DISCOVERY_GATE5H_POLICY.discoveryCeiling,
   );
+  const versionAdjustedDiscoveries = applyTrackVersionScoresToResolvedDiscoveries(
+    input.discoveries,
+  );
   const preview = previewSurgicalDiscoveryRun({
     baseline: { targets: eligibleBaselineTargets },
     targets: eligibleTargets,
-    discoveries: input.discoveries,
+    discoveries: versionAdjustedDiscoveries,
     blockedMusicTrackIdsByTargetId: input.blockedMusicTrackIdsByTargetId,
     discoveryCeiling,
     musicSpacing: DISCOVERY_GATE5H_POLICY.musicSpacing,
