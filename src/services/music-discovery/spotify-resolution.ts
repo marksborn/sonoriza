@@ -2,6 +2,7 @@ import type {
   SpotifyCatalogArtistSummary,
   SpotifyCatalogTrackSummary,
 } from "@/services/spotify/catalog-search";
+import { classifyTrackVersion } from "./track-version-preference";
 
 export type SpotifyDiscoveryResolutionStatus = "RESOLVED" | "AMBIGUOUS" | "NOT_FOUND";
 
@@ -219,9 +220,7 @@ async function resolvedArtistWithRepresentativeTrack(
   alternatives: SpotifyCatalogArtistSummary[],
 ): Promise<SpotifyDiscoveryResolution> {
   const tracks = await provider.searchTracks({ artistName: artist.name, limit: 10 });
-  const representative = tracks.find((track) =>
-    track.artists.some((row) => row.id === artist.id),
-  );
+  const representative = chooseRepresentativeTrackByVersion(tracks, artist.id);
   if (!representative) {
     return {
       candidateKey: candidate.candidateKey,
@@ -241,6 +240,38 @@ async function resolvedArtistWithRepresentativeTrack(
     spotifyTrack: representative,
     alternatives,
   };
+}
+
+export function chooseRepresentativeTrackByVersion(
+  tracks: SpotifyCatalogTrackSummary[],
+  spotifyArtistId: string,
+): SpotifyCatalogTrackSummary | null {
+  const canonicalArtistTracks = tracks.filter((track) =>
+    track.artists.some((row) => row.id === spotifyArtistId),
+  );
+  if (canonicalArtistTracks.length === 0) return null;
+
+  const ranked = canonicalArtistTracks.map((track, index) => ({
+    track,
+    index,
+    versionRank: representativeVersionRank(track),
+  }));
+  ranked.sort((left, right) =>
+    left.versionRank !== right.versionRank
+      ? left.versionRank - right.versionRank
+      : left.index - right.index,
+  );
+  return ranked[0]?.track ?? null;
+}
+
+function representativeVersionRank(track: SpotifyCatalogTrackSummary): number {
+  const classification = classifyTrackVersion({
+    trackName: track.name,
+    albumName: track.albumName,
+  }).classification;
+  if (classification === "STUDIO_OR_STANDARD") return 0;
+  if (classification === "UNKNOWN") return 1;
+  return 2;
 }
 
 function empty(
