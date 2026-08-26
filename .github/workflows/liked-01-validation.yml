@@ -27,6 +27,183 @@ on:
       - ".github/workflows/liked-01-validation.yml"
 
 jobs:
+  patch-canonical-label:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/liked-01-gate6a'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate6a
+      - name: Apply canonical resolved artist labels
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          service = Path('src/services/music-preference/liked-discovery-expansion-shadow.ts')
+          text = service.read_text()
+
+          old = 'import { resolveExternalDiscoveryCandidate } from "@/services/music-discovery/spotify-resolution";'
+          new = '''import {
+            resolveExternalDiscoveryCandidate,
+            type SpotifyDiscoveryResolution,
+          } from "@/services/music-discovery/spotify-resolution";'''
+          if old not in text:
+              raise SystemExit('service import anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''export type LikedExpansionResolvedCandidate = LikedExpansionAggregate & {
+            spotifyArtistId: string;
+            spotifyTrackId: string;
+            trackName: string;
+            albumName: string | null;
+            resolutionReason: string;
+          };'''
+          new = '''export type LikedExpansionResolvedCandidate = LikedExpansionAggregate & {
+            providerArtistName: string;
+            spotifyArtistId: string;
+            spotifyTrackId: string;
+            trackName: string;
+            albumName: string | null;
+            resolutionReason: string;
+          };'''
+          if old not in text:
+              raise SystemExit('resolved type anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''      resolvedCandidates.push({
+                ...candidate,
+                spotifyArtistId: resolution.spotifyArtist.id,
+                spotifyTrackId: resolution.spotifyTrack.id,
+                trackName: resolution.spotifyTrack.name,
+                albumName: resolution.spotifyTrack.albumName,
+                resolutionReason: resolution.reason,
+              });'''
+          new = '''      resolvedCandidates.push(
+                materializeResolvedExpansionCandidate(candidate, resolution),
+              );'''
+          if old not in text:
+              raise SystemExit('resolved push anchor not found')
+          text = text.replace(old, new, 1)
+
+          anchor = '''export function isResolvedDirectAffinityArtist(
+            spotifyArtistId: string,
+            directSpotifyArtistIds: ReadonlySet<string>,
+          ): boolean {'''
+          helper = '''export function materializeResolvedExpansionCandidate(
+            candidate: LikedExpansionAggregate,
+            resolution: SpotifyDiscoveryResolution,
+          ): LikedExpansionResolvedCandidate {
+            if (
+              resolution.status !== "RESOLVED" ||
+              !resolution.spotifyArtist ||
+              !resolution.spotifyTrack
+            ) {
+              throw new Error("resolved Spotify artist and track are required");
+            }
+            const canonicalArtistName = resolution.spotifyArtist.name;
+            return {
+              ...candidate,
+              providerArtistName: candidate.artistName,
+              artistName: canonicalArtistName,
+              normalizedArtistName: normalized(canonicalArtistName),
+              scoreCard: {
+                ...candidate.scoreCard,
+                artistName: canonicalArtistName,
+              },
+              spotifyArtistId: resolution.spotifyArtist.id,
+              spotifyTrackId: resolution.spotifyTrack.id,
+              trackName: resolution.spotifyTrack.name,
+              albumName: resolution.spotifyTrack.albumName,
+              resolutionReason: resolution.reason,
+            };
+          }
+
+          export function isResolvedDirectAffinityArtist(
+            spotifyArtistId: string,
+            directSpotifyArtistIds: ReadonlySet<string>,
+          ): boolean {'''
+          if anchor not in text:
+              raise SystemExit('helper insertion anchor not found')
+          text = text.replace(anchor, helper, 1)
+          service.write_text(text)
+
+          test = Path('src/services/music-preference/liked-discovery-expansion-shadow.test.ts')
+          text = test.read_text()
+          old = '''  likedTrackCountAffinity,
+            rankLikedExpansionAggregates,'''
+          new = '''  likedTrackCountAffinity,
+            materializeResolvedExpansionCandidate,
+            rankLikedExpansionAggregates,'''
+          if old not in text:
+              raise SystemExit('test import anchor not found')
+          text = text.replace(old, new, 1)
+
+          anchor = '''test("expanded discovery can introduce resolved related artists without mutating current pool rows", () => {'''
+          regression = '''test("resolved expansion uses Spotify canonical artist name and preserves provider label", () => {
+            const candidate = rankLikedExpansionAggregates({
+              directAffinities: direct,
+              similarityEdges: [
+                edge("candidate:doors", "The Doors", "seed-a", "Seed A", 0.9),
+              ],
+            }).rows[0]!;
+            const canonicalArtist = {
+              id: "spotify-doors",
+              name: "Doors",
+              uri: "spotify:artist:spotify-doors",
+              spotifyUrl: null,
+            };
+            const resolved = materializeResolvedExpansionCandidate(candidate, {
+              candidateKey: candidate.candidateKey,
+              status: "RESOLVED",
+              reason: "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK",
+              spotifyArtist: canonicalArtist,
+              spotifyTrack: {
+                id: "track-doors",
+                name: "Representative Track",
+                uri: "spotify:track:track-doors",
+                spotifyUrl: null,
+                isrc: null,
+                artists: [canonicalArtist],
+                albumId: "album-doors",
+                albumName: "Representative Album",
+                durationMs: 180000,
+              },
+              alternatives: [],
+            });
+
+            assert.equal(resolved.providerArtistName, "The Doors");
+            assert.equal(resolved.artistName, "Doors");
+            assert.equal(resolved.normalizedArtistName, "doors");
+            assert.equal(resolved.scoreCard.artistName, "Doors");
+            assert.equal(resolved.spotifyArtistId, "spotify-doors");
+            assert.equal(resolved.spotifyTrackId, "track-doors");
+          });
+
+          test("expanded discovery can introduce resolved related artists without mutating current pool rows", () => {'''
+          if anchor not in text:
+              raise SystemExit('test insertion anchor not found')
+          text = text.replace(anchor, regression, 1)
+
+          old = '''  const expansion: LikedExpansionResolvedCandidate = {
+              candidateKey: "candidate:new",'''
+          new = '''  const expansion: LikedExpansionResolvedCandidate = {
+              candidateKey: "candidate:new",
+              providerArtistName: "New Artist",'''
+          if old not in text:
+              raise SystemExit('test resolved object anchor not found')
+          text = text.replace(old, new, 1)
+          test.write_text(text)
+          PY
+
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add src/services/music-preference/liked-discovery-expansion-shadow.ts src/services/music-preference/liked-discovery-expansion-shadow.test.ts
+          git commit -m "fix: canonicalize LIKED resolved artist labels"
+          git push origin HEAD:feat/liked-01-gate6a
+
   validate:
     runs-on: ubuntu-latest
     services:
