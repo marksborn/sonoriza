@@ -1,0 +1,54 @@
+name: Patch LIKED-01 Gate 6A dominant-seed score
+
+on:
+  push:
+    branches:
+      - feat/liked-01-gate6a
+    paths:
+      - ".github/workflows/patch-liked-01-gate6a-seed-score.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate6a
+          fetch-depth: 0
+      - name: Keep similarity and affinity on the same evidence path
+        shell: python
+        run: |
+          from pathlib import Path
+
+          service = Path("src/services/music-preference/liked-discovery-expansion-shadow.ts")
+          text = service.read_text()
+          old = '''      similarity: aggregate.maxSimilarity,\n      seedArtistAffinity: aggregate.bestSeed.affinity,'''
+          new = '''      // Do not synthesize a stronger path by combining similarity from one\n      // seed with explicit affinity from another. The dominant evidence path\n      // supplies both terms; multi-seed support remains an audit/tie-break signal.\n      similarity: aggregate.bestSeed.similarity,\n      seedArtistAffinity: aggregate.bestSeed.affinity,'''
+          if text.count(old) != 1:
+              raise SystemExit("aggregate scoring marker not found exactly once")
+          text = text.replace(old, new, 1)
+          old = '''          similarity: row.maxSimilarity,\n          seedArtistAffinity: row.dominantSeed.affinity,'''
+          new = '''          similarity: row.dominantSeed.similarity,\n          seedArtistAffinity: row.dominantSeed.affinity,'''
+          if text.count(old) != 1:
+              raise SystemExit("history rescore marker not found exactly once")
+          service.write_text(text.replace(old, new, 1))
+
+          test_file = Path("src/services/music-preference/liked-discovery-expansion-shadow.test.ts")
+          tests = test_file.read_text()
+          old = '''  assert.equal(row.scoreCard.score, 99);'''
+          new = '''  // Seed A wins the existing external-discovery path score using its own\n  // similarity (0.8) and affinity (1.0); similarity=1.0 from Seed B is not stacked.\n  assert.equal(row.scoreCard.score, 89);'''
+          if tests.count(old) != 1:
+              raise SystemExit("score assertion marker not found exactly once")
+          test_file.write_text(tests.replace(old, new, 1))
+      - name: Commit patch
+        run: |
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add src/services/music-preference/liked-discovery-expansion-shadow.ts \
+                  src/services/music-preference/liked-discovery-expansion-shadow.test.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: keep LIKED expansion score on one evidence path"
+          git push origin HEAD:feat/liked-01-gate6a
