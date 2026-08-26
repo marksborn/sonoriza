@@ -143,6 +143,14 @@ async function main() {
           .join("; ")
       : "none",
   );
+  p(
+    "Exits vs LIKED overlay:",
+    report.changes.exitsVsLikedOverlay.length > 0
+      ? report.changes.exitsVsLikedOverlay
+          .map((row) => `${row.artistName} — ${row.trackName}`)
+          .join("; ")
+      : "none",
+  );
 
   console.log();
   console.log(

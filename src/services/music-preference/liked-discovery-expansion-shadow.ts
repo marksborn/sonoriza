@@ -193,15 +193,15 @@ export async function getLikedDiscoveryExpansionShadowReport(
         similarity: true,
       },
     }),
-    prisma.trackListeningEvent.findMany({
+    // Keep canonical-history identity aggregation in PostgreSQL. Prisma's
+    // client-side distinct can otherwise materialize one row per listening event.
+    prisma.trackListeningEvent.groupBy({
+      by: ["primaryArtistId"],
       where: { userId, primaryArtistId: { not: null } },
-      select: { primaryArtistId: true },
-      distinct: ["primaryArtistId"],
     }),
-    prisma.trackListeningEvent.findMany({
+    prisma.trackListeningEvent.groupBy({
+      by: ["artistName"],
       where: { userId },
-      select: { artistName: true },
-      distinct: ["artistName"],
     }),
   ]);
 
