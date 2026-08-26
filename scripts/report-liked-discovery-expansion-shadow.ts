@@ -85,6 +85,10 @@ async function main() {
     "  rejected resolved direct artists:",
     report.resolution.rejectedResolvedDirectArtists,
   );
+  p(
+    "  rejected resolved historical artists:",
+    report.resolution.rejectedResolvedHistoricalArtists,
+  );
   p("  provider failures:", report.resolution.failures.length);
   p("  Spotify catalog calls:", report.resolution.spotifyCatalogCalls);
   p("  Spotify failures:", report.resolution.spotifyFailures);

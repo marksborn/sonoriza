@@ -119,6 +119,7 @@ export type LikedDiscoveryExpansionShadowReport = {
     ambiguous: number;
     notFound: number;
     rejectedResolvedDirectArtists: number;
+    rejectedResolvedHistoricalArtists: number;
     failures: Array<{ candidateKey: string; error: string }>;
     spotifyCatalogCalls: number;
     spotifyFailures: number;
@@ -153,7 +154,12 @@ export async function getLikedDiscoveryExpansionShadowReport(
     externalReferenceLimit: LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.topPerCategory,
   });
 
-  const [directAffinities, activeSeeds, similarityEdges] = await Promise.all([
+  const [
+    directAffinities,
+    activeSeeds,
+    similarityEdges,
+    historicalSpotifyArtists,
+  ] = await Promise.all([
     prisma.artistAffinityState.findMany({
       where: { userId, active: true },
       select: {
@@ -184,6 +190,11 @@ export async function getLikedDiscoveryExpansionShadowReport(
         sourceArtistName: true,
         similarity: true,
       },
+    }),
+    prisma.trackListeningEvent.findMany({
+      where: { userId, primaryArtistId: { not: null } },
+      select: { primaryArtistId: true },
+      distinct: ["primaryArtistId"],
     }),
   ]);
 
@@ -224,6 +235,11 @@ export async function getLikedDiscoveryExpansionShadowReport(
   const directSpotifyArtistIds = new Set(
     directAffinities.map((row) => row.spotifyArtistId),
   );
+  const historicalSpotifyArtistIds = new Set(
+    historicalSpotifyArtists
+      .map((row) => row.primaryArtistId)
+      .filter((value): value is string => Boolean(value)),
+  );
   const baselineTrackIds = new Set(
     baseline.discovery
       .map((row) => row.spotifyTrackId)
@@ -236,6 +252,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
   let ambiguous = 0;
   let notFound = 0;
   let rejectedResolvedDirectArtists = 0;
+  let rejectedResolvedHistoricalArtists = 0;
 
   for (const candidate of selection.selected) {
     if (
@@ -271,6 +288,18 @@ export async function getLikedDiscoveryExpansionShadowReport(
         )
       ) {
         rejectedResolvedDirectArtists += 1;
+        continue;
+      }
+      // Last.fm names/MBIDs are pre-resolution evidence. Once Spotify gives us
+      // canonical identity, reject any artist already present in canonical
+      // listening history even if an alias or missing MBID escaped the probe.
+      if (
+        isResolvedHistoricalArtist(
+          resolution.spotifyArtist.id,
+          historicalSpotifyArtistIds,
+        )
+      ) {
+        rejectedResolvedHistoricalArtists += 1;
         continue;
       }
       if (baselineTrackIds.has(resolution.spotifyTrack.id)) continue;
@@ -338,6 +367,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
       ambiguous,
       notFound,
       rejectedResolvedDirectArtists,
+      rejectedResolvedHistoricalArtists,
       failures,
       spotifyCatalogCalls: spotifyMetrics.totalCalls,
       spotifyFailures: spotifyMetrics.failures,
@@ -691,6 +721,13 @@ export function isResolvedDirectAffinityArtist(
   directSpotifyArtistIds: ReadonlySet<string>,
 ): boolean {
   return directSpotifyArtistIds.has(spotifyArtistId);
+}
+
+export function isResolvedHistoricalArtist(
+  spotifyArtistId: string,
+  historicalSpotifyArtistIds: ReadonlySet<string>,
+): boolean {
+  return historicalSpotifyArtistIds.has(spotifyArtistId);
 }
 
 function betterSeed(

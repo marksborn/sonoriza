@@ -7,6 +7,7 @@ import {
   buildLikedExpandedDiscoveryTop,
   buildLikedExpansionHistoryCounts,
   isResolvedDirectAffinityArtist,
+  isResolvedHistoricalArtist,
   likedTrackCountAffinity,
   rankLikedExpansionAggregates,
   selectLikedExpansionResolutionCandidates,
@@ -169,6 +170,15 @@ test("resolved Spotify identity cannot re-enter a directly liked artist through 
   const directIds = new Set(["spotify-direct"]);
   assert.equal(isResolvedDirectAffinityArtist("spotify-direct", directIds), true);
   assert.equal(isResolvedDirectAffinityArtist("spotify-new", directIds), false);
+});
+
+test("resolved Spotify identity cannot re-enter a historically known artist through an alias without MBID", () => {
+  const historicalIds = new Set(["spotify-known-history"]);
+  assert.equal(
+    isResolvedHistoricalArtist("spotify-known-history", historicalIds),
+    true,
+  );
+  assert.equal(isResolvedHistoricalArtist("spotify-new", historicalIds), false);
 });
 
 test("expanded discovery can introduce resolved related artists without mutating current pool rows", () => {
