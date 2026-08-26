@@ -334,8 +334,8 @@ export async function getLikedDiscoveryExpansionShadowReport(
       if (seenTrackIds.has(resolution.spotifyTrack.id)) continue;
       seenTrackIds.add(resolution.spotifyTrack.id);
       resolvedCandidates.push(
-  materializeResolvedExpansionCandidate(candidate, resolution),
-);
+        materializeResolvedExpansionCandidate(candidate, resolution),
+      );
     } catch (error) {
       failures.push({
         candidateKey: candidate.candidateKey,
