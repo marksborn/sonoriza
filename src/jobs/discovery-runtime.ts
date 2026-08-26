@@ -18,6 +18,12 @@ import {
   targetUsesExternalDiscovery,
 } from "@/services/music-discovery/target-discovery-runtime-policy";
 import { getDiscoveryTrackIdentityEvidence } from "@/services/music-discovery/track-identity";
+import {
+  discoveriesForPilotTarget,
+  likedDiscoveryPilotTargetIds,
+  mergeLikedPilotWithStandardDiscovery,
+  resolveLikedDiscoveryPilotRuntime,
+} from "@/services/music-preference/liked-discovery-pilot-runtime";
 import type {
   Candidate,
   PlanRunResult,
@@ -385,15 +391,44 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
     return input.plan;
   }
 
-  if (external.discoveries.length === 0) {
+  const pilotTargetIds = likedDiscoveryPilotTargetIds();
+  const hasEligiblePilotTarget = Boolean(
+    targetScoped &&
+      eligibleTargetIds &&
+      [...eligibleTargetIds].some((targetId) => pilotTargetIds.has(targetId)),
+  );
+  const likedPilot = await resolveLikedDiscoveryPilotRuntime({
+    userId: state.userId,
+    userEmail: state.userEmail,
+    baseDiscoveryEnabled: hasEligiblePilotTarget,
+    masterEnabled: process.env.LIKED_DISCOVERY_PILOT_ENABLED,
+    allowlistedEmails: process.env.LIKED_DISCOVERY_PILOT_USER_EMAILS,
+    allowlistedTargetIds: process.env.LIKED_DISCOVERY_PILOT_TARGET_IDS,
+  });
+  const mergedDiscovery = mergeLikedPilotWithStandardDiscovery({
+    standard: external.discoveries,
+    pilot: likedPilot.discovery,
+  });
+  const discoveries = mergedDiscovery.discoveries;
+  const likedPilotEvidence = {
+    ...likedPilot.evidence,
+    duplicateSuppressedAgainstStandardDiscovery:
+      mergedDiscovery.duplicateSuppressed,
+  };
+  const acquisitionEvidence = {
+    ...external.evidence,
+    likedPilot: likedPilotEvidence,
+  };
+
+  if (discoveries.length === 0) {
     state.gate5h.invariantsPassed = true;
     state.gate5h.evidence = {
-      acquisition: external.evidence,
+      acquisition: acquisitionEvidence,
       abstained: "NO_RESOLVED_DISCOVERY",
     };
     if (targetRuntime?.enabled) {
       targetRuntime.evidence = mergeEvidence(targetRuntime.evidence, {
-        external: { abstained: "NO_RESOLVED_DISCOVERY" },
+        external: { abstained: "NO_RESOLVED_DISCOVERY", likedPilot: likedPilotEvidence },
       });
     }
     return input.plan;
@@ -421,7 +456,7 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
       const applied = applyTargetScopedExternalDiscovery({
         baseline: input.plan,
         targets: input.targets,
-        discoveries: external.discoveries,
+        discoveries,
         blockedMusicTrackIdsByTargetId: blockedByTarget,
         eligibleTargetIds: eligibleTargetIds!,
         targetRuntime,
@@ -430,7 +465,7 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
       state.gate5h.invariantsPassed = applied.invariantsPassed;
       state.gate5h.selectedDiscoveryCount = applied.selectedDiscoveryCount;
       state.gate5h.evidence = {
-        acquisition: external.evidence,
+        acquisition: acquisitionEvidence,
         mode: "PER_TARGET",
         eligibleTargetIds: [...eligibleTargetIds!],
         selectedDiscoveryCount: applied.selectedDiscoveryCount,
@@ -444,6 +479,7 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
           eligibleTargetIds: [...eligibleTargetIds!],
           selectedDiscoveryCount: applied.selectedDiscoveryCount,
           replacements: applied.replacements,
+          likedPilot: likedPilotEvidence,
         },
       });
       if (!applied.invariantsPassed) {
@@ -456,7 +492,7 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
     const applied = applyDiscoveryGate5H({
       baseline: input.plan,
       targets: input.targets,
-      discoveries: external.discoveries,
+      discoveries,
       blockedMusicTrackIdsByTargetId: blockedByTarget,
       keepFilledTargetIds: input.keepFilledTargetIds,
     });
@@ -464,13 +500,13 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
     state.gate5h.invariantsPassed = applied.invariantsPassed;
     state.gate5h.selectedDiscoveryCount = applied.selectedDiscoveryCount;
     state.gate5h.evidence = {
-      acquisition: external.evidence,
+      acquisition: acquisitionEvidence,
       selectedDiscoveryCount: applied.selectedDiscoveryCount,
       skippedKeepFilledTargetIds: applied.skippedKeepFilledTargetIds,
       surgical: applied.preview?.evidence ?? null,
       replacements: replacementEvidence(
         applied.preview?.targets ?? [],
-        external.discoveries,
+        discoveries,
         false,
       ),
     };
@@ -484,7 +520,7 @@ export async function applyDiscoveryGate5HForCurrentRun(input: {
     state.gate5h.failure = `SURGICAL_APPLY_FAILED_ABSTAIN: ${message}`;
     state.gate5h.invariantsPassed = true;
     state.gate5h.evidence = {
-      acquisition: external.evidence,
+      acquisition: acquisitionEvidence,
       abstained: "SURGICAL_APPLY_ERROR",
       error: message,
     };
@@ -520,6 +556,7 @@ function applyTargetScopedExternalDiscovery(input: {
   const targetById = new Map(
     input.targets.map((target) => [target.targetPlaylistId, target] as const),
   );
+  const pilotTargetIds = likedDiscoveryPilotTargetIds();
 
   for (const planned of input.baseline.targets) {
     if (!input.eligibleTargetIds.has(planned.targetPlaylistId)) continue;
@@ -533,10 +570,15 @@ function applyTargetScopedExternalDiscovery(input: {
     );
     if (!current) continue;
 
+    const targetDiscoveries = discoveriesForPilotTarget(
+      remaining,
+      planned.targetPlaylistId,
+      pilotTargetIds,
+    );
     const applied = applyDiscoveryGate5H({
       baseline: { targets: [current] },
       targets: [target],
-      discoveries: remaining,
+      discoveries: targetDiscoveries,
       blockedMusicTrackIdsByTargetId: input.blockedMusicTrackIdsByTargetId,
       discoveryCeiling: caps.externalDiscoveryCeiling,
     });
@@ -546,6 +588,10 @@ function applyTargetScopedExternalDiscovery(input: {
       targetName: planned.name,
       intensity: policy.intensity,
       discoveryCeiling: caps.externalDiscoveryCeiling,
+      likedPilotAllowed: pilotTargetIds.has(planned.targetPlaylistId),
+      likedPilotCandidateAvailable: targetDiscoveries.some(
+        (row) => row.pathLabel === "LIKED_SIMILAR_EXPLORATORY",
+      ),
       applied: applied.applied,
       invariantsPassed: applied.invariantsPassed,
       selectedDiscoveryCount: applied.selectedDiscoveryCount,
@@ -565,7 +611,7 @@ function applyTargetScopedExternalDiscovery(input: {
 
     const selected = replacementEvidence(
       applied.preview?.targets ?? [],
-      input.discoveries,
+      targetDiscoveries,
       true,
     );
     replacements.push(...selected);
@@ -642,7 +688,14 @@ function replacementEvidence(
       return {
         targetPlaylistId: target.targetPlaylistId,
         targetName: target.name,
-        ...(includeFamily ? { family: "DISCOVERY" } : {}),
+        ...(includeFamily
+          ? {
+              family:
+                resolved?.pathLabel === "LIKED_SIMILAR_EXPLORATORY"
+                  ? "LIKED_DISCOVERY"
+                  : "DISCOVERY",
+            }
+          : {}),
         musicOrdinal: replacement.musicOrdinal,
         overallPosition: replacement.overallPosition,
         baselineUri: replacement.baseline.uri,
