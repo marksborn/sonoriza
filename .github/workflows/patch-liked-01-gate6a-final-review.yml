@@ -1,0 +1,61 @@
+name: Patch LIKED-01 Gate 6A final review items
+
+on:
+  push:
+    branches:
+      - feat/liked-01-gate6a
+    paths:
+      - ".github/workflows/patch-liked-01-gate6a-final-review.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/liked-01-gate6a
+          fetch-depth: 0
+      - name: Apply database aggregation and report symmetry fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one marker, got {count}")
+              return text.replace(old, new, 1)
+
+          service = Path("src/services/music-preference/liked-discovery-expansion-shadow.ts")
+          text = service.read_text()
+
+          text = replace_once(
+              text,
+              '''    prisma.trackListeningEvent.findMany({\n      where: { userId, primaryArtistId: { not: null } },\n      select: { primaryArtistId: true },\n      distinct: ["primaryArtistId"],\n    }),\n    prisma.trackListeningEvent.findMany({\n      where: { userId },\n      select: { artistName: true },\n      distinct: ["artistName"],\n    }),''',
+              '''    // Keep canonical-history identity aggregation in PostgreSQL. Prisma's\n    // client-side distinct can otherwise materialize one row per listening event.\n    prisma.trackListeningEvent.groupBy({\n      by: ["primaryArtistId"],\n      where: { userId, primaryArtistId: { not: null } },\n    }),\n    prisma.trackListeningEvent.groupBy({\n      by: ["artistName"],\n      where: { userId },\n    }),''',
+              "database history aggregation",
+          )
+          service.write_text(text)
+
+          cli = Path("scripts/report-liked-discovery-expansion-shadow.ts")
+          cli_text = cli.read_text()
+          cli_text = replace_once(
+              cli_text,
+              '''  p(\n    "Entrants vs LIKED overlay:",\n    report.changes.entrantsVsLikedOverlay.length > 0\n      ? report.changes.entrantsVsLikedOverlay\n          .map((row) => `${row.artistName} — ${row.trackName}`)\n          .join("; ")\n      : "none",\n  );\n\n  console.log();''',
+              '''  p(\n    "Entrants vs LIKED overlay:",\n    report.changes.entrantsVsLikedOverlay.length > 0\n      ? report.changes.entrantsVsLikedOverlay\n          .map((row) => `${row.artistName} — ${row.trackName}`)\n          .join("; ")\n      : "none",\n  );\n  p(\n    "Exits vs LIKED overlay:",\n    report.changes.exitsVsLikedOverlay.length > 0\n      ? report.changes.exitsVsLikedOverlay\n          .map((row) => `${row.artistName} — ${row.trackName}`)\n          .join("; ")\n      : "none",\n  );\n\n  console.log();''',
+              "liked overlay exits output",
+          )
+          cli.write_text(cli_text)
+
+      - name: Commit patch
+        run: |
+          git config user.name "Marcos Nascimento"
+          git config user.email "nascimento@itscontrol.com.br"
+          git add src/services/music-preference/liked-discovery-expansion-shadow.ts \
+                  scripts/report-liked-discovery-expansion-shadow.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: close LIKED Gate 6A review diagnostics"
+          git push origin HEAD:feat/liked-01-gate6a
