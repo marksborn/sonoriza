@@ -11,6 +11,7 @@ import {
   isResolvedDirectAffinityArtist,
   isResolvedHistoricalArtist,
   likedTrackCountAffinity,
+  materializeResolvedExpansionCandidate,
   rankLikedExpansionAggregates,
   selectLikedExpansionResolutionCandidates,
   type LikedExpansionResolvedCandidate,
@@ -235,6 +236,46 @@ test("resolved canonical artist name re-applies represented baseline exclusion",
   assert.equal(hasEquivalentArtistName(representedArtistNames, "blur"), false);
 });
 
+test("resolved expansion uses Spotify canonical artist name and preserves provider label", () => {
+  const candidate = rankLikedExpansionAggregates({
+    directAffinities: direct,
+    similarityEdges: [
+      edge("candidate:doors", "The Doors", "seed-a", "Seed A", 0.9),
+    ],
+  }).rows[0]!;
+  const canonicalArtist = {
+    id: "spotify-doors",
+    name: "Doors",
+    uri: "spotify:artist:spotify-doors",
+    spotifyUrl: null,
+  };
+  const resolved = materializeResolvedExpansionCandidate(candidate, {
+    candidateKey: candidate.candidateKey,
+    status: "RESOLVED",
+    reason: "CONTROLLED_ARTIST_ALIAS_WITH_REPRESENTATIVE_TRACK",
+    spotifyArtist: canonicalArtist,
+    spotifyTrack: {
+      id: "track-doors",
+      name: "Representative Track",
+      uri: "spotify:track:track-doors",
+      spotifyUrl: null,
+      isrc: null,
+      artists: [canonicalArtist],
+      albumId: "album-doors",
+      albumName: "Representative Album",
+      durationMs: 180000,
+    },
+    alternatives: [],
+  });
+
+  assert.equal(resolved.providerArtistName, "The Doors");
+  assert.equal(resolved.artistName, "Doors");
+  assert.equal(resolved.normalizedArtistName, "doors");
+  assert.equal(resolved.scoreCard.artistName, "Doors");
+  assert.equal(resolved.spotifyArtistId, "spotify-doors");
+  assert.equal(resolved.spotifyTrackId, "track-doors");
+});
+
 test("expanded discovery can introduce resolved related artists without mutating current pool rows", () => {
   const currentTop = [
     {
@@ -266,6 +307,7 @@ test("expanded discovery can introduce resolved related artists without mutating
   ];
   const expansion: LikedExpansionResolvedCandidate = {
     candidateKey: "candidate:new",
+    providerArtistName: "New Artist",
     candidateArtistMbid: null,
     artistName: "New Artist",
     normalizedArtistName: "new artist",

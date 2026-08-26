@@ -6,7 +6,10 @@ import {
   scoreExternalDiscoveryCandidate,
   type ExternalDiscoveryCandidateScore,
 } from "@/services/music-discovery/scoring";
-import { resolveExternalDiscoveryCandidate } from "@/services/music-discovery/spotify-resolution";
+import {
+  resolveExternalDiscoveryCandidate,
+  type SpotifyDiscoveryResolution,
+} from "@/services/music-discovery/spotify-resolution";
 import { SpotifyCatalogSearchClient } from "@/services/spotify/catalog-search";
 
 import {
@@ -52,6 +55,7 @@ export type LikedExpansionAggregate = {
 };
 
 export type LikedExpansionResolvedCandidate = LikedExpansionAggregate & {
+  providerArtistName: string;
   spotifyArtistId: string;
   spotifyTrackId: string;
   trackName: string;
@@ -329,14 +333,9 @@ export async function getLikedDiscoveryExpansionShadowReport(
       if (baselineTrackIds.has(resolution.spotifyTrack.id)) continue;
       if (seenTrackIds.has(resolution.spotifyTrack.id)) continue;
       seenTrackIds.add(resolution.spotifyTrack.id);
-      resolvedCandidates.push({
-        ...candidate,
-        spotifyArtistId: resolution.spotifyArtist.id,
-        spotifyTrackId: resolution.spotifyTrack.id,
-        trackName: resolution.spotifyTrack.name,
-        albumName: resolution.spotifyTrack.albumName,
-        resolutionReason: resolution.reason,
-      });
+      resolvedCandidates.push(
+  materializeResolvedExpansionCandidate(candidate, resolution),
+);
     } catch (error) {
       failures.push({
         candidateKey: candidate.candidateKey,
@@ -739,6 +738,35 @@ async function getArtistHistoryCounts(
       count: row._count._all,
     })),
   );
+}
+
+export function materializeResolvedExpansionCandidate(
+  candidate: LikedExpansionAggregate,
+  resolution: SpotifyDiscoveryResolution,
+): LikedExpansionResolvedCandidate {
+  if (
+    resolution.status !== "RESOLVED" ||
+    !resolution.spotifyArtist ||
+    !resolution.spotifyTrack
+  ) {
+    throw new Error("resolved Spotify artist and track are required");
+  }
+  const canonicalArtistName = resolution.spotifyArtist.name;
+  return {
+    ...candidate,
+    providerArtistName: candidate.artistName,
+    artistName: canonicalArtistName,
+    normalizedArtistName: normalized(canonicalArtistName),
+    scoreCard: {
+      ...candidate.scoreCard,
+      artistName: canonicalArtistName,
+    },
+    spotifyArtistId: resolution.spotifyArtist.id,
+    spotifyTrackId: resolution.spotifyTrack.id,
+    trackName: resolution.spotifyTrack.name,
+    albumName: resolution.spotifyTrack.albumName,
+    resolutionReason: resolution.reason,
+  };
 }
 
 export function isResolvedDirectAffinityArtist(
