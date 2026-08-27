@@ -172,7 +172,7 @@ export default async function DestinationsDiscoveryLayout({
             </div>
 
             <div className="mt-4 flex items-start gap-3 rounded-2xl border border-line-dark/55 bg-surface-subtle/55 px-4 py-3 text-xs font-semibold leading-5 text-muted-inverse">
-              <UiIcon name="info" size={17} className="mt-0.5 shrink-0 text-brand-400" />
+              <UiIcon name="music" size={17} className="mt-0.5 shrink-0 text-brand-400" />
               <span>
                 Salvar atualiza somente a política deste destino. Nenhuma geração é iniciada e nenhuma playlist é alterada imediatamente.
               </span>
