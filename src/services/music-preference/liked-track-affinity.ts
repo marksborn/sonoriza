@@ -24,6 +24,7 @@ export type ExistingLikedTrack = {
   albumId: string | null;
   albumName: string | null;
   addedAt: Date | null;
+  durationMs?: number | null;
   isLiked: boolean;
   availability: LikedTrackAvailability;
 };
@@ -60,6 +61,7 @@ export type PlannedLikedTrack = {
   albumId: string | null;
   albumName: string | null;
   addedAt: Date | null;
+  durationMs: number | null;
   availability: LikedTrackAvailability;
 };
 
@@ -195,6 +197,7 @@ export async function loadExistingLikedTrackAffinityState(
         albumId: true,
         albumName: true,
         addedAt: true,
+        durationMs: true,
         isLiked: true,
         availability: true,
       },
@@ -454,6 +457,7 @@ export async function applyLikedTrackAffinityPlan(
             albumId: track.albumId,
             albumName: track.albumName,
             addedAt: track.addedAt,
+            durationMs: track.durationMs,
             availability: track.availability,
           },
         });
@@ -620,6 +624,7 @@ function toPlannedTrack(item: LikedTrackInventoryItem): PlannedLikedTrack {
     albumId: normalizeText(item.albumId),
     albumName: normalizeText(item.albumName),
     addedAt: parseDate(item.addedAt),
+    durationMs: normalizeDurationMs(item.durationMs),
     availability: availabilityFromInventory(item.status),
   };
 }
@@ -653,6 +658,7 @@ function sameTrackMetadata(
     normalizeText(previous.albumId) === normalizeText(current.albumId) &&
     normalizeText(previous.albumName) === normalizeText(current.albumName) &&
     dateValue(previous.addedAt) === dateValue(current.addedAt) &&
+    normalizeDurationMs(previous.durationMs) === current.durationMs &&
     previous.availability === current.availability
   );
 }
@@ -671,6 +677,10 @@ function parseDate(value: string | null): Date | null {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function normalizeDurationMs(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 function dateValue(value: Date | null): number | null {
