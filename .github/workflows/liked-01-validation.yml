@@ -7,6 +7,11 @@ on:
       - "src/services/music-preference/**"
       - "src/services/music-discovery/**"
       - "src/jobs/discovery-runtime.ts"
+      - "src/jobs/generate-playlists.ts"
+      - "src/jobs/incremental-planning.ts"
+      - "src/jobs/liked-track-source-shadow.ts"
+      - "src/jobs/liked-track-source-shadow.test.ts"
+      - "src/jobs/music-repeat-runtime.ts"
       - "scripts/report-liked-track-affinity.ts"
       - "scripts/report-liked-artist-similarity.ts"
       - "scripts/report-liked-shadow-discovery.ts"
@@ -14,6 +19,7 @@ on:
       - "scripts/report-liked-discovery-expansion-shadow.ts"
       - "scripts/report-liked-discovery-calibration-shadow.ts"
       - "scripts/report-liked-discovery-pilot-runtime.ts"
+      - "scripts/report-liked-track-planner-shadow.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
   push:
@@ -24,6 +30,11 @@ on:
       - "src/services/music-preference/**"
       - "src/services/music-discovery/**"
       - "src/jobs/discovery-runtime.ts"
+      - "src/jobs/generate-playlists.ts"
+      - "src/jobs/incremental-planning.ts"
+      - "src/jobs/liked-track-source-shadow.ts"
+      - "src/jobs/liked-track-source-shadow.test.ts"
+      - "src/jobs/music-repeat-runtime.ts"
       - "scripts/report-liked-track-affinity.ts"
       - "scripts/report-liked-artist-similarity.ts"
       - "scripts/report-liked-shadow-discovery.ts"
@@ -31,6 +42,7 @@ on:
       - "scripts/report-liked-discovery-expansion-shadow.ts"
       - "scripts/report-liked-discovery-calibration-shadow.ts"
       - "scripts/report-liked-discovery-pilot-runtime.ts"
+      - "scripts/report-liked-track-planner-shadow.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
 
@@ -71,5 +83,6 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npm run test:music-preference
+      - run: npm run test:incremental
       - run: npm run typecheck
       - run: npm run build
