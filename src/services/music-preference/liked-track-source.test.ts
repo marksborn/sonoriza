@@ -12,20 +12,43 @@ import {
 
 const NOW = new Date("2026-08-27T12:00:00.000Z");
 
-function row(
-  overrides: Partial<LikedTrackSourceRow> & Pick<LikedTrackSourceRow, "spotifyTrackId">,
-): LikedTrackSourceRow {
+type RowOverrides = Partial<LikedTrackSourceRow> &
+  Pick<LikedTrackSourceRow, "spotifyTrackId">;
+
+function explicitOr<K extends keyof LikedTrackSourceRow>(
+  overrides: RowOverrides,
+  key: K,
+  fallback: LikedTrackSourceRow[K],
+): LikedTrackSourceRow[K] {
+  return Object.prototype.hasOwnProperty.call(overrides, key)
+    ? (overrides[key] as LikedTrackSourceRow[K])
+    : fallback;
+}
+
+function row(overrides: RowOverrides): LikedTrackSourceRow {
   return {
     spotifyTrackId: overrides.spotifyTrackId,
-    spotifyUri: overrides.spotifyUri ?? `spotify:track:${overrides.spotifyTrackId}`,
-    trackName: overrides.trackName ?? "Track",
-    primaryArtistId: overrides.primaryArtistId ?? "artist-1",
-    primaryArtistName: overrides.primaryArtistName ?? "Artist",
-    albumId: overrides.albumId ?? "album-1",
-    albumName: overrides.albumName ?? "Album",
-    addedAt: overrides.addedAt ?? new Date("2026-08-20T00:00:00.000Z"),
-    availability: overrides.availability ?? LikedTrackAvailability.AVAILABLE,
-    lastObservedAt: overrides.lastObservedAt ?? NOW,
+    spotifyUri: explicitOr(
+      overrides,
+      "spotifyUri",
+      `spotify:track:${overrides.spotifyTrackId}`,
+    ),
+    trackName: explicitOr(overrides, "trackName", "Track"),
+    primaryArtistId: explicitOr(overrides, "primaryArtistId", "artist-1"),
+    primaryArtistName: explicitOr(overrides, "primaryArtistName", "Artist"),
+    albumId: explicitOr(overrides, "albumId", "album-1"),
+    albumName: explicitOr(overrides, "albumName", "Album"),
+    addedAt: explicitOr(
+      overrides,
+      "addedAt",
+      new Date("2026-08-20T00:00:00.000Z"),
+    ),
+    availability: explicitOr(
+      overrides,
+      "availability",
+      LikedTrackAvailability.AVAILABLE,
+    ),
+    lastObservedAt: explicitOr(overrides, "lastObservedAt", NOW),
   };
 }
 
@@ -95,9 +118,18 @@ test("buildLikedTrackSourceSnapshot keeps freshness and sample deterministic", (
     NOW,
   );
 
-  assert.equal(snapshot.freshness.newestAddedAt?.toISOString(), "2026-08-25T00:00:00.000Z");
-  assert.equal(snapshot.freshness.oldestAddedAt?.toISOString(), "2020-01-01T00:00:00.000Z");
-  assert.equal(snapshot.freshness.latestObservedAt?.toISOString(), "2026-08-27T11:00:00.000Z");
+  assert.equal(
+    snapshot.freshness.newestAddedAt?.toISOString(),
+    "2026-08-25T00:00:00.000Z",
+  );
+  assert.equal(
+    snapshot.freshness.oldestAddedAt?.toISOString(),
+    "2020-01-01T00:00:00.000Z",
+  );
+  assert.equal(
+    snapshot.freshness.latestObservedAt?.toISOString(),
+    "2026-08-27T11:00:00.000Z",
+  );
   assert.deepEqual(
     snapshot.sample.map((item) => item.spotifyTrackId),
     ["newer", "older"],
