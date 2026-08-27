@@ -4,6 +4,8 @@ import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
 import { syncMusicIngestionRuleSerialized } from "@/services/spotify/music-ingestion-serialized";
 
+import { runLikedTrackIncrementalSyncJob } from "./liked-track-incremental-sync";
+
 export type MusicIngestionJobResult = {
   ruleId: string;
   status: "SUCCESS" | "NOOP" | "FAILED";
@@ -18,8 +20,21 @@ export type MusicIngestionJobResult = {
  * disabled until their explicit activation path has established state, so this
  * job cannot silently import historical content after deploy. AUTH-01 filters
  * removed users before any Spotify call.
+ *
+ * SOURCE-LIKED-01 Gate 4B shares this cron entry point but is independently
+ * fail-closed by its own master/user allowlist. A native-source failure is
+ * isolated and never prevents the existing inbox rules from running.
  */
 export async function runMusicIngestionJob(): Promise<MusicIngestionJobResult[]> {
+  try {
+    await runLikedTrackIncrementalSyncJob();
+  } catch (error) {
+    console.error(
+      "[SOURCE-LIKED-01][incremental-sync-job]",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   const rules = (
     await prisma.musicIngestionRule.findMany({
       where: { enabled: true },
