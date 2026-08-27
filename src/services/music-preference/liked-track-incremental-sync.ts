@@ -406,7 +406,7 @@ function availabilityToInventoryStatus(
 
 function toInventoryItem(item: SavedTrackItemResponse): LikedTrackInventoryItem {
   const raw = item.track ?? null;
-  const addedAt = clean(item.added_at);
+  const addedAt = normalizeAddedAt(item.added_at);
   const spotifyTrackId = canonicalSpotifyTrackId(raw);
   const playable = readPlayableMusicCandidate(raw);
   const candidate = playable.candidate;
@@ -432,6 +432,13 @@ function toInventoryItem(item: SavedTrackItemResponse): LikedTrackInventoryItem 
     status,
     restrictionReason: playable.restrictionReason,
   };
+}
+
+function normalizeAddedAt(value: string | null | undefined): string | null {
+  const normalized = clean(value);
+  if (!normalized) return null;
+  const timestamp = Date.parse(normalized);
+  return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
 }
 
 function clean(value: string | null | undefined): string | null {
