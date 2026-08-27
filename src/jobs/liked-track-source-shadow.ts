@@ -11,6 +11,7 @@ import {
 } from "@/services/playlist-planner";
 import { filterMusicCandidatesForRepeat } from "@/services/spotify/recently-played";
 
+import { buildLikedTrackArbitrationShadowEvidence } from "./liked-track-source-arbitration-shadow";
 import { currentMusicRepeatState } from "./music-repeat-runtime";
 
 export const LIKED_TRACK_SOURCE_SHADOW_POLICY = {
@@ -79,7 +80,7 @@ export function resolveLikedTrackSourceShadowPolicy(input: {
 }
 
 /**
- * SOURCE-LIKED-01 Gate 3B.
+ * SOURCE-LIKED-01 Gate 3B/3C.
  *
  * Prepares a local-only candidate set. A disabled/not-ready/error state never
  * blocks the authoritative generation and never changes its planner input.
@@ -109,7 +110,8 @@ export async function prepareLikedTrackSourceShadowForCurrentRun(): Promise<Prep
       ...base,
       policyEnabled: policy.enabled,
       policyReason: policy.reason,
-      userAllowlisted: policy.reason !== "USER_NOT_ALLOWLISTED" && Boolean(user?.email),
+      userAllowlisted:
+        policy.reason !== "USER_NOT_ALLOWLISTED" && Boolean(user?.email),
       targetAllowlist: [...policy.targetIds],
     };
 
@@ -204,7 +206,8 @@ export function applyLikedTrackSourceShadowForCurrentRun(
 
     for (const target of context.targets) {
       const currentPool =
-        context.musicPoolByTargetId?.get(target.targetPlaylistId) ?? context.pools.music;
+        context.musicPoolByTargetId?.get(target.targetPlaylistId) ??
+        context.pools.music;
       const currentUris = new Set(currentPool.map((candidate) => candidate.uri));
       const allowlisted = prepared.targetIds.has(target.targetPlaylistId);
       const blocked = context.blockedMusicTrackIdsByTargetId?.get(
@@ -221,12 +224,16 @@ export function applyLikedTrackSourceShadowForCurrentRun(
       );
 
       const overlap = allowlisted
-        ? prepared.candidates.filter((candidate) => currentUris.has(candidate.uri)).length
+        ? prepared.candidates.filter((candidate) => currentUris.has(candidate.uri))
+            .length
         : 0;
       const negativeBlocked = allowlisted
         ? sourceNew.filter(
             (candidate) =>
-              Boolean(candidate.spotifyTrackId) && blocked?.has(candidate.spotifyTrackId!),
+              Boolean(candidate.spotifyTrackId) &&
+              Boolean(
+                candidate.spotifyTrackId && blocked?.has(candidate.spotifyTrackId),
+              ),
           ).length
         : 0;
       targetInputs.push({
@@ -266,11 +273,14 @@ export function applyLikedTrackSourceShadowForCurrentRun(
           shadowMissing: true,
         };
       }
-      const sourceUris = sourceAddedUrisByTargetId.get(currentTarget.targetPlaylistId) ?? new Set();
+      const sourceUris =
+        sourceAddedUrisByTargetId.get(currentTarget.targetPlaylistId) ?? new Set();
       const selectedFromLiked = shadowTarget.result.items.filter((item) =>
         sourceUris.has(item.uri),
       );
-      const currentUris = new Set(currentTarget.result.items.map((item) => item.uri));
+      const currentUris = new Set(
+        currentTarget.result.items.map((item) => item.uri),
+      );
       const shadowUris = new Set(shadowTarget.result.items.map((item) => item.uri));
       return {
         targetPlaylistId: currentTarget.targetPlaylistId,
@@ -286,10 +296,31 @@ export function applyLikedTrackSourceShadowForCurrentRun(
           artist: item.primaryArtistName ?? null,
           durationMs: item.durationMs,
         })),
-        selectedAddedVsCurrent: [...shadowUris].filter((uri) => !currentUris.has(uri)).length,
-        selectedRemovedVsCurrent: [...currentUris].filter((uri) => !shadowUris.has(uri)).length,
+        selectedAddedVsCurrent: [...shadowUris].filter(
+          (uri) => !currentUris.has(uri),
+        ).length,
+        selectedRemovedVsCurrent: [...currentUris].filter(
+          (uri) => !shadowUris.has(uri),
+        ).length,
       };
     });
+
+    let arbitrationShadow: Record<string, unknown>;
+    try {
+      arbitrationShadow = buildLikedTrackArbitrationShadowEvidence({
+        prepared,
+        context,
+      }) as unknown as Record<string, unknown>;
+    } catch (error) {
+      arbitrationShadow = {
+        policyVersion: "source-liked-gate3c-v1",
+        mode: "SHADOW_ONLY",
+        plannerInfluence: false,
+        status: "ERROR",
+        reason: "ARBITRATION_SHADOW_FAILED",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
 
     const currentPlanUnchanged = planFingerprint(context.plan) === currentFingerprint;
     runState.likedTrackSourceShadow = {
@@ -315,6 +346,7 @@ export function applyLikedTrackSourceShadowForCurrentRun(
             : 0),
         0,
       ),
+      arbitrationShadow,
     };
   } catch (error) {
     runState.likedTrackSourceShadow = {
@@ -448,5 +480,7 @@ function clean(value: string | null | undefined): string | null {
 }
 
 function validDurationMs(value: number | null | undefined): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : null;
 }
