@@ -122,6 +122,7 @@ export function buildLikedTrackDurationPlan(
   const active = existing.filter((row) => row.isLiked);
   const updates: LikedTrackDurationUpdate[] = [];
   let beforeWithDuration = 0;
+  let afterWithDuration = 0;
   let unchangedWithDuration = 0;
   let missingProviderTrack = 0;
   let missingProviderDuration = 0;
@@ -130,12 +131,22 @@ export function buildLikedTrackDurationPlan(
     const currentDuration = validDurationMs(row.durationMs);
     if (currentDuration != null) beforeWithDuration += 1;
 
-    if (!providerByTrackId.has(row.spotifyTrackId)) {
+    const providerHasTrack = providerByTrackId.has(row.spotifyTrackId);
+    const providerDuration = providerHasTrack
+      ? (providerByTrackId.get(row.spotifyTrackId) ?? null)
+      : null;
+
+    // APPLY only replaces duration when the provider supplies a valid value.
+    // Otherwise the currently valid local duration, when present, survives.
+    if (providerDuration != null || currentDuration != null) {
+      afterWithDuration += 1;
+    }
+
+    if (!providerHasTrack) {
       missingProviderTrack += 1;
       continue;
     }
 
-    const providerDuration = providerByTrackId.get(row.spotifyTrackId) ?? null;
     if (providerDuration == null) {
       missingProviderDuration += 1;
       continue;
@@ -153,7 +164,6 @@ export function buildLikedTrackDurationPlan(
   }
 
   updates.sort((left, right) => left.spotifyTrackId.localeCompare(right.spotifyTrackId));
-  const afterWithDuration = Math.min(active.length, beforeWithDuration + updates.length);
 
   return {
     providerCanonicalTracks: providerByTrackId.size,
