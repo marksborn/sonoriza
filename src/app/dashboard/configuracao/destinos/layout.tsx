@@ -12,6 +12,10 @@ import {
 } from "@/services/music-discovery/target-discovery-policy";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
+const sectionClass =
+  "rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 sm:p-5";
+const discoveryOptionClass =
+  "cursor-pointer rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 transition hover:border-brand-400/45 hover:bg-surface-elevated/65 has-[:checked]:border-brand-400/65 has-[:checked]:bg-brand/15";
 
 const INTENSITIES: Array<{
   value: TargetDiscoveryIntensity;
@@ -98,21 +102,20 @@ function DiscoveryToggle({
   defaultChecked: boolean;
 }) {
   return (
-    <label
-      htmlFor={id}
-      className="flex cursor-pointer items-start gap-3 rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 transition hover:border-brand-400/45 hover:bg-surface-elevated/65"
-    >
-      <input
-        id={id}
-        type="checkbox"
-        name={name}
-        defaultChecked={defaultChecked}
-        className="mt-1 h-4 w-4 shrink-0 accent-accent"
-      />
-      <span>
-        <span className="block text-sm font-black text-ink-inverse">{label}</span>
-        <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
-          {description}
+    <label htmlFor={id} className={discoveryOptionClass}>
+      <span className="flex items-start gap-3">
+        <input
+          id={id}
+          type="checkbox"
+          name={name}
+          defaultChecked={defaultChecked}
+          className="mt-1 h-4 w-4 shrink-0 accent-accent"
+        />
+        <span>
+          <span className="block text-sm font-black text-ink-inverse">{label}</span>
+          <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+            {description}
+          </span>
         </span>
       </span>
     </label>
@@ -168,11 +171,10 @@ export default async function DestinationsDiscoveryLayout({
               </span>
             </div>
 
-            <div className="status-warning mt-4 flex items-start gap-3 rounded-2xl border px-4 py-3 text-xs font-semibold leading-5">
-              <UiIcon name="warning" size={17} className="mt-0.5 shrink-0" />
+            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-line-dark/55 bg-surface-subtle/55 px-4 py-3 text-xs font-semibold leading-5 text-muted-inverse">
+              <UiIcon name="music" size={17} className="mt-0.5 shrink-0 text-brand-400" />
               <span>
-                Nesta etapa, salvar apenas persiste a preferência. O planner e a geração ainda não consomem esta política,
-                portanto nenhuma playlist muda automaticamente.
+                Salvar atualiza somente a política deste destino. Nenhuma geração é iniciada e nenhuma playlist é alterada imediatamente.
               </span>
             </div>
 
@@ -204,18 +206,15 @@ export default async function DestinationsDiscoveryLayout({
                             As escolhas ficam salvas somente neste destino.
                           </p>
                         </div>
-                        <span
-                          className={`w-fit rounded-full border px-2.5 py-1 text-xs font-black ${
-                            policy.enabled ? "status-success" : "product-badge"
-                          }`}
-                        >
-                          {policy.enabled ? "Descobrir habilitado" : "Descobrir desligado"}
+                        <span className="product-badge w-fit">
+                          <UiIcon name="music" size={14} />
+                          {policy.enabled ? "Descobrir ativo" : "Descobrir desligado"}
                         </span>
                       </div>
 
                       <label
                         htmlFor={`${idPrefix}-master`}
-                        className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-accent/30 bg-accent/10 p-4"
+                        className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 transition hover:border-brand-400/45 hover:bg-surface-elevated/65 has-[:checked]:border-brand-400/65 has-[:checked]:bg-brand/15"
                       >
                         <input
                           id={`${idPrefix}-master`}
@@ -229,49 +228,58 @@ export default async function DestinationsDiscoveryLayout({
                             Usar Descobrir neste destino
                           </span>
                           <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
-                            Este é o interruptor principal. Com ele desligado, os subtipos abaixo ficam armazenados,
-                            mas não autorizam nenhuma família de descoberta.
+                            Interruptor principal. Desligado, mantém as escolhas abaixo salvas sem autorizar famílias de descoberta.
                           </span>
                         </span>
                       </label>
 
-                      <div className="mt-4 grid gap-3 md:grid-cols-2">
-                        <DiscoveryToggle
-                          id={`${idPrefix}-familiar`}
-                          name="discoveryFamiliarEnabled"
-                          label="Familiaridade"
-                          description="Repertório e artistas já conhecidos, respeitando as demais regras aplicáveis."
-                          defaultChecked={policy.familiarEnabled}
-                        />
-                        <DiscoveryToggle
-                          id={`${idPrefix}-rediscovery`}
-                          name="discoveryRediscoveryEnabled"
-                          label="Redescoberta"
-                          description="Músicas com histórico forte que ficaram ausentes por tempo relevante."
-                          defaultChecked={policy.rediscoveryEnabled}
-                        />
-                        <DiscoveryToggle
-                          id={`${idPrefix}-novelty`}
-                          name="discoveryNoveltyEnabled"
-                          label="Descoberta"
-                          description="Faixas e artistas novos para você quando houver afinidade provável."
-                          defaultChecked={policy.discoveryEnabled}
-                        />
-                        <DiscoveryToggle
-                          id={`${idPrefix}-releases`}
-                          name="discoveryReleasesEnabled"
-                          label="Novidades"
-                          description="Reserva a preferência para lançamentos relevantes; não inventa candidatos enquanto o provider não estiver disponível."
-                          defaultChecked={policy.releasesEnabled}
-                        />
-                      </div>
+                      <fieldset className={`${sectionClass} mt-4`}>
+                        <legend className="px-1 text-sm font-black text-ink-inverse">
+                          Famílias de descoberta
+                        </legend>
+                        <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
+                          Escolha quais tipos de enriquecimento este destino pode considerar quando o master estiver ativo.
+                        </p>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <DiscoveryToggle
+                            id={`${idPrefix}-familiar`}
+                            name="discoveryFamiliarEnabled"
+                            label="Familiaridade"
+                            description="Repertório e artistas já conhecidos, respeitando as demais regras aplicáveis."
+                            defaultChecked={policy.familiarEnabled}
+                          />
+                          <DiscoveryToggle
+                            id={`${idPrefix}-rediscovery`}
+                            name="discoveryRediscoveryEnabled"
+                            label="Redescoberta"
+                            description="Músicas com histórico forte que ficaram ausentes por tempo relevante."
+                            defaultChecked={policy.rediscoveryEnabled}
+                          />
+                          <DiscoveryToggle
+                            id={`${idPrefix}-novelty`}
+                            name="discoveryNoveltyEnabled"
+                            label="Descoberta"
+                            description="Faixas e artistas novos para você quando houver afinidade provável."
+                            defaultChecked={policy.discoveryEnabled}
+                          />
+                          <DiscoveryToggle
+                            id={`${idPrefix}-releases`}
+                            name="discoveryReleasesEnabled"
+                            label="Novidades"
+                            description="Reserva a preferência para lançamentos relevantes; não inventa candidatos enquanto o provider não estiver disponível."
+                            defaultChecked={policy.releasesEnabled}
+                          />
+                        </div>
+                      </fieldset>
 
-                      <fieldset className="mt-4">
-                        <legend className="text-sm font-black text-ink-inverse">Intensidade</legend>
+                      <fieldset className={`${sectionClass} mt-4`}>
+                        <legend className="px-1 text-sm font-black text-ink-inverse">
+                          Intensidade
+                        </legend>
                         <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
                           A intensidade controla o quanto o motor poderá enriquecer a seleção; não representa uma porcentagem fixa.
                         </p>
-                        <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                        <div className="mt-4 grid gap-3 lg:grid-cols-3">
                           {INTENSITIES.map((intensity) => (
                             <label
                               key={intensity.value}
