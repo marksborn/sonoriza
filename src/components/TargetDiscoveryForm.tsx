@@ -5,9 +5,9 @@ import {
 } from "@/services/music-discovery/target-discovery-policy";
 
 const sectionClass =
-  "rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 sm:p-5";
+  "rounded-2xl border border-line-dark/55 bg-surface-subtle/55 px-3 py-3 sm:p-5";
 const discoveryOptionClass =
-  "cursor-pointer rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 transition hover:border-brand-400/45 hover:bg-surface-elevated/65 has-[:checked]:border-brand-400/65 has-[:checked]:bg-brand/15";
+  "cursor-pointer rounded-xl border border-line-dark/55 bg-surface-subtle/55 px-3 py-2.5 transition hover:border-brand-400/45 hover:bg-surface-elevated/65 has-[:checked]:border-brand-400/65 has-[:checked]:bg-brand/15 sm:rounded-2xl sm:p-4";
 
 const INTENSITIES: Array<{
   value: TargetDiscoveryIntensity;
@@ -61,17 +61,17 @@ function DiscoveryToggle({
 }) {
   return (
     <label htmlFor={id} className={discoveryOptionClass}>
-      <span className="flex items-start gap-3">
+      <span className="flex items-center gap-2.5 sm:items-start sm:gap-3">
         <input
           id={id}
           type="checkbox"
           name={name}
           defaultChecked={defaultChecked}
-          className="mt-1 h-4 w-4 shrink-0 accent-accent"
+          className="h-4 w-4 shrink-0 accent-accent sm:mt-1"
         />
-        <span>
+        <span className="min-w-0">
           <span className="block text-sm font-black text-ink-inverse">{label}</span>
-          <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+          <span className="mt-1 hidden text-xs leading-5 text-muted-inverse/65 sm:block">
             {description}
           </span>
         </span>
@@ -85,10 +85,10 @@ export function TargetDiscoveryForm({ target, saveAction }: Props) {
   const idPrefix = `discovery-${target.id}`;
 
   return (
-    <form action={saveAction} className="space-y-4">
+    <form action={saveAction} className="space-y-3 sm:space-y-4">
       <input type="hidden" name="targetId" value={target.id} />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
             Descobrir neste destino
@@ -108,20 +108,20 @@ export function TargetDiscoveryForm({ target, saveAction }: Props) {
 
       <label
         htmlFor={`${idPrefix}-master`}
-        className="flex cursor-pointer items-start gap-3 rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 transition hover:border-brand-400/45 hover:bg-surface-elevated/65 has-[:checked]:border-brand-400/65 has-[:checked]:bg-brand/15"
+        className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-line-dark/55 bg-surface-subtle/55 px-3 py-3 transition hover:border-brand-400/45 hover:bg-surface-elevated/65 has-[:checked]:border-brand-400/65 has-[:checked]:bg-brand/15 sm:items-start sm:gap-3 sm:rounded-2xl sm:p-4"
       >
         <input
           id={`${idPrefix}-master`}
           type="checkbox"
           name="discoveryEnabled"
           defaultChecked={policy.enabled}
-          className="mt-1 h-4 w-4 shrink-0 accent-accent"
+          className="h-4 w-4 shrink-0 accent-accent sm:mt-1"
         />
-        <span>
+        <span className="min-w-0">
           <span className="block text-sm font-black text-ink-inverse">
             Usar Descobrir neste destino
           </span>
-          <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+          <span className="mt-1 hidden text-xs leading-5 text-muted-inverse/65 sm:block">
             Desligado, mantém as escolhas abaixo salvas sem autorizar famílias de descoberta.
           </span>
         </span>
@@ -131,10 +131,10 @@ export function TargetDiscoveryForm({ target, saveAction }: Props) {
         <legend className="px-1 text-sm font-black text-ink-inverse">
           Famílias de descoberta
         </legend>
-        <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
-          Escolha quais tipos de enriquecimento esta playlist pode considerar.
+        <p className="mt-1 text-[11px] leading-4 text-muted-inverse/65 sm:text-xs sm:leading-5">
+          Escolha os tipos de enriquecimento permitidos nesta playlist.
         </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid gap-2 sm:mt-4 sm:grid-cols-2 sm:gap-3">
           <DiscoveryToggle
             id={`${idPrefix}-familiar`}
             name="discoveryFamiliarEnabled"
@@ -168,26 +168,28 @@ export function TargetDiscoveryForm({ target, saveAction }: Props) {
 
       <fieldset className={sectionClass}>
         <legend className="px-1 text-sm font-black text-ink-inverse">Intensidade</legend>
-        <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
-          Controla quanto o motor poderá enriquecer a seleção; não representa porcentagem fixa.
+        <p className="mt-1 text-[11px] leading-4 text-muted-inverse/65 sm:text-xs sm:leading-5">
+          Define quanto espaço o motor pode abrir para enriquecimento; não é uma porcentagem fixa.
         </p>
-        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        <div className="mt-3 grid gap-2 sm:mt-4 sm:gap-3 lg:grid-cols-3">
           {INTENSITIES.map((intensity) => (
             <label
               key={intensity.value}
               htmlFor={`${idPrefix}-${intensity.value.toLowerCase()}`}
               className={discoveryOptionClass}
             >
-              <input
-                id={`${idPrefix}-${intensity.value.toLowerCase()}`}
-                type="radio"
-                name="discoveryIntensity"
-                value={intensity.value}
-                defaultChecked={policy.intensity === intensity.value}
-                className="mr-2 accent-accent"
-              />
-              <span className="font-black text-ink-inverse">{intensity.label}</span>
-              <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+              <span className="flex items-center gap-2 sm:block">
+                <input
+                  id={`${idPrefix}-${intensity.value.toLowerCase()}`}
+                  type="radio"
+                  name="discoveryIntensity"
+                  value={intensity.value}
+                  defaultChecked={policy.intensity === intensity.value}
+                  className="shrink-0 accent-accent sm:mr-2"
+                />
+                <span className="font-black text-ink-inverse">{intensity.label}</span>
+              </span>
+              <span className="mt-1 hidden text-xs leading-5 text-muted-inverse/65 sm:block">
                 {intensity.description}
               </span>
             </label>
@@ -195,11 +197,11 @@ export function TargetDiscoveryForm({ target, saveAction }: Props) {
         </div>
       </fieldset>
 
-      <div className="flex flex-col gap-3 border-t border-line-dark/55 pt-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs leading-5 text-muted-inverse/65">
+      <div className="flex flex-col gap-3 border-t border-line-dark/55 pt-3 sm:flex-row sm:items-center sm:justify-between sm:pt-4">
+        <p className="hidden text-xs leading-5 text-muted-inverse/65 sm:block">
           Álbuns completos continuam no fluxo próprio de Descobrir → Álbuns.
         </p>
-        <button type="submit" className="primary-button shrink-0">
+        <button type="submit" className="primary-button w-full shrink-0 sm:w-auto">
           Salvar Descobertas
         </button>
       </div>
