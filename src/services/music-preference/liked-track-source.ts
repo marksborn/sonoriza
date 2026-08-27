@@ -107,18 +107,18 @@ export function buildLikedTrackSourceSnapshot(
   const available = rows.filter(
     (row) => row.availability === LikedTrackAvailability.AVAILABLE,
   );
-  const availableMissingDuration = available.filter(
-    (row) => validDurationMs(row.durationMs) == null,
-  );
-  const plannerReadyAvailable = available.filter(
+  const identityReadyAvailable = available.filter(
     (row) =>
       Boolean(clean(row.spotifyUri)) &&
       Boolean(clean(row.trackName)) &&
-      Boolean(clean(row.spotifyTrackId)) &&
-      validDurationMs(row.durationMs) != null,
+      Boolean(clean(row.spotifyTrackId)),
   );
-  const identityIncomplete =
-    plannerReadyAvailable.length + availableMissingDuration.length < available.length;
+  const availableMissingDuration = available.filter(
+    (row) => validDurationMs(row.durationMs) == null,
+  );
+  const plannerReadyAvailable = identityReadyAvailable.filter(
+    (row) => validDurationMs(row.durationMs) != null,
+  );
   const addedAt = rows
     .flatMap((row) => (row.addedAt ? [row.addedAt] : []))
     .sort((a, b) => a.getTime() - b.getTime());
@@ -157,12 +157,7 @@ export function buildLikedTrackSourceSnapshot(
         (row) => Boolean(clean(row.albumId) || clean(row.albumName)),
       ).length,
       withDuration: rows.filter((row) => validDurationMs(row.durationMs) != null).length,
-      locallyMaterializedIdentity: available.filter(
-        (row) =>
-          Boolean(clean(row.spotifyUri)) &&
-          Boolean(clean(row.trackName)) &&
-          Boolean(clean(row.spotifyTrackId)),
-      ).length,
+      locallyMaterializedIdentity: identityReadyAvailable.length,
       plannerReadyAvailable: plannerReadyAvailable.length,
     },
     freshness: {
@@ -176,7 +171,7 @@ export function buildLikedTrackSourceSnapshot(
         ? null
         : availableMissingDuration.length > 0
           ? "DURATION_INCOMPLETE"
-          : identityIncomplete
+          : identityReadyAvailable.length < available.length
             ? "IDENTITY_INCOMPLETE"
             : null,
       requiredMissingField:
