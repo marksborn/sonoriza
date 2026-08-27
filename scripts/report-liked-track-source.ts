@@ -35,7 +35,7 @@ async function main() {
   const p = (label: string, value: unknown) =>
     console.log(`${label.padEnd(38)}${String(value)}`);
 
-  console.log("========== SOURCE-LIKED-01 — GATE 2 LOCAL ==========");
+  console.log("========== SOURCE-LIKED-01 — FONTE LOCAL ==========");
   p("User:", user.email);
   p("Generated at:", report.generatedAt.toISOString());
   console.log();
@@ -60,7 +60,9 @@ async function main() {
   p("  with title:", report.counts.withTitle);
   p("  with primary artist:", report.counts.withPrimaryArtist);
   p("  with album:", report.counts.withAlbum);
+  p("  with duration:", report.counts.withDuration);
   p("  identity materialized locally:", report.counts.locallyMaterializedIdentity);
+  p("  planner-ready available:", report.counts.plannerReadyAvailable);
   console.log();
 
   console.log("Freshness:");
@@ -71,22 +73,24 @@ async function main() {
 
   console.log("Planner materialization:");
   p("  ready:", report.plannerMaterialization.ready);
-  p("  blocker:", report.plannerMaterialization.blocker);
-  p("  missing field:", report.plannerMaterialization.requiredMissingField);
+  p("  blocker:", report.plannerMaterialization.blocker ?? "-");
+  p("  missing field:", report.plannerMaterialization.requiredMissingField ?? "-");
+  p("  eligible available:", report.plannerMaterialization.eligibleAvailableTracks);
+  p("  blocked available:", report.plannerMaterialization.blockedAvailableTracks);
   console.log(`  note: ${report.plannerMaterialization.note}`);
   console.log();
 
   console.log("Sample:");
   for (const [index, item] of report.sample.entries()) {
     console.log(
-      `  ${index + 1}. ${item.artist ?? "?"} — ${item.title ?? "?"} | ${item.spotifyTrackId} | ${item.availability}`,
+      `  ${index + 1}. ${item.artist ?? "?"} — ${item.title ?? "?"} | ${item.spotifyTrackId} | ${item.durationMs ?? "?"} ms | ${item.availability}`,
     );
   }
   if (report.sample.length === 0) console.log("  none");
   console.log();
 
   console.log(
-    "Gate 2 é estritamente local/read-only: nenhuma chamada Spotify, nenhum write e nenhuma influência no planner. O próximo gate deve materializar durationMs localmente antes do shadow planner.",
+    "Relatório estritamente local/read-only: nenhuma chamada Spotify, nenhum write e nenhuma influência no planner.",
   );
 }
 
