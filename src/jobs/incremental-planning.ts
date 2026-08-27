@@ -17,6 +17,10 @@ import {
   prepareDiscoveryMusicForCurrentRun,
 } from "./discovery-runtime";
 import {
+  applyLikedTrackSourceShadowForCurrentRun,
+  prepareLikedTrackSourceShadowForCurrentRun,
+} from "./liked-track-source-shadow";
+import {
   filterMusicBatchForCurrentRun,
   MusicRepeatPreWriteBlockedError,
   revalidateMusicRepeatBeforeRealWrite,
@@ -124,6 +128,7 @@ export async function collectIncrementally<
 }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
+  const likedTrackSourceShadow = await prepareLikedTrackSourceShadowForCurrentRun();
   const discoveryState = currentDiscoveryRuntimeState();
   const targetDiscoveryState = currentTargetDiscoveryRuntimeState();
   const targetScopedRuntime = targetDiscoveryState?.enabled === true;
@@ -369,7 +374,20 @@ export async function collectIncrementally<
     }
   };
 
+  const captureLikedTrackSourceShadow = () => {
+    applyLikedTrackSourceShadowForCurrentRun(likedTrackSourceShadow, {
+      pools,
+      plan,
+      targets,
+      musicPoolByTargetId,
+      preservedByTargetId: activePreservedByTargetId,
+      blockedMusicTrackIdsByTargetId,
+      initialReserved,
+    });
+  };
+
   if (await settleReadyPlan()) {
+    captureLikedTrackSourceShadow();
     return {
       pools,
       plan,
@@ -454,6 +472,7 @@ export async function collectIncrementally<
       if (effectiveReplanAfterEachSourceRead) {
         rebuildPlan();
         if (await settleReadyPlan()) {
+          captureLikedTrackSourceShadow();
           return {
             pools,
             plan,
@@ -482,6 +501,7 @@ export async function collectIncrementally<
     });
 
     if (await settleReadyPlan()) {
+      captureLikedTrackSourceShadow();
       return {
         pools,
         plan,
@@ -502,6 +522,7 @@ export async function collectIncrementally<
     // Re-run only the local planner against the refreshed MUSIC-01 context.
   }
 
+  captureLikedTrackSourceShadow();
   return {
     pools,
     plan,

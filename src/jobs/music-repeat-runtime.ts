@@ -35,6 +35,8 @@ export type MusicRepeatRunState = {
   preWriteRevalidated: boolean;
   preWriteBlockedCount: number;
   preWriteMissingIdentityCount: number;
+  /** SOURCE-LIKED-01 Gate 3B: observability only, never authoritative planner input. */
+  likedTrackSourceShadow?: Record<string, unknown> | null;
 };
 
 const storage = new AsyncLocalStorage<MusicRepeatRunState>();

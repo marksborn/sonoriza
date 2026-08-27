@@ -101,6 +101,7 @@ export async function generatePlaylists(
     preWriteRevalidated: false,
     preWriteBlockedCount: 0,
     preWriteMissingIdentityCount: 0,
+    likedTrackSourceShadow: null,
   };
 
   const result = await runWithMusicRepeatState(state, () =>
@@ -167,6 +168,7 @@ async function appendRuntimeSummary(
           state.missingTrackIdentitySkippedCount,
         discoveryRuntime: discoveryRuntimeSummary(discoveryState),
         targetDiscoveryRuntime: targetDiscoveryRuntimeSummary(targetDiscoveryState),
+        likedTrackSourceShadow: state.likedTrackSourceShadow ?? null,
       } as Prisma.InputJsonValue,
     },
   });
