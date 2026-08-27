@@ -8,6 +8,7 @@ import {
   type CalendarOption,
   type SpotifyDestinationOption,
 } from "@/components/TargetPlaylistForm";
+import { TargetDiscoveryForm } from "@/components/TargetDiscoveryForm";
 import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -30,6 +31,8 @@ import {
   nextScheduleLabel,
   parseScheduleTime,
 } from "@/services/target-schedule";
+
+import { saveTargetDiscoveryPolicy } from "./discovery-actions";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
 const CREATE_NEW = "__NEW__";
@@ -1215,6 +1218,13 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             destinationUnavailable,
                           }}
                         />
+
+                        <div className="mt-6 border-t border-line-dark/55 pt-6">
+                          <TargetDiscoveryForm
+                            target={target}
+                            saveAction={saveTargetDiscoveryPolicy}
+                          />
+                        </div>
                       </div>
                     </details>
                   </article>
