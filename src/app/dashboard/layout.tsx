@@ -23,18 +23,18 @@ export default async function DashboardLayout({
           retryAfterSecondsRemaining={retryAfterSecondsRemaining(backoff)}
         />
       ) : null}
-      {children}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-2 sm:bottom-7 sm:right-7">
+      <div className="pb-28 sm:pb-0">{children}</div>
+      <div className="fixed inset-x-4 bottom-4 z-50 flex flex-row items-center justify-end gap-2 sm:inset-x-auto sm:bottom-7 sm:right-7 sm:flex-col sm:items-end">
         <Link
           href="/dashboard/descobrir"
-          className="inline-flex items-center gap-2 rounded-2xl border border-brand-400/40 bg-brand/95 px-4 py-3 text-sm font-black text-white shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-brand-400"
+          className="inline-flex items-center gap-2 rounded-2xl border border-brand-400/40 bg-brand/95 px-3 py-2.5 text-sm font-black text-white shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-brand-400 sm:px-4 sm:py-3"
         >
           <UiIcon name="music" size={19} />
           Descobrir
         </Link>
         <Link
           href="/dashboard/configuracao"
-          className="inline-flex items-center gap-2 rounded-2xl border border-line-dark/70 bg-surface-elevated/95 px-4 py-3 text-sm font-black text-ink-inverse shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-brand-400/55 hover:bg-surface-subtle"
+          className="inline-flex items-center gap-2 rounded-2xl border border-line-dark/70 bg-surface-elevated/95 px-3 py-2.5 text-sm font-black text-ink-inverse shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-brand-400/55 hover:bg-surface-subtle sm:px-4 sm:py-3"
         >
           <UiIcon name="settings" size={19} />
           Configurar
