@@ -11,6 +11,8 @@ on:
       - "src/jobs/incremental-planning.ts"
       - "src/jobs/liked-track-source-shadow.ts"
       - "src/jobs/liked-track-source-shadow.test.ts"
+      - "src/jobs/liked-track-source-arbitration-shadow.ts"
+      - "src/jobs/liked-track-source-arbitration-shadow.test.ts"
       - "src/jobs/music-repeat-runtime.ts"
       - "scripts/report-liked-track-affinity.ts"
       - "scripts/report-liked-artist-similarity.ts"
@@ -20,6 +22,7 @@ on:
       - "scripts/report-liked-discovery-calibration-shadow.ts"
       - "scripts/report-liked-discovery-pilot-runtime.ts"
       - "scripts/report-liked-track-planner-shadow.ts"
+      - "scripts/report-liked-track-arbitration-shadow.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
   push:
@@ -34,6 +37,8 @@ on:
       - "src/jobs/incremental-planning.ts"
       - "src/jobs/liked-track-source-shadow.ts"
       - "src/jobs/liked-track-source-shadow.test.ts"
+      - "src/jobs/liked-track-source-arbitration-shadow.ts"
+      - "src/jobs/liked-track-source-arbitration-shadow.test.ts"
       - "src/jobs/music-repeat-runtime.ts"
       - "scripts/report-liked-track-affinity.ts"
       - "scripts/report-liked-artist-similarity.ts"
@@ -43,6 +48,7 @@ on:
       - "scripts/report-liked-discovery-calibration-shadow.ts"
       - "scripts/report-liked-discovery-pilot-runtime.ts"
       - "scripts/report-liked-track-planner-shadow.ts"
+      - "scripts/report-liked-track-arbitration-shadow.ts"
       - "package.json"
       - ".github/workflows/liked-01-validation.yml"
 
