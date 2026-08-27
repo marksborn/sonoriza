@@ -10,7 +10,30 @@ import {
   buildLikedTrackShadowCandidates,
   resolveLikedTrackSourceShadowPolicy,
 } from "./liked-track-source-shadow";
-import { runWithMusicRepeatState, type MusicRepeatRunState } from "./music-repeat-runtime";
+import {
+  runWithMusicRepeatState,
+  type MusicRepeatRunState,
+} from "./music-repeat-runtime";
+
+type ShadowTargetInputEvidence = {
+  negativeSignalBlocked?: number;
+};
+
+type ShadowTargetEvidence = {
+  likedSourceCandidatesSelected?: number;
+  shadow?: {
+    totalDurationMs?: number;
+  };
+};
+
+type ShadowTestSummary = {
+  status?: string;
+  currentPlanUnchanged?: boolean;
+  plannerInfluence?: boolean;
+  likedSourceCandidatesSelected?: number;
+  targetInputs?: ShadowTargetInputEvidence[];
+  targets?: ShadowTargetEvidence[];
+};
 
 test("Gate 3B policy is fail-closed until master, user and target are explicitly allowlisted", () => {
   assert.equal(
@@ -47,10 +70,16 @@ test("native liked candidate materialization includes only available rows with c
     row("ready", LikedTrackAvailability.AVAILABLE, 180_000),
     row("unavailable", LikedTrackAvailability.UNAVAILABLE, 190_000),
     row("no-duration", LikedTrackAvailability.AVAILABLE, null),
-    { ...row("no-uri", LikedTrackAvailability.AVAILABLE, 200_000), spotifyUri: null },
+    {
+      ...row("no-uri", LikedTrackAvailability.AVAILABLE, 200_000),
+      spotifyUri: null,
+    },
   ];
   const candidates = buildLikedTrackShadowCandidates(rows);
-  assert.deepEqual(candidates.map((candidate) => candidate.spotifyTrackId), ["ready"]);
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.spotifyTrackId),
+    ["ready"],
+  );
   assert.equal(candidates[0]?.durationMs, 180_000);
   assert.equal(candidates[0]?.primaryArtistId, "artist-ready");
 });
@@ -79,14 +108,17 @@ test("shadow appends liked source after the current pool without mutating the au
     );
   });
 
-  assert.deepEqual(currentPlan.targets[0]!.result.items.map((item) => item.uri), beforeUris);
-  const summary = state.likedTrackSourceShadow as any;
+  assert.deepEqual(
+    currentPlan.targets[0]!.result.items.map((item) => item.uri),
+    beforeUris,
+  );
+  const summary = shadowSummary(state);
   assert.equal(summary.status, "READY");
   assert.equal(summary.currentPlanUnchanged, true);
   assert.equal(summary.plannerInfluence, false);
   assert.equal(summary.likedSourceCandidatesSelected, 1);
-  assert.equal(summary.targets[0].likedSourceCandidatesSelected, 1);
-  assert.equal(summary.targets[0].shadow.totalDurationMs, 300_000);
+  assert.equal(summary.targets?.[0]?.likedSourceCandidatesSelected, 1);
+  assert.equal(summary.targets?.[0]?.shadow?.totalDurationMs, 300_000);
 });
 
 test("shadow keeps MUSIC-05 negative signals authoritative for liked candidates", async () => {
@@ -115,10 +147,16 @@ test("shadow keeps MUSIC-05 negative signals authoritative for liked candidates"
     );
   });
 
-  const summary = state.likedTrackSourceShadow as any;
-  assert.equal(summary.targetInputs[0].negativeSignalBlocked, 1);
-  assert.equal(summary.targets[0].likedSourceCandidatesSelected, 0);
+  const summary = shadowSummary(state);
+  assert.equal(summary.targetInputs?.[0]?.negativeSignalBlocked, 1);
+  assert.equal(summary.targets?.[0]?.likedSourceCandidatesSelected, 0);
 });
+
+function shadowSummary(state: MusicRepeatRunState): ShadowTestSummary {
+  const value = state.likedTrackSourceShadow;
+  assert.ok(value && typeof value === "object" && !Array.isArray(value));
+  return value as ShadowTestSummary;
+}
 
 function row(
   id: string,
