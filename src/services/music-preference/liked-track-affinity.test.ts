@@ -95,6 +95,7 @@ test("same provider snapshot is semantically idempotent", () => {
         albumId: "album-track-1",
         albumName: "Album track-1",
         addedAt: new Date("2026-08-20T10:00:00.000Z"),
+        durationMs: 180_000,
         isLiked: true,
         availability: LikedTrackAvailability.AVAILABLE,
       },
