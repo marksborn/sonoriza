@@ -81,3 +81,19 @@ test("buildLikedTrackDurationPlan is idempotent when duration already matches", 
   assert.equal(plan.afterWithDuration, 2);
   assert.equal(plan.coveragePercent, 100);
 });
+
+test("changing an already valid duration does not double-count projected coverage", () => {
+  const plan = buildLikedTrackDurationPlan(
+    provider([item("a", 181_000)]),
+    [
+      { spotifyTrackId: "a", durationMs: 180_000, isLiked: true },
+      { spotifyTrackId: "missing", durationMs: null, isLiked: true },
+    ],
+  );
+
+  assert.equal(plan.beforeWithDuration, 1);
+  assert.deepEqual(plan.updates, [{ spotifyTrackId: "a", durationMs: 181_000 }]);
+  assert.equal(plan.missingProviderTrack, 1);
+  assert.equal(plan.afterWithDuration, 1);
+  assert.equal(plan.coveragePercent, 50);
+});
