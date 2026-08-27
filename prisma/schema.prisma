@@ -747,6 +747,7 @@ model LikedTrackPreference {
   primaryArtistName String?
   albumId           String?
   albumName         String?
+  durationMs        Int?
   addedAt           DateTime?
   isLiked           Boolean                        @default(true)
   availability      LikedTrackAvailability
@@ -920,7 +921,7 @@ model TargetScheduleRun {
   scheduledForMinutes   Int
   scheduleTimezone      String
   policy                TargetUpdatePolicy
-  status                TargetScheduleRunStatus @default(RUNNING)
+  status                 TargetScheduleRunStatus @default(RUNNING)
   attempt               Int                     @default(1)
   generationRunId       String?
   targetDurationMs      Int?

@@ -13,6 +13,7 @@ export type LikedTrackSourceRow = {
   primaryArtistName: string | null;
   albumId: string | null;
   albumName: string | null;
+  durationMs: number | null;
   addedAt: Date | null;
   availability: LikedTrackAvailability;
   lastObservedAt: Date;
@@ -39,7 +40,9 @@ export type LikedTrackSourceSnapshot = {
     withTitle: number;
     withPrimaryArtist: number;
     withAlbum: number;
+    withDuration: number;
     locallyMaterializedIdentity: number;
+    plannerReadyAvailable: number;
   };
   freshness: {
     newestAddedAt: Date | null;
@@ -47,9 +50,11 @@ export type LikedTrackSourceSnapshot = {
     latestObservedAt: Date | null;
   };
   plannerMaterialization: {
-    ready: false;
-    blocker: "DURATION_NOT_PERSISTED";
-    requiredMissingField: "durationMs";
+    ready: boolean;
+    blocker: "DURATION_INCOMPLETE" | "IDENTITY_INCOMPLETE" | null;
+    requiredMissingField: "durationMs" | null;
+    eligibleAvailableTracks: number;
+    blockedAvailableTracks: number;
     note: string;
   };
   sample: Array<{
@@ -58,17 +63,18 @@ export type LikedTrackSourceSnapshot = {
     title: string | null;
     artist: string | null;
     album: string | null;
+    durationMs: number | null;
     availability: LikedTrackAvailability;
   }>;
 };
 
 /**
- * SOURCE-LIKED-01 Gate 2.
+ * SOURCE-LIKED-01 Gate 2/3A.
  *
  * Materializes the native LIKED_TRACKS source exclusively from Sonoriza-owned
  * LikedTrackPreference rows already reconciled by LIKED-01. This path is local
- * only: it performs no provider read, no Spotify write and is not connected to
- * the production planner yet.
+ * only: it performs no provider read, no Spotify write and remains disconnected
+ * from the production planner.
  */
 export async function getLikedTrackSourceSnapshot(
   userId: string,
@@ -83,6 +89,7 @@ export async function getLikedTrackSourceSnapshot(
       primaryArtistName: true,
       albumId: true,
       albumName: true,
+      durationMs: true,
       addedAt: true,
       availability: true,
       lastObservedAt: true,
@@ -100,12 +107,25 @@ export function buildLikedTrackSourceSnapshot(
   const available = rows.filter(
     (row) => row.availability === LikedTrackAvailability.AVAILABLE,
   );
+  const identityReadyAvailable = available.filter(
+    (row) =>
+      Boolean(clean(row.spotifyUri)) &&
+      Boolean(clean(row.trackName)) &&
+      Boolean(clean(row.spotifyTrackId)),
+  );
+  const availableMissingDuration = available.filter(
+    (row) => validDurationMs(row.durationMs) == null,
+  );
+  const plannerReadyAvailable = identityReadyAvailable.filter(
+    (row) => validDurationMs(row.durationMs) != null,
+  );
   const addedAt = rows
     .flatMap((row) => (row.addedAt ? [row.addedAt] : []))
     .sort((a, b) => a.getTime() - b.getTime());
   const observedAt = rows
     .map((row) => row.lastObservedAt)
     .sort((a, b) => a.getTime() - b.getTime());
+  const ready = plannerReadyAvailable.length === available.length;
 
   return {
     generatedAt,
@@ -136,12 +156,9 @@ export function buildLikedTrackSourceSnapshot(
       withAlbum: rows.filter(
         (row) => Boolean(clean(row.albumId) || clean(row.albumName)),
       ).length,
-      locallyMaterializedIdentity: available.filter(
-        (row) =>
-          Boolean(clean(row.spotifyUri)) &&
-          Boolean(clean(row.trackName)) &&
-          Boolean(clean(row.spotifyTrackId)),
-      ).length,
+      withDuration: rows.filter((row) => validDurationMs(row.durationMs) != null).length,
+      locallyMaterializedIdentity: identityReadyAvailable.length,
+      plannerReadyAvailable: plannerReadyAvailable.length,
     },
     freshness: {
       newestAddedAt: addedAt.at(-1) ?? null,
@@ -149,11 +166,21 @@ export function buildLikedTrackSourceSnapshot(
       latestObservedAt: observedAt.at(-1) ?? null,
     },
     plannerMaterialization: {
-      ready: false,
-      blocker: "DURATION_NOT_PERSISTED",
-      requiredMissingField: "durationMs",
-      note:
-        "The current canonical liked-track state does not persist durationMs. Gate 3 must add a local duration-bearing materialization before LIKED_TRACKS can become a planner candidate source without provider reads.",
+      ready,
+      blocker: ready
+        ? null
+        : availableMissingDuration.length > 0
+          ? "DURATION_INCOMPLETE"
+          : identityReadyAvailable.length < available.length
+            ? "IDENTITY_INCOMPLETE"
+            : null,
+      requiredMissingField:
+        !ready && availableMissingDuration.length > 0 ? "durationMs" : null,
+      eligibleAvailableTracks: plannerReadyAvailable.length,
+      blockedAvailableTracks: Math.max(0, available.length - plannerReadyAvailable.length),
+      note: ready
+        ? "All currently available liked tracks have the local identity and duration required to become planner candidates in the next shadow gate. Planner influence is still disabled."
+        : "The native liked-track source remains blocked from planner shadowing until every available track has local candidate identity and durationMs.",
     },
     sample: rows.slice(0, 10).map((row) => ({
       spotifyTrackId: row.spotifyTrackId,
@@ -161,6 +188,7 @@ export function buildLikedTrackSourceSnapshot(
       title: clean(row.trackName),
       artist: clean(row.primaryArtistName),
       album: clean(row.albumName),
+      durationMs: validDurationMs(row.durationMs),
       availability: row.availability,
     })),
   };
@@ -170,4 +198,8 @@ function clean(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized || null;
+}
+
+function validDurationMs(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }

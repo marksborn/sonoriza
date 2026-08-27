@@ -18,7 +18,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-test("Saved Tracks inventory paginates, keeps relinked identity and classifies unavailable/invalid rows", async () => {
+test("Saved Tracks inventory paginates, keeps relinked identity/duration and classifies unavailable/invalid rows", async () => {
   const requested: string[] = [];
   const fetchImpl = (async (input: string | URL | Request) => {
     const url = String(input);
@@ -92,13 +92,24 @@ test("Saved Tracks inventory paginates, keeps relinked identity and classifies u
     inventory.items.map((item) => ({
       id: item.spotifyTrackId,
       effective: item.effectiveSpotifyTrackId,
+      durationMs: item.durationMs,
       status: item.status,
     })),
     [
-      { id: "canonical-a", effective: "effective-a", status: "AVAILABLE" },
-      { id: "track-b", effective: "track-b", status: "UNAVAILABLE" },
-      { id: null, effective: null, status: "INVALID" },
-      { id: "track-c", effective: "track-c", status: "AVAILABLE" },
+      {
+        id: "canonical-a",
+        effective: "effective-a",
+        durationMs: 180_000,
+        status: "AVAILABLE",
+      },
+      {
+        id: "track-b",
+        effective: "track-b",
+        durationMs: 200_000,
+        status: "UNAVAILABLE",
+      },
+      { id: null, effective: null, durationMs: null, status: "INVALID" },
+      { id: "track-c", effective: "track-c", durationMs: 210_000, status: "AVAILABLE" },
     ],
   );
   assert.equal(inventory.items[1]?.restrictionReason, "market");
@@ -193,6 +204,7 @@ function item(
     primaryArtistName,
     albumId: null,
     albumName: null,
+    durationMs: spotifyTrackId ? 180_000 : null,
     status,
     restrictionReason: status === "UNAVAILABLE" ? "market" : null,
   };

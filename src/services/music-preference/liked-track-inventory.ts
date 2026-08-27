@@ -26,6 +26,7 @@ export type LikedTrackInventoryItem = {
   primaryArtistName: string | null;
   albumId: string | null;
   albumName: string | null;
+  durationMs: number | null;
   status: LikedTrackInventoryItemStatus;
   restrictionReason: string | null;
 };
@@ -174,11 +175,10 @@ export function buildLikedTrackInventoryReport(
   );
   const distinctTrackIds = new Set(providerTrackIds);
   const localByTrackId = new Map(localIdentity.map((row) => [row.spotifyTrackId, row]));
-  const matchedLocal = [...distinctTrackIds]
-    .flatMap((trackId) => {
-      const evidence = localByTrackId.get(trackId);
-      return evidence ? [evidence] : [];
-    });
+  const matchedLocal = [...distinctTrackIds].flatMap((trackId) => {
+    const evidence = localByTrackId.get(trackId);
+    return evidence ? [evidence] : [];
+  });
 
   const artists = new Set<string>();
   for (const item of provider.items) {
@@ -266,6 +266,7 @@ function toInventoryItem(item: SavedTrackItemResponse): LikedTrackInventoryItem 
     primaryArtistName: clean(candidate?.primaryArtistName ?? primaryArtist?.name),
     albumId: clean(candidate?.albumId ?? raw?.album?.id),
     albumName: clean(candidate?.albumName ?? raw?.album?.name),
+    durationMs: validDurationMs(candidate?.durationMs ?? raw?.duration_ms),
     status,
     restrictionReason: playable.restrictionReason,
   };
@@ -279,6 +280,10 @@ function clean(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
   return normalized || null;
+}
+
+function validDurationMs(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 function stripBase(url: string): string {

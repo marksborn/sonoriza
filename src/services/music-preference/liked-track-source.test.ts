@@ -38,6 +38,7 @@ function row(overrides: RowOverrides): LikedTrackSourceRow {
     primaryArtistName: explicitOr(overrides, "primaryArtistName", "Artist"),
     albumId: explicitOr(overrides, "albumId", "album-1"),
     albumName: explicitOr(overrides, "albumName", "Album"),
+    durationMs: explicitOr(overrides, "durationMs", 180_000),
     addedAt: explicitOr(
       overrides,
       "addedAt",
@@ -55,7 +56,7 @@ function row(overrides: RowOverrides): LikedTrackSourceRow {
 test("buildLikedTrackSourceSnapshot exposes a local persistent native source", () => {
   const snapshot = buildLikedTrackSourceSnapshot(
     [
-      row({ spotifyTrackId: "a" }),
+      row({ spotifyTrackId: "a", durationMs: null }),
       row({
         spotifyTrackId: "b",
         availability: LikedTrackAvailability.UNAVAILABLE,
@@ -69,6 +70,7 @@ test("buildLikedTrackSourceSnapshot exposes a local persistent native source", (
         primaryArtistName: null,
         albumId: null,
         albumName: null,
+        durationMs: null,
       }),
     ],
     NOW,
@@ -91,12 +93,39 @@ test("buildLikedTrackSourceSnapshot exposes a local persistent native source", (
     withTitle: 2,
     withPrimaryArtist: 2,
     withAlbum: 2,
+    withDuration: 1,
     locallyMaterializedIdentity: 1,
+    plannerReadyAvailable: 0,
   });
 
   assert.equal(snapshot.plannerMaterialization.ready, false);
-  assert.equal(snapshot.plannerMaterialization.blocker, "DURATION_NOT_PERSISTED");
+  assert.equal(snapshot.plannerMaterialization.blocker, "DURATION_INCOMPLETE");
   assert.equal(snapshot.plannerMaterialization.requiredMissingField, "durationMs");
+  assert.equal(snapshot.plannerMaterialization.eligibleAvailableTracks, 0);
+  assert.equal(snapshot.plannerMaterialization.blockedAvailableTracks, 1);
+});
+
+test("buildLikedTrackSourceSnapshot becomes shadow-ready only when available rows have duration", () => {
+  const snapshot = buildLikedTrackSourceSnapshot(
+    [
+      row({ spotifyTrackId: "newer", durationMs: 181_000 }),
+      row({ spotifyTrackId: "older", durationMs: 199_000 }),
+      row({
+        spotifyTrackId: "unavailable",
+        availability: LikedTrackAvailability.UNAVAILABLE,
+        durationMs: null,
+      }),
+    ],
+    NOW,
+  );
+
+  assert.equal(snapshot.counts.available, 2);
+  assert.equal(snapshot.counts.withDuration, 2);
+  assert.equal(snapshot.counts.plannerReadyAvailable, 2);
+  assert.equal(snapshot.plannerMaterialization.ready, true);
+  assert.equal(snapshot.plannerMaterialization.blocker, null);
+  assert.equal(snapshot.plannerMaterialization.requiredMissingField, null);
+  assert.equal(snapshot.plannerMaterialization.blockedAvailableTracks, 0);
 });
 
 test("buildLikedTrackSourceSnapshot keeps freshness and sample deterministic", () => {
@@ -105,12 +134,14 @@ test("buildLikedTrackSourceSnapshot keeps freshness and sample deterministic", (
       row({
         spotifyTrackId: "newer",
         trackName: "Newer",
+        durationMs: 181_000,
         addedAt: new Date("2026-08-25T00:00:00.000Z"),
         lastObservedAt: new Date("2026-08-27T11:00:00.000Z"),
       }),
       row({
         spotifyTrackId: "older",
         trackName: "Older",
+        durationMs: 199_000,
         addedAt: new Date("2020-01-01T00:00:00.000Z"),
         lastObservedAt: new Date("2026-08-26T11:00:00.000Z"),
       }),
@@ -131,7 +162,10 @@ test("buildLikedTrackSourceSnapshot keeps freshness and sample deterministic", (
     "2026-08-27T11:00:00.000Z",
   );
   assert.deepEqual(
-    snapshot.sample.map((item) => item.spotifyTrackId),
-    ["newer", "older"],
+    snapshot.sample.map((item) => [item.spotifyTrackId, item.durationMs]),
+    [
+      ["newer", 181_000],
+      ["older", 199_000],
+    ],
   );
 });

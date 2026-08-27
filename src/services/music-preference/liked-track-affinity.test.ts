@@ -34,6 +34,7 @@ function item(
     primaryArtistName: spotifyArtistId ? `Artist ${spotifyArtistId}` : null,
     albumId: `album-${spotifyTrackId}`,
     albumName: `Album ${spotifyTrackId}`,
+    durationMs: 180_000,
     status: "AVAILABLE",
     restrictionReason: null,
     ...options,
