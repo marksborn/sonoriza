@@ -151,6 +151,29 @@ type MutableAggregate = {
   bestSeed: LikedExpansionAggregate["dominantSeed"] | null;
 };
 
+export function buildLikedExpansionResolutionQualitySample<T>(
+  candidates: readonly T[],
+  budget: number,
+): T[] {
+  if (!Number.isInteger(budget) || budget < 1) {
+    throw new Error("resolution quality sample budget must be a positive integer");
+  }
+  return candidates.slice(0, budget);
+}
+
+export function canMaterializeLikedExpansionResolvedCandidate(
+  currentResolvedCount: number,
+  targetResolvedCandidates: number,
+): boolean {
+  if (!Number.isInteger(currentResolvedCount) || currentResolvedCount < 0) {
+    throw new Error("currentResolvedCount must be a non-negative integer");
+  }
+  if (!Number.isInteger(targetResolvedCandidates) || targetResolvedCandidates < 1) {
+    throw new Error("targetResolvedCandidates must be a positive integer");
+  }
+  return currentResolvedCount < targetResolvedCandidates;
+}
+
 export async function getLikedDiscoveryExpansionShadowReport(
   userId: string,
 ): Promise<LikedDiscoveryExpansionShadowReport> {
@@ -241,6 +264,10 @@ export async function getLikedDiscoveryExpansionShadowReport(
     budget: LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.resolutionCandidateBudget,
     maxPerDominantSeed: LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.maxPerDominantSeed,
   });
+  const qualitySample = buildLikedExpansionResolutionQualitySample(
+    selection.selected,
+    LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.resolutionCandidateBudget,
+  );
 
   const spotify = await SpotifyCatalogSearchClient.forUser(userId);
   const directSpotifyArtistIds = new Set(
@@ -271,13 +298,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
   let rejectedResolvedRepresentedArtists = 0;
   let rejectedResolvedHistoricalArtists = 0;
 
-  for (const candidate of selection.selected) {
-    if (
-      resolvedCandidates.length >=
-      LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.targetResolvedCandidates
-    ) {
-      break;
-    }
+  for (const candidate of qualitySample) {
     attempted += 1;
     try {
       const resolution = await resolveExternalDiscoveryCandidate(spotify, {
@@ -333,6 +354,14 @@ export async function getLikedDiscoveryExpansionShadowReport(
       if (baselineTrackIds.has(resolution.spotifyTrack.id)) continue;
       if (seenTrackIds.has(resolution.spotifyTrack.id)) continue;
       seenTrackIds.add(resolution.spotifyTrack.id);
+      if (
+        !canMaterializeLikedExpansionResolvedCandidate(
+          resolvedCandidates.length,
+          LIKED_DISCOVERY_EXPANSION_SHADOW_POLICY.targetResolvedCandidates,
+        )
+      ) {
+        continue;
+      }
       resolvedCandidates.push(
         materializeResolvedExpansionCandidate(candidate, resolution),
       );
@@ -382,7 +411,7 @@ export async function getLikedDiscoveryExpansionShadowReport(
       historyProbedArtistNames: probes.length,
       rejectedKnownHistoryArtistNames: selection.rejectedKnownHistoryArtistNames,
       eligibleResolutionCandidates: selection.eligibleCount,
-      selectedResolutionCandidates: selection.selected.length,
+      selectedResolutionCandidates: qualitySample.length,
     },
     resolution: {
       attempted,
