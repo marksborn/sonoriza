@@ -1,6 +1,7 @@
-import type {
-  EpisodeListeningState,
-  PodcastListeningStatus,
+import {
+  Prisma,
+  type EpisodeListeningState,
+  type PodcastListeningStatus,
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -26,6 +27,7 @@ export type CanonicalPodcastListeningState = {
   resumePositionMs: number;
   fullyPlayed: boolean;
   status: PodcastListeningStatus;
+  firstProgressObservedAt: Date | null;
   lastObservedAt: Date;
 };
 
@@ -45,19 +47,21 @@ type ExistingPodcastListeningState = Pick<
   | "fullyPlayed"
   | "status"
   | "lastObservedAt"
->;
+> & {
+  firstProgressObservedAt?: Date | null;
+};
 
 /**
- * Canonical merge policy for PODCAST-04.
+ * Canonical merge policy for PODCAST-04/PODCAST-05.
  *
  * Completion is intentionally sticky: once Spotify has explicitly confirmed an
  * episode as completed, a later response with a missing/reset resume point must
  * not silently make the episode eligible again. Replay remains an explicit
- * source policy (`includePlayed`).
+ * source policy.
  *
- * Before completion, progress is monotonic. A smaller provider resume position
- * is treated as a representation/reset anomaly instead of proof that the user
- * "unheard" part of an episode.
+ * Before completion, progress is monotonic. PODCAST-05 additionally remembers
+ * the first time positive progress was observed, allowing a freshness policy to
+ * distinguish "started while fresh" from "started after expiry".
  */
 export function mergePodcastListeningState(
   existing: ExistingPodcastListeningState | null,
@@ -77,6 +81,9 @@ export function mergePodcastListeningState(
     0,
     durationMs,
   );
+  const firstProgressObservedAt =
+    existing?.firstProgressObservedAt ??
+    (observedResume !== null && observedResume > 0 ? observedAt : null);
 
   if (existing?.status === "COMPLETED" || observation.fullyPlayed === true) {
     return {
@@ -86,6 +93,7 @@ export function mergePodcastListeningState(
       resumePositionMs: mergedResume,
       fullyPlayed: true,
       status: "COMPLETED",
+      firstProgressObservedAt,
       lastObservedAt: observedAt,
     };
   }
@@ -100,6 +108,7 @@ export function mergePodcastListeningState(
     resumePositionMs: mergedResume,
     fullyPlayed: false,
     status,
+    firstProgressObservedAt,
     lastObservedAt: observedAt,
   };
 }
@@ -129,8 +138,30 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
             spotifyEpisodeId: { in: ids },
           },
         });
+        const progressRows = await tx.$queryRaw<Array<{
+          spotifyEpisodeId: string;
+          firstProgressObservedAt: Date | null;
+        }>>`
+          SELECT "spotifyEpisodeId", "firstProgressObservedAt"
+          FROM "EpisodeListeningState"
+          WHERE "userId" = ${userId}
+            AND "spotifyEpisodeId" IN (${Prisma.join(ids)})
+        `;
+        const firstProgressById = new Map(
+          progressRows.map((entry) => [
+            entry.spotifyEpisodeId,
+            entry.firstProgressObservedAt,
+          ]),
+        );
         const existingById = new Map(
-          existing.map((entry) => [entry.spotifyEpisodeId, entry]),
+          existing.map((entry) => [
+            entry.spotifyEpisodeId,
+            {
+              ...entry,
+              firstProgressObservedAt:
+                firstProgressById.get(entry.spotifyEpisodeId) ?? null,
+            },
+          ]),
         );
         const resolved = normalized.map((observation) =>
           mergePodcastListeningState(
@@ -166,6 +197,18 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
               lastObservedAt: state.lastObservedAt,
             },
           });
+
+          if (state.firstProgressObservedAt) {
+            await tx.$executeRaw`
+              UPDATE "EpisodeListeningState"
+              SET "firstProgressObservedAt" = COALESCE(
+                "firstProgressObservedAt",
+                ${state.firstProgressObservedAt}
+              )
+              WHERE "userId" = ${userId}
+                AND "spotifyEpisodeId" = ${state.spotifyEpisodeId}
+            `;
+          }
         }
 
         return resolved;
