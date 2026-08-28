@@ -138,7 +138,7 @@ export default async function SourcesLayout({ children }: { children: ReactNode 
             </div>
 
             <div className="status-info mt-5 rounded-2xl border px-4 py-3 text-xs font-bold leading-5">
-              Nesta etapa, o controle é apenas uma preferência persistida e ainda não altera o planner. A participação efetiva continuará protegida pelo rollout atual até o Gate 5B2.
+              Músicas Curtidas só participa do planner quando esta preferência e o rollout operacional estiverem habilitados. Desativar aqui interrompe a influência no planner sem alterar sua biblioteca nem a sincronização da fonte.
             </div>
           </div>
         </div>

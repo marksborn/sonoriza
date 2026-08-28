@@ -15,6 +15,10 @@ const layout = readFileSync(
   "src/app/dashboard/configuracao/fontes/layout.tsx",
   "utf8",
 );
+const plannerRuntime = readFileSync(
+  "src/jobs/liked-track-source-shadow.ts",
+  "utf8",
+);
 
 test("SOURCE-LIKED-01 Gate 5B1 persists a provider-neutral preference disabled by default", () => {
   assert.match(schema, /enum NativeSourceType \{\s+LIKED_TRACKS\s+\}/);
@@ -27,13 +31,13 @@ test("SOURCE-LIKED-01 Gate 5B1 persists a provider-neutral preference disabled b
   assert.doesNotMatch(migration, /INSERT\s+INTO/i);
 });
 
-test("SOURCE-LIKED-01 Gate 5B1 native card reads local state without provider calls", () => {
+test("SOURCE-LIKED-01 native card and preference read stay local-only", () => {
   assert.match(service, /prisma\.nativeSourcePreference\.findUnique/);
   assert.match(service, /prisma\.likedTrackPreference\.groupBy/);
   assert.match(service, /prisma\.likedTrackPreference\.aggregate/);
+  assert.match(service, /getNativeLikedTrackSourcePreferenceState/);
   assert.match(service, /providerReads: false/);
   assert.match(service, /spotifyWrites: false/);
-  assert.match(service, /plannerInfluence: false/);
   assert.doesNotMatch(service, /SpotifyClient|forUser\(|fetch\(/);
 
   assert.match(layout, /Músicas Curtidas/);
@@ -42,15 +46,20 @@ test("SOURCE-LIKED-01 Gate 5B1 native card reads local state without provider ca
   assert.match(layout, /Desativar preferência/);
 });
 
-test("SOURCE-LIKED-01 Gate 5B1 does not wire the user preference into planner runtime", () => {
-  const runtimeFiles = [
-    "src/jobs/generate-playlists.ts",
-    "src/jobs/liked-track-source-shadow.ts",
-  ];
+test("SOURCE-LIKED-01 Gate 5B2 requires rollout AND persisted user consent", () => {
+  assert.match(plannerRuntime, /getNativeLikedTrackSourcePreferenceState/);
+  assert.match(plannerRuntime, /resolveLikedTrackSourcePlannerConsentPolicy/);
+  assert.match(plannerRuntime, /USER_SOURCE_DISABLED/);
+  assert.match(plannerRuntime, /USER_SOURCE_PREFERENCE_ERROR/);
+  assert.match(
+    plannerRuntime,
+    /MASTER_FLAG_AND_USER_ALLOWLIST_AND_TARGET_ID_ALLOWLIST_AND_USER_SOURCE_PREFERENCE/,
+  );
+  assert.match(plannerRuntime, /sourcePreference\.readError/);
+  assert.match(plannerRuntime, /likedTrackPreference\.findMany/);
+  assert.doesNotMatch(plannerRuntime, /SpotifyClient|forUser\(/);
 
-  for (const path of runtimeFiles) {
-    const source = readFileSync(path, "utf8");
-    assert.doesNotMatch(source, /nativeSourcePreference/);
-    assert.doesNotMatch(source, /native-source-preference/);
-  }
+  assert.match(layout, /rollout operacional/);
+  assert.match(layout, /interrompe a influência no planner/);
+  assert.match(layout, /sem alterar sua biblioteca nem a sincronização da fonte/);
 });
