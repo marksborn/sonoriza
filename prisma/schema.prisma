@@ -45,10 +45,11 @@ model User {
   pushSubscriptions                PushSubscription[]
   pushDeliveries                   PushDelivery[]
   musicPreferenceSignals           MusicPreferenceSignal[]
-  likedTrackPreferences             LikedTrackPreference[]
-  artistAffinityStates              ArtistAffinityState[]
-  artistSimilaritySeeds             ArtistSimilaritySeedState[]
-  artistSimilarityEdges             ArtistSimilarityEdge[]
+  likedTrackPreferences            LikedTrackPreference[]
+  nativeSourcePreferences          NativeSourcePreference[]
+  artistAffinityStates             ArtistAffinityState[]
+  artistSimilaritySeeds            ArtistSimilaritySeedState[]
+  artistSimilarityEdges            ArtistSimilarityEdge[]
   albumRecommendationMemories      AlbumRecommendationMemory[]
 }
 
@@ -587,7 +588,7 @@ model TargetPlaylist {
   discoveryIntensity               TargetDiscoveryIntensity      @default(BALANCED)
   durationMode                     DurationMode                  @default(FIXED)
   fixedDurationSeconds             Int?
-  calendarMode                     TargetCalendarMode             @default(LEGACY_GLOBAL)
+  calendarMode                     TargetCalendarMode            @default(LEGACY_GLOBAL)
   emptyCalendarBehavior            EmptyCalendarBehavior         @default(CLEAR)
   calendarEventFilterMode          CalendarEventFilterMode       @default(ALL)
   calendarEventMarker              String?
@@ -712,6 +713,32 @@ model GenerationItem {
 
   @@index([runId])
   @@index([targetPlaylistId])
+}
+
+// ---------------------------------------------------------------------------
+// SOURCE-LIKED-01 — provider-neutral preference for native Sonoriza sources.
+//
+// Gate 5B1 only persists and exposes the user's desired source state. The
+// planner intentionally does not consume this model until Gate 5B2, where the
+// product preference will be combined with the operational rollout gate.
+// ---------------------------------------------------------------------------
+
+enum NativeSourceType {
+  LIKED_TRACKS
+}
+
+model NativeSourcePreference {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NativeSourceType
+  enabled   Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([userId, enabled])
 }
 
 // ---------------------------------------------------------------------------
@@ -922,7 +949,7 @@ model TargetScheduleRun {
   scheduledForMinutes   Int
   scheduleTimezone      String
   policy                TargetUpdatePolicy
-  status                 TargetScheduleRunStatus @default(RUNNING)
+  status                TargetScheduleRunStatus @default(RUNNING)
   attempt               Int                     @default(1)
   generationRunId       String?
   targetDurationMs      Int?
@@ -988,7 +1015,7 @@ enum PushDeliveryStatus {
 
 model NotificationPreference {
   id                String   @id @default(cuid())
-  userId             String   @unique
+  userId            String   @unique
   generationEnabled Boolean  @default(true)
   cleanupEnabled    Boolean  @default(true)
   errorEnabled      Boolean  @default(true)
@@ -1001,7 +1028,7 @@ model NotificationPreference {
 
 model PushSubscription {
   id                String    @id @default(cuid())
-  userId             String
+  userId            String
   endpointHash      String    @unique
   endpoint          String    @db.Text
   p256dh            String    @db.Text
