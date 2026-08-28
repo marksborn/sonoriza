@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
@@ -140,6 +141,16 @@ export default async function SourcesLayout({ children }: { children: ReactNode 
             <div className="status-info mt-5 rounded-2xl border px-4 py-3 text-xs font-bold leading-5">
               Músicas Curtidas só participa do planner quando esta preferência e o rollout operacional estiverem habilitados. Desativar aqui interrompe a influência no planner sem alterar sua biblioteca nem a sincronização da fonte.
             </div>
+          </div>
+
+          <div className="mt-3 flex justify-end">
+            <Link
+              href="/dashboard/configuracao/fontes/podcasts"
+              className="inline-flex items-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-2.5 text-sm font-black text-ink-inverse transition hover:border-brand-400/55 hover:bg-surface-elevated"
+            >
+              <UiIcon name="repeat" size={16} />
+              Políticas de podcasts
+            </Link>
           </div>
         </div>
       </section>
