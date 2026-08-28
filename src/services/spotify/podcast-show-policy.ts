@@ -10,6 +10,10 @@ export type PodcastEpisodeOrderValue =
   | "OLDEST_FIRST"
   | "NEWEST_FIRST";
 
+type RuntimePodcastShowPolicy = PodcastShowPolicySnapshot & {
+  publishedEpisodeIds?: readonly string[];
+};
+
 export type PodcastShowPolicyResult = {
   candidates: Candidate[];
   stateFilteredCount: number;
@@ -32,12 +36,12 @@ export function sortShowCandidates(
 
 /**
  * PODCAST-05 pure policy engine. It never persists progress and never reads the
- * provider. Collection supplies canonical playback facts; this function turns
- * them into the ordered pool that the planner may consume.
+ * provider. Collection supplies canonical playback facts; GenerationItem audit
+ * history supplies published traversal/shuffle memory.
  */
 export function applyPodcastShowPolicy(
   candidates: Candidate[],
-  policy: PodcastShowPolicySnapshot,
+  policy: RuntimePodcastShowPolicy,
   now: Date = new Date(),
 ): PodcastShowPolicyResult {
   const allOrdered =
@@ -78,34 +82,34 @@ export function applyPodcastShowPolicy(
   }
 
   const sequenceStateful = policy.episodeEligibility !== "UNPLAYED_ONLY";
-  if (sequenceStateful && policy.sequenceCompleted) {
-    return {
-      candidates: [],
-      stateFilteredCount,
-      releaseExpiredCount,
-      cursorFilteredCount: stateAndFreshnessEligible.length,
-      randomConsumedSkippedCount: 0,
-      sequenceBlocked: false,
-      effectiveRandomRound: policy.randomRound,
-      randomRoundReset: false,
-    };
-  }
+  const publishedEpisodeIds = policy.publishedEpisodeIds ?? [];
+  const lastPublishedEpisodeId = sequenceStateful
+    ? publishedEpisodeIds.at(-1) ?? null
+    : null;
 
-  const anchorEpisodeId =
-    (sequenceStateful ? policy.sequenceCursorEpisodeId : null) ??
-    policy.startEpisodeId;
   let cursorFilteredCount = 0;
   let sequenceBlocked = false;
   let eligible = stateAndFreshnessEligible;
 
-  if (anchorEpisodeId) {
-    const anchorIndex = positionByEpisodeId.get(anchorEpisodeId);
-    if (anchorIndex === undefined) {
-      if (policy.strictSequence && sequenceStateful && policy.sequenceCursorEpisodeId) {
+  if (lastPublishedEpisodeId) {
+    const lastPublishedIndex = positionByEpisodeId.get(lastPublishedEpisodeId);
+    if (lastPublishedIndex === undefined) {
+      if (policy.strictSequence) {
         sequenceBlocked = true;
         eligible = [];
       }
     } else {
+      eligible = stateAndFreshnessEligible.filter((candidate) => {
+        const episodeId = candidate.spotifyEpisodeId;
+        const position = episodeId ? positionByEpisodeId.get(episodeId) : undefined;
+        const keep = position !== undefined && position > lastPublishedIndex;
+        if (!keep) cursorFilteredCount += 1;
+        return keep;
+      });
+    }
+  } else if (policy.startEpisodeId) {
+    const anchorIndex = positionByEpisodeId.get(policy.startEpisodeId);
+    if (anchorIndex !== undefined) {
       eligible = stateAndFreshnessEligible.filter((candidate) => {
         const episodeId = candidate.spotifyEpisodeId;
         const position = episodeId ? positionByEpisodeId.get(episodeId) : undefined;
@@ -145,33 +149,45 @@ export function applyPodcastShowPolicy(
 
 function applyRandomPolicy(
   candidates: Candidate[],
-  policy: PodcastShowPolicySnapshot,
+  policy: RuntimePodcastShowPolicy,
   stateFilteredCount: number,
   releaseExpiredCount: number,
 ): PodcastShowPolicyResult {
-  const consumed = new Set(policy.randomConsumedEpisodeIds);
-  let randomConsumedSkippedCount = 0;
+  const eligibleEpisodeIds = new Set(
+    candidates.flatMap((candidate) =>
+      candidate.spotifyEpisodeId ? [candidate.spotifyEpisodeId] : [],
+    ),
+  );
+  const published = policy.publishedEpisodeIds ?? [];
   let effectiveRandomRound = policy.randomRound;
   let randomRoundReset = false;
-  let pool = candidates;
+  let consumed = new Set(policy.randomConsumedEpisodeIds);
 
-  if (policy.randomPolicy === "WITHOUT_REPLACEMENT") {
-    const remaining = candidates.filter((candidate) => {
-      const episodeId = candidate.spotifyEpisodeId;
-      const alreadyConsumed = Boolean(episodeId && consumed.has(episodeId));
-      if (alreadyConsumed) randomConsumedSkippedCount += 1;
-      return !alreadyConsumed;
-    });
-
-    if (remaining.length === 0 && candidates.length > 0) {
-      effectiveRandomRound += 1;
-      randomRoundReset = true;
-      randomConsumedSkippedCount = 0;
-      pool = candidates;
-    } else {
-      pool = remaining;
+  if (policy.randomPolicy === "WITH_REPLACEMENT") {
+    effectiveRandomRound += published.length;
+    consumed = new Set();
+  } else if (eligibleEpisodeIds.size > 0) {
+    for (const episodeId of published) {
+      if (!eligibleEpisodeIds.has(episodeId)) continue;
+      consumed.add(episodeId);
+      if (consumed.size >= eligibleEpisodeIds.size) {
+        consumed = new Set();
+        effectiveRandomRound += 1;
+        randomRoundReset = true;
+      }
     }
   }
+
+  let randomConsumedSkippedCount = 0;
+  const pool =
+    policy.randomPolicy === "WITHOUT_REPLACEMENT"
+      ? candidates.filter((candidate) => {
+          const episodeId = candidate.spotifyEpisodeId;
+          const alreadyConsumed = Boolean(episodeId && consumed.has(episodeId));
+          if (alreadyConsumed) randomConsumedSkippedCount += 1;
+          return !alreadyConsumed;
+        })
+      : candidates;
 
   const shuffled = deterministicShuffle(
     pool,
@@ -206,7 +222,7 @@ function applyRandomPolicy(
 
 function passesListeningState(
   candidate: Candidate,
-  policy: PodcastShowPolicySnapshot,
+  policy: RuntimePodcastShowPolicy,
 ): boolean {
   const status = candidate.podcastListeningStatus;
   if (!status) return policy.episodeEligibility !== "PLAYED_ONLY";
@@ -217,7 +233,7 @@ function passesListeningState(
 
 function passesReleaseWindow(
   candidate: Candidate,
-  policy: PodcastShowPolicySnapshot,
+  policy: RuntimePodcastShowPolicy,
   now: Date,
 ): boolean {
   if (policy.maxReleaseAgeDays === null) return true;
@@ -246,7 +262,7 @@ function passesReleaseWindow(
 
 function sortByPolicyOrder(
   candidates: Candidate[],
-  order: Exclude<PodcastShowOrderValue, "RANDOM"> | "OLDEST_FIRST" | "NEWEST_FIRST",
+  order: "OLDEST_FIRST" | "NEWEST_FIRST",
 ): Candidate[] {
   const direction = order === "OLDEST_FIRST" ? 1 : -1;
   return [...candidates].sort((left, right) => {
@@ -306,7 +322,10 @@ function deterministicShuffle(candidates: Candidate[], seed: string): Candidate[
       candidate,
       key: stableHash(`${seed}:${candidate.spotifyEpisodeId ?? candidate.uri}`),
     }))
-    .sort((left, right) => left.key - right.key || left.candidate.uri.localeCompare(right.candidate.uri))
+    .sort(
+      (left, right) =>
+        left.key - right.key || left.candidate.uri.localeCompare(right.candidate.uri),
+    )
     .map((entry) => entry.candidate);
 }
 
