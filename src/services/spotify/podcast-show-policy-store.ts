@@ -1,5 +1,3 @@
-import type { Prisma } from "@prisma/client";
-
 import { prisma } from "@/lib/prisma";
 
 export type PodcastEpisodeEligibilityValue =
@@ -27,10 +25,8 @@ export type PodcastShowPolicySnapshot = {
   maxReleaseAgeDays: number | null;
   expiryPolicy: PodcastExpiryPolicyValue;
   maxEpisodesPerCycle: number | null;
-  sequenceCursorEpisodeId: string | null;
-  sequenceCompleted: boolean;
+  /** Reset generation used only to rotate the deterministic random seed. */
   randomRound: number;
-  randomConsumedEpisodeIds: string[];
 };
 
 export type PodcastShowPolicyUpdate = Pick<
@@ -45,73 +41,66 @@ export type PodcastShowPolicyUpdate = Pick<
   | "maxEpisodesPerCycle"
 >;
 
-export type PodcastShowPolicySelection = {
-  sourcePlaylistId: string;
-  spotifyEpisodeId: string;
-  episodeOrder: PodcastShowOrderValue;
-  randomPolicy: PodcastRandomPolicyValue;
-  randomRound: number;
-  randomRoundReset: boolean;
-  sequenceStateful: boolean;
-  sequenceIndex: number | null;
-  nextSequenceEpisodeId: string | null;
-};
-
-type PolicyRow = {
-  sourcePlaylistId: string;
-  includePlayed: boolean;
-  legacyEpisodeOrder: string;
-  episodeEligibility: string | null;
-  episodeOrder: string | null;
-  randomPolicy: string | null;
-  startEpisodeId: string | null;
-  strictSequence: boolean | null;
-  maxReleaseAgeDays: number | null;
-  expiryPolicy: string | null;
-  maxEpisodesPerCycle: number | null;
-  sequenceCursorEpisodeId: string | null;
-  sequenceCompleted: boolean | null;
-  randomRound: number | null;
-  randomConsumedEpisodeIds: unknown;
-};
-
 /**
- * PODCAST-05 uses a raw-SQL companion table on purpose in this gate. This keeps
- * the policy/state independent from SourcePlaylist's provider/cache concerns and
- * from EpisodeListeningState's canonical Spotify playback facts.
+ * Persistent product policy only. Traversal/shuffle consumption is deliberately
+ * reconstructed from successful, non-simulation GenerationItem audit history so
+ * merely simulating or collecting candidates can never advance a show.
  */
 export async function loadPodcastShowPolicies(
   userId: string,
 ): Promise<Map<string, PodcastShowPolicySnapshot>> {
-  const rows = await prisma.$queryRaw<PolicyRow[]>`
-    SELECT
-      s."id" AS "sourcePlaylistId",
-      s."includePlayed" AS "includePlayed",
-      s."episodeOrder"::text AS "legacyEpisodeOrder",
-      p."episodeEligibility",
-      p."episodeOrder",
-      p."randomPolicy",
-      p."startEpisodeId",
-      p."strictSequence",
-      p."maxReleaseAgeDays",
-      p."expiryPolicy",
-      p."maxEpisodesPerCycle",
-      p."sequenceCursorEpisodeId",
-      p."sequenceCompleted",
-      p."randomRound",
-      p."randomConsumedEpisodeIds"
-    FROM "SourcePlaylist" s
-    LEFT JOIN "PodcastShowPolicy" p
-      ON p."sourcePlaylistId" = s."id"
-    WHERE s."userId" = ${userId}
-      AND s."kind"::text = 'PODCAST'
-      AND s."spotifyType"::text = 'SHOW'
-  `;
+  const sources = await prisma.sourcePlaylist.findMany({
+    where: {
+      userId,
+      kind: "PODCAST",
+      spotifyType: "SHOW",
+    },
+    select: {
+      id: true,
+      includePlayed: true,
+      episodeOrder: true,
+      podcastShowPolicy: {
+        select: {
+          episodeEligibility: true,
+          episodeOrder: true,
+          randomPolicy: true,
+          startEpisodeId: true,
+          strictSequence: true,
+          maxReleaseAgeDays: true,
+          expiryPolicy: true,
+          maxEpisodesPerCycle: true,
+          randomRound: true,
+        },
+      },
+    },
+  });
 
   return new Map(
-    rows.map((row) => {
-      const policy = normalizePolicyRow(row);
-      return [policy.sourcePlaylistId, policy] as const;
+    sources.map((source) => {
+      const policy = source.podcastShowPolicy;
+      const snapshot: PodcastShowPolicySnapshot = policy
+        ? {
+            sourcePlaylistId: source.id,
+            episodeEligibility: policy.episodeEligibility,
+            episodeOrder: policy.episodeOrder,
+            randomPolicy: policy.randomPolicy,
+            startEpisodeId: normalizedId(policy.startEpisodeId),
+            strictSequence: policy.strictSequence,
+            maxReleaseAgeDays: normalizeNullableNonNegativeInt(
+              policy.maxReleaseAgeDays,
+            ),
+            expiryPolicy: policy.expiryPolicy,
+            maxEpisodesPerCycle: normalizeNullablePositiveInt(
+              policy.maxEpisodesPerCycle,
+            ),
+            randomRound: Math.max(0, Math.trunc(policy.randomRound)),
+          }
+        : legacyPolicy({
+            sourcePlaylistId: source.id,
+            includePlayed: source.includePlayed,
+            episodeOrder: source.episodeOrder,
+          });
+      return [source.id, snapshot] as const;
     }),
   );
 }
@@ -121,231 +110,153 @@ export async function savePodcastShowPolicy(
   sourcePlaylistId: string,
   input: PodcastShowPolicyUpdate,
 ): Promise<boolean> {
-  const maxReleaseAgeDays = normalizeNullableNonNegativeInt(input.maxReleaseAgeDays);
-  const maxEpisodesPerCycle = normalizeNullablePositiveInt(input.maxEpisodesPerCycle);
-  const startEpisodeId = normalizedId(input.startEpisodeId);
-
-  const rows = await prisma.$queryRaw<Array<{ sourcePlaylistId: string }>>`
-    INSERT INTO "PodcastShowPolicy" (
-      "sourcePlaylistId",
-      "episodeEligibility",
-      "episodeOrder",
-      "randomPolicy",
-      "startEpisodeId",
-      "strictSequence",
-      "maxReleaseAgeDays",
-      "expiryPolicy",
-      "maxEpisodesPerCycle",
-      "sequenceCursorEpisodeId",
-      "sequenceCompleted",
-      "randomRound",
-      "randomConsumedEpisodeIds",
-      "updatedAt"
-    )
-    SELECT
-      s."id",
-      ${input.episodeEligibility},
-      ${input.episodeOrder},
-      ${input.randomPolicy},
-      ${startEpisodeId},
-      ${input.strictSequence},
-      ${maxReleaseAgeDays},
-      ${input.expiryPolicy},
-      ${maxEpisodesPerCycle},
-      NULL,
-      false,
-      0,
-      '[]'::jsonb,
-      CURRENT_TIMESTAMP
-    FROM "SourcePlaylist" s
-    WHERE s."id" = ${sourcePlaylistId}
-      AND s."userId" = ${userId}
-      AND s."kind"::text = 'PODCAST'
-      AND s."spotifyType"::text = 'SHOW'
-    ON CONFLICT ("sourcePlaylistId") DO UPDATE SET
-      "episodeEligibility" = EXCLUDED."episodeEligibility",
-      "episodeOrder" = EXCLUDED."episodeOrder",
-      "randomPolicy" = EXCLUDED."randomPolicy",
-      "startEpisodeId" = EXCLUDED."startEpisodeId",
-      "strictSequence" = EXCLUDED."strictSequence",
-      "maxReleaseAgeDays" = EXCLUDED."maxReleaseAgeDays",
-      "expiryPolicy" = EXCLUDED."expiryPolicy",
-      "maxEpisodesPerCycle" = EXCLUDED."maxEpisodesPerCycle",
-      -- A changed policy starts a deliberate new traversal/shuffle.
-      "sequenceCursorEpisodeId" = NULL,
-      "sequenceCompleted" = false,
-      "randomRound" = 0,
-      "randomConsumedEpisodeIds" = '[]'::jsonb,
-      "updatedAt" = CURRENT_TIMESTAMP
-    RETURNING "sourcePlaylistId"
-  `;
-
-  if (rows.length !== 1) return false;
-
-  // Keep the legacy flags coherent for code paths that still consume them.
-  await prisma.sourcePlaylist.updateMany({
-    where: { id: sourcePlaylistId, userId },
-    data: {
-      includePlayed: input.episodeEligibility !== "UNPLAYED_ONLY",
-      episodeOrder:
-        input.episodeOrder === "NEWEST_FIRST"
-          ? "NEWEST_FIRST"
-          : input.episodeOrder === "OLDEST_FIRST"
-            ? "OLDEST_FIRST"
-            : "SOURCE_DEFAULT",
+  const source = await prisma.sourcePlaylist.findFirst({
+    where: {
+      id: sourcePlaylistId,
+      userId,
+      kind: "PODCAST",
+      spotifyType: "SHOW",
     },
+    select: { id: true },
   });
+  if (!source) return false;
+
+  const maxReleaseAgeDays = normalizeNullableNonNegativeInt(
+    input.maxReleaseAgeDays,
+  );
+  const maxEpisodesPerCycle = normalizeNullablePositiveInt(
+    input.maxEpisodesPerCycle,
+  );
+  const startEpisodeId = normalizedId(input.startEpisodeId);
+  const updatedAt = new Date();
+
+  await prisma.$transaction([
+    prisma.podcastShowPolicy.upsert({
+      where: { sourcePlaylistId },
+      create: {
+        sourcePlaylistId,
+        episodeEligibility: input.episodeEligibility,
+        episodeOrder: input.episodeOrder,
+        randomPolicy: input.randomPolicy,
+        startEpisodeId,
+        strictSequence: input.strictSequence,
+        maxReleaseAgeDays,
+        expiryPolicy: input.expiryPolicy,
+        maxEpisodesPerCycle,
+        randomRound: 0,
+        randomConsumedEpisodeIds: [],
+        updatedAt,
+      },
+      update: {
+        episodeEligibility: input.episodeEligibility,
+        episodeOrder: input.episodeOrder,
+        randomPolicy: input.randomPolicy,
+        startEpisodeId,
+        strictSequence: input.strictSequence,
+        maxReleaseAgeDays,
+        expiryPolicy: input.expiryPolicy,
+        maxEpisodesPerCycle,
+        sequenceCursorEpisodeId: null,
+        sequenceCompleted: false,
+        randomRound: { increment: 1 },
+        randomConsumedEpisodeIds: [],
+        updatedAt,
+      },
+    }),
+    // Keep legacy flags coherent for readers/UI that still consume PODCAST-03.
+    prisma.sourcePlaylist.update({
+      where: { id: sourcePlaylistId },
+      data: {
+        includePlayed: input.episodeEligibility !== "UNPLAYED_ONLY",
+        episodeOrder:
+          input.episodeOrder === "NEWEST_FIRST"
+            ? "NEWEST_FIRST"
+            : input.episodeOrder === "OLDEST_FIRST"
+              ? "OLDEST_FIRST"
+              : "SOURCE_DEFAULT",
+      },
+    }),
+  ]);
+
   return true;
 }
 
+/**
+ * Reset is a policy-local operation: changing updatedAt makes all older real
+ * GenerationItems fall outside the traversal-history window. Spotify playback
+ * state and the user's library are untouched.
+ */
 export async function resetPodcastShowPolicyProgress(
   userId: string,
   sourcePlaylistId: string,
 ): Promise<boolean> {
-  const changed = await prisma.$executeRaw`
-    UPDATE "PodcastShowPolicy" p
-    SET
-      "sequenceCursorEpisodeId" = NULL,
-      "sequenceCompleted" = false,
-      "randomRound" = "randomRound" + 1,
-      "randomConsumedEpisodeIds" = '[]'::jsonb,
-      "updatedAt" = CURRENT_TIMESTAMP
-    FROM "SourcePlaylist" s
-    WHERE p."sourcePlaylistId" = s."id"
-      AND s."id" = ${sourcePlaylistId}
-      AND s."userId" = ${userId}
-      AND s."spotifyType"::text = 'SHOW'
-  `;
-  return changed === 1;
-}
-
-/**
- * Commit Sonoriza-owned traversal state only after a real target write and its
- * GenerationItem audit rows succeeded. Simulations never call this function.
- */
-export async function recordPodcastShowPolicySelections(
-  selections: PodcastShowPolicySelection[],
-): Promise<void> {
-  if (selections.length === 0) return;
-
-  const grouped = new Map<string, PodcastShowPolicySelection[]>();
-  for (const selection of selections) {
-    const bucket = grouped.get(selection.sourcePlaylistId) ?? [];
-    bucket.push(selection);
-    grouped.set(selection.sourcePlaylistId, bucket);
-  }
-
-  await prisma.$transaction(async (tx) => {
-    for (const [sourcePlaylistId, selected] of grouped) {
-      const rows = await tx.$queryRaw<Array<{
-        episodeOrder: string;
-        randomPolicy: string;
-        randomRound: number;
-        randomConsumedEpisodeIds: unknown;
-      }>>`
-        SELECT
-          "episodeOrder",
-          "randomPolicy",
-          "randomRound",
-          "randomConsumedEpisodeIds"
-        FROM "PodcastShowPolicy"
-        WHERE "sourcePlaylistId" = ${sourcePlaylistId}
-        FOR UPDATE
-      `;
-      const current = rows[0];
-      if (!current) continue;
-
-      if (current.episodeOrder === "RANDOM") {
-        const effectiveRound = Math.max(
-          current.randomRound,
-          ...selected.map((entry) => entry.randomRound),
-        );
-
-        if (current.randomPolicy === "WITH_REPLACEMENT") {
-          await tx.$executeRaw`
-            UPDATE "PodcastShowPolicy"
-            SET
-              "randomRound" = ${effectiveRound + 1},
-              "randomConsumedEpisodeIds" = '[]'::jsonb,
-              "updatedAt" = CURRENT_TIMESTAMP
-            WHERE "sourcePlaylistId" = ${sourcePlaylistId}
-          `;
-          continue;
-        }
-
-        const reset =
-          effectiveRound > current.randomRound ||
-          selected.some((entry) => entry.randomRoundReset);
-        const consumed = new Set(
-          reset ? [] : normalizeEpisodeIdArray(current.randomConsumedEpisodeIds),
-        );
-        for (const entry of selected) consumed.add(entry.spotifyEpisodeId);
-        const serialized = JSON.stringify([...consumed].sort());
-        await tx.$executeRaw`
-          UPDATE "PodcastShowPolicy"
-          SET
-            "randomRound" = ${effectiveRound},
-            "randomConsumedEpisodeIds" = ${serialized}::jsonb,
-            "updatedAt" = CURRENT_TIMESTAMP
-          WHERE "sourcePlaylistId" = ${sourcePlaylistId}
-        `;
-        continue;
-      }
-
-      const stateful = selected
-        .filter((entry) => entry.sequenceStateful && entry.sequenceIndex !== null)
-        .sort((a, b) => (a.sequenceIndex ?? -1) - (b.sequenceIndex ?? -1));
-      const last = stateful.at(-1);
-      if (!last) continue;
-
-      await tx.$executeRaw`
-        UPDATE "PodcastShowPolicy"
-        SET
-          "sequenceCursorEpisodeId" = ${last.nextSequenceEpisodeId},
-          "sequenceCompleted" = ${last.nextSequenceEpisodeId === null},
-          "updatedAt" = CURRENT_TIMESTAMP
-        WHERE "sourcePlaylistId" = ${sourcePlaylistId}
-      `;
-    }
+  const source = await prisma.sourcePlaylist.findFirst({
+    where: {
+      id: sourcePlaylistId,
+      userId,
+      kind: "PODCAST",
+      spotifyType: "SHOW",
+    },
+    select: {
+      id: true,
+      includePlayed: true,
+      episodeOrder: true,
+    },
   });
+  if (!source) return false;
+
+  const fallback = legacyPolicy({
+    sourcePlaylistId,
+    includePlayed: source.includePlayed,
+    episodeOrder: source.episodeOrder,
+  });
+  const updatedAt = new Date();
+
+  await prisma.podcastShowPolicy.upsert({
+    where: { sourcePlaylistId },
+    create: {
+      sourcePlaylistId,
+      episodeEligibility: fallback.episodeEligibility,
+      episodeOrder: fallback.episodeOrder,
+      randomPolicy: fallback.randomPolicy,
+      strictSequence: fallback.strictSequence,
+      maxReleaseAgeDays: fallback.maxReleaseAgeDays,
+      expiryPolicy: fallback.expiryPolicy,
+      maxEpisodesPerCycle: fallback.maxEpisodesPerCycle,
+      randomRound: 1,
+      randomConsumedEpisodeIds: [],
+      updatedAt,
+    },
+    update: {
+      sequenceCursorEpisodeId: null,
+      sequenceCompleted: false,
+      randomRound: { increment: 1 },
+      randomConsumedEpisodeIds: [],
+      updatedAt,
+    },
+  });
+
+  return true;
 }
 
-function normalizePolicyRow(row: PolicyRow): PodcastShowPolicySnapshot {
+function legacyPolicy(input: {
+  sourcePlaylistId: string;
+  includePlayed: boolean;
+  episodeOrder: string;
+}): PodcastShowPolicySnapshot {
   return {
-    sourcePlaylistId: row.sourcePlaylistId,
-    episodeEligibility: isEpisodeEligibility(row.episodeEligibility)
-      ? row.episodeEligibility
-      : row.includePlayed
-        ? "ALL"
-        : "UNPLAYED_ONLY",
-    episodeOrder: isEpisodeOrder(row.episodeOrder)
-      ? row.episodeOrder
-      : row.legacyEpisodeOrder === "NEWEST_FIRST"
-        ? "NEWEST_FIRST"
-        : "OLDEST_FIRST",
-    randomPolicy: isRandomPolicy(row.randomPolicy)
-      ? row.randomPolicy
-      : "WITHOUT_REPLACEMENT",
-    startEpisodeId: normalizedId(row.startEpisodeId),
-    strictSequence: row.strictSequence ?? true,
-    maxReleaseAgeDays: normalizeNullableNonNegativeInt(row.maxReleaseAgeDays),
-    expiryPolicy: isExpiryPolicy(row.expiryPolicy)
-      ? row.expiryPolicy
-      : "STRICT_EXPIRY",
-    maxEpisodesPerCycle: normalizeNullablePositiveInt(row.maxEpisodesPerCycle),
-    sequenceCursorEpisodeId: normalizedId(row.sequenceCursorEpisodeId),
-    sequenceCompleted: row.sequenceCompleted ?? false,
-    randomRound: Math.max(0, Math.trunc(row.randomRound ?? 0)),
-    randomConsumedEpisodeIds: normalizeEpisodeIdArray(row.randomConsumedEpisodeIds),
+    sourcePlaylistId: input.sourcePlaylistId,
+    episodeEligibility: input.includePlayed ? "ALL" : "UNPLAYED_ONLY",
+    episodeOrder:
+      input.episodeOrder === "NEWEST_FIRST" ? "NEWEST_FIRST" : "OLDEST_FIRST",
+    randomPolicy: "WITHOUT_REPLACEMENT",
+    startEpisodeId: null,
+    strictSequence: true,
+    maxReleaseAgeDays: null,
+    expiryPolicy: "STRICT_EXPIRY",
+    maxEpisodesPerCycle: null,
+    randomRound: 0,
   };
-}
-
-function normalizeEpisodeIdArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.flatMap((entry) => {
-    const normalized = typeof entry === "string" ? normalizedId(entry) : null;
-    return normalized ? [normalized] : [];
-  }))];
 }
 
 function normalizedId(value: string | null | undefined): string | null {
@@ -360,22 +271,3 @@ function normalizeNullablePositiveInt(value: number | null): number | null {
 function normalizeNullableNonNegativeInt(value: number | null): number | null {
   return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : null;
 }
-
-function isEpisodeEligibility(value: string | null): value is PodcastEpisodeEligibilityValue {
-  return value === "UNPLAYED_ONLY" || value === "PLAYED_ONLY" || value === "ALL";
-}
-
-function isEpisodeOrder(value: string | null): value is PodcastShowOrderValue {
-  return value === "OLDEST_FIRST" || value === "NEWEST_FIRST" || value === "RANDOM";
-}
-
-function isRandomPolicy(value: string | null): value is PodcastRandomPolicyValue {
-  return value === "WITHOUT_REPLACEMENT" || value === "WITH_REPLACEMENT";
-}
-
-function isExpiryPolicy(value: string | null): value is PodcastExpiryPolicyValue {
-  return value === "STRICT_EXPIRY" || value === "ALLOW_IN_PROGRESS_TO_FINISH";
-}
-
-// Keeps the Prisma import live in builds where tagged-template inference varies.
-export type PodcastShowPolicyTransactionClient = Prisma.TransactionClient;
