@@ -1,4 +1,4 @@
-const SONORIZA_SW_VERSION = "notify-01-v1";
+const SONORIZA_SW_VERSION = "pwa-01-network-fetch-v1";
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -80,5 +80,15 @@ function safeDashboardUrl(value) {
   return "/dashboard";
 }
 
-// Intentionally no fetch handler and no Cache API usage.
-// Authenticated pages, APIs and dynamic playlist state always use the network.
+// PWA-01 diagnostic parity with Tião: the worker participates only in
+// same-origin document navigations and always goes straight to the network.
+// API requests and all non-navigation requests remain outside the worker.
+// No Cache API is used, so authenticated HTML/session state is never persisted.
+self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "GET" || event.request.mode !== "navigate") return;
+
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+
+  event.respondWith(fetch(event.request));
+});
