@@ -670,7 +670,10 @@ export function buildLikedTrackProductivePilotPlan(input: {
           reason: "COMPOSITION_QUALITY_REGRESSION",
         });
       }
-      if (!variantTarget.result.stats.sequenceQualityPassed) {
+      if (
+        currentTarget.result.stats.sequenceQualityPassed &&
+        !variantTarget.result.stats.sequenceQualityPassed
+      ) {
         guardFailures.push({
           targetPlaylistId: currentTarget.targetPlaylistId,
           targetName: currentTarget.name,
