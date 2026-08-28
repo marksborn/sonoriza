@@ -428,7 +428,7 @@ model SpotifyExtendedHistoryImportRun {
   noopEvents        Int                                 @default(0)
   startedAt         DateTime                            @default(now())
   finishedAt        DateTime?
-  error             String?                             @db.Text
+  error              String?                            @db.Text
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -660,10 +660,11 @@ model GenerationRun {
   error      String?    @db.Text
   summary    Json?
 
-  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  logs         GenerationLog[]
-  items        GenerationItem[]
-  scheduleRuns TargetScheduleRun[]
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs             GenerationLog[]
+  items            GenerationItem[]
+  scheduleRuns     TargetScheduleRun[]
+  scheduleAttempts TargetScheduleAttempt[]
 
   @@index([userId, startedAt])
 }
@@ -938,12 +939,32 @@ model TargetScheduleRun {
   startedAt             DateTime                @default(now())
   finishedAt            DateTime?
 
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  target        TargetPlaylist @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)
-  generationRun GenerationRun? @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target        TargetPlaylist          @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)
+  generationRun GenerationRun?          @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  attempts      TargetScheduleAttempt[]
 
   @@index([userId, startedAt])
   @@index([targetPlaylistId, startedAt])
+}
+
+model TargetScheduleAttempt {
+  id                  String                  @id @default(cuid())
+  targetScheduleRunId String
+  attempt             Int
+  status              TargetScheduleRunStatus @default(RUNNING)
+  generationRunId     String?
+  reason              String?                 @db.Text
+  details             Json?
+  startedAt           DateTime                @default(now())
+  finishedAt          DateTime?
+
+  scheduleRun   TargetScheduleRun @relation(fields: [targetScheduleRunId], references: [id], onDelete: Cascade)
+  generationRun GenerationRun?    @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+
+  @@unique([targetScheduleRunId, attempt])
+  @@index([targetScheduleRunId, startedAt])
+  @@index([generationRunId])
 }
 
 // ---------------------------------------------------------------------------
@@ -967,7 +988,7 @@ enum PushDeliveryStatus {
 
 model NotificationPreference {
   id                String   @id @default(cuid())
-  userId            String   @unique
+  userId             String   @unique
   generationEnabled Boolean  @default(true)
   cleanupEnabled    Boolean  @default(true)
   errorEnabled      Boolean  @default(true)
@@ -980,7 +1001,7 @@ model NotificationPreference {
 
 model PushSubscription {
   id                String    @id @default(cuid())
-  userId            String
+  userId             String
   endpointHash      String    @unique
   endpoint          String    @db.Text
   p256dh            String    @db.Text
