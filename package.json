@@ -27,6 +27,7 @@
     "history:spotify": "tsx scripts/import-spotify-extended-history.ts",
     "liked:inventory": "tsx scripts/report-liked-track-inventory.ts",
     "liked:affinity": "tsx scripts/report-liked-track-affinity.ts",
+    "liked:reconcile": "tsx scripts/report-liked-track-reconciliation.ts",
     "liked:similarity": "tsx scripts/report-liked-artist-similarity.ts",
     "liked:shadow-discovery": "tsx scripts/report-liked-shadow-discovery.ts",
     "liked:backfill": "tsx scripts/report-liked-artist-similarity-backfill.ts",
