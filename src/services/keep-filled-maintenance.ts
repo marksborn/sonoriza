@@ -5,12 +5,15 @@ import { prisma } from "@/lib/prisma";
 import {
   buildKeepFilledPreservation,
   type GeneratedItemProvenance,
+  type PodcastShowMaintenancePolicy,
 } from "@/services/keep-filled-core";
 import type { Candidate } from "@/services/playlist-planner";
 import { parseSequencePattern } from "@/services/playlist-planner";
 import { SpotifyClient } from "@/services/spotify";
 import { refreshAuthoritativePodcastListeningStates } from "@/services/spotify/podcast-authoritative-state";
 import { prismaPodcastListeningStateStore } from "@/services/spotify/podcast-listening-state";
+import { evaluatePodcastShowCandidateEligibility } from "@/services/spotify/podcast-show-policy";
+import { loadPodcastShowPolicies } from "@/services/spotify/podcast-show-policy-store";
 import { loadMusicRepeatContext } from "@/services/spotify/recently-played";
 
 export type KeepFilledTargetPatch = {
@@ -68,11 +71,7 @@ export async function prepareKeepFilledTarget(
   const spotify = await SpotifyClient.forUser(userId);
   const remote = await spotify.getTargetPlaylistState(target.spotifyPlaylistId);
   const observations = remote.items.flatMap((item) => {
-    if (
-      item.type !== "PODCAST" ||
-      !item.uri ||
-      !item.spotifyEpisodeId
-    ) {
+    if (item.type !== "PODCAST" || !item.uri || !item.spotifyEpisodeId) {
       return [];
     }
     return [
@@ -162,7 +161,6 @@ export async function prepareKeepFilledTarget(
       userId,
       authoritativeEpisodeIds,
       date,
-      // P2: reuse this target's instrumented client for the authoritative reads.
       { episodeReader: (episodeId) => spotify.getEpisodePlaybackState(episodeId) },
     );
   const podcastStates = new Map(observedPodcastStates);
@@ -170,11 +168,23 @@ export async function prepareKeepFilledTarget(
     podcastStates.set(episodeId, state);
   }
 
+  const podcastShowPolicyByUri = willClearEmptyCalendar
+    ? new Map<string, PodcastShowMaintenancePolicy>()
+    : await buildPodcastShowMaintenancePolicies({
+        userId,
+        date,
+        remoteItems: remote.items,
+        provenanceByUri,
+        podcastStates,
+        spotify,
+      });
+
   const musicRepeat = await loadMusicRepeatContext(userId, date);
   const preservation = buildKeepFilledPreservation({
     items: remote.items,
     podcastStates,
     provenanceByUri,
+    podcastShowPolicyByUri,
     musicRepeatEnabled: musicRepeat.enabled,
     blockedTrackIds: musicRepeat.blockedTrackIds,
     rules: {
@@ -237,6 +247,115 @@ export async function prepareKeepFilledTarget(
     },
     skipReason: null,
   };
+}
+
+async function buildPodcastShowMaintenancePolicies(input: {
+  userId: string;
+  date: Date;
+  remoteItems: Awaited<ReturnType<SpotifyClient["getTargetPlaylistState"]>>["items"];
+  provenanceByUri: ReadonlyMap<string, GeneratedItemProvenance>;
+  podcastStates: ReadonlyMap<
+    string,
+    Awaited<ReturnType<typeof prismaPodcastListeningStateStore.observe>> extends Map<
+      string,
+      infer State
+    >
+      ? State
+      : never
+  >;
+  spotify: SpotifyClient;
+}): Promise<Map<string, PodcastShowMaintenancePolicy>> {
+  const [showSources, policies] = await Promise.all([
+    prisma.sourcePlaylist.findMany({
+      where: {
+        userId: input.userId,
+        kind: "PODCAST",
+        spotifyType: "SHOW",
+      },
+      select: { id: true, spotifyId: true },
+    }),
+    loadPodcastShowPolicies(input.userId),
+  ]);
+  const policyBySpotifyShowId = new Map(
+    showSources.flatMap((source) => {
+      const policy = policies.get(source.id);
+      return policy ? [[source.spotifyId, policy] as const] : [];
+    }),
+  );
+  const result = new Map<string, PodcastShowMaintenancePolicy>();
+
+  for (const item of input.remoteItems) {
+    if (
+      item.type !== "PODCAST" ||
+      !item.uri ||
+      !item.spotifyEpisodeId
+    ) {
+      continue;
+    }
+    const provenance = input.provenanceByUri.get(item.uri);
+    if (
+      provenance?.sourceSpotifyType !== "SHOW" ||
+      !provenance.sourceSpotifyId
+    ) {
+      continue;
+    }
+    const policy = policyBySpotifyShowId.get(provenance.sourceSpotifyId);
+    if (!policy) continue;
+
+    const state = input.podcastStates.get(item.spotifyEpisodeId);
+    let blockedReason: PodcastShowMaintenancePolicy["blockedReason"] = null;
+
+    if (state) {
+      const baseCandidate: Candidate = {
+        uri: item.uri,
+        spotifyEpisodeId: item.spotifyEpisodeId,
+        type: "PODCAST",
+        title: item.title ?? "Podcast",
+        programId: item.programId ?? provenance.sourceSpotifyId,
+        durationMs: Math.max(0, item.originalDurationMs ?? state.durationMs),
+        podcastListeningStatus: state.status,
+        podcastFirstProgressObservedAt: state.firstProgressObservedAt,
+      };
+      const stateFailure = evaluatePodcastShowCandidateEligibility(
+        baseCandidate,
+        { ...policy, maxReleaseAgeDays: null },
+        input.date,
+      );
+
+      if (stateFailure === "STATE_FILTERED") {
+        blockedReason = "PODCAST_SHOW_STATE_FILTERED";
+      } else if (policy.maxReleaseAgeDays !== null) {
+        const episode = (await input.spotify.getEpisodePlaybackState(
+          item.spotifyEpisodeId,
+        )) as Awaited<ReturnType<SpotifyClient["getEpisodePlaybackState"]>> & {
+          release_date?: string;
+          release_date_precision?: string;
+        };
+        const freshnessFailure = evaluatePodcastShowCandidateEligibility(
+          {
+            ...baseCandidate,
+            releaseDate: episode.release_date,
+            releaseDatePrecision: episode.release_date_precision,
+          },
+          policy,
+          input.date,
+        );
+        if (freshnessFailure === "RELEASE_EXPIRED") {
+          blockedReason = "PODCAST_SHOW_RELEASE_EXPIRED";
+        } else if (freshnessFailure === "RELEASE_UNKNOWN") {
+          blockedReason = "PODCAST_SHOW_RELEASE_UNKNOWN";
+        }
+      }
+    }
+
+    result.set(item.uri, {
+      replayAllowed: policy.episodeEligibility !== "UNPLAYED_ONLY",
+      maxEpisodesPerCycle: policy.maxEpisodesPerCycle,
+      blockedReason,
+    });
+  }
+
+  return result;
 }
 
 function emptyCalendarSkip(
