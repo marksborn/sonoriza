@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 
+import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { PwaServiceWorker } from "@/components/PwaServiceWorker";
 
 import "./globals.css";
@@ -50,6 +51,7 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body>
         <PwaServiceWorker />
+        <PwaInstallPrompt />
         {children}
       </body>
     </html>
