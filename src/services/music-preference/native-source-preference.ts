@@ -24,12 +24,17 @@ export type NativeLikedTrackSourceConfiguration = {
   plannerInfluence: false;
 };
 
+export type NativeLikedTrackSourcePreferenceState = {
+  enabled: boolean;
+  explicitlyConfigured: boolean;
+  readError: string | null;
+};
+
 /**
  * SOURCE-LIKED-01 Gate 5B1.
  *
  * Reads the product preference and lightweight source statistics exclusively
- * from Sonoriza-owned tables. It intentionally performs no provider read and
- * does not participate in planner arbitration until Gate 5B2.
+ * from Sonoriza-owned tables. It intentionally performs no provider read.
  */
 export async function getNativeLikedTrackSourceConfiguration(
   userId: string,
@@ -94,6 +99,44 @@ export async function getNativeLikedTrackSourceConfiguration(
     spotifyWrites: false,
     plannerInfluence: false,
   };
+}
+
+/**
+ * SOURCE-LIKED-01 Gate 5B2.
+ *
+ * Reads only the persisted product consent used by the planner gate. Missing or
+ * unreadable state is fail-closed: the caller receives enabled=false and can
+ * distinguish a normal opt-out from a database/read failure without consulting
+ * Spotify or any provider.
+ */
+export async function getNativeLikedTrackSourcePreferenceState(
+  userId: string,
+): Promise<NativeLikedTrackSourcePreferenceState> {
+  try {
+    const preference = await prisma.nativeSourcePreference.findUnique({
+      where: {
+        userId_type: {
+          userId,
+          type: NativeSourceType.LIKED_TRACKS,
+        },
+      },
+      select: {
+        enabled: true,
+      },
+    });
+
+    return {
+      enabled: preference?.enabled ?? false,
+      explicitlyConfigured: Boolean(preference),
+      readError: null,
+    };
+  } catch (error) {
+    return {
+      enabled: false,
+      explicitlyConfigured: false,
+      readError: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export async function setNativeLikedTrackSourceEnabled(
