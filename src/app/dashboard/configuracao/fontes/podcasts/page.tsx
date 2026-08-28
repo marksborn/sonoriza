@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
@@ -58,9 +59,10 @@ async function updateShowPolicy(formData: FormData) {
     episodeEligibility,
     episodeOrder,
     randomPolicy,
-    startEpisodeId: episodeOrder === "RANDOM"
-      ? null
-      : parseSpotifyEpisodeId(optionalText(formData, "startEpisode")),
+    startEpisodeId:
+      episodeOrder === "RANDOM"
+        ? null
+        : parseSpotifyEpisodeId(optionalText(formData, "startEpisode")),
     strictSequence:
       episodeOrder === "RANDOM" ? false : formData.get("strictSequence") === "on",
     maxReleaseAgeDays: optionalInt(formData, "maxReleaseAgeDays", 0, 36500),
@@ -166,7 +168,8 @@ export default async function PodcastPoliciesPage({
           <div className="mt-6 space-y-5">
             {shows.map((show) => {
               const policy =
-                policies.get(show.id) ?? defaultPolicy(show.id, show.includePlayed, show.episodeOrder);
+                policies.get(show.id) ??
+                defaultPolicy(show.id, show.includePlayed, show.episodeOrder);
               const random = policy.episodeOrder === "RANDOM";
               const replayTraversal = policy.episodeEligibility !== "UNPLAYED_ONLY";
 
@@ -176,7 +179,13 @@ export default async function PodcastPoliciesPage({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="product-badge">Programa</span>
-                        <span className={show.enabled ? "status-success rounded-full border px-2.5 py-1 text-xs font-black" : "product-badge"}>
+                        <span
+                          className={
+                            show.enabled
+                              ? "status-success rounded-full border px-2.5 py-1 text-xs font-black"
+                              : "product-badge"
+                          }
+                        >
                           {show.enabled ? "Ativo" : "Desativado"}
                         </span>
                       </div>
@@ -199,30 +208,56 @@ export default async function PodcastPoliciesPage({
                   <form action={updateShowPolicy} className="mt-5 grid gap-4 lg:grid-cols-2">
                     <input type="hidden" name="sourcePlaylistId" value={show.id} />
 
-                    <Field label="Episódios" help="Define o universo elegível antes da ordem e da validade.">
-                      <select name="episodeEligibility" defaultValue={policy.episodeEligibility} className={selectClass}>
+                    <Field
+                      label="Episódios"
+                      help="Define o universo elegível antes da ordem e da validade."
+                    >
+                      <select
+                        name="episodeEligibility"
+                        defaultValue={policy.episodeEligibility}
+                        className={selectClass}
+                      >
                         <option value="UNPLAYED_ONLY">Somente não concluídos</option>
                         <option value="PLAYED_ONLY">Somente já escutados</option>
                         <option value="ALL">Escutados e não escutados</option>
                       </select>
                     </Field>
 
-                    <Field label="Ordem" help="A ordem vale para o catálogo completo do programa.">
-                      <select name="episodeOrder" defaultValue={policy.episodeOrder} className={selectClass}>
+                    <Field
+                      label="Ordem"
+                      help="A ordem vale para o catálogo completo do programa."
+                    >
+                      <select
+                        name="episodeOrder"
+                        defaultValue={policy.episodeOrder}
+                        className={selectClass}
+                      >
                         <option value="OLDEST_FIRST">Mais antigos primeiro</option>
                         <option value="NEWEST_FIRST">Mais recentes primeiro</option>
                         <option value="RANDOM">Aleatório</option>
                       </select>
                     </Field>
 
-                    <Field label="Aleatório" help="Só é aplicada quando Ordem = Aleatório.">
-                      <select name="randomPolicy" defaultValue={policy.randomPolicy} className={selectClass}>
-                        <option value="WITHOUT_REPLACEMENT">Evitar repetição até percorrer todos</option>
+                    <Field
+                      label="Aleatório"
+                      help="Só é aplicada quando Ordem = Aleatório."
+                    >
+                      <select
+                        name="randomPolicy"
+                        defaultValue={policy.randomPolicy}
+                        className={selectClass}
+                      >
+                        <option value="WITHOUT_REPLACEMENT">
+                          Evitar repetição até percorrer todos
+                        </option>
                         <option value="WITH_REPLACEMENT">Permitir repetição</option>
                       </select>
                     </Field>
 
-                    <Field label="Começar a partir de" help="Opcional. Cole o ID, URI spotify:episode:… ou link do episódio. Ignorado no aleatório.">
+                    <Field
+                      label="Começar a partir de"
+                      help="Opcional. Cole o ID, URI spotify:episode:… ou link do episódio. Ignorado no aleatório."
+                    >
                       <input
                         name="startEpisode"
                         defaultValue={policy.startEpisodeId ?? ""}
@@ -231,7 +266,10 @@ export default async function PodcastPoliciesPage({
                       />
                     </Field>
 
-                    <Field label="Validade após lançamento" help="Deixe vazio para nunca expirar. Útil para notícias e conteúdo temporal.">
+                    <Field
+                      label="Validade após lançamento"
+                      help="Deixe vazio para nunca expirar. Útil para notícias e conteúdo temporal."
+                    >
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
@@ -242,18 +280,32 @@ export default async function PodcastPoliciesPage({
                           placeholder="Sem limite"
                           className={inputClass}
                         />
-                        <span className="shrink-0 text-xs font-bold text-muted-inverse">dias</span>
+                        <span className="shrink-0 text-xs font-bold text-muted-inverse">
+                          dias
+                        </span>
                       </div>
                     </Field>
 
-                    <Field label="Quando vencer em andamento" help="Permitir concluir só vale quando o primeiro progresso foi observado dentro da janela.">
-                      <select name="expiryPolicy" defaultValue={policy.expiryPolicy} className={selectClass}>
+                    <Field
+                      label="Quando vencer em andamento"
+                      help="Permitir concluir só vale quando o primeiro progresso foi observado dentro da janela."
+                    >
+                      <select
+                        name="expiryPolicy"
+                        defaultValue={policy.expiryPolicy}
+                        className={selectClass}
+                      >
                         <option value="STRICT_EXPIRY">Expirar mesmo em andamento</option>
-                        <option value="ALLOW_IN_PROGRESS_TO_FINISH">Deixar terminar se começou dentro da janela</option>
+                        <option value="ALLOW_IN_PROGRESS_TO_FINISH">
+                          Deixar terminar se começou dentro da janela
+                        </option>
                       </select>
                     </Field>
 
-                    <Field label="Máximo global por ciclo" help="Compartilhado entre todos os destinos gerados no mesmo ciclo. Vazio usa o limite do destino como teto.">
+                    <Field
+                      label="Máximo global por ciclo"
+                      help="Compartilhado entre todos os destinos gerados no mesmo ciclo. Vazio usa o limite do destino como teto."
+                    >
                       <input
                         type="number"
                         name="maxEpisodesPerCycle"
@@ -274,7 +326,9 @@ export default async function PodcastPoliciesPage({
                           className="mt-1 h-4 w-4"
                         />
                         <span>
-                          <span className="block text-sm font-black text-ink-inverse">Sequência estrita</span>
+                          <span className="block text-sm font-black text-ink-inverse">
+                            Sequência estrita
+                          </span>
                           <span className="mt-1 block text-xs leading-5 text-muted-inverse">
                             Em ordem crescente/decrescente, não oferece um episódio posterior para contornar o próximo episódio que não cabe no destino.
                           </span>
@@ -317,7 +371,7 @@ function Field({
 }: {
   label: string;
   help: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <label className="block rounded-xl border border-line-dark/55 bg-surface-dark/45 p-4">
@@ -398,7 +452,9 @@ function parseSpotifyEpisodeId(value: string | null): string | null {
     if (url.hostname.endsWith("spotify.com")) {
       const parts = url.pathname.split("/").filter(Boolean);
       const episodeIndex = parts.indexOf("episode");
-      if (episodeIndex >= 0 && parts[episodeIndex + 1]) return parts[episodeIndex + 1]!;
+      if (episodeIndex >= 0 && parts[episodeIndex + 1]) {
+        return parts[episodeIndex + 1]!;
+      }
     }
   } catch {
     // A plain Spotify episode id is valid input as well.
