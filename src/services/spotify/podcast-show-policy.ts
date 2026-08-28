@@ -10,6 +10,11 @@ export type PodcastEpisodeOrderValue =
   | "OLDEST_FIRST"
   | "NEWEST_FIRST";
 
+export type PodcastShowEligibilityFailure =
+  | "STATE_FILTERED"
+  | "RELEASE_EXPIRED"
+  | "RELEASE_UNKNOWN";
+
 type RuntimePodcastShowPolicy = PodcastShowPolicySnapshot & {
   publishedEpisodeIds?: readonly string[];
 };
@@ -32,6 +37,24 @@ export function sortShowCandidates(
 ): Candidate[] {
   if (order === "SOURCE_DEFAULT") return [...candidates];
   return sortByPolicyOrder(candidates, order);
+}
+
+/**
+ * Shared eligibility gate for normal SHOW collection and KEEP_FILLED. A release
+ * window configured by the user is fail-closed when the provider omits the
+ * release date: stale temporal content must never be silently preserved.
+ */
+export function evaluatePodcastShowCandidateEligibility(
+  candidate: Candidate,
+  policy: PodcastShowPolicySnapshot,
+  now: Date = new Date(),
+): PodcastShowEligibilityFailure | null {
+  if (!passesListeningState(candidate, policy)) return "STATE_FILTERED";
+  if (policy.maxReleaseAgeDays !== null && !candidate.releaseDate) {
+    return "RELEASE_UNKNOWN";
+  }
+  if (!passesReleaseWindow(candidate, policy, now)) return "RELEASE_EXPIRED";
+  return null;
 }
 
 /**
@@ -61,11 +84,12 @@ export function applyPodcastShowPolicy(
   const stateAndFreshnessEligible: Candidate[] = [];
 
   for (const candidate of allOrdered) {
-    if (!passesListeningState(candidate, policy)) {
+    const failure = evaluatePodcastShowCandidateEligibility(candidate, policy, now);
+    if (failure === "STATE_FILTERED") {
       stateFilteredCount += 1;
       continue;
     }
-    if (!passesReleaseWindow(candidate, policy, now)) {
+    if (failure === "RELEASE_EXPIRED" || failure === "RELEASE_UNKNOWN") {
       releaseExpiredCount += 1;
       continue;
     }
@@ -109,7 +133,10 @@ export function applyPodcastShowPolicy(
     }
   } else if (policy.startEpisodeId) {
     const anchorIndex = positionByEpisodeId.get(policy.startEpisodeId);
-    if (anchorIndex !== undefined) {
+    if (anchorIndex === undefined && policy.strictSequence) {
+      sequenceBlocked = true;
+      eligible = [];
+    } else if (anchorIndex !== undefined) {
       eligible = stateAndFreshnessEligible.filter((candidate) => {
         const episodeId = candidate.spotifyEpisodeId;
         const position = episodeId ? positionByEpisodeId.get(episodeId) : undefined;
@@ -221,7 +248,7 @@ function applyRandomPolicy(
 
 function passesListeningState(
   candidate: Candidate,
-  policy: RuntimePodcastShowPolicy,
+  policy: PodcastShowPolicySnapshot,
 ): boolean {
   const status = candidate.podcastListeningStatus;
   if (!status) return policy.episodeEligibility !== "PLAYED_ONLY";
@@ -232,7 +259,7 @@ function passesListeningState(
 
 function passesReleaseWindow(
   candidate: Candidate,
-  policy: RuntimePodcastShowPolicy,
+  policy: PodcastShowPolicySnapshot,
   now: Date,
 ): boolean {
   if (policy.maxReleaseAgeDays === null) return true;
@@ -240,7 +267,7 @@ function passesReleaseWindow(
     candidate.releaseDate,
     candidate.releaseDatePrecision,
   );
-  if (!releasedAt) return true;
+  if (!releasedAt) return false;
 
   const expiresAt = new Date(
     releasedAt.getTime() + policy.maxReleaseAgeDays * 24 * 60 * 60 * 1000,
