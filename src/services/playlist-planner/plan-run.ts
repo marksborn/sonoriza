@@ -49,9 +49,9 @@ export interface PlanRunResult {
 }
 
 /**
- * Plans every target playlist of a single run in priority order, threading the
- * set of already-used URIs forward. This is what guarantees that no track and
- * no episode appears in two playlists generated in the same run.
+ * Plans every target playlist of a single run in priority order, threading both
+ * URI reservations and podcast-program counts forward. PODCAST-05 makes the
+ * latter explicit: a show cap is consumed by the run, not reset per playlist.
  *
  * CALENDAR-02 keeps the exact same planner for PER_EVENT. The only difference
  * is that the planner is called once per independent duration block, with the
@@ -71,14 +71,22 @@ export function planRun({
 }: PlanRunInput): PlanRunResult {
   const ordered = [...targets].sort((a, b) => a.priority - b.priority);
   const reserved = new Set<string>(initialReserved ?? []);
+  const globalPodcastProgramCounts = new Map<string, number>();
   const results: PlanRunTargetResult[] = [];
 
   for (const target of ordered) {
     const targetMusicPool =
       musicPoolByTargetId?.get(target.targetPlaylistId) ?? pools.music;
+    const podcastPool = applyGlobalPodcastPolicyToPool({
+      candidates: pools.podcasts,
+      reserved,
+      globalProgramCounts: globalPodcastProgramCounts,
+      rules: target.rules,
+    });
     const baseTargetPools: PlannerPools = {
       ...pools,
       music: targetMusicPool,
+      podcasts: podcastPool,
     };
     const blockedMusicTrackIds = blockedMusicTrackIdsByTargetId?.get(
       target.targetPlaylistId,
@@ -95,7 +103,11 @@ export function planRun({
             ),
           }
         : baseTargetPools;
-    const preserved = preservedByTargetId?.get(target.targetPlaylistId);
+    const preserved = applyGlobalPodcastPolicyToPreserved({
+      candidates: preservedByTargetId?.get(target.targetPlaylistId) ?? [],
+      globalProgramCounts: globalPodcastProgramCounts,
+      rules: target.rules,
+    });
     const result = target.durationBlocks
       ? planSegmentedTarget({
           target,
@@ -110,6 +122,7 @@ export function planRun({
           preserved,
         });
     for (const uri of result.usedUris) reserved.add(uri);
+    countPlannedPodcasts(result.items, globalPodcastProgramCounts);
     results.push({
       targetPlaylistId: target.targetPlaylistId,
       name: target.name,
@@ -118,6 +131,99 @@ export function planRun({
   }
 
   return { targets: results };
+}
+
+function applyGlobalPodcastPolicyToPool(input: {
+  candidates: Candidate[];
+  reserved: ReadonlySet<string>;
+  globalProgramCounts: ReadonlyMap<string, number>;
+  rules: PlaylistRules;
+}): Candidate[] {
+  const includedByProgram = new Map<string, number>();
+  const strictProgramOffered = new Set<string>();
+  const output: Candidate[] = [];
+
+  for (const candidate of input.candidates) {
+    if (candidate.type !== "PODCAST") {
+      output.push(candidate);
+      continue;
+    }
+    const programId = candidate.programId;
+    if (!programId) {
+      output.push(candidate);
+      continue;
+    }
+    if (input.reserved.has(candidate.uri)) continue;
+
+    const cap = effectiveGlobalPodcastCap(candidate, input.rules);
+    const alreadyPlanned = input.globalProgramCounts.get(programId) ?? 0;
+    const remaining = Math.max(0, cap - alreadyPlanned);
+    if (remaining <= 0) continue;
+
+    if (candidate.podcastStrictSequence) {
+      if (strictProgramOffered.has(programId)) continue;
+      strictProgramOffered.add(programId);
+
+      // Conservative sequence protection: expose only the next episode of a
+      // strict show to a destination. If it cannot fit this destination at all,
+      // do not let a later episode jump ahead. Another destination may still
+      // receive it later in the same run.
+      const durationMs = Math.max(0, candidate.durationMs);
+      const maxPodcastDurationMs = input.rules.maxPodcastDurationMs ?? null;
+      if (durationMs <= 0) continue;
+      if (durationMs > Math.max(0, input.rules.targetDurationMs)) continue;
+      if (maxPodcastDurationMs !== null && durationMs > maxPodcastDurationMs) {
+        continue;
+      }
+      output.push(candidate);
+      continue;
+    }
+
+    const offered = includedByProgram.get(programId) ?? 0;
+    if (offered >= remaining) continue;
+    includedByProgram.set(programId, offered + 1);
+    output.push(candidate);
+  }
+
+  return output;
+}
+
+function applyGlobalPodcastPolicyToPreserved(input: {
+  candidates: Candidate[];
+  globalProgramCounts: ReadonlyMap<string, number>;
+  rules: PlaylistRules;
+}): Candidate[] {
+  const includedByProgram = new Map<string, number>();
+  return input.candidates.filter((candidate) => {
+    if (candidate.type !== "PODCAST" || !candidate.programId) return true;
+    const programId = candidate.programId;
+    const cap = effectiveGlobalPodcastCap(candidate, input.rules);
+    const alreadyPlanned = input.globalProgramCounts.get(programId) ?? 0;
+    const included = includedByProgram.get(programId) ?? 0;
+    if (alreadyPlanned + included >= cap) return false;
+    includedByProgram.set(programId, included + 1);
+    return true;
+  });
+}
+
+function effectiveGlobalPodcastCap(
+  candidate: Candidate,
+  rules: PlaylistRules,
+): number {
+  const targetCap = Math.max(1, Math.trunc(rules.maxEpisodesPerProgram || 1));
+  const showCap = candidate.podcastMaxEpisodesPerCycle;
+  if (!Number.isInteger(showCap) || Number(showCap) < 1) return targetCap;
+  return Math.min(targetCap, Number(showCap));
+}
+
+function countPlannedPodcasts(
+  items: Candidate[],
+  counts: Map<string, number>,
+): void {
+  for (const item of items) {
+    if (item.type !== "PODCAST" || !item.programId) continue;
+    counts.set(item.programId, (counts.get(item.programId) ?? 0) + 1);
+  }
 }
 
 function planSegmentedTarget(input: {
