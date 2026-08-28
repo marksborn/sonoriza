@@ -22,7 +22,15 @@ import {
   type PodcastListeningObservation,
   type PodcastListeningStateStore,
 } from "./podcast-listening-state";
-import { sortShowCandidates } from "./podcast-show-policy";
+import { applyPodcastShowPolicy } from "./podcast-show-policy";
+import {
+  hydratePodcastShowPolicyHistory,
+  type PodcastShowPolicyRuntimeSnapshot,
+} from "./podcast-show-policy-history";
+import {
+  loadPodcastShowPolicies,
+  type PodcastShowPolicySnapshot,
+} from "./podcast-show-policy-store";
 import {
   decodeMusicSourceCache,
   decodeMusicSourceCacheUnavailableTrackCount,
@@ -83,16 +91,30 @@ export class SpotifyIncrementalReader {
     private readonly authoritativePodcastProgramIds: ReadonlySet<string> = new Set(),
     private readonly podcastListeningStateStore: PodcastListeningStateStore =
       prismaPodcastListeningStateStore,
+    private readonly showPolicies: ReadonlyMap<
+      string,
+      PodcastShowPolicyRuntimeSnapshot
+    > = new Map(),
   ) {}
 
   static async forUser(
     userId: string,
     options: { authoritativePodcastProgramIds?: ReadonlySet<string> } = {},
   ): Promise<SpotifyIncrementalReader> {
+    const [accessToken, basePolicies] = await Promise.all([
+      getSpotifyAccessToken(userId),
+      loadPodcastShowPolicies(userId),
+    ]);
+    const showPolicies = await hydratePodcastShowPolicyHistory(
+      userId,
+      basePolicies,
+    );
+
     return new SpotifyIncrementalReader(
-      await getSpotifyAccessToken(userId),
+      accessToken,
       options.authoritativePodcastProgramIds ?? new Set(),
       prismaPodcastListeningStateStore,
+      showPolicies,
     );
   }
 
@@ -325,9 +347,6 @@ export class SpotifyIncrementalReader {
             accumulatedUnavailableTrackCount = partial.unavailableTrackCount;
 
             if (partial.nextOffset === null) {
-              // Every item page was already collected before an earlier run
-              // lost the final validation call. The metadata read above proves
-              // the same snapshot is still current, so promotion is safe.
               await persistCache(
                 snapshotBefore,
                 encodeMusicSourceCache(
@@ -473,6 +492,8 @@ export class SpotifyIncrementalReader {
     const metrics = this.sourceMetrics(sourceKey);
     let nextUrl: string | null = `/shows/${source.spotifyId}/episodes?limit=50`;
     let done = false;
+    const policy =
+      this.showPolicies.get(source.id) ?? legacyShowPolicy(source);
 
     return {
       id: source.id,
@@ -486,23 +507,15 @@ export class SpotifyIncrementalReader {
       readNext: async (): Promise<IncrementalSourceBatch> => {
         if (done || !nextUrl) return { candidates: [], done: true };
 
-        const collector = createPodcastCollector(source.includePlayed, source.spotifyId, {
+        // SHOW policy is global across the show's catalog, so pagination order
+        // can never be used as a semantic shortcut. Read the complete catalog.
+        const collector = createPodcastCollector(true, source.spotifyId, {
           userId: source.userId,
           stateStore: this.podcastListeningStateStore,
           sourceSpotifyType: "SHOW",
           sourceSpotifyId: source.spotifyId,
         });
 
-        if (source.episodeOrder === "SOURCE_DEFAULT") {
-          const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
-          metrics.pagesRead += 1;
-          nextUrl = page.next ? stripBase(page.next) : null;
-          done = nextUrl === null;
-          ingestPodcastPage(collector, page.items);
-          return { ...(await collector.result()), done };
-        }
-
-        // Explicit chronological order must be global, never pagination-incidental.
         while (nextUrl) {
           const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
           metrics.pagesRead += 1;
@@ -511,9 +524,16 @@ export class SpotifyIncrementalReader {
         }
         done = true;
         const result = await collector.result();
+        const applied = applyPodcastShowPolicy(result.candidates, policy);
+        const fullyPlayedSkippedCount =
+          policy.episodeEligibility === "UNPLAYED_ONLY"
+            ? (result.fullyPlayedSkippedCount ?? 0) + applied.stateFilteredCount
+            : result.fullyPlayedSkippedCount;
+
         return {
           ...result,
-          candidates: sortShowCandidates(result.candidates, source.episodeOrder),
+          candidates: applied.candidates,
+          fullyPlayedSkippedCount,
           done: true,
         };
       },
@@ -729,6 +749,9 @@ function createPodcastCollector(
             sourceSpotifyType: options.sourceSpotifyType,
             sourceSpotifyId: options.sourceSpotifyId,
             sourceIncludePlayed: includePlayed,
+            spotifyEpisodeId,
+            podcastListeningStatus: state.status,
+            podcastFirstProgressObservedAt: state.firstProgressObservedAt,
           });
         }
 
@@ -745,6 +768,28 @@ function createPodcastCollector(
         throw asPodcastLocalProcessingError("BUILD_CANDIDATES", error);
       }
     },
+  };
+}
+
+function legacyShowPolicy(
+  source: IncrementalSpotifySourceConfig,
+): PodcastShowPolicySnapshot & { publishedEpisodeIds: string[] } {
+  return {
+    sourcePlaylistId: source.id,
+    episodeEligibility: source.includePlayed ? "ALL" : "UNPLAYED_ONLY",
+    episodeOrder:
+      source.episodeOrder === "NEWEST_FIRST" ? "NEWEST_FIRST" : "OLDEST_FIRST",
+    randomPolicy: "WITHOUT_REPLACEMENT",
+    startEpisodeId: null,
+    strictSequence: true,
+    maxReleaseAgeDays: null,
+    expiryPolicy: "STRICT_EXPIRY",
+    maxEpisodesPerCycle: null,
+    sequenceCursorEpisodeId: null,
+    sequenceCompleted: false,
+    randomRound: 0,
+    randomConsumedEpisodeIds: [],
+    publishedEpisodeIds: [],
   };
 }
 
