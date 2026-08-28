@@ -663,8 +663,8 @@ model GenerationRun {
   user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   logs             GenerationLog[]
   items            GenerationItem[]
-  scheduleRuns     TargetScheduleRun[]
-  scheduleAttempts TargetScheduleAttempt[]
+  scheduleRuns     TargetScheduleRun[]     @relation("TargetScheduleRunGeneration")
+  scheduleAttempts TargetScheduleAttempt[] @relation("TargetScheduleAttemptGeneration")
 
   @@index([userId, startedAt])
 }
@@ -941,7 +941,7 @@ model TargetScheduleRun {
 
   user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   target        TargetPlaylist          @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)
-  generationRun GenerationRun?          @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  generationRun GenerationRun?          @relation("TargetScheduleRunGeneration", fields: [generationRunId], references: [id], onDelete: SetNull)
   attempts      TargetScheduleAttempt[]
 
   @@index([userId, startedAt])
@@ -960,7 +960,7 @@ model TargetScheduleAttempt {
   finishedAt          DateTime?
 
   scheduleRun   TargetScheduleRun @relation(fields: [targetScheduleRunId], references: [id], onDelete: Cascade)
-  generationRun GenerationRun?    @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  generationRun GenerationRun?    @relation("TargetScheduleAttemptGeneration", fields: [generationRunId], references: [id], onDelete: SetNull)
 
   @@unique([targetScheduleRunId, attempt])
   @@index([targetScheduleRunId, startedAt])
