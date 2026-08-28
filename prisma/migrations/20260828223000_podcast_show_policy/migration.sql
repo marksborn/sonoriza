@@ -4,15 +4,37 @@
 -- remains the canonical observation of Spotify playback; this table stores the
 -- user's selection policy plus Sonoriza-owned sequencing/shuffle memory.
 
+CREATE TYPE "PodcastEpisodeEligibility" AS ENUM (
+    'UNPLAYED_ONLY',
+    'PLAYED_ONLY',
+    'ALL'
+);
+
+CREATE TYPE "PodcastShowOrder" AS ENUM (
+    'OLDEST_FIRST',
+    'NEWEST_FIRST',
+    'RANDOM'
+);
+
+CREATE TYPE "PodcastRandomPolicy" AS ENUM (
+    'WITHOUT_REPLACEMENT',
+    'WITH_REPLACEMENT'
+);
+
+CREATE TYPE "PodcastExpiryPolicy" AS ENUM (
+    'STRICT_EXPIRY',
+    'ALLOW_IN_PROGRESS_TO_FINISH'
+);
+
 CREATE TABLE "PodcastShowPolicy" (
     "sourcePlaylistId" TEXT NOT NULL,
-    "episodeEligibility" TEXT NOT NULL DEFAULT 'UNPLAYED_ONLY',
-    "episodeOrder" TEXT NOT NULL DEFAULT 'OLDEST_FIRST',
-    "randomPolicy" TEXT NOT NULL DEFAULT 'WITHOUT_REPLACEMENT',
+    "episodeEligibility" "PodcastEpisodeEligibility" NOT NULL DEFAULT 'UNPLAYED_ONLY',
+    "episodeOrder" "PodcastShowOrder" NOT NULL DEFAULT 'OLDEST_FIRST',
+    "randomPolicy" "PodcastRandomPolicy" NOT NULL DEFAULT 'WITHOUT_REPLACEMENT',
     "startEpisodeId" TEXT,
     "strictSequence" BOOLEAN NOT NULL DEFAULT true,
     "maxReleaseAgeDays" INTEGER,
-    "expiryPolicy" TEXT NOT NULL DEFAULT 'STRICT_EXPIRY',
+    "expiryPolicy" "PodcastExpiryPolicy" NOT NULL DEFAULT 'STRICT_EXPIRY',
     "maxEpisodesPerCycle" INTEGER,
     "sequenceCursorEpisodeId" TEXT,
     "sequenceCompleted" BOOLEAN NOT NULL DEFAULT false,
@@ -25,14 +47,6 @@ CREATE TABLE "PodcastShowPolicy" (
     CONSTRAINT "PodcastShowPolicy_sourcePlaylistId_fkey"
       FOREIGN KEY ("sourcePlaylistId") REFERENCES "SourcePlaylist"("id")
       ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "PodcastShowPolicy_episodeEligibility_check"
-      CHECK ("episodeEligibility" IN ('UNPLAYED_ONLY', 'PLAYED_ONLY', 'ALL')),
-    CONSTRAINT "PodcastShowPolicy_episodeOrder_check"
-      CHECK ("episodeOrder" IN ('OLDEST_FIRST', 'NEWEST_FIRST', 'RANDOM')),
-    CONSTRAINT "PodcastShowPolicy_randomPolicy_check"
-      CHECK ("randomPolicy" IN ('WITHOUT_REPLACEMENT', 'WITH_REPLACEMENT')),
-    CONSTRAINT "PodcastShowPolicy_expiryPolicy_check"
-      CHECK ("expiryPolicy" IN ('STRICT_EXPIRY', 'ALLOW_IN_PROGRESS_TO_FINISH')),
     CONSTRAINT "PodcastShowPolicy_maxReleaseAgeDays_check"
       CHECK ("maxReleaseAgeDays" IS NULL OR "maxReleaseAgeDays" >= 0),
     CONSTRAINT "PodcastShowPolicy_maxEpisodesPerCycle_check"
@@ -52,8 +66,14 @@ INSERT INTO "PodcastShowPolicy" (
 )
 SELECT
     "id",
-    CASE WHEN "includePlayed" THEN 'ALL' ELSE 'UNPLAYED_ONLY' END,
-    CASE WHEN "episodeOrder"::text = 'NEWEST_FIRST' THEN 'NEWEST_FIRST' ELSE 'OLDEST_FIRST' END
+    CASE
+      WHEN "includePlayed" THEN 'ALL'::"PodcastEpisodeEligibility"
+      ELSE 'UNPLAYED_ONLY'::"PodcastEpisodeEligibility"
+    END,
+    CASE
+      WHEN "episodeOrder"::text = 'NEWEST_FIRST' THEN 'NEWEST_FIRST'::"PodcastShowOrder"
+      ELSE 'OLDEST_FIRST'::"PodcastShowOrder"
+    END
 FROM "SourcePlaylist"
 WHERE "spotifyType"::text = 'SHOW'
 ON CONFLICT ("sourcePlaylistId") DO NOTHING;
