@@ -28,6 +28,8 @@ import { generatePlaylists } from "./generate-playlists";
 import { runIsolated } from "./isolated-execution";
 
 const RETRY_AFTER_MS = 30 * 60 * 1000;
+const STALE_RUNNING_ATTEMPT_REASON =
+  "Tentativa expirada após 30 minutos sem conclusão; um novo retry assumiu o slot.";
 
 type ScheduledResult = {
   userId: string;
@@ -36,6 +38,8 @@ type ScheduledResult = {
   runId: string;
   status: string;
 };
+
+type ScheduleAttemptRef = Pick<TargetScheduleRun, "id" | "attempt">;
 
 export async function runScheduledGeneration(
   now = new Date(),
@@ -93,7 +97,7 @@ export async function runScheduledGeneration(
       const gate = await getFirstRunGate(user.id, assessment);
       if (!gate.realRunAllowed) {
         await finishMany(
-          claimed.map((entry) => entry.audit.id),
+          claimed.map((entry) => entry.audit),
           "BLOCKED",
           gate.reason ?? "simulação atual não aprovada",
           now,
@@ -141,7 +145,7 @@ export async function runScheduledGeneration(
             executable.push(entry);
           } catch (error) {
             const reason = errorMessage(error);
-            await finishOne(entry.audit.id, "BLOCKED", reason, now);
+            await finishOne(entry.audit, "BLOCKED", reason, now);
             results.push(result(entry, "", `blocked: ${reason}`));
           }
           continue;
@@ -149,7 +153,7 @@ export async function runScheduledGeneration(
         try {
           const prepared = await prepareKeepFilledTarget(user.id, entry.target, now);
           if (prepared.skipReason) {
-            await finishOne(entry.audit.id, "NOOP", prepared.skipReason, now, {
+            await finishOne(entry.audit, "NOOP", prepared.skipReason, now, {
               targetDurationMs: 0,
             });
             results.push(result(entry, "", `noop: ${prepared.skipReason}`));
@@ -160,7 +164,7 @@ export async function runScheduledGeneration(
           executable.push(entry);
         } catch (error) {
           const reason = errorMessage(error);
-          await finishOne(entry.audit.id, "BLOCKED", reason, now);
+          await finishOne(entry.audit, "BLOCKED", reason, now);
           results.push(result(entry, "", `blocked: ${reason}`));
         }
       }
@@ -231,6 +235,13 @@ export async function runScheduledGeneration(
               ? { [targetId]: rebuildByTargetId[targetId] }
               : {},
           });
+
+          // Persist the GenerationRun link as soon as it exists. The attempt row
+          // may already have been marked stale by a newer retry; in that case we
+          // still retain the late GenerationRun link, but never mutate the newer
+          // aggregate attempt.
+          await linkGenerationRun(entry.audit, generated.runId);
+
           const generation = await prisma.generationRun.findUnique({
             where: { id: generated.runId },
             select: { status: true, error: true, summary: true },
@@ -243,7 +254,7 @@ export async function runScheduledGeneration(
               ? targetSummary.error
               : generation?.error ?? null;
 
-          await finishOne(entry.audit.id, status, reason, new Date(), {
+          await finishOne(entry.audit, status, reason, new Date(), {
             generationRunId: generated.runId,
             targetDurationMs: numberOrNull(targetSummary?.targetDurationMs),
             validDurationBeforeMs: numberOrNull(targetSummary?.validDurationBeforeMs),
@@ -262,14 +273,14 @@ export async function runScheduledGeneration(
         },
         async (entry, error) => {
           const reason = errorMessage(error);
-          await finishOne(entry.audit.id, "FAILED", reason, new Date());
+          await finishOne(entry.audit, "FAILED", reason, new Date());
           results.push(result(entry, "", `error: ${reason}`));
         },
       );
     } catch (error) {
       const reason = errorMessage(error);
       await finishMany(
-        claimed.map((entry) => entry.audit.id),
+        claimed.map((entry) => entry.audit),
         "FAILED",
         reason,
         new Date(),
@@ -297,44 +308,94 @@ async function claimScheduleSlot(
     if (["SUCCESS", "NOOP", "PARTIAL"].includes(existing.status)) return null;
     if (now.getTime() - existing.startedAt.getTime() < RETRY_AFTER_MS) return null;
 
-    const claimed = await prisma.targetScheduleRun.updateMany({
-      where: {
-        id: existing.id,
-        status: existing.status,
-        startedAt: existing.startedAt,
-      },
-      data: {
-        status: "RUNNING",
-        attempt: { increment: 1 },
-        generationRunId: null,
-        reason: null,
-        startedAt: now,
-        finishedAt: null,
-      },
+    return prisma.$transaction(async (tx) => {
+      const claimed = await tx.targetScheduleRun.updateMany({
+        where: {
+          id: existing.id,
+          status: existing.status,
+          attempt: existing.attempt,
+          startedAt: existing.startedAt,
+        },
+        data: {
+          status: "RUNNING",
+          attempt: { increment: 1 },
+          generationRunId: null,
+          reason: null,
+          startedAt: now,
+          finishedAt: null,
+        },
+      });
+      if (claimed.count !== 1) return null;
+
+      if (existing.status === "RUNNING") {
+        const stale = await tx.targetScheduleAttempt.updateMany({
+          where: {
+            targetScheduleRunId: existing.id,
+            attempt: existing.attempt,
+            status: "RUNNING",
+          },
+          data: {
+            status: "FAILED",
+            reason: STALE_RUNNING_ATTEMPT_REASON,
+            finishedAt: now,
+          },
+        });
+        if (stale.count !== 1) {
+          throw new Error(
+            `Missing TargetScheduleAttempt ${existing.id}#${existing.attempt} while expiring stale retry`,
+          );
+        }
+      }
+
+      await tx.targetScheduleAttempt.create({
+        data: {
+          targetScheduleRunId: existing.id,
+          attempt: existing.attempt + 1,
+          status: "RUNNING",
+          startedAt: now,
+        },
+      });
+
+      return tx.targetScheduleRun.findUnique({ where: { id: existing.id } });
     });
-    if (claimed.count !== 1) return null;
-    return prisma.targetScheduleRun.findUnique({ where: { id: existing.id } });
   }
 
-  const created = await prisma.targetScheduleRun.createMany({
-    data: [
-      {
-        userId,
-        targetPlaylistId: target.id,
-        scheduleKey: slot.scheduleKey,
-        scheduledLocalDate: slot.localDate,
-        scheduledForMinutes: target.dailyScheduleMinutes!,
-        scheduleTimezone: target.scheduleTimezone!,
-        policy: target.updatePolicy,
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.targetScheduleRun.createMany({
+      data: [
+        {
+          userId,
+          targetPlaylistId: target.id,
+          scheduleKey: slot.scheduleKey,
+          scheduledLocalDate: slot.localDate,
+          scheduledForMinutes: target.dailyScheduleMinutes!,
+          scheduleTimezone: target.scheduleTimezone!,
+          policy: target.updatePolicy,
+          status: "RUNNING",
+          startedAt: now,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    if (created.count !== 1) return null;
+
+    const audit = await tx.targetScheduleRun.findUnique({
+      where: { scheduleKey: slot.scheduleKey },
+    });
+    if (!audit) {
+      throw new Error(`Missing schedule run after claiming ${slot.scheduleKey}`);
+    }
+
+    await tx.targetScheduleAttempt.create({
+      data: {
+        targetScheduleRunId: audit.id,
+        attempt: audit.attempt,
         status: "RUNNING",
         startedAt: now,
       },
-    ],
-    skipDuplicates: true,
-  });
-  if (created.count !== 1) return null;
-  return prisma.targetScheduleRun.findUnique({
-    where: { scheduleKey: slot.scheduleKey },
+    });
+
+    return audit;
   });
 }
 
@@ -366,36 +427,127 @@ function readTargetSummaries(summary: unknown): Map<string, Record<string, unkno
 }
 
 async function finishMany(
-  ids: string[],
+  audits: ScheduleAttemptRef[],
   status: TargetScheduleRunStatus,
   reason: string | null,
   finishedAt: Date,
 ) {
-  if (ids.length === 0) return;
-  await prisma.targetScheduleRun.updateMany({
-    where: { id: { in: ids }, status: "RUNNING" },
-    data: { status, reason, finishedAt },
+  if (audits.length === 0) return;
+
+  const completedIds = await prisma.$transaction(async (tx) => {
+    const ids: string[] = [];
+    for (const audit of audits) {
+      const aggregate = await tx.targetScheduleRun.updateMany({
+        where: {
+          id: audit.id,
+          status: "RUNNING",
+          attempt: audit.attempt,
+        },
+        data: { status, reason, finishedAt },
+      });
+      if (aggregate.count !== 1) continue;
+
+      const attempt = await tx.targetScheduleAttempt.updateMany({
+        where: {
+          targetScheduleRunId: audit.id,
+          attempt: audit.attempt,
+          status: "RUNNING",
+        },
+        data: { status, reason, finishedAt },
+      });
+      if (attempt.count !== 1) {
+        throw new Error(
+          `Missing TargetScheduleAttempt ${audit.id}#${audit.attempt} while finishing`,
+        );
+      }
+      ids.push(audit.id);
+    }
+    return ids;
   });
-  await Promise.all(ids.map((id) => dispatchTargetScheduleRunNotificationSafely(id)));
+
+  await Promise.all(
+    completedIds.map((id) => dispatchTargetScheduleRunNotificationSafely(id)),
+  );
+}
+
+async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: string) {
+  await prisma.$transaction(async (tx) => {
+    const attempt = await tx.targetScheduleAttempt.updateMany({
+      where: {
+        targetScheduleRunId: audit.id,
+        attempt: audit.attempt,
+      },
+      data: { generationRunId },
+    });
+    if (attempt.count !== 1) {
+      throw new Error(
+        `Missing TargetScheduleAttempt ${audit.id}#${audit.attempt} while linking generation`,
+      );
+    }
+
+    // Only the attempt that still owns the aggregate may update its summary.
+    // A late/stale attempt keeps its own GenerationRun link above, but cannot
+    // overwrite a newer retry's aggregate state.
+    await tx.targetScheduleRun.updateMany({
+      where: {
+        id: audit.id,
+        status: "RUNNING",
+        attempt: audit.attempt,
+      },
+      data: { generationRunId },
+    });
+  });
 }
 
 async function finishOne(
-  id: string,
+  audit: ScheduleAttemptRef,
   status: TargetScheduleRunStatus,
   reason: string | null,
   finishedAt: Date,
   data: Prisma.TargetScheduleRunUncheckedUpdateInput = {},
 ) {
-  await prisma.targetScheduleRun.update({
-    where: { id },
-    data: {
+  const completed = await prisma.$transaction(async (tx) => {
+    const aggregate = await tx.targetScheduleRun.updateMany({
+      where: {
+        id: audit.id,
+        status: "RUNNING",
+        attempt: audit.attempt,
+      },
+      data: {
+        status,
+        reason,
+        finishedAt,
+        ...data,
+      },
+    });
+    if (aggregate.count !== 1) return false;
+
+    const attemptData: Prisma.TargetScheduleAttemptUncheckedUpdateManyInput = {
       status,
       reason,
       finishedAt,
-      ...data,
-    },
+      ...(data.generationRunId === undefined
+        ? {}
+        : { generationRunId: data.generationRunId }),
+      ...(data.details === undefined ? {} : { details: data.details }),
+    };
+    const attempt = await tx.targetScheduleAttempt.updateMany({
+      where: {
+        targetScheduleRunId: audit.id,
+        attempt: audit.attempt,
+        status: "RUNNING",
+      },
+      data: attemptData,
+    });
+    if (attempt.count !== 1) {
+      throw new Error(
+        `Missing TargetScheduleAttempt ${audit.id}#${audit.attempt} while finishing`,
+      );
+    }
+    return true;
   });
-  await dispatchTargetScheduleRunNotificationSafely(id);
+
+  if (completed) await dispatchTargetScheduleRunNotificationSafely(audit.id);
 }
 
 function result(
