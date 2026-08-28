@@ -13,6 +13,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test:pwa": "tsx --test src/services/pwa-contract.test.ts",
     "test:planner": "tsx --test src/services/playlist-planner/planner.test.ts",
     "test:spotify": "tsx --test src/services/spotify/*.test.ts",
     "test:incremental": "tsx --test src/jobs/*.test.ts",

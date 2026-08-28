@@ -1,0 +1,83 @@
+name: PWA-01 validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/pwa-01-validation.yml"
+      - "package.json"
+      - "src/app/layout.tsx"
+      - "src/app/manifest.ts"
+      - "src/components/PwaInstallPrompt.tsx"
+      - "src/components/PwaServiceWorker.tsx"
+      - "src/services/pwa-contract.test.ts"
+      - "public/sw.js"
+      - "public/pwa-icon-*.png"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/pwa-01-validation.yml"
+      - "package.json"
+      - "src/app/layout.tsx"
+      - "src/app/manifest.ts"
+      - "src/components/PwaInstallPrompt.tsx"
+      - "src/components/PwaServiceWorker.tsx"
+      - "src/services/pwa-contract.test.ts"
+      - "public/sw.js"
+      - "public/pwa-icon-*.png"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza?schema=public
+      AUTH_SECRET: pwa-01-ci-only-not-production
+      AUTH_GOOGLE_ID: pwa-01-ci
+      AUTH_GOOGLE_SECRET: pwa-01-ci
+      AUTH_SPOTIFY_ID: pwa-01-ci
+      AUTH_SPOTIFY_SECRET: pwa-01-ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: PWA contract
+        run: npm run test:pwa
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

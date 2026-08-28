@@ -73,6 +73,23 @@ test("PWA-01 registers the worker without using the HTTP cache", () => {
   assert.match(source, /updateViaCache:\s*"none"/);
 });
 
+test("PWA-01 exposes an explicit install flow inside Sonoriza", () => {
+  const source = read("src/components/PwaInstallPrompt.tsx");
+  const layout = read("src/app/layout.tsx");
+
+  assert.match(source, /beforeinstallprompt/);
+  assert.match(source, /preventDefault\(\)/);
+  assert.match(source, /deferredPrompt\.prompt\(\)/);
+  assert.match(source, /deferredPrompt\.userChoice/);
+  assert.match(source, /appinstalled/);
+  assert.match(source, /display-mode: standalone/);
+  assert.match(source, /standalone\?: boolean/);
+  assert.match(source, /Instalar o Sonoriza/);
+  assert.match(source, /Vivaldi para Android/);
+  assert.match(source, /Criar atalho/);
+  assert.match(layout, /<PwaInstallPrompt \/>/);
+});
+
 test("PWA-01 ships valid static raster install icons", () => {
   assert.deepEqual(readPngDimensions("public/pwa-icon-180.png"), {
     width: 180,
