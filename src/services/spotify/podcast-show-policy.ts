@@ -161,11 +161,10 @@ function applyRandomPolicy(
   const published = policy.publishedEpisodeIds ?? [];
   let effectiveRandomRound = policy.randomRound;
   let randomRoundReset = false;
-  let consumed = new Set(policy.randomConsumedEpisodeIds);
+  let consumed = new Set<string>();
 
   if (policy.randomPolicy === "WITH_REPLACEMENT") {
     effectiveRandomRound += published.length;
-    consumed = new Set();
   } else if (eligibleEpisodeIds.size > 0) {
     for (const episodeId of published) {
       if (!eligibleEpisodeIds.has(episodeId)) continue;
