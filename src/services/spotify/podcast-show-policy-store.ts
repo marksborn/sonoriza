@@ -27,6 +27,10 @@ export type PodcastShowPolicySnapshot = {
   maxEpisodesPerCycle: number | null;
   /** Reset generation used only to rotate the deterministic random seed. */
   randomRound: number;
+  /** Deprecated compatibility fields: published GenerationItems are authoritative. */
+  sequenceCursorEpisodeId?: string | null;
+  sequenceCompleted?: boolean;
+  randomConsumedEpisodeIds?: string[];
 };
 
 export type PodcastShowPolicyUpdate = Pick<
