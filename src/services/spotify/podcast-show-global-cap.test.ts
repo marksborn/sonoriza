@@ -20,13 +20,31 @@ function podcast(
   };
 }
 
-function target(id: string, priority: number, maxPerProgram = 5): RunTarget {
+function strictPodcast(
+  show: string,
+  episode: string,
+  cap: number | null,
+  durationMs = 60_000,
+): Candidate {
+  return {
+    ...podcast(show, episode, cap),
+    durationMs,
+    podcastStrictSequence: true,
+  };
+}
+
+function target(
+  id: string,
+  priority: number,
+  maxPerProgram = 5,
+  targetDurationMs = 60_000,
+): RunTarget {
   return {
     targetPlaylistId: id,
     name: id,
     priority,
     rules: {
-      targetDurationMs: 60_000,
+      targetDurationMs,
       compositionMode: "PROPORTION",
       podcastPercent: 100,
       sequencePattern: ["PODCAST"],
@@ -77,6 +95,40 @@ test("per-show cap 2 can be distributed across two destinations but never exceed
 
   assert.equal(showItems(result, "show-a").length, 2);
   assert.equal(new Set(showItems(result, "show-a").map((item) => item.uri)).size, 2);
+});
+
+test("strict sequence can place consecutive episodes in one destination when both fit", () => {
+  const result = planRun({
+    pools: {
+      music: [],
+      podcasts: [
+        strictPodcast("show-a", "73", 2),
+        strictPodcast("show-a", "74", 2),
+        strictPodcast("show-a", "75", 2),
+      ],
+    },
+    targets: [target("car", 0, 5, 120_000)],
+  });
+
+  assert.deepEqual(
+    showItems(result, "show-a").map((item) => item.spotifyEpisodeId),
+    ["73", "74"],
+  );
+});
+
+test("strict sequence never lets a later episode jump ahead when the next one cannot fit", () => {
+  const result = planRun({
+    pools: {
+      music: [],
+      podcasts: [
+        strictPodcast("show-a", "73", 2, 90_000),
+        strictPodcast("show-a", "74", 2, 30_000),
+      ],
+    },
+    targets: [target("car", 0, 5, 60_000)],
+  });
+
+  assert.deepEqual(showItems(result, "show-a"), []);
 });
 
 test("different shows keep independent global budgets", () => {
