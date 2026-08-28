@@ -140,7 +140,7 @@ function applyGlobalPodcastPolicyToPool(input: {
   rules: PlaylistRules;
 }): Candidate[] {
   const includedByProgram = new Map<string, number>();
-  const strictProgramOffered = new Set<string>();
+  const strictProgramBlocked = new Set<string>();
   const output: Candidate[] = [];
 
   for (const candidate of input.candidates) {
@@ -161,20 +161,25 @@ function applyGlobalPodcastPolicyToPool(input: {
     if (remaining <= 0) continue;
 
     if (candidate.podcastStrictSequence) {
-      if (strictProgramOffered.has(programId)) continue;
-      strictProgramOffered.add(programId);
+      if (strictProgramBlocked.has(programId)) continue;
+      const offered = includedByProgram.get(programId) ?? 0;
+      if (offered >= remaining) continue;
 
-      // Conservative sequence protection: expose only the next episode of a
-      // strict show to a destination. If it cannot fit this destination at all,
-      // do not let a later episode jump ahead. Another destination may still
-      // receive it later in the same run.
+      // Strict sequence may offer several consecutive episodes when the cap
+      // allows it, but the first one that cannot fit blocks every later episode
+      // from that show for this destination. This permits 73 -> 74 while never
+      // allowing 74 to jump ahead just because 73 is too large for the target.
       const durationMs = Math.max(0, candidate.durationMs);
       const maxPodcastDurationMs = input.rules.maxPodcastDurationMs ?? null;
-      if (durationMs <= 0) continue;
-      if (durationMs > Math.max(0, input.rules.targetDurationMs)) continue;
-      if (maxPodcastDurationMs !== null && durationMs > maxPodcastDurationMs) {
+      const fitsTarget = durationMs > 0 &&
+        durationMs <= Math.max(0, input.rules.targetDurationMs) &&
+        (maxPodcastDurationMs === null || durationMs <= maxPodcastDurationMs);
+      if (!fitsTarget) {
+        strictProgramBlocked.add(programId);
         continue;
       }
+
+      includedByProgram.set(programId, offered + 1);
       output.push(candidate);
       continue;
     }
