@@ -3,6 +3,10 @@ import { LikedTrackAvailability } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { buildLikedTrackSourceSnapshot } from "@/services/music-preference/liked-track-source";
 import {
+  getNativeLikedTrackSourcePreferenceState,
+  type NativeLikedTrackSourcePreferenceState,
+} from "@/services/music-preference/native-source-preference";
+import {
   planRun,
   type Candidate,
   type PlanRunResult,
@@ -27,19 +31,18 @@ export const LIKED_TRACK_SOURCE_SHADOW_POLICY = {
 } as const;
 
 /**
- * SOURCE-LIKED-01 Gate 5A.
+ * SOURCE-LIKED-01 Gate 5A + Gate 5B2.
  *
- * The first productive rollout deliberately reuses the 5% arbitration that was
- * already measured in Gate 3C. It only replaces a plan that was already ready,
- * and it abstains if any non-allowlisted target moves or if an allowlisted
- * target regresses on quality, duration or diversity. The source is local-only;
- * this gate never performs provider reads to build its candidate set.
+ * Productive exposure stays fixed at the proven 5% Gate 5A arbitration, but it
+ * now requires both the operational rollout gate and the user's persisted
+ * product preference. Missing, disabled or unreadable consent always abstains.
  */
 export const LIKED_TRACK_SOURCE_PLANNER_PILOT_POLICY = {
-  version: "source-liked-gate5a-v1",
+  version: "source-liked-gate5b2-v1",
   mode: "PILOT_PRODUCTIVE",
   exposurePercent: 5,
-  activationRule: "MASTER_FLAG_AND_USER_ALLOWLIST_AND_TARGET_ID_ALLOWLIST",
+  activationRule:
+    "MASTER_FLAG_AND_USER_ALLOWLIST_AND_TARGET_ID_ALLOWLIST_AND_USER_SOURCE_PREFERENCE",
   strategy: "ORDER_PRESERVING_INTERLEAVE_EXCLUSIVE_LIKED",
   fallbackRule: "ABSTAIN_AND_KEEP_READY_BASELINE_PLAN",
   providerReads: false,
@@ -50,6 +53,8 @@ export type LikedTrackSourceShadowPolicyReason =
   | "USER_EMAIL_MISSING"
   | "USER_NOT_ALLOWLISTED"
   | "TARGET_ALLOWLIST_EMPTY"
+  | "USER_SOURCE_DISABLED"
+  | "USER_SOURCE_PREFERENCE_ERROR"
   | "ENABLED";
 
 export type LikedTrackSourceShadowContext = {
@@ -66,7 +71,7 @@ export type PreparedLikedTrackSourceShadow = {
   enabled: boolean;
   targetIds: ReadonlySet<string>;
   candidates: Candidate[];
-  /** Gate 5A pilot is independent from the shadow flag. Optional keeps Gate 3 tests/source compatible. */
+  /** Productive pilot is independent from shadow mode and additionally requires Gate 5B2 consent. */
   plannerPilotEnabled?: boolean;
   plannerPilotTargetIds?: ReadonlySet<string>;
 };
@@ -93,6 +98,7 @@ export function resolveLikedTrackSourceShadowPolicy(input: {
   return resolveAllowlistedPolicy(input);
 }
 
+/** Gate 5A operational rollout only. Gate 5B2 consent is combined separately. */
 export function resolveLikedTrackSourcePlannerPilotPolicy(input: {
   userEmail: string | null | undefined;
   masterEnabled?: string | null;
@@ -107,10 +113,51 @@ export function resolveLikedTrackSourcePlannerPilotPolicy(input: {
 }
 
 /**
- * SOURCE-LIKED-01 Gate 3B/3C + Gate 5A preparation.
+ * SOURCE-LIKED-01 Gate 5B2 pure policy combiner.
  *
- * One local DB read serves shadow and productive pilot policies. Neither policy
- * needs Spotify reads here. A disabled/not-ready/error state always abstains.
+ * Operational permission is necessary but no longer sufficient. Product consent
+ * must be readable and explicitly enabled. Any read failure is fail-closed.
+ */
+export function resolveLikedTrackSourcePlannerConsentPolicy(input: {
+  operationalPolicy: {
+    enabled: boolean;
+    reason: LikedTrackSourceShadowPolicyReason;
+    targetIds: ReadonlySet<string>;
+  };
+  preference: NativeLikedTrackSourcePreferenceState;
+}): {
+  enabled: boolean;
+  reason: LikedTrackSourceShadowPolicyReason;
+  targetIds: ReadonlySet<string>;
+} {
+  const { operationalPolicy, preference } = input;
+  if (!operationalPolicy.enabled) return operationalPolicy;
+  if (preference.readError) {
+    return {
+      enabled: false,
+      reason: "USER_SOURCE_PREFERENCE_ERROR",
+      targetIds: operationalPolicy.targetIds,
+    };
+  }
+  if (!preference.enabled) {
+    return {
+      enabled: false,
+      reason: "USER_SOURCE_DISABLED",
+      targetIds: operationalPolicy.targetIds,
+    };
+  }
+  return {
+    enabled: true,
+    reason: "ENABLED",
+    targetIds: operationalPolicy.targetIds,
+  };
+}
+
+/**
+ * SOURCE-LIKED-01 Gate 3B/3C + Gate 5A/5B2 preparation.
+ *
+ * Shadow remains independent. Productive use requires operational rollout AND
+ * local user consent. Neither path performs Spotify/provider reads here.
  */
 export async function prepareLikedTrackSourceShadowForCurrentRun(): Promise<PreparedLikedTrackSourceShadow> {
   const runState = currentMusicRepeatState();
@@ -132,11 +179,23 @@ export async function prepareLikedTrackSourceShadowForCurrentRun(): Promise<Prep
       allowlistedEmails: process.env.LIKED_TRACK_SOURCE_SHADOW_USER_EMAILS,
       allowlistedTargetIds: process.env.LIKED_TRACK_SOURCE_SHADOW_TARGET_IDS,
     });
-    const plannerPilotPolicy = resolveLikedTrackSourcePlannerPilotPolicy({
+    const plannerOperationalPolicy = resolveLikedTrackSourcePlannerPilotPolicy({
       userEmail: user?.email,
       masterEnabled: process.env.LIKED_TRACK_SOURCE_PLANNER_ENABLED,
       allowlistedEmails: process.env.LIKED_TRACK_SOURCE_PLANNER_USER_EMAILS,
       allowlistedTargetIds: process.env.LIKED_TRACK_SOURCE_PLANNER_TARGET_IDS,
+    });
+    const preferenceChecked = plannerOperationalPolicy.enabled;
+    const sourcePreference: NativeLikedTrackSourcePreferenceState = preferenceChecked
+      ? await getNativeLikedTrackSourcePreferenceState(runState.userId)
+      : {
+          enabled: false,
+          explicitlyConfigured: false,
+          readError: null,
+        };
+    const plannerPilotPolicy = resolveLikedTrackSourcePlannerConsentPolicy({
+      operationalPolicy: plannerOperationalPolicy,
+      preference: sourcePreference,
     });
 
     runState.likedTrackSourceShadow = {
@@ -146,11 +205,20 @@ export async function prepareLikedTrackSourceShadowForCurrentRun(): Promise<Prep
       userAllowlisted:
         shadowPolicy.reason !== "USER_NOT_ALLOWLISTED" && Boolean(user?.email),
       targetAllowlist: [...shadowPolicy.targetIds],
-      productivePilot: productivePilotSummaryBase({
-        enabled: plannerPilotPolicy.enabled,
-        reason: plannerPilotPolicy.reason,
-        targetIds: plannerPilotPolicy.targetIds,
-      }),
+      productivePilot: {
+        ...productivePilotSummaryBase({
+          enabled: plannerPilotPolicy.enabled,
+          reason: plannerPilotPolicy.reason,
+          targetIds: plannerPilotPolicy.targetIds,
+        }),
+        operationalPolicyEnabled: plannerOperationalPolicy.enabled,
+        operationalPolicyReason: plannerOperationalPolicy.reason,
+        userSourcePreferenceChecked: preferenceChecked,
+        userSourcePreferenceEnabled: sourcePreference.enabled,
+        userSourcePreferenceExplicitlyConfigured:
+          sourcePreference.explicitlyConfigured,
+        userSourcePreferenceReadError: sourcePreference.readError,
+      },
     };
 
     if (!shadowPolicy.enabled && !plannerPilotPolicy.enabled) {
