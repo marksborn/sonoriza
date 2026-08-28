@@ -27,6 +27,17 @@ export type GeneratedItemProvenance = {
   sourceIncludePlayed?: boolean | null;
 };
 
+export type PodcastShowMaintenanceRemovalReason =
+  | "PODCAST_SHOW_STATE_FILTERED"
+  | "PODCAST_SHOW_RELEASE_EXPIRED"
+  | "PODCAST_SHOW_RELEASE_UNKNOWN";
+
+export type PodcastShowMaintenancePolicy = {
+  replayAllowed: boolean;
+  maxEpisodesPerCycle: number | null;
+  blockedReason?: PodcastShowMaintenanceRemovalReason | null;
+};
+
 export type KeepFilledRemovalReason =
   | "UNREADABLE_ITEM"
   | "DUPLICATE_URI"
@@ -36,6 +47,7 @@ export type KeepFilledRemovalReason =
   | "PODCAST_COMPLETED_NO_REPLAY"
   | "PODCAST_DURATION_LIMIT"
   | "PODCAST_PROGRAM_LIMIT"
+  | PodcastShowMaintenanceRemovalReason
   | "MUSIC_ARTIST_IDENTITY_MISSING"
   | "MUSIC_ALBUM_IDENTITY_MISSING"
   | "MUSIC_ARTIST_LIMIT"
@@ -66,6 +78,7 @@ export function buildKeepFilledPreservation(input: {
   items: CurrentTargetPlaylistItem[];
   podcastStates: ReadonlyMap<string, CanonicalPodcastStateForMaintenance>;
   provenanceByUri: ReadonlyMap<string, GeneratedItemProvenance>;
+  podcastShowPolicyByUri?: ReadonlyMap<string, PodcastShowMaintenancePolicy>;
   musicRepeatEnabled: boolean;
   blockedTrackIds: ReadonlySet<string>;
   rules: Pick<
@@ -125,7 +138,11 @@ export function buildKeepFilledPreservation(input: {
       continue;
     }
     if (seenUris.has(item.uri)) {
-      remove(item, "DUPLICATE_URI", item.originalDurationMs ?? item.musicCandidate?.durationMs ?? 0);
+      remove(
+        item,
+        "DUPLICATE_URI",
+        item.originalDurationMs ?? item.musicCandidate?.durationMs ?? 0,
+      );
       forceReplace = true;
       continue;
     }
@@ -165,7 +182,13 @@ export function buildKeepFilledPreservation(input: {
         Math.trunc(item.originalDurationMs ?? state.durationMs),
       );
       const provenance = input.provenanceByUri.get(item.uri);
-      const replayAllowed = provenance?.sourceIncludePlayed ?? null;
+      const showPolicy = input.podcastShowPolicyByUri?.get(item.uri);
+      if (showPolicy?.blockedReason) {
+        remove(item, showPolicy.blockedReason, originalDurationMs);
+        continue;
+      }
+      const replayAllowed =
+        showPolicy?.replayAllowed ?? provenance?.sourceIncludePlayed ?? null;
 
       if (state.status === "COMPLETED" && replayAllowed === false) {
         remove(item, "PODCAST_COMPLETED_NO_REPLAY", originalDurationMs);
@@ -179,7 +202,10 @@ export function buildKeepFilledPreservation(input: {
           replayAllowed === true &&
           item.providerFullyPlayed === false &&
           (item.providerResumePositionMs ?? 0) > 0
-            ? Math.min(originalDurationMs, Math.max(0, item.providerResumePositionMs ?? 0))
+            ? Math.min(
+                originalDurationMs,
+                Math.max(0, item.providerResumePositionMs ?? 0),
+              )
             : null;
         durationMs =
           activeReplayPosition === null
@@ -211,6 +237,8 @@ export function buildKeepFilledPreservation(input: {
         title: item.title ?? "Podcast",
         ...(item.subtitle ? { subtitle: item.subtitle } : {}),
         programId,
+        spotifyEpisodeId: episodeId,
+        podcastListeningStatus: state.status,
         durationMs,
         originalDurationMs,
         resumePositionMs: Math.max(0, originalDurationMs - durationMs),
@@ -222,6 +250,9 @@ export function buildKeepFilledPreservation(input: {
           ? { sourceSpotifyId: provenance.sourceSpotifyId }
           : {}),
         ...(replayAllowed !== null ? { sourceIncludePlayed: replayAllowed } : {}),
+        ...(showPolicy?.maxEpisodesPerCycle != null
+          ? { podcastMaxEpisodesPerCycle: showPolicy.maxEpisodesPerCycle }
+          : {}),
       };
     }
 
@@ -229,7 +260,9 @@ export function buildKeepFilledPreservation(input: {
       input.rules.compositionMode === "SEQUENCE" &&
       input.rules.sequencePattern.length > 0 &&
       candidate.type !==
-        input.rules.sequencePattern[preserved.length % input.rules.sequencePattern.length]
+        input.rules.sequencePattern[
+          preserved.length % input.rules.sequencePattern.length
+        ]
     ) {
       remove(item, "SEQUENCE_TYPE_MISMATCH", candidate.durationMs);
       continue;
@@ -237,8 +270,14 @@ export function buildKeepFilledPreservation(input: {
 
     if (candidate.type === "PODCAST") {
       const programId = candidate.programId!;
+      const targetLimit = input.rules.maxEpisodesPerProgram;
+      const showLimit = candidate.podcastMaxEpisodesPerCycle;
+      const effectiveLimit =
+        Number.isInteger(showLimit) && Number(showLimit) >= 1
+          ? Math.min(targetLimit, Number(showLimit))
+          : targetLimit;
       const count = programCounts.get(programId) ?? 0;
-      if (count >= input.rules.maxEpisodesPerProgram) {
+      if (count >= effectiveLimit) {
         remove(item, "PODCAST_PROGRAM_LIMIT", candidate.durationMs);
         continue;
       }
@@ -275,7 +314,10 @@ export function buildKeepFilledPreservation(input: {
         );
       }
       if (albumLimit !== null && candidate.albumId) {
-        albumCounts.set(candidate.albumId, (albumCounts.get(candidate.albumId) ?? 0) + 1);
+        albumCounts.set(
+          candidate.albumId,
+          (albumCounts.get(candidate.albumId) ?? 0) + 1,
+        );
       }
     }
 
@@ -284,7 +326,10 @@ export function buildKeepFilledPreservation(input: {
     validDurationBeforeMs += Math.max(0, candidate.durationMs);
   }
 
-  if (duplicateUris.size > 0 && removals.some((entry) => entry.uri && duplicateUris.has(entry.uri))) {
+  if (
+    duplicateUris.size > 0 &&
+    removals.some((entry) => entry.uri && duplicateUris.has(entry.uri))
+  ) {
     forceReplace = true;
   }
 
