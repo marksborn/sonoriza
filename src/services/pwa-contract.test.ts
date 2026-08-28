@@ -55,14 +55,19 @@ test("PWA-01 manifest exposes the installable Sonoriza contract", () => {
   );
 });
 
-test("PWA-01 service worker is intentionally cacheless", () => {
+test("PWA-01 service worker uses network-only navigation without Cache API", () => {
   const source = read("public/sw.js");
 
   assert.match(source, /addEventListener\("install"/);
   assert.match(source, /addEventListener\("activate"/);
-  assert.doesNotMatch(source, /addEventListener\("fetch"/);
+  assert.match(source, /addEventListener\("fetch"/);
+  assert.match(source, /event\.request\.mode !== "navigate"/);
+  assert.match(source, /url\.pathname\.startsWith\("\/api\/"\)/);
+  assert.match(source, /event\.respondWith\(fetch\(event\.request\)\)/);
   assert.doesNotMatch(source, /\bcaches\s*\./);
-  assert.doesNotMatch(source, /respondWith\s*\(/);
+  assert.doesNotMatch(source, /\bcaches\s*\(/);
+  assert.doesNotMatch(source, /cache\.put\s*\(/);
+  assert.doesNotMatch(source, /cache\.match\s*\(/);
 });
 
 test("PWA-01 registers the worker without using the HTTP cache", () => {
