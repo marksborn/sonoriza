@@ -324,20 +324,20 @@ function latestPossibleReleaseInstant(
 ): Date | null {
   if (!date) return null;
   const parts = date.split("-").map(Number);
-  const year = parts[0];
+  const year = Number(parts[0] ?? Number.NaN);
   if (!Number.isInteger(year) || year < 1) return null;
 
   if (precision === "year") {
     return new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
   }
 
-  const month = parts[1];
+  const month = Number(parts[1] ?? Number.NaN);
   if (!Number.isInteger(month) || month < 1 || month > 12) return null;
   if (precision === "month") {
     return new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
   }
 
-  const day = parts[2];
+  const day = Number(parts[2] ?? Number.NaN);
   if (!Number.isInteger(day) || day < 1 || day > 31) return null;
   return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
 }
