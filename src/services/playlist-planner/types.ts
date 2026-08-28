@@ -38,6 +38,24 @@ export interface Candidate {
   sourceSpotifyId?: string;
   /** SCHEDULE-01: explicit replay policy of the source that selected a podcast. */
   sourceIncludePlayed?: boolean;
+
+  /** PODCAST-05 canonical Spotify episode identity/state used by SHOW policy. */
+  spotifyEpisodeId?: string;
+  podcastListeningStatus?: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
+  podcastFirstProgressObservedAt?: Date | null;
+  /** Sonoriza source row owning the SHOW policy; never a provider id. */
+  podcastPolicySourceId?: string;
+  podcastPolicyOrder?: "OLDEST_FIRST" | "NEWEST_FIRST" | "RANDOM";
+  podcastRandomPolicy?: "WITHOUT_REPLACEMENT" | "WITH_REPLACEMENT";
+  podcastRandomRound?: number;
+  podcastRandomRoundReset?: boolean;
+  /** Stateful sequencing is needed for replay/all-episode deterministic traversals. */
+  podcastSequenceStateful?: boolean;
+  podcastSequenceIndex?: number | null;
+  podcastNextSequenceEpisodeId?: string | null;
+  podcastStrictSequence?: boolean;
+  /** Per-show cap shared by every target in the same generation run. */
+  podcastMaxEpisodesPerCycle?: number | null;
 }
 
 export interface PlaylistRules {

@@ -67,7 +67,9 @@ function podcast(
   };
 }
 
-function build(overrides: Partial<Parameters<typeof buildKeepFilledPreservation>[0]> = {}) {
+function build(
+  overrides: Partial<Parameters<typeof buildKeepFilledPreservation>[0]> = {},
+) {
   return buildKeepFilledPreservation({
     items: [music(0, "m1"), podcast(1, "p1")],
     podcastStates: new Map([
@@ -105,7 +107,14 @@ test("KEEP_FILLED preserves valid current content and its effective duration", (
 test("completed podcast with includePlayed=false stops occupying duration", () => {
   const result = build({
     podcastStates: new Map([
-      ["p1", { status: "COMPLETED", durationMs: 3_600_000, resumePositionMs: 3_500_000 }],
+      [
+        "p1",
+        {
+          status: "COMPLETED",
+          durationMs: 3_600_000,
+          resumePositionMs: 3_500_000,
+        },
+      ],
     ]),
   });
   assert.deepEqual(result.preserved.map((item) => item.uri), ["spotify:track:m1"]);
@@ -116,7 +125,14 @@ test("completed podcast with includePlayed=false stops occupying duration", () =
 test("in-progress podcast contributes only remaining time", () => {
   const result = build({
     podcastStates: new Map([
-      ["p1", { status: "IN_PROGRESS", durationMs: 3_600_000, resumePositionMs: 1_200_000 }],
+      [
+        "p1",
+        {
+          status: "IN_PROGRESS",
+          durationMs: 3_600_000,
+          resumePositionMs: 1_200_000,
+        },
+      ],
     ]),
   });
   const kept = result.preserved.find((item) => item.type === "PODCAST");
@@ -127,10 +143,24 @@ test("in-progress podcast contributes only remaining time", () => {
 test("completed podcast explicitly allowed for replay remains valid", () => {
   const result = build({
     provenanceByUri: new Map([
-      ["spotify:episode:p1", { sourceIncludePlayed: true, sourceSpotifyType: "SHOW", sourceSpotifyId: "show-1" }],
+      [
+        "spotify:episode:p1",
+        {
+          sourceIncludePlayed: true,
+          sourceSpotifyType: "SHOW",
+          sourceSpotifyId: "show-1",
+        },
+      ],
     ]),
     podcastStates: new Map([
-      ["p1", { status: "COMPLETED", durationMs: 3_600_000, resumePositionMs: 3_600_000 }],
+      [
+        "p1",
+        {
+          status: "COMPLETED",
+          durationMs: 3_600_000,
+          resumePositionMs: 3_600_000,
+        },
+      ],
     ]),
   });
   const kept = result.preserved.find((item) => item.type === "PODCAST");
@@ -138,11 +168,110 @@ test("completed podcast explicitly allowed for replay remains valid", () => {
   assert.equal(kept?.sourceIncludePlayed, true);
 });
 
+test("current SHOW policy overrides stale replay provenance", () => {
+  const result = build({
+    provenanceByUri: new Map([
+      [
+        "spotify:episode:p1",
+        {
+          sourceIncludePlayed: false,
+          sourceSpotifyType: "SHOW",
+          sourceSpotifyId: "show-1",
+        },
+      ],
+    ]),
+    podcastShowPolicyByUri: new Map([
+      [
+        "spotify:episode:p1",
+        { replayAllowed: true, maxEpisodesPerCycle: 1 },
+      ],
+    ]),
+    podcastStates: new Map([
+      [
+        "p1",
+        {
+          status: "COMPLETED",
+          durationMs: 3_600_000,
+          resumePositionMs: 3_600_000,
+        },
+      ],
+    ]),
+  });
+
+  const kept = result.preserved.find((item) => item.type === "PODCAST");
+  assert.equal(kept?.sourceIncludePlayed, true);
+  assert.equal(kept?.podcastMaxEpisodesPerCycle, 1);
+});
+
+test("stale SHOW episode is not preserved by KEEP_FILLED", () => {
+  const result = build({
+    podcastShowPolicyByUri: new Map([
+      [
+        "spotify:episode:p1",
+        {
+          replayAllowed: false,
+          maxEpisodesPerCycle: 1,
+          blockedReason: "PODCAST_SHOW_RELEASE_EXPIRED",
+        },
+      ],
+    ]),
+  });
+
+  assert.deepEqual(result.preserved.map((item) => item.uri), ["spotify:track:m1"]);
+  assert.equal(result.removals[0]?.reason, "PODCAST_SHOW_RELEASE_EXPIRED");
+  assert.deepEqual(result.removeUris, ["spotify:episode:p1"]);
+});
+
+test("SHOW state filter removes an item even if old provenance allowed replay", () => {
+  const result = build({
+    provenanceByUri: new Map([
+      [
+        "spotify:episode:p1",
+        {
+          sourceIncludePlayed: true,
+          sourceSpotifyType: "SHOW",
+          sourceSpotifyId: "show-1",
+        },
+      ],
+    ]),
+    podcastShowPolicyByUri: new Map([
+      [
+        "spotify:episode:p1",
+        {
+          replayAllowed: false,
+          maxEpisodesPerCycle: 1,
+          blockedReason: "PODCAST_SHOW_STATE_FILTERED",
+        },
+      ],
+    ]),
+    podcastStates: new Map([
+      [
+        "p1",
+        {
+          status: "COMPLETED",
+          durationMs: 3_600_000,
+          resumePositionMs: 3_600_000,
+        },
+      ],
+    ]),
+  });
+
+  assert.equal(result.preserved.length, 1);
+  assert.equal(result.removals[0]?.reason, "PODCAST_SHOW_STATE_FILTERED");
+});
+
 test("unknown replay provenance is preserved instead of destructively guessed", () => {
   const result = build({
     provenanceByUri: new Map(),
     podcastStates: new Map([
-      ["p1", { status: "COMPLETED", durationMs: 3_600_000, resumePositionMs: 3_600_000 }],
+      [
+        "p1",
+        {
+          status: "COMPLETED",
+          durationMs: 3_600_000,
+          resumePositionMs: 3_600_000,
+        },
+      ],
     ]),
   });
   assert.equal(result.preserved.length, 2);
@@ -162,8 +291,14 @@ test("hard podcast duration and program caps are applied to preserved items", ()
   const result = build({
     items: [podcast(0, "p1"), podcast(1, "p2")],
     podcastStates: new Map([
-      ["p1", { status: "NOT_STARTED", durationMs: 3_600_000, resumePositionMs: 0 }],
-      ["p2", { status: "NOT_STARTED", durationMs: 3_600_000, resumePositionMs: 0 }],
+      [
+        "p1",
+        { status: "NOT_STARTED", durationMs: 3_600_000, resumePositionMs: 0 },
+      ],
+      [
+        "p2",
+        { status: "NOT_STARTED", durationMs: 3_600_000, resumePositionMs: 0 },
+      ],
     ]),
     provenanceByUri: new Map([
       ["spotify:episode:p1", { sourceIncludePlayed: false }],
@@ -178,9 +313,40 @@ test("hard podcast duration and program caps are applied to preserved items", ()
   assert.equal(duration.removals[0]?.reason, "PODCAST_DURATION_LIMIT");
 });
 
+test("SHOW cap can be stricter than the destination cap for preserved items", () => {
+  const result = build({
+    items: [podcast(0, "p1"), podcast(1, "p2")],
+    podcastStates: new Map([
+      [
+        "p1",
+        { status: "NOT_STARTED", durationMs: 3_600_000, resumePositionMs: 0 },
+      ],
+      [
+        "p2",
+        { status: "NOT_STARTED", durationMs: 3_600_000, resumePositionMs: 0 },
+      ],
+    ]),
+    provenanceByUri: new Map([
+      ["spotify:episode:p1", { sourceIncludePlayed: false }],
+      ["spotify:episode:p2", { sourceIncludePlayed: false }],
+    ]),
+    podcastShowPolicyByUri: new Map([
+      ["spotify:episode:p1", { replayAllowed: false, maxEpisodesPerCycle: 1 }],
+      ["spotify:episode:p2", { replayAllowed: false, maxEpisodesPerCycle: 1 }],
+    ]),
+    rules: { ...baseRules, maxEpisodesPerProgram: 5 },
+  });
+
+  assert.equal(result.preserved.length, 1);
+  assert.equal(result.removals[0]?.reason, "PODCAST_PROGRAM_LIMIT");
+});
+
 test("diversity limits remain hard constraints for preserved music", () => {
   const result = build({
-    items: [music(0, "m1", "artist-a", "album-a"), music(1, "m2", "artist-a", "album-b")],
+    items: [
+      music(0, "m1", "artist-a", "album-a"),
+      music(1, "m2", "artist-a", "album-b"),
+    ],
     podcastStates: new Map(),
     provenanceByUri: new Map(),
     rules: { ...baseRules, maxTracksPerArtist: 1 },
@@ -192,7 +358,11 @@ test("diversity limits remain hard constraints for preserved music", () => {
 test("SEQUENCE preserves the longest valid subsequence without reordering it", () => {
   const result = build({
     items: [music(0, "m1"), music(1, "m2"), podcast(2, "p1")],
-    rules: { ...baseRules, compositionMode: "SEQUENCE", sequencePattern: ["MUSIC", "PODCAST"] },
+    rules: {
+      ...baseRules,
+      compositionMode: "SEQUENCE",
+      sequencePattern: ["MUSIC", "PODCAST"],
+    },
   });
   assert.deepEqual(
     result.preserved.map((item) => item.uri),
