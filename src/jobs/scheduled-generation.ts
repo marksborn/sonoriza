@@ -236,9 +236,10 @@ export async function runScheduledGeneration(
               : {},
           });
 
-          // Persist the GenerationRun link as soon as it exists. If the process
-          // dies before terminalizing the schedule attempt, the retry audit can
-          // still point to the real generation that was created.
+          // Persist the GenerationRun link as soon as it exists. The attempt row
+          // may already have been marked stale by a newer retry; in that case we
+          // still retain the late GenerationRun link, but never mutate the newer
+          // aggregate attempt.
           await linkGenerationRun(entry.audit, generated.runId);
 
           const generation = await prisma.generationRun.findUnique({
@@ -327,7 +328,7 @@ async function claimScheduleSlot(
       if (claimed.count !== 1) return null;
 
       if (existing.status === "RUNNING") {
-        await tx.targetScheduleAttempt.updateMany({
+        const stale = await tx.targetScheduleAttempt.updateMany({
           where: {
             targetScheduleRunId: existing.id,
             attempt: existing.attempt,
@@ -339,6 +340,11 @@ async function claimScheduleSlot(
             finishedAt: now,
           },
         });
+        if (stale.count !== 1) {
+          throw new Error(
+            `Missing TargetScheduleAttempt ${existing.id}#${existing.attempt} while expiring stale retry`,
+          );
+        }
       }
 
       await tx.targetScheduleAttempt.create({
@@ -466,21 +472,10 @@ async function finishMany(
 
 async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: string) {
   await prisma.$transaction(async (tx) => {
-    const aggregate = await tx.targetScheduleRun.updateMany({
-      where: {
-        id: audit.id,
-        status: "RUNNING",
-        attempt: audit.attempt,
-      },
-      data: { generationRunId },
-    });
-    if (aggregate.count !== 1) return;
-
     const attempt = await tx.targetScheduleAttempt.updateMany({
       where: {
         targetScheduleRunId: audit.id,
         attempt: audit.attempt,
-        status: "RUNNING",
       },
       data: { generationRunId },
     });
@@ -489,6 +484,18 @@ async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: str
         `Missing TargetScheduleAttempt ${audit.id}#${audit.attempt} while linking generation`,
       );
     }
+
+    // Only the attempt that still owns the aggregate may update its summary.
+    // A late/stale attempt keeps its own GenerationRun link above, but cannot
+    // overwrite a newer retry's aggregate state.
+    await tx.targetScheduleRun.updateMany({
+      where: {
+        id: audit.id,
+        status: "RUNNING",
+        attempt: audit.attempt,
+      },
+      data: { generationRunId },
+    });
   });
 }
 
