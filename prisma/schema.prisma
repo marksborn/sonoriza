@@ -133,6 +133,28 @@ enum PodcastEpisodeOrder {
   NEWEST_FIRST
 }
 
+enum PodcastEpisodeEligibility {
+  UNPLAYED_ONLY
+  PLAYED_ONLY
+  ALL
+}
+
+enum PodcastShowOrder {
+  OLDEST_FIRST
+  NEWEST_FIRST
+  RANDOM
+}
+
+enum PodcastRandomPolicy {
+  WITHOUT_REPLACEMENT
+  WITH_REPLACEMENT
+}
+
+enum PodcastExpiryPolicy {
+  STRICT_EXPIRY
+  ALLOW_IN_PROGRESS_TO_FINISH
+}
+
 enum MusicSourceRetentionMode {
   KEEP_ALL
   REMOVE_AFTER_PLAYED
@@ -170,12 +192,33 @@ model SourcePlaylist {
   updatedAt DateTime @updatedAt
 
   user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  podcastShowPolicy    PodcastShowPolicy?
   cleanupRuns          MusicSourceCleanupRun[]
   ingestionRulesTarget MusicIngestionRule[]    @relation("MusicIngestionTarget")
   ingestionRunsTarget  MusicIngestionRun[]     @relation("MusicIngestionRunTarget")
 
   @@unique([userId, spotifyType, spotifyId])
   @@index([userId, kind])
+}
+
+model PodcastShowPolicy {
+  sourcePlaylistId         String                    @id
+  episodeEligibility       PodcastEpisodeEligibility @default(UNPLAYED_ONLY)
+  episodeOrder             PodcastShowOrder          @default(OLDEST_FIRST)
+  randomPolicy             PodcastRandomPolicy       @default(WITHOUT_REPLACEMENT)
+  startEpisodeId           String?
+  strictSequence           Boolean                   @default(true)
+  maxReleaseAgeDays        Int?
+  expiryPolicy             PodcastExpiryPolicy       @default(STRICT_EXPIRY)
+  maxEpisodesPerCycle      Int?
+  sequenceCursorEpisodeId  String?
+  sequenceCompleted        Boolean                   @default(false)
+  randomRound              Int                       @default(0)
+  randomConsumedEpisodeIds Json                      @default("[]")
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+
+  source SourcePlaylist @relation(fields: [sourcePlaylistId], references: [id], onDelete: Cascade)
 }
 
 model MusicSourceCleanupRun {
@@ -474,7 +517,7 @@ model AlbumRecommendationMemory {
 }
 
 // ---------------------------------------------------------------------------
-// Native podcast listening state — PODCAST-04.
+// Native podcast listening state — PODCAST-04 / PODCAST-05 freshness evidence.
 // ---------------------------------------------------------------------------
 
 enum PodcastListeningStatus {
@@ -484,17 +527,18 @@ enum PodcastListeningStatus {
 }
 
 model EpisodeListeningState {
-  id               String                 @id @default(cuid())
-  userId           String
-  spotifyEpisodeId String
-  spotifyUri       String
-  durationMs       Int
-  resumePositionMs Int                    @default(0)
-  fullyPlayed      Boolean                @default(false)
-  status           PodcastListeningStatus @default(NOT_STARTED)
-  lastObservedAt   DateTime
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  id                      String                 @id @default(cuid())
+  userId                  String
+  spotifyEpisodeId        String
+  spotifyUri              String
+  durationMs              Int
+  resumePositionMs        Int                    @default(0)
+  fullyPlayed             Boolean                @default(false)
+  status                  PodcastListeningStatus @default(NOT_STARTED)
+  firstProgressObservedAt DateTime?
+  lastObservedAt          DateTime
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
