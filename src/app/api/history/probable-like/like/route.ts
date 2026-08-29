@@ -6,6 +6,9 @@ import {
   ProbableLikeCandidateNotFoundError,
   confirmProbableLike,
 } from "@/services/listening-history/probable-like-action";
+import { SpotifyBackoffActiveError } from "@/services/spotify/backoff";
+import { isSpotifyApiError } from "@/services/spotify/errors";
+import { SpotifyLibraryModifyScopeRequiredError } from "@/services/spotify/library";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +43,44 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof ProbableLikeCandidateNotFoundError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof SpotifyLibraryModifyScopeRequiredError) {
+      return NextResponse.json(
+        {
+          code: "SPOTIFY_RECONNECT_REQUIRED",
+          error: error.message,
+          reconnectPath: "/dashboard/configuracao/revisao",
+        },
+        { status: 428 },
+      );
+    }
+    if (error instanceof SpotifyBackoffActiveError) {
+      return NextResponse.json(
+        {
+          code: error.code,
+          error: `O Spotify pediu para aguardar antes de tentar novamente (${error.retryAfterSecondsRemaining}s).`,
+          retryAfterSecondsRemaining: error.retryAfterSecondsRemaining,
+          blockedUntil: error.blockedUntil.toISOString(),
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(error.retryAfterSecondsRemaining),
+          },
+        },
+      );
+    }
+    if (isSpotifyApiError(error)) {
+      return NextResponse.json(
+        {
+          code: "SPOTIFY_LIBRARY_WRITE_FAILED",
+          error:
+            error.status === 429
+              ? "O Spotify pediu para aguardar antes de tentar novamente."
+              : "O Spotify não confirmou a inclusão em Músicas Curtidas. Tente novamente.",
+        },
+        { status: error.status === 429 ? 429 : 502 },
+      );
     }
     throw error;
   }

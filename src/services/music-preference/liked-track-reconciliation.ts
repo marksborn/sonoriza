@@ -96,11 +96,6 @@ export type LikedTrackReconciliationReport = {
  * therefore performs a complete read-only provider scan, compares it with the
  * canonical local liked-track state and reuses the LIKED-01 affinity plan.
  *
- * HISTORY-04 Gate 5 adds one important ownership rule to that canonical state:
- * an explicit LIKE created inside Sonoriza is preserved even when absent from
- * the provider snapshot. `buildLikedTrackAffinityPlan` performs that union; the
- * provider diagnostics below remain provider-only.
- *
  * APPLY is guarded by a circuit breaker. Missing canonical IDs are a hard
  * blocker. Large removal sets require explicit manual review/force so a
  * truncated or otherwise suspicious provider response cannot mass-unlike the
@@ -269,7 +264,7 @@ function buildReport(input: {
     forced: input.applied && input.force && input.safety.status === "REVIEW_REQUIRED",
     provider: {
       rows: input.provider.items.length,
-      distinctCanonicalTracks: input.plan.providerCanonicalTrackCount,
+      distinctCanonicalTracks: input.plan.currentTracks.length,
       technicalDuplicateRows: input.plan.technicalDuplicateRows,
       rowsWithoutCanonicalId: input.plan.tracksWithoutCanonicalId,
       pagesRead: input.provider.pagesRead,

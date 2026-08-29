@@ -3,7 +3,11 @@ import { signIn } from "@/lib/auth";
 export function ReconnectSpotifyAction() {
   async function reconnectSpotify() {
     "use server";
-    await signIn("spotify", { redirectTo: "/dashboard/configuracao/revisao" });
+    await signIn(
+      "spotify",
+      { redirectTo: "/dashboard/historico" },
+      { show_dialog: "true" },
+    );
   }
 
   return (
