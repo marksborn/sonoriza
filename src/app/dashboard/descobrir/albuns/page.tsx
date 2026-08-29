@@ -51,6 +51,9 @@ export default async function AlbumsPage({
             <div className="flex flex-wrap gap-2 text-xs font-bold text-muted-inverse sm:justify-end">
               <span className="product-badge px-3 py-1.5">{report.ranked.length} sugestões</span>
               <span className="product-badge px-3 py-1.5">{report.queueMemory.queuedCount} enfileirado</span>
+              {report.snapshot.completeness === "PARTIAL" ? (
+                <span className="product-badge px-3 py-1.5">ranking parcial</span>
+              ) : null}
               {report.snapshot.generatedAt ? (
                 <span className="product-badge px-3 py-1.5">
                   {formatSnapshotAge(report.snapshot.generatedAt)}
@@ -86,15 +89,33 @@ export default async function AlbumsPage({
       ) : report.ranked.length === 0 ? (
         <section className="product-panel p-8 text-center">
           <span className="product-icon-tile mx-auto h-12 w-12">
-            <UiIcon name="check" size={22} />
+            <UiIcon name={report.snapshot.completeness === "PARTIAL" ? "history" : "check"} size={22} />
           </span>
-          <h3 className="mt-4 text-xl font-black text-ink-inverse">Nada urgente para aprofundar</h3>
+          <h3 className="mt-4 text-xl font-black text-ink-inverse">
+            {report.snapshot.completeness === "PARTIAL"
+              ? "Ainda ampliando as recomendações"
+              : "Nada urgente para aprofundar"}
+          </h3>
           <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted-inverse">
-            As edições já enfileiradas são lembradas pelo Sonoriza e não voltam a ocupar o ranking sem uma mudança de estado.
+            {report.snapshot.completeness === "PARTIAL"
+              ? "O catálogo ainda está sendo aquecido em segundo plano. A tela continua rápida e novos ciclos podem trazer mais sugestões sem chamar o Spotify durante a navegação."
+              : "As edições já enfileiradas são lembradas pelo Sonoriza e não voltam a ocupar o ranking sem uma mudança de estado."}
           </p>
         </section>
       ) : (
         <>
+          {report.snapshot.completeness === "PARTIAL" ? (
+            <div className="status-warning flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm">
+              <UiIcon name="history" size={18} className="mt-0.5 shrink-0" />
+              <div>
+                <p className="font-black">Mostrando um ranking parcial e válido.</p>
+                <p className="mt-1 opacity-80">
+                  As sugestões abaixo já usam o scoring real da ALBUM-01. O catálogo continua aquecendo em segundo plano, então próximos ciclos podem ampliar ou reordenar a lista sem disparar chamadas ao Spotify ao abrir esta tela.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           {report.snapshot.status === "STALE" ? (
             <div className="status-warning flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm">
               <UiIcon name="history" size={18} className="mt-0.5 shrink-0" />
