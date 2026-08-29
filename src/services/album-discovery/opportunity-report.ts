@@ -9,7 +9,10 @@ import {
   scoreAlbumOpportunity,
   type AlbumOpportunityCandidate,
 } from "@/services/album-discovery/opportunity";
-import { buildAlbumCoverageFacts, type AlbumHistoryEvent } from "@/services/album-discovery/profile";
+import {
+  buildAlbumCoverageFacts,
+  type AlbumHistoryEvent,
+} from "@/services/album-discovery/profile";
 import {
   ALBUM_QUEUE_MEMORY_POLICY,
   loadAlbumRecommendationMemories,
@@ -21,6 +24,7 @@ import {
 } from "@/services/spotify/album-catalog";
 import {
   SpotifyCatalogReadSession,
+  SpotifyCatalogRequestBudgetExceededError,
   isSpotifyCatalogRequestBudgetExceededError,
 } from "@/services/spotify/catalog-read-session";
 import { SpotifyCatalogSearchClient } from "@/services/spotify/catalog-search";
@@ -35,7 +39,6 @@ import { resolveExternalDiscoveryCandidate } from "@/services/music-discovery/sp
 import { getDiscoveryTrackIdentityEvidence } from "@/services/music-discovery/track-identity";
 
 const DEFAULT_PROFILE_POOL_SIZE = 100;
-const ALBUM_TRACK_CONCURRENCY = 1;
 const REPORT_CACHE_TTL_MS = 5 * 60_000;
 
 type AlbumOpportunityReport = Awaited<ReturnType<typeof computeAlbumOpportunityReport>>;
@@ -70,12 +73,25 @@ export type AlbumOpportunityProviderFailure = {
   error: string;
 };
 
+export type AlbumOpportunityCatalogProgress = {
+  completeness: "COMPLETE" | "PARTIAL";
+  reason: "REQUEST_BUDGET_EXHAUSTED" | null;
+  nextRequestPath: string | null;
+};
+
 export function isAlbumOpportunityTerminalProviderError(error: unknown): boolean {
   if (isSpotifyCatalogRequestBudgetExceededError(error)) return true;
   return (
     isSpotifyApiError(error) &&
     (error.kind === "RATE_LIMITED" || error.kind === "QUOTA_EXCEEDED")
   );
+}
+
+export function isAlbumOpportunityResumableBudgetStop(
+  error: unknown,
+  candidateCount: number,
+): error is SpotifyCatalogRequestBudgetExceededError {
+  return candidateCount > 0 && error instanceof SpotifyCatalogRequestBudgetExceededError;
 }
 
 export async function getAlbumOpportunityReport(
@@ -180,11 +196,17 @@ async function computeAlbumOpportunityReport(
     catalogAlbums: SpotifyAlbumCatalogSummary[];
     events: AlbumHistoryEvent[];
   }> = [];
+  let catalogProgress: AlbumOpportunityCatalogProgress = {
+    completeness: "COMPLETE",
+    reason: null,
+    nextRequestPath: null,
+  };
 
   // Phase 1: resolve identities and populate the cheap artist-album catalog first.
   // With a small request budget, repeated refreshes therefore finish all artist
   // lists before spending quota on per-album tracklists. Successful pages remain
-  // cached across runs, so a budget stop is resumable without changing ranking.
+  // cached across runs. A budget stop here remains terminal because no album
+  // candidates have been scored yet.
   for (const artistCandidate of selectedArtists) {
     const identity = await loadHistoricalArtistIdentity({
       userId,
@@ -261,10 +283,12 @@ async function computeAlbumOpportunityReport(
     }
   }
 
-  // Phase 2: only after every resolvable artist catalog is available do we
-  // enrich exact album editions with tracklists. This preserves the existing
-  // full-ranking semantics while making quota-limited progress deterministic.
-  for (const prepared of preparedArtists) {
+  // Phase 2: enrich exact editions incrementally. Because catalog concurrency is
+  // intentionally one request at a time, committing each scored album to the
+  // report as soon as it is available lets a local request-budget stop return a
+  // truthful partial ranking. Provider quota/rate-limit and cache-write failures
+  // remain terminal and preserve the previous snapshot.
+  phase2: for (const prepared of preparedArtists) {
     const {
       artistCandidate,
       identity,
@@ -274,68 +298,63 @@ async function computeAlbumOpportunityReport(
       catalogAlbums,
       events,
     } = prepared;
+    let scoredAlbumCount = 0;
 
-    try {
-      const albumResults = await mapWithConcurrency(
-        catalogAlbums,
-        ALBUM_TRACK_CONCURRENCY,
-        async (album) => {
-          try {
-            const albumTracks = await albumCatalog.getAlbumTracks(album.id);
-            const coverage = buildAlbumCoverageFacts({
-              album,
-              tracks: albumTracks,
-              events,
-              spotifyArtistId: spotifyArtist.id,
-              spotifyArtistName: spotifyArtist.name,
-              asOf,
-            });
-            return {
-              scored: scoreAlbumOpportunity({
-                artistName: artistCandidate.artistName,
-                artistDeepeningScore: artistCandidate.score,
-                coverage,
-              }),
-              failure: null,
-            };
-          } catch (error) {
-            if (isAlbumOpportunityTerminalProviderError(error)) throw error;
-            return {
-              scored: null,
-              failure: {
-                subject: `${artistCandidate.artistName}:${album.name}:${album.id}`,
-                error: errorMessage(error),
-              } satisfies AlbumOpportunityProviderFailure,
-            };
-          }
-        },
-      );
-
-      let scoredAlbumCount = 0;
-      for (const result of albumResults) {
-        if (result.failure) failures.push(result.failure);
-        if (!result.scored) continue;
-        candidates.push(result.scored);
-        if (result.scored.eligible) scoredAlbumCount += 1;
+    for (const album of catalogAlbums) {
+      try {
+        const albumTracks = await albumCatalog.getAlbumTracks(album.id);
+        const coverage = buildAlbumCoverageFacts({
+          album,
+          tracks: albumTracks,
+          events,
+          spotifyArtistId: spotifyArtist.id,
+          spotifyArtistName: spotifyArtist.name,
+          asOf,
+        });
+        const scored = scoreAlbumOpportunity({
+          artistName: artistCandidate.artistName,
+          artistDeepeningScore: artistCandidate.score,
+          coverage,
+        });
+        candidates.push(scored);
+        if (scored.eligible) scoredAlbumCount += 1;
+      } catch (error) {
+        if (isAlbumOpportunityResumableBudgetStop(error, candidates.length)) {
+          catalogProgress = {
+            completeness: "PARTIAL",
+            reason: "REQUEST_BUDGET_EXHAUSTED",
+            nextRequestPath: error.nextRequestPath,
+          };
+          artistReports.push({
+            artistName: artistCandidate.artistName,
+            artistDeepeningScore: artistCandidate.score,
+            historicalArtistIdentity: identity,
+            resolutionStatus,
+            resolutionReason,
+            spotifyArtist: { id: spotifyArtist.id, name: spotifyArtist.name },
+            catalogAlbumCount: catalogAlbums.length,
+            scoredAlbumCount,
+          });
+          break phase2;
+        }
+        if (isAlbumOpportunityTerminalProviderError(error)) throw error;
+        failures.push({
+          subject: `${artistCandidate.artistName}:${album.name}:${album.id}`,
+          error: errorMessage(error),
+        });
       }
-
-      artistReports.push({
-        artistName: artistCandidate.artistName,
-        artistDeepeningScore: artistCandidate.score,
-        historicalArtistIdentity: identity,
-        resolutionStatus,
-        resolutionReason,
-        spotifyArtist: { id: spotifyArtist.id, name: spotifyArtist.name },
-        catalogAlbumCount: catalogAlbums.length,
-        scoredAlbumCount,
-      });
-    } catch (error) {
-      if (isAlbumOpportunityTerminalProviderError(error)) throw error;
-      failures.push({
-        subject: `${artistCandidate.artistName}:tracklists`,
-        error: errorMessage(error),
-      });
     }
+
+    artistReports.push({
+      artistName: artistCandidate.artistName,
+      artistDeepeningScore: artistCandidate.score,
+      historicalArtistIdentity: identity,
+      resolutionStatus,
+      resolutionReason,
+      spotifyArtist: { id: spotifyArtist.id, name: spotifyArtist.name },
+      catalogAlbumCount: catalogAlbums.length,
+      scoredAlbumCount,
+    });
   }
 
   const memoryApplied = suppressQueuedAlbumOpportunities(candidates, albumMemories);
@@ -356,9 +375,14 @@ async function computeAlbumOpportunityReport(
       requestedArtistCount: artistLimit,
       selectedArtistCount: selectedArtists.length,
       catalogScope: "ALL_FULL_ALBUM_EDITIONS_FOR_RESOLVED_ARTISTS" as const,
+      candidateUniverse:
+        catalogProgress.completeness === "COMPLETE"
+          ? ("COMPLETE_CATALOG" as const)
+          : ("PARTIAL_CATALOG" as const),
       editionIdentity: "SPOTIFY_ALBUM_ID" as const,
       topOutput: top,
     },
+    catalogProgress,
     queueMemory: {
       persistedRecordCount: albumMemories.length,
       queuedCount: queuedMemoryCount,
@@ -440,29 +464,6 @@ async function loadArtistHistoryEvents(input: {
     },
     orderBy: { playedAt: "asc" },
   });
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  if (items.length === 0) return [];
-  const limit = Math.max(1, Math.min(items.length, Math.trunc(concurrency)));
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-
-  async function worker() {
-    while (true) {
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= items.length) return;
-      results[index] = await mapper(items[index]!, index);
-    }
-  }
-
-  await Promise.all(Array.from({ length: limit }, () => worker()));
-  return results;
 }
 
 function uniqueArtists(rows: DiscoveryArtistProfile[]): DiscoveryArtistProfile[] {
