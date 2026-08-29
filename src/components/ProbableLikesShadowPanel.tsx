@@ -119,6 +119,15 @@ export async function ProbableLikesShadowPanel({
                     <p className="mt-3 text-[11px] font-bold text-muted-inverse/80">
                       Última reprodução: {dateFormatter.format(candidate.lastPlayedAt)}
                     </p>
+                    <a
+                      href={`https://open.spotify.com/track/${encodeURIComponent(candidate.spotifyTrackId)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-2 rounded-xl border border-success/30 bg-success-soft/70 px-3 py-2 text-xs font-black text-success transition hover:border-success/50 hover:bg-success-soft"
+                    >
+                      <UiIcon name="play" size={15} />
+                      Abrir no Spotify
+                    </a>
                     <ProbableLikePilotFeedbackControls
                       spotifyTrackId={candidate.spotifyTrackId}
                       initialVerdict={currentFeedback?.verdict ?? null}
