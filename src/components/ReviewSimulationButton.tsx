@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { UiIcon } from "@/components/UiIcon";
+import { readJsonApiResponse } from "@/services/http-api-response";
 
 type Props = {
   disabled?: boolean;
@@ -54,7 +55,10 @@ export function ReviewSimulationButton({
     async function loadBackoff() {
       try {
         const response = await fetch("/api/generate", { cache: "no-store" });
-        const data = (await response.json()) as ApiResult;
+        const data = await readJsonApiResponse<ApiResult>(
+          response,
+          "a verificação do Spotify",
+        );
         if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`);
         if (!active) return;
         setBackoff(data.spotifyBackoff ?? null);
@@ -92,7 +96,7 @@ export function ReviewSimulationButton({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ simulate: true }),
       });
-      const data = (await response.json()) as ApiResult;
+      const data = await readJsonApiResponse<ApiResult>(response, "a simulação");
 
       if (!response.ok) {
         if (
