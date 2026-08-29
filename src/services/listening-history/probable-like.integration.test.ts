@@ -105,6 +105,24 @@ integrationTest(
       },
     }));
 
+    const shortUtilityEvents = [0, 1, 2, 3].map((index) => ({
+      userId: user.id,
+      spotifyTrackId: "short-utility",
+      spotifyUri: "spotify:track:short-utility",
+      trackName: "Utility Day Marker",
+      artistName: "Provider Utility",
+      playedAt: new Date(`2022-11-${String(index + 1).padStart(2, "0")}T12:00:00.000Z`),
+      source: "SPOTIFY_EXTENDED_HISTORY" as const,
+      sourceEventKey: `short-${index}-${suffix}`,
+      metadata: {
+        spotifyExtendedHistory: {
+          msPlayed: 6_000,
+          reasonEnd: "trackdone",
+          explicitSkip: false,
+        },
+      },
+    }));
+
     await prisma.trackListeningEvent.createMany({
       data: [
         {
@@ -119,6 +137,7 @@ integrationTest(
         ...factualEvents,
         ...inferredEvents,
         ...likedEvents,
+        ...shortUtilityEvents,
       ],
     });
 
@@ -146,7 +165,9 @@ integrationTest(
     assert.ok(ids.includes("inferred-candidate"));
     assert.ok(!ids.includes("already-liked"));
     assert.ok(!ids.includes("ghost-before-window"));
+    assert.ok(!ids.includes("short-utility"));
     assert.equal(result.excludedLikedCount, 1);
+    assert.equal(result.excludedShortContentCount, 1);
 
     const factual = result.candidates.find(
       (candidate) => candidate.spotifyTrackId === "factual-candidate",

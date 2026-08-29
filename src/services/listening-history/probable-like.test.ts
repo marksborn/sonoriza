@@ -20,6 +20,9 @@ function aggregate(
     distinctDays: overrides.distinctDays ?? 4,
     factualCompleteCount: overrides.factualCompleteCount ?? 3,
     factualSkipCount: overrides.factualSkipCount ?? 0,
+    knownTrackDurationMs: overrides.knownTrackDurationMs ?? null,
+    maxFactualCompleteMsPlayed:
+      overrides.maxFactualCompleteMsPlayed ?? 180_000,
     firstPlayedAt:
       overrides.firstPlayedAt ?? new Date("2026-07-01T12:00:00.000Z"),
     lastPlayedAt:
@@ -57,6 +60,7 @@ test("inferred completion can support a candidate but is weighted below factual"
   const inferredOnly = aggregate({
     spotifyTrackId: "inferred",
     factualCompleteCount: 0,
+    maxFactualCompleteMsPlayed: null,
     playCount: 4,
     distinctDays: 3,
   });
@@ -118,4 +122,62 @@ test("single-day repetition is not enough for probable-like ranking", () => {
   });
 
   assert.equal(result.candidates.length, 0);
+});
+
+test("known catalog duration excludes ultra-short utility content", () => {
+  const result = rankProbableLikeAggregates({
+    aggregates: [
+      aggregate({
+        spotifyTrackId: "utility-known",
+        playCount: 38,
+        distinctDays: 31,
+        factualCompleteCount: 31,
+        knownTrackDurationMs: 6_000,
+        maxFactualCompleteMsPlayed: 6_000,
+      }),
+    ],
+    likedTrackIds: new Set(),
+    now,
+  });
+
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.excludedShortContentCount, 1);
+});
+
+test("repeated factual completions provide conservative historical short-content fallback", () => {
+  const result = rankProbableLikeAggregates({
+    aggregates: [
+      aggregate({
+        spotifyTrackId: "utility-historical",
+        playCount: 38,
+        distinctDays: 31,
+        factualCompleteCount: 31,
+        knownTrackDurationMs: null,
+        maxFactualCompleteMsPlayed: 6_500,
+      }),
+    ],
+    likedTrackIds: new Set(),
+    now,
+  });
+
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.excludedShortContentCount, 1);
+});
+
+test("one short tail completion does not classify an otherwise unknown track as utility", () => {
+  const result = rankProbableLikeAggregates({
+    aggregates: [
+      aggregate({
+        spotifyTrackId: "tail-only",
+        factualCompleteCount: 1,
+        knownTrackDurationMs: null,
+        maxFactualCompleteMsPlayed: 6_000,
+      }),
+    ],
+    likedTrackIds: new Set(),
+    now,
+  });
+
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.excludedShortContentCount, 0);
 });

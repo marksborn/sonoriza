@@ -18,8 +18,10 @@ export type ProbableLikeCandidate = {
   playCount: number;
   distinctDays: number;
   factualCompleteCount: number;
-  inferredCompleteCount: number;
   factualSkipCount: number;
+  knownTrackDurationMs: number | null;
+  maxFactualCompleteMsPlayed: number | null;
+  inferredCompleteCount: number;
   inferredSkipCount: number;
   firstPlayedAt: Date;
   lastPlayedAt: Date;
@@ -33,6 +35,7 @@ export type ProbableLikeShadowResult = {
   evaluatedTrackCount: number;
   excludedLikedCount: number;
   excludedStrongNegativeCount: number;
+  excludedShortContentCount: number;
 };
 
 export type ProbableLikeAggregate = {
@@ -43,6 +46,8 @@ export type ProbableLikeAggregate = {
   distinctDays: number;
   factualCompleteCount: number;
   factualSkipCount: number;
+  knownTrackDurationMs: number | null;
+  maxFactualCompleteMsPlayed: number | null;
   firstPlayedAt: Date;
   lastPlayedAt: Date;
 };
@@ -55,6 +60,8 @@ type AggregateRow = {
   distinctDays: bigint;
   factualCompleteCount: bigint;
   factualSkipCount: bigint;
+  knownTrackDurationMs: bigint | null;
+  maxFactualCompleteMsPlayed: bigint | null;
   firstPlayedAt: Date;
   lastPlayedAt: Date;
 };
@@ -71,6 +78,14 @@ const MIN_PLAYS = 3;
 const MIN_DISTINCT_DAYS = 2;
 const MAX_RANKED_AGGREGATES = 1_000;
 const DEFAULT_LIMIT = 10;
+
+// HISTORY-04 Gate 3B follow-up: tiny utility/jingle tracks can accumulate a
+// deceptively strong completion score simply because they last only a few
+// seconds. Fifteen seconds is intentionally conservative; historical fallback
+// additionally requires at least two factual completions before excluding a
+// track when catalog duration itself is not known locally.
+const SHORT_CONTENT_MAX_MS = 15_000;
+const MIN_SHORT_FACTUAL_COMPLETIONS = 2;
 
 /**
  * HISTORY-04 Gate 3B — read-only ranking of tracks the user has already shown
@@ -131,11 +146,17 @@ export function rankProbableLikeAggregates(input: {
 
   let excludedLikedCount = 0;
   let excludedStrongNegativeCount = 0;
+  let excludedShortContentCount = 0;
   const candidates: ProbableLikeCandidate[] = [];
 
   for (const aggregate of input.aggregates) {
     if (input.likedTrackIds.has(aggregate.spotifyTrackId)) {
       excludedLikedCount += 1;
+      continue;
+    }
+
+    if (isUltraShortContent(aggregate)) {
+      excludedShortContentCount += 1;
       continue;
     }
 
@@ -214,6 +235,7 @@ export function rankProbableLikeAggregates(input: {
     evaluatedTrackCount: input.aggregates.length,
     excludedLikedCount,
     excludedStrongNegativeCount,
+    excludedShortContentCount,
   };
 }
 
@@ -237,6 +259,22 @@ async function loadProbableLikeAggregates(
         WHERE e."metadata" #>> '{spotifyExtendedHistory,explicitSkip}' = 'true'
           OR e."metadata" #>> '{spotifyExtendedHistory,skipped}' = 'true'
       )::bigint AS "factualSkipCount",
+      MAX(
+        CASE
+          WHEN COALESCE(e."metadata" #>> '{spotifyRecentlyPlayed,trackDurationMs}', '') ~ '^[0-9]+$'
+            THEN (e."metadata" #>> '{spotifyRecentlyPlayed,trackDurationMs}')::bigint
+          ELSE NULL
+        END
+      )::bigint AS "knownTrackDurationMs",
+      MAX(
+        CASE
+          WHEN e."metadata" #>> '{spotifyExtendedHistory,reasonEnd}' = 'trackdone'
+            AND COALESCE(e."metadata" #>> '{spotifyExtendedHistory,explicitSkip}', 'false') <> 'true'
+            AND COALESCE(e."metadata" #>> '{spotifyExtendedHistory,msPlayed}', '') ~ '^[0-9]+$'
+            THEN (e."metadata" #>> '{spotifyExtendedHistory,msPlayed}')::bigint
+          ELSE NULL
+        END
+      )::bigint AS "maxFactualCompleteMsPlayed",
       MIN(e."playedAt") AS "firstPlayedAt",
       MAX(e."playedAt") AS "lastPlayedAt"
     FROM "TrackListeningEvent" e
@@ -257,6 +295,10 @@ async function loadProbableLikeAggregates(
     distinctDays: toSafeNumber(row.distinctDays),
     factualCompleteCount: toSafeNumber(row.factualCompleteCount),
     factualSkipCount: toSafeNumber(row.factualSkipCount),
+    knownTrackDurationMs: toSafeNullableNumber(row.knownTrackDurationMs),
+    maxFactualCompleteMsPlayed: toSafeNullableNumber(
+      row.maxFactualCompleteMsPlayed,
+    ),
     firstPlayedAt: row.firstPlayedAt,
     lastPlayedAt: row.lastPlayedAt,
   }));
@@ -338,6 +380,23 @@ function buildCanonicalSql(lastFmWindow: LastFmHistoryWindow): Prisma.Sql {
   )`;
 }
 
+function isUltraShortContent(aggregate: ProbableLikeAggregate): boolean {
+  if (
+    aggregate.knownTrackDurationMs !== null &&
+    aggregate.knownTrackDurationMs > 0 &&
+    aggregate.knownTrackDurationMs <= SHORT_CONTENT_MAX_MS
+  ) {
+    return true;
+  }
+
+  return (
+    aggregate.factualCompleteCount >= MIN_SHORT_FACTUAL_COMPLETIONS &&
+    aggregate.maxFactualCompleteMsPlayed !== null &&
+    aggregate.maxFactualCompleteMsPlayed > 0 &&
+    aggregate.maxFactualCompleteMsPlayed <= SHORT_CONTENT_MAX_MS
+  );
+}
+
 function buildReasons(input: ProbableLikeAggregate & {
   inferredCompleteCount: number;
   inferredSkipCount: number;
@@ -375,6 +434,10 @@ function toSafeNumber(value: bigint): number {
     throw new Error("Probable-like aggregate exceeds JavaScript safe integer range");
   }
   return result;
+}
+
+function toSafeNullableNumber(value: bigint | null): number | null {
+  return value === null ? null : toSafeNumber(value);
 }
 
 function clamp(value: number, min: number, max: number): number {
