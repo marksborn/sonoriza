@@ -114,6 +114,38 @@ export async function confirmProbableLike(input: {
   const now = new Date();
 
   const artistAffinityUpdated = await prisma.$transaction(async (tx) => {
+    // Read the current track evidence before mutating anything so we know every
+    // artist whose aggregate may change. The advisory locks below serialize all
+    // count/recompute work for the same user+artist, preventing two concurrent
+    // likes by one artist from both writing a stale likedTrackCount=1.
+    const activeEvidence = await tx.artistAffinityEvidence.findMany({
+      where: {
+        userId: input.userId,
+        spotifyTrackId: candidate.spotifyTrackId,
+        type: ArtistAffinityEvidenceType.LIKED_TRACK,
+        active: true,
+      },
+      select: { id: true, spotifyArtistId: true },
+    });
+
+    const affectedArtistIds = new Set<string>(
+      activeEvidence.map((evidence) => evidence.spotifyArtistId),
+    );
+    if (primaryArtistId) affectedArtistIds.add(primaryArtistId);
+    const orderedAffectedArtistIds = [...affectedArtistIds].sort();
+
+    for (const spotifyArtistId of orderedAffectedArtistIds) {
+      // Two-int transaction-scoped advisory lock. hashtext collisions can only
+      // cause extra serialization, never incorrect state. Sorted acquisition
+      // avoids deadlocks when a track identity change touches two artists.
+      await tx.$queryRaw`
+        SELECT pg_advisory_xact_lock(
+          hashtext(${`history04-like:${input.userId}`}),
+          hashtext(${spotifyArtistId})
+        )
+      `;
+    }
+
     await tx.likedTrackPreference.upsert({
       where: {
         userId_spotifyTrackId: {
@@ -156,20 +188,8 @@ export async function confirmProbableLike(input: {
       },
     });
 
-    const activeEvidence = await tx.artistAffinityEvidence.findMany({
-      where: {
-        userId: input.userId,
-        spotifyTrackId: candidate.spotifyTrackId,
-        type: ArtistAffinityEvidenceType.LIKED_TRACK,
-        active: true,
-      },
-      select: { id: true, spotifyArtistId: true },
-    });
-
-    const affectedArtistIds = new Set<string>();
     for (const evidence of activeEvidence) {
       if (evidence.spotifyArtistId === primaryArtistId) continue;
-      affectedArtistIds.add(evidence.spotifyArtistId);
       await tx.artistAffinityEvidence.update({
         where: { id: evidence.id },
         data: {
@@ -182,7 +202,6 @@ export async function confirmProbableLike(input: {
     }
 
     if (primaryArtistId) {
-      affectedArtistIds.add(primaryArtistId);
       await tx.artistAffinityEvidence.upsert({
         where: {
           userId_type_spotifyTrackId_spotifyArtistId: {
@@ -215,7 +234,7 @@ export async function confirmProbableLike(input: {
       });
     }
 
-    for (const spotifyArtistId of affectedArtistIds) {
+    for (const spotifyArtistId of orderedAffectedArtistIds) {
       const likedTrackCount = await tx.artistAffinityEvidence.count({
         where: {
           userId: input.userId,
