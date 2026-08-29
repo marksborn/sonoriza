@@ -1,9 +1,23 @@
 import type { Prisma } from "@prisma/client";
 
+import { prisma } from "@/lib/prisma";
+
 export type LastFmHistoryWindow = {
   from: Date | null;
   to: Date;
 } | null;
+
+export async function getCanonicalLastFmHistoryWindow(
+  userId: string,
+): Promise<LastFmHistoryWindow> {
+  const backfill = await prisma.lastFmBackfillRun.findFirst({
+    where: { userId, status: "SUCCESS" },
+    orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+    select: { from: true, to: true },
+  });
+
+  return backfill ? { from: backfill.from, to: backfill.to } : null;
+}
 
 /**
  * HISTORY-01 established Last.fm as a bounded historical backfill source.
