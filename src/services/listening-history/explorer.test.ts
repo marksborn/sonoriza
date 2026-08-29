@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import {
   buildListeningHistoryWhere,
   historyFilterQueryString,
+  LISTENING_HISTORY_EPOCH,
   listListeningHistory,
   resolveListeningHistoryFilters,
 } from "./explorer";
@@ -37,7 +38,7 @@ test("HISTORY-04 custom range is inclusive by calendar day and sanitized", () =>
   assert.equal(filters.toExclusive?.getDate(), 23);
 });
 
-test("HISTORY-04 query builder preserves active filters without provider reads", () => {
+test("HISTORY-04 query builder preserves active filters and excludes Unix epoch", () => {
   const filters = resolveListeningHistoryFilters({
     period: "30d",
     q: "Deftones",
@@ -54,7 +55,11 @@ test("HISTORY-04 query builder preserves active filters without provider reads",
   const where = buildListeningHistoryWhere("user-a", filters);
   assert.equal(where.userId, "user-a");
   assert.equal(where.source, "LASTFM_SCROBBLE");
-  assert.ok(where.playedAt);
+  assert.ok(where.playedAt && typeof where.playedAt === "object");
+  assert.equal(
+    (where.playedAt as { gt?: Date }).gt?.getTime(),
+    LISTENING_HISTORY_EPOCH.getTime(),
+  );
   assert.ok(where.OR);
 });
 
@@ -114,4 +119,29 @@ integrationTest("HISTORY-04 explorer keeps rows isolated by user and filters loc
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0]?.trackName, "Here to Stay");
   assert.equal(result.items[0]?.source, "LASTFM_SCROBBLE");
+});
+
+integrationTest("HISTORY-04 database rejects a new non-positive playedAt", async (t) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const user = await prisma.user.create({
+    data: { email: `history-epoch-guard-${suffix}@example.test` },
+  });
+
+  t.after(async () => {
+    await prisma.user.delete({ where: { id: user.id } });
+  });
+
+  await assert.rejects(
+    prisma.trackListeningEvent.create({
+      data: {
+        userId: user.id,
+        trackName: "Invalid epoch event",
+        artistName: "Invalid",
+        playedAt: new Date(0),
+        source: "LASTFM_SCROBBLE",
+        sourceEventKey: `epoch-${suffix}`,
+      },
+    }),
+    /after Unix epoch/,
+  );
 });

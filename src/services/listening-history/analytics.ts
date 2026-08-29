@@ -2,6 +2,8 @@ import type { ListeningEventSource, Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
+const LISTENING_HISTORY_EPOCH = new Date(0);
+
 export type ListeningSourceCount = {
   source: ListeningEventSource;
   count: number;
@@ -47,16 +49,21 @@ export type TrackListeningStats = {
 export async function getListeningHistorySummary(
   userId: string,
 ): Promise<ListeningHistorySummary> {
+  const canonicalWhere: Prisma.TrackListeningEventWhereInput = {
+    userId,
+    playedAt: { gt: LISTENING_HISTORY_EPOCH },
+  };
+
   const [aggregate, sources, backfill] = await Promise.all([
     prisma.trackListeningEvent.aggregate({
-      where: { userId },
+      where: canonicalWhere,
       _count: { _all: true },
       _min: { playedAt: true },
       _max: { playedAt: true },
     }),
     prisma.trackListeningEvent.groupBy({
       by: ["source"],
-      where: { userId },
+      where: canonicalWhere,
       _count: { _all: true },
     }),
     prisma.lastFmBackfillRun.findFirst({
@@ -114,7 +121,11 @@ export async function getTrackListeningStats(
     albumName,
   });
   const canonicalWhere: Prisma.TrackListeningEventWhereInput = spotifyTrackId
-    ? { userId, spotifyTrackId }
+    ? {
+        userId,
+        spotifyTrackId,
+        playedAt: { gt: LISTENING_HISTORY_EPOCH },
+      }
     : unresolvedWhere;
 
   const [aggregate, sources, unresolvedAggregate] = await Promise.all([
@@ -169,6 +180,7 @@ function unresolvedNameWhere(input: {
   return {
     userId: input.userId,
     spotifyTrackId: null,
+    playedAt: { gt: LISTENING_HISTORY_EPOCH },
     trackName: { equals: input.trackName, mode: "insensitive" },
     artistName: { equals: input.artistName, mode: "insensitive" },
     ...(input.albumName

@@ -16,15 +16,20 @@ export default async function DashboardLayout({
 
   return (
     <>
-      {backoff ? (
-        <SpotifyBackoffBanner
-          reason={backoff.reason}
-          blockedUntil={backoff.blockedUntil.toISOString()}
-          retryAfterSecondsRemaining={retryAfterSecondsRemaining(backoff)}
-        />
-      ) : null}
-      <div className="bg-canvas-dark pb-24 sm:bg-transparent sm:pb-0">{children}</div>
-      <div className="fixed inset-x-3 bottom-3 z-50 flex flex-row items-center justify-end gap-1.5 sm:inset-x-auto sm:bottom-7 sm:right-7 sm:flex-col sm:items-end sm:gap-2">
+      <div className="h-[calc(100dvh-5rem)] overflow-y-auto overscroll-y-contain bg-canvas-dark pb-3 sm:h-auto sm:overflow-visible sm:bg-transparent sm:pb-0">
+        {backoff ? (
+          <SpotifyBackoffBanner
+            reason={backoff.reason}
+            blockedUntil={backoff.blockedUntil.toISOString()}
+            retryAfterSecondsRemaining={retryAfterSecondsRemaining(backoff)}
+          />
+        ) : null}
+        {children}
+      </div>
+      <nav
+        aria-label="Navegação principal do Sonoriza"
+        className="fixed inset-x-3 bottom-3 z-50 flex flex-row items-center justify-end gap-1.5 sm:inset-x-auto sm:bottom-7 sm:right-7 sm:flex-col sm:items-end sm:gap-2"
+      >
         <Link
           href="/dashboard/descobrir"
           className="inline-flex items-center gap-1.5 rounded-xl border border-brand-400/40 bg-brand/95 px-3 py-2 text-xs font-black text-white shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-brand-400 sm:gap-2 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-sm"
@@ -58,7 +63,7 @@ export default async function DashboardLayout({
           />
           Configurar
         </Link>
-      </div>
+      </nav>
     </>
   );
 }
