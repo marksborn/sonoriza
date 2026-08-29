@@ -15,7 +15,14 @@ function evidence(
     historicalSpotifyTrackId: overrides.historicalSpotifyTrackId ?? "old-id",
     trackName: overrides.trackName ?? "Light the Torch",
     artistName: overrides.artistName ?? "Soilwork",
-    albumName: "albumName" in overrides ? (overrides.albumName ?? null) : "Figure Number Five",
+    primaryArtistId:
+      "primaryArtistId" in overrides
+        ? (overrides.primaryArtistId ?? null)
+        : "soilwork-current",
+    albumName:
+      "albumName" in overrides
+        ? (overrides.albumName ?? null)
+        : "Figure Number Five",
     isrc: "isrc" in overrides ? (overrides.isrc ?? null) : "SEVAA0300104",
   };
 }
@@ -67,6 +74,43 @@ test("relinks an obsolete historical id by exact ISRC", () => {
   assert.equal(result?.resolution, "ISRC_MATCH");
 });
 
+test("ISRC resolves collaborations even when history stores joined artist names", () => {
+  const result = selectStrongSpotifyTrackMatch(
+    evidence({
+      trackName: "Collaboration Song",
+      artistName: "Artist A, Artist B",
+      primaryArtistId: "artist-a",
+      albumName: "Together",
+      isrc: "BRABC2600001",
+    }),
+    [
+      track({
+        id: "collaboration-current",
+        name: "Collaboration Song",
+        albumName: "Together",
+        isrc: "BR-ABC-26-00001",
+        artists: [
+          {
+            id: "artist-a",
+            name: "Artist A",
+            uri: "spotify:artist:artist-a",
+            spotifyUrl: null,
+          },
+          {
+            id: "artist-b",
+            name: "Artist B",
+            uri: "spotify:artist:artist-b",
+            spotifyUrl: null,
+          },
+        ],
+      }),
+    ],
+  );
+
+  assert.equal(result?.track.id, "collaboration-current");
+  assert.equal(result?.resolution, "ISRC_MATCH");
+});
+
 test("uses exact title artist and album when historical ISRC is unavailable", () => {
   const result = selectStrongSpotifyTrackMatch(evidence({ isrc: null }), [
     track({ id: "wrong-album", albumName: "Compilation" }),
@@ -78,10 +122,13 @@ test("uses exact title artist and album when historical ISRC is unavailable", ()
 });
 
 test("refuses ambiguous editions instead of silently liking the wrong recording", () => {
-  const result = selectStrongSpotifyTrackMatch(evidence({ isrc: null, albumName: null }), [
-    track({ id: "version-a", isrc: "AAA111" }),
-    track({ id: "version-b", isrc: "BBB222" }),
-  ]);
+  const result = selectStrongSpotifyTrackMatch(
+    evidence({ isrc: null, albumName: null, primaryArtistId: null }),
+    [
+      track({ id: "version-a", isrc: "AAA111" }),
+      track({ id: "version-b", isrc: "BBB222" }),
+    ],
+  );
 
   assert.equal(result, null);
 });
@@ -98,4 +145,19 @@ test("identity key tolerates case punctuation and accents but requires track and
     }),
   );
   assert.equal(probableLikeTrackIdentityKey({ trackName: "A", artistName: null }), null);
+});
+
+test("identity key preserves non-Latin titles and artists", () => {
+  const japanese = probableLikeTrackIdentityKey({
+    trackName: "光の歌",
+    artistName: "東京バンド",
+  });
+  const cyrillic = probableLikeTrackIdentityKey({
+    trackName: "Свет",
+    artistName: "Группа",
+  });
+
+  assert.ok(japanese);
+  assert.ok(cyrillic);
+  assert.notEqual(japanese, cyrillic);
 });
