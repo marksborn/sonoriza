@@ -1,7 +1,8 @@
 import { ProbableLikePilotFeedbackControls } from "@/components/ProbableLikePilotFeedbackControls";
 import { UiIcon } from "@/components/UiIcon";
+import { auth } from "@/lib/auth";
 import type { ProbableLikeShadowResult } from "@/services/listening-history/probable-like";
-import type { ProbableLikePilotSummary } from "@/services/listening-history/probable-like-pilot";
+import { getProbableLikePilotSummary } from "@/services/listening-history/probable-like-pilot";
 
 const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
@@ -9,13 +10,15 @@ const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
   year: "numeric",
 });
 
-export function ProbableLikesShadowPanel({
+export async function ProbableLikesShadowPanel({
   result,
-  pilot,
 }: {
   result: ProbableLikeShadowResult;
-  pilot: ProbableLikePilotSummary;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) return null;
+  const pilot = await getProbableLikePilotSummary(session.user.id);
+
   return (
     <section className="product-panel overflow-hidden p-5 sm:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
