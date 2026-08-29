@@ -1,14 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { LikedTrackPreferenceProvenance } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
+import {
+  buildLikedTrackAffinityPlan,
+  loadExistingLikedTrackAffinityState,
+} from "@/services/music-preference/liked-track-affinity";
+import type { SpotifyLikedTrackInventory } from "@/services/music-preference/liked-track-inventory";
 import { confirmProbableLike } from "./probable-like-action";
 import { getProbableLikeShadow } from "./probable-like";
 
 const integrationTest = process.env.DATABASE_URL ? test : test.skip;
 
 integrationTest(
-  "Gate 5 confirms one canonical LIKE, propagates artist affinity and removes the candidate idempotently",
+  "Gate 5 confirms one canonical LIKE, propagates affinity and survives provider reconciliation idempotently",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const user = await prisma.user.create({
@@ -125,6 +132,42 @@ integrationTest(
     assert.equal(action.artistAffinityUpdated, true);
     assert.equal(action.providerWriteAttempted, false);
     assert.equal(action.confirmCount, 1);
+
+    // The loader consumed by both LIKED-01 sync and SOURCE-LIKED-01
+    // reconciliation must expose this as a durable local explicit preference.
+    const existingForReconciliation = await loadExistingLikedTrackAffinityState(
+      user.id,
+    );
+    assert.deepEqual(existingForReconciliation.localExplicitTrackIds, [
+      spotifyTrackId,
+    ]);
+
+    // Simulate a complete Spotify Saved Tracks scan where this track is absent.
+    // Absence from the provider cannot erase an explicit Sonoriza-owned LIKE.
+    const emptyProvider: SpotifyLikedTrackInventory = {
+      items: [],
+      pagesRead: 1,
+      providerCalls: 1,
+      retries: 0,
+      rateLimitedCount: 0,
+      retryWaitMs: 0,
+    };
+    const reconciliationPlan = buildLikedTrackAffinityPlan(
+      emptyProvider,
+      existingForReconciliation,
+      LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
+      new Date("2026-08-29T19:45:00.000Z"),
+    );
+    assert.equal(reconciliationPlan.providerCanonicalTrackCount, 0);
+    assert.deepEqual(
+      reconciliationPlan.currentTracks.map((track) => track.spotifyTrackId),
+      [spotifyTrackId],
+    );
+    assert.deepEqual(reconciliationPlan.tracksToUnlike, []);
+    assert.deepEqual(reconciliationPlan.evidenceToDeactivate, []);
+    assert.equal(reconciliationPlan.after.likedTracks, 1);
+    assert.equal(reconciliationPlan.after.activeEvidence, 1);
+    assert.equal(reconciliationPlan.after.activeArtists, 1);
 
     const after = await getProbableLikeShadow(user.id, { limit: 25 });
     assert.equal(
