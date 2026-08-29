@@ -62,6 +62,7 @@
     "plan:example": "tsx scripts/plan-example.ts"
   },
   "prisma": {
+    "schema": "prisma",
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
