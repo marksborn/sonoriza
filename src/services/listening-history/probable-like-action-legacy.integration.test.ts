@@ -66,9 +66,25 @@ integrationTest(
     });
 
     const providerWrites: string[] = [];
+    const resolveSpotifyIdentity = async () => ({
+      historicalSpotifyTrackId: spotifyTrackId,
+      spotifyTrackId,
+      spotifyUri: `spotify:track:${spotifyTrackId}`,
+      spotifyUrl: `https://open.spotify.com/track/${spotifyTrackId}`,
+      trackName: "Legacy Local Like",
+      primaryArtistId: spotifyArtistId,
+      primaryArtistName: "Legacy Artist",
+      albumId: null,
+      albumName: null,
+      durationMs: 0,
+      isrc: null,
+      resolution: "HISTORICAL_ID_STILL_CURRENT" as const,
+    });
+
     const result = await confirmProbableLike(
       { userId: user.id, spotifyTrackId },
       {
+        resolveSpotifyIdentity,
         saveTrackToSpotify: async ({ spotifyTrackId: providerTrackId }) => {
           providerWrites.push(providerTrackId);
         },
@@ -98,6 +114,7 @@ integrationTest(
     const retry = await confirmProbableLike(
       { userId: user.id, spotifyTrackId },
       {
+        resolveSpotifyIdentity,
         saveTrackToSpotify: async ({ spotifyTrackId: providerTrackId }) => {
           providerWrites.push(providerTrackId);
         },
