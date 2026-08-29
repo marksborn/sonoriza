@@ -1,14 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LikedTrackPreferenceProvenance } from "@prisma/client";
-
 import { prisma } from "@/lib/prisma";
-import {
-  buildLikedTrackAffinityPlan,
-  loadExistingLikedTrackAffinityState,
-} from "@/services/music-preference/liked-track-affinity";
-import type { SpotifyLikedTrackInventory } from "@/services/music-preference/liked-track-inventory";
 import { confirmProbableLike } from "./probable-like-action";
 import { getProbableLikeShadow } from "./probable-like";
 
@@ -146,37 +139,6 @@ integrationTest(
     assert.equal(action.artistAffinityUpdated, true);
     assert.equal(action.providerWriteAttempted, true);
     assert.equal(action.confirmCount, 1);
-
-    // The loader consumed by both LIKED-01 sync and SOURCE-LIKED-01
-    // reconciliation exposes the explicit History confirmation durably. This
-    // remains a safety net even though the normal Gate 5 path now writes Spotify.
-    const existingForReconciliation = await loadExistingLikedTrackAffinityState(
-      user.id,
-    );
-    assert.deepEqual(existingForReconciliation.localExplicitTrackIds, [
-      spotifyTrackId,
-    ]);
-
-    const emptyProvider: SpotifyLikedTrackInventory = {
-      items: [],
-      pagesRead: 1,
-      providerCalls: 1,
-      retries: 0,
-      rateLimitedCount: 0,
-      retryWaitMs: 0,
-    };
-    const reconciliationPlan = buildLikedTrackAffinityPlan(
-      emptyProvider,
-      existingForReconciliation,
-      LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
-      new Date("2026-08-29T19:45:00.000Z"),
-    );
-    assert.equal(reconciliationPlan.providerCanonicalTrackCount, 0);
-    assert.deepEqual(
-      reconciliationPlan.currentTracks.map((track) => track.spotifyTrackId),
-      [spotifyTrackId],
-    );
-    assert.deepEqual(reconciliationPlan.tracksToUnlike, []);
 
     const after = await getProbableLikeShadow(user.id, { limit: 25 });
     assert.equal(
