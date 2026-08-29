@@ -107,7 +107,7 @@ integrationTest(
     assert.equal(preference.primaryArtistId, spotifyArtistId);
     assert.equal(preference.firstProvenance, "LIKED_TRACK_SYNC");
     assert.equal(preference.lastProvenance, "LIKED_TRACK_SYNC");
-    assert.ok(preference.addedAt);
+    assert.equal(preference.addedAt, null);
 
     const evidence = await prisma.artistAffinityEvidence.findMany({
       where: { userId: user.id, spotifyTrackId, active: true },
