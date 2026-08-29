@@ -11,6 +11,10 @@ import {
   type SpotifyPlaylistSummary,
   type SpotifyShowSummary,
 } from "@/services/spotify";
+import {
+  loadPodcastShowPolicies,
+  type PodcastShowPolicySnapshot,
+} from "@/services/spotify/podcast-show-policy-store";
 
 const LIBRARY_SCOPE = "user-library-read";
 const PLAYBACK_SCOPE = "user-read-playback-position";
@@ -33,6 +37,7 @@ function revalidateConfiguration() {
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/configuracao");
   revalidatePath("/dashboard/configuracao/fontes");
+  revalidatePath("/dashboard/configuracao/fontes/podcasts");
   revalidatePath("/dashboard/configuracao/revisao");
 }
 
@@ -45,7 +50,6 @@ async function addSource(formData: FormData) {
   const spotifyId = String(formData.get("spotifyId") ?? "").trim();
   const spotifyTypeRaw = String(formData.get("spotifyType") ?? "").trim();
   const kindRaw = String(formData.get("kind") ?? "").trim();
-  const episodeOrderRaw = String(formData.get("episodeOrder") ?? "").trim();
 
   const spotifyType =
     spotifyTypeRaw === SpotifySourceType.PLAYLIST
@@ -55,13 +59,6 @@ async function addSource(formData: FormData) {
         : spotifyTypeRaw === SpotifySourceType.SAVED_EPISODES
           ? SpotifySourceType.SAVED_EPISODES
           : null;
-
-  const episodeOrder =
-    episodeOrderRaw === PodcastEpisodeOrder.OLDEST_FIRST
-      ? PodcastEpisodeOrder.OLDEST_FIRST
-      : episodeOrderRaw === PodcastEpisodeOrder.NEWEST_FIRST
-        ? PodcastEpisodeOrder.NEWEST_FIRST
-        : PodcastEpisodeOrder.SOURCE_DEFAULT;
 
   const requestedKind =
     kindRaw === SourceKind.MUSIC
@@ -138,19 +135,22 @@ async function addSource(formData: FormData) {
       includePlayed: false,
       episodeOrder:
         spotifyType === SpotifySourceType.SHOW
-          ? episodeOrder
+          ? PodcastEpisodeOrder.OLDEST_FIRST
           : PodcastEpisodeOrder.SOURCE_DEFAULT,
     },
     update: {
       name: sourceName,
       kind,
       enabled: true,
-      ...(spotifyType === SpotifySourceType.SHOW ? { episodeOrder } : {}),
     },
   });
 
   revalidateConfiguration();
-  redirect("/dashboard/configuracao/fontes?saved=added");
+  redirect(
+    spotifyType === SpotifySourceType.SHOW
+      ? "/dashboard/configuracao/fontes?saved=added-show"
+      : "/dashboard/configuracao/fontes?saved=added",
+  );
 }
 
 async function toggleSource(formData: FormData) {
@@ -173,37 +173,6 @@ async function toggleSource(formData: FormData) {
   redirect("/dashboard/configuracao/fontes?saved=updated");
 }
 
-async function updateEpisodeOrder(formData: FormData) {
-  "use server";
-
-  const session = await auth();
-  if (!session?.user?.id) redirect("/");
-
-  const id = String(formData.get("id") ?? "").trim();
-  const raw = String(formData.get("episodeOrder") ?? "").trim();
-  const episodeOrder =
-    raw === PodcastEpisodeOrder.OLDEST_FIRST
-      ? PodcastEpisodeOrder.OLDEST_FIRST
-      : raw === PodcastEpisodeOrder.NEWEST_FIRST
-        ? PodcastEpisodeOrder.NEWEST_FIRST
-        : null;
-  if (!id || !episodeOrder) redirect("/dashboard/configuracao/fontes?error=invalid");
-
-  const result = await prisma.sourcePlaylist.updateMany({
-    where: {
-      id,
-      userId: session.user.id,
-      kind: SourceKind.PODCAST,
-      spotifyType: SpotifySourceType.SHOW,
-    },
-    data: { episodeOrder },
-  });
-  if (result.count !== 1) redirect("/dashboard/configuracao/fontes?error=invalid");
-
-  revalidateConfiguration();
-  redirect("/dashboard/configuracao/fontes?saved=order");
-}
-
 async function updatePlaybackPolicy(formData: FormData) {
   "use server";
 
@@ -214,11 +183,18 @@ async function updatePlaybackPolicy(formData: FormData) {
   const includePlayed = String(formData.get("includePlayed") ?? "") === "true";
   if (!id) redirect("/dashboard/configuracao/fontes?error=invalid");
 
-  const result = await prisma.sourcePlaylist.updateMany({
+  const source = await prisma.sourcePlaylist.findFirst({
     where: { id, userId: session.user.id, kind: SourceKind.PODCAST },
+    select: { spotifyType: true },
+  });
+  if (!source || source.spotifyType === SpotifySourceType.SHOW) {
+    redirect("/dashboard/configuracao/fontes?error=invalid");
+  }
+
+  await prisma.sourcePlaylist.update({
+    where: { id },
     data: { includePlayed },
   });
-  if (result.count !== 1) redirect("/dashboard/configuracao/fontes?error=invalid");
 
   revalidateConfiguration();
   redirect("/dashboard/configuracao/fontes?saved=policy");
@@ -264,8 +240,7 @@ export default async function SpotifySourcesPage({
   if (!session?.user?.id) redirect("/");
 
   const params = await searchParams;
-
-  const [spotifyAccount, configuredSources] = await Promise.all([
+  const [spotifyAccount, configuredSources, showPolicies] = await Promise.all([
     prisma.account.findFirst({
       where: { userId: session.user.id, provider: "spotify" },
       select: { id: true, scope: true },
@@ -274,6 +249,7 @@ export default async function SpotifySourcesPage({
       where: { userId: session.user.id },
       orderBy: [{ enabled: "desc" }, { kind: "asc" }, { name: "asc" }],
     }),
+    loadPodcastShowPolicies(session.user.id),
   ]);
 
   const hasLibraryScope = scopeIncludes(spotifyAccount?.scope, LIBRARY_SCOPE);
@@ -307,7 +283,6 @@ export default async function SpotifySourcesPage({
   const configuredKeys = new Set(
     configuredSources.map((source) => sourceKey(source.spotifyType, source.spotifyId)),
   );
-
   const availablePlaylists = playlists.filter(
     (playlist) =>
       !configuredKeys.has(sourceKey(SpotifySourceType.PLAYLIST, playlist.id)),
@@ -322,7 +297,6 @@ export default async function SpotifySourcesPage({
   return (
     <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
       <div className="product-ambient" />
-
       <div className="relative mx-auto max-w-6xl">
         <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -338,10 +312,9 @@ export default async function SpotifySourcesPage({
               Fontes do Spotify
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-inverse sm:text-base">
-              Escolha músicas e podcasts que alimentam o Sonoriza. Para podcasts, você pode usar Seus episódios de uma vez ou selecionar programas específicos.
+              Escolha o que alimenta o Sonoriza. Programas individuais têm uma política própria, editada em um único lugar.
             </p>
           </div>
-
           <div className="product-card px-4 py-3 text-sm">
             <p className="font-bold text-ink-inverse">Conta atual</p>
             <p className="mt-1 text-muted-inverse">{session.user.email}</p>
@@ -353,9 +326,9 @@ export default async function SpotifySourcesPage({
             <UiIcon name="check" size={17} className="mt-0.5 shrink-0" />
             <span>
               {params.saved === "added" && "Fonte adicionada. Nenhuma geração foi iniciada."}
+              {params.saved === "added-show" && "Programa adicionado. A política padrão pode ser ajustada em Editar política."}
               {params.saved === "updated" && "Estado da fonte atualizado."}
-              {params.saved === "policy" && "Política de episódios atualizada. Uma nova simulação será necessária."}
-              {params.saved === "order" && "Ordem do programa atualizada. Uma nova simulação será necessária."}
+              {params.saved === "policy" && "Política da fonte genérica atualizada."}
               {params.saved === "removed" && "Fonte removida da configuração."}
             </span>
           </div>
@@ -379,7 +352,7 @@ export default async function SpotifySourcesPage({
             <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">Conexão necessária</p>
             <h2 className="mt-2 text-2xl font-black text-ink-inverse">Conecte o Spotify primeiro</h2>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-inverse">
-              A configuração usa somente conteúdo visível na sua própria conta e não aceita IDs técnicos digitados manualmente.
+              A configuração usa somente conteúdo visível na sua própria conta.
             </p>
             <form action={connectSpotify}>
               <button type="submit" className="mt-5 inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-black text-brand-900 shadow-action transition hover:bg-accent-400">
@@ -398,7 +371,7 @@ export default async function SpotifySourcesPage({
                     Reconecte para liberar o controle de podcasts
                   </p>
                   <p className="mt-1 max-w-3xl text-sm leading-6 opacity-75">
-                    O novo acesso permite ler Seus episódios, saber quais já foram concluídos e considerar somente o tempo restante dos que você começou a ouvir. O Sonoriza não recebe acesso ao áudio nem à sua senha.
+                    O acesso adicional permite ler episódios salvos e posição de reprodução.
                   </p>
                 </div>
                 <form action={connectSpotify}>
@@ -416,7 +389,7 @@ export default async function SpotifySourcesPage({
                   <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">Configuradas</p>
                   <h2 className="mt-1 text-xl font-black text-ink-inverse">Fontes em uso</h2>
                   <p className="mt-1 text-sm text-muted-inverse">
-                    Desativar mantém a fonte cadastrada, mas ela deixa de alimentar a próxima geração.
+                    Programas mostram apenas um resumo; toda a política avançada fica no editor único.
                   </p>
                 </div>
                 <span className="product-badge">
@@ -431,103 +404,99 @@ export default async function SpotifySourcesPage({
                 </div>
               ) : (
                 <div className="mt-5 grid gap-3 md:grid-cols-2">
-                  {configuredSources.map((source) => (
-                    <article
-                      key={source.id}
-                      className={`rounded-2xl border p-4 transition ${
-                        source.enabled
-                          ? "border-line-dark/65 bg-surface-subtle/70"
-                          : "border-line-dark/40 bg-surface-subtle/35 opacity-70"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="product-badge px-2.5 py-1 text-[0.68rem] uppercase tracking-wide">
-                              {source.spotifyType === SpotifySourceType.SAVED_EPISODES
-                                ? "Biblioteca"
-                                : source.spotifyType === SpotifySourceType.SHOW
-                                  ? "Programa"
-                                  : "Playlist"}
-                            </span>
-                            <span className="product-badge border-accent/30 bg-accent/10 px-2.5 py-1 text-[0.68rem] uppercase tracking-wide text-accent-400">
-                              {source.kind === SourceKind.MUSIC ? "Música" : "Podcast"}
-                            </span>
+                  {configuredSources.map((source) => {
+                    const showPolicy =
+                      source.spotifyType === SpotifySourceType.SHOW
+                        ? showPolicies.get(source.id)
+                        : undefined;
+                    return (
+                      <article
+                        key={source.id}
+                        className={`rounded-2xl border p-4 transition ${
+                          source.enabled
+                            ? "border-line-dark/65 bg-surface-subtle/70"
+                            : "border-line-dark/40 bg-surface-subtle/35 opacity-70"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="product-badge px-2.5 py-1 text-[0.68rem] uppercase tracking-wide">
+                                {source.spotifyType === SpotifySourceType.SAVED_EPISODES
+                                  ? "Biblioteca"
+                                  : source.spotifyType === SpotifySourceType.SHOW
+                                    ? "Programa"
+                                    : "Playlist"}
+                              </span>
+                              <span className="product-badge border-accent/30 bg-accent/10 px-2.5 py-1 text-[0.68rem] uppercase tracking-wide text-accent-400">
+                                {source.kind === SourceKind.MUSIC ? "Música" : "Podcast"}
+                              </span>
+                            </div>
+                            <h3 className="mt-3 truncate font-black text-ink-inverse">{source.name ?? "Fonte do Spotify"}</h3>
                           </div>
-                          <h3 className="mt-3 truncate font-black text-ink-inverse">{source.name ?? "Fonte do Spotify"}</h3>
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[0.68rem] font-black ${source.enabled ? "status-success" : "product-badge"}`}>
+                            <UiIcon name={source.enabled ? "check" : "warning"} size={13} />
+                            {source.enabled ? "Ativa" : "Desativada"}
+                          </span>
                         </div>
-                        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[0.68rem] font-black ${source.enabled ? "status-success" : "product-badge"}`}>
-                          <UiIcon name={source.enabled ? "check" : "warning"} size={13} />
-                          {source.enabled ? "Ativa" : "Desativada"}
-                        </span>
-                      </div>
 
-                      {source.spotifyType === SpotifySourceType.SHOW && (
-                        <div className="mt-4 rounded-xl border border-accent/20 bg-accent/5 p-3">
-                          <p className="text-xs font-black text-accent-400">Ordem dos episódios</p>
-                          <p className="mt-1 text-xs leading-5 text-muted-inverse">
-                            Este programa tem prioridade sobre “Seus episódios” e playlists genéricas para o mesmo show.
-                          </p>
-                          <form action={updateEpisodeOrder} className="mt-3 flex gap-2">
-                            <input type="hidden" name="id" value={source.id} />
-                            <select
-                              name="episodeOrder"
-                              defaultValue={
-                                source.episodeOrder === PodcastEpisodeOrder.NEWEST_FIRST
-                                  ? PodcastEpisodeOrder.NEWEST_FIRST
-                                  : PodcastEpisodeOrder.OLDEST_FIRST
-                              }
-                              className={selectClass}
+                        {source.spotifyType === SpotifySourceType.SHOW && showPolicy && (
+                          <div className="mt-4 rounded-xl border border-accent/20 bg-accent/5 p-3">
+                            <p className="text-xs font-black text-accent-400">Política do programa</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {showPolicySummary(showPolicy).map((item) => (
+                                <span key={item} className="product-badge">{item}</span>
+                              ))}
+                            </div>
+                            <Link
+                              href={`/dashboard/configuracao/fontes/podcasts?show=${encodeURIComponent(source.id)}`}
+                              className="mt-3 inline-flex items-center gap-2 text-xs font-black text-ink-inverse transition hover:text-accent-400"
                             >
-                              <option value={PodcastEpisodeOrder.OLDEST_FIRST}>Mais antigos primeiro</option>
-                              <option value={PodcastEpisodeOrder.NEWEST_FIRST}>Mais novos primeiro</option>
-                            </select>
-                            <button type="submit" className={neutralButtonClass}>
-                              <UiIcon name="check" size={15} />
-                              Salvar
-                            </button>
-                          </form>
-                        </div>
-                      )}
+                              <UiIcon name="settings" size={15} />
+                              Editar política
+                            </Link>
+                          </div>
+                        )}
 
-                      {source.kind === SourceKind.PODCAST && (
-                        <div className="mt-4 rounded-xl border border-line-dark/55 bg-surface-dark/45 p-3">
-                          <p className="text-xs font-black text-ink-inverse">Episódios já concluídos</p>
-                          <p className="mt-1 text-xs leading-5 text-muted-inverse">
-                            {source.includePlayed
-                              ? "Podem voltar à seleção e contam com a duração inteira."
-                              : "Ficam de fora. Episódios em andamento contam apenas pelo tempo restante."}
-                          </p>
-                          <form action={updatePlaybackPolicy} className="mt-3">
+                        {source.kind === SourceKind.PODCAST && source.spotifyType !== SpotifySourceType.SHOW && (
+                          <div className="mt-4 rounded-xl border border-line-dark/55 bg-surface-dark/45 p-3">
+                            <p className="text-xs font-black text-ink-inverse">Episódios já concluídos</p>
+                            <p className="mt-1 text-xs leading-5 text-muted-inverse">
+                              {source.includePlayed
+                                ? "Podem voltar à seleção."
+                                : "Ficam de fora; episódios em andamento usam apenas o tempo restante."}
+                            </p>
+                            <form action={updatePlaybackPolicy} className="mt-3">
+                              <input type="hidden" name="id" value={source.id} />
+                              <input type="hidden" name="includePlayed" value={source.includePlayed ? "false" : "true"} />
+                              <button type="submit" className={neutralButtonClass}>
+                                <UiIcon name="repeat" size={15} />
+                                {source.includePlayed ? "Usar somente não concluídos" : "Incluir já escutados"}
+                              </button>
+                            </form>
+                          </div>
+                        )}
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <form action={toggleSource}>
                             <input type="hidden" name="id" value={source.id} />
-                            <input type="hidden" name="includePlayed" value={source.includePlayed ? "false" : "true"} />
+                            <input type="hidden" name="enabled" value={source.enabled ? "false" : "true"} />
                             <button type="submit" className={neutralButtonClass}>
-                              <UiIcon name="repeat" size={15} />
-                              {source.includePlayed ? "Usar somente não concluídos" : "Incluir já escutados"}
+                              <UiIcon name={source.enabled ? "warning" : "check"} size={15} />
+                              {source.enabled ? "Desativar" : "Ativar"}
+                            </button>
+                          </form>
+                          <form action={removeSource}>
+                            <input type="hidden" name="id" value={source.id} />
+                            <button type="submit" className="inline-flex items-center gap-1.5 rounded-xl border border-danger/30 bg-danger-soft px-3 py-2 text-xs font-black text-danger transition hover:bg-danger/15">
+                              <UiIcon name="trash" size={15} />
+                              Remover
                             </button>
                           </form>
                         </div>
-                      )}
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <form action={toggleSource}>
-                          <input type="hidden" name="id" value={source.id} />
-                          <input type="hidden" name="enabled" value={source.enabled ? "false" : "true"} />
-                          <button type="submit" className={neutralButtonClass}>
-                            <UiIcon name={source.enabled ? "warning" : "check"} size={15} />
-                            {source.enabled ? "Desativar" : "Ativar"}
-                          </button>
-                        </form>
-                        <form action={removeSource}>
-                          <input type="hidden" name="id" value={source.id} />
-                          <button type="submit" className="inline-flex items-center gap-1.5 rounded-xl border border-danger/30 bg-danger-soft px-3 py-2 text-xs font-black text-danger transition hover:bg-danger/15">
-                            <UiIcon name="trash" size={15} />
-                            Remover
-                          </button>
-                        </form>
-                      </div>
-                    </article>
-                  ))}
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </section>
@@ -537,7 +506,7 @@ export default async function SpotifySourcesPage({
                 <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">Playlists</p>
                 <h2 className="mt-1 text-xl font-black text-ink-inverse">Adicionar playlist</h2>
                 <p className="mt-1 text-sm leading-6 text-muted-inverse">
-                  Escolha se a playlist fornece músicas ou, quando ela realmente contiver episódios, podcasts.
+                  Escolha se a playlist fornece músicas ou podcasts.
                 </p>
 
                 {playlistLoadError ? (
@@ -581,7 +550,7 @@ export default async function SpotifySourcesPage({
                 <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">Podcasts</p>
                 <h2 className="mt-1 text-xl font-black text-ink-inverse">Seus episódios ou programas</h2>
                 <p className="mt-1 text-sm leading-6 text-muted-inverse">
-                  Seus episódios evita escolher programa por programa. O limite por programa continua valendo porque cada episódio mantém o programa de origem.
+                  Adicione programas sem decidir a política aqui; depois use o editor único para ajustar sequência, replay, aleatório e validade.
                 </p>
 
                 {!podcastReady ? (
@@ -606,7 +575,7 @@ export default async function SpotifySourcesPage({
                             <p className="text-xs font-black uppercase tracking-[0.12em] text-brand-400">Recomendado</p>
                             <h3 className="mt-1 text-lg font-black text-ink-inverse">Seus episódios</h3>
                             <p className="mt-1 max-w-xl text-sm leading-6 text-muted-inverse">
-                              Usa diretamente a coleção que aparece no Spotify como “Seus episódios”. Por padrão, episódios concluídos ficam de fora.
+                              Usa diretamente a coleção do Spotify. Por padrão, episódios concluídos ficam de fora.
                             </p>
                           </div>
                           <button type="submit" className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-brand-400/35 bg-brand/15 px-4 py-2.5 text-sm font-black text-ink-inverse transition hover:bg-brand/25">
@@ -639,13 +608,10 @@ export default async function SpotifySourcesPage({
                                 <div className="min-w-0">
                                   <h3 className="truncate font-black text-ink-inverse">{show.name}</h3>
                                   <p className="mt-1 truncate text-xs text-muted-inverse/65">{show.publisher ?? "Programa do Spotify"}</p>
+                                  <p className="mt-2 text-xs leading-5 text-muted-inverse">
+                                    Política inicial: não concluídos · mais antigos primeiro · sequência estrita.
+                                  </p>
                                 </div>
-                              </div>
-                              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-                                <select name="episodeOrder" defaultValue={PodcastEpisodeOrder.OLDEST_FIRST} className={selectClass}>
-                                  <option value={PodcastEpisodeOrder.OLDEST_FIRST}>Mais antigos primeiro</option>
-                                  <option value={PodcastEpisodeOrder.NEWEST_FIRST}>Mais novos primeiro</option>
-                                </select>
                                 <button type="submit" className={neutralButtonClass}>
                                   <UiIcon name="plus" size={15} />
                                   Adicionar
@@ -662,11 +628,41 @@ export default async function SpotifySourcesPage({
             </div>
 
             <p className="mt-6 text-center text-xs leading-5 text-muted-inverse/60">
-              Alterar fontes não executa nem modifica playlists de destino automaticamente.
+              Alterar fontes ou políticas não executa nem modifica playlists de destino automaticamente.
             </p>
           </>
         )}
       </div>
     </main>
   );
+}
+
+function showPolicySummary(policy: PodcastShowPolicySnapshot): string[] {
+  const eligibility =
+    policy.episodeEligibility === "PLAYED_ONLY"
+      ? "Já escutados"
+      : policy.episodeEligibility === "ALL"
+        ? "Todos"
+        : "Não concluídos";
+  const order =
+    policy.episodeOrder === "NEWEST_FIRST"
+      ? "Novos → antigos"
+      : policy.episodeOrder === "RANDOM"
+        ? policy.randomPolicy === "WITH_REPLACEMENT"
+          ? "Aleatório · repete"
+          : "Aleatório · sem repetir"
+        : "Antigos → novos";
+  const validity =
+    policy.maxReleaseAgeDays == null
+      ? "Sem validade"
+      : `Até ${policy.maxReleaseAgeDays} dia${policy.maxReleaseAgeDays === 1 ? "" : "s"}`;
+  const cap =
+    policy.maxEpisodesPerCycle == null
+      ? "Máx. do destino"
+      : `Máx. ${policy.maxEpisodesPerCycle} / ciclo`;
+  const items = [eligibility, order, validity, cap];
+  if (policy.episodeOrder !== "RANDOM" && policy.strictSequence) {
+    items.push("Sequência estrita");
+  }
+  return items;
 }
