@@ -2,7 +2,10 @@ import type { ListeningEventSource, Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
-const LISTENING_HISTORY_EPOCH = new Date(0);
+import {
+  buildCanonicalListeningEventWhere,
+  getCanonicalLastFmHistoryWindow,
+} from "./canonical";
 
 export type ListeningSourceCount = {
   source: ListeningEventSource;
@@ -49,12 +52,19 @@ export type TrackListeningStats = {
 export async function getListeningHistorySummary(
   userId: string,
 ): Promise<ListeningHistorySummary> {
-  const canonicalWhere: Prisma.TrackListeningEventWhereInput = {
+  const [lastFmWindow, backfill] = await Promise.all([
+    getCanonicalLastFmHistoryWindow(userId),
+    prisma.lastFmBackfillRun.findFirst({
+      where: { userId },
+      orderBy: { startedAt: "desc" },
+    }),
+  ]);
+  const canonicalWhere = buildCanonicalListeningEventWhere({
     userId,
-    playedAt: { gt: LISTENING_HISTORY_EPOCH },
-  };
+    lastFmWindow,
+  });
 
-  const [aggregate, sources, backfill] = await Promise.all([
+  const [aggregate, sources] = await Promise.all([
     prisma.trackListeningEvent.aggregate({
       where: canonicalWhere,
       _count: { _all: true },
@@ -65,10 +75,6 @@ export async function getListeningHistorySummary(
       by: ["source"],
       where: canonicalWhere,
       _count: { _all: true },
-    }),
-    prisma.lastFmBackfillRun.findFirst({
-      where: { userId },
-      orderBy: { startedAt: "desc" },
     }),
   ]);
 
@@ -114,19 +120,22 @@ export async function getTrackListeningStats(
   const artistName = requiredText(input.artistName, "artistName");
   const albumName = input.albumName?.trim() || null;
   const spotifyTrackId = input.spotifyTrackId?.trim() || null;
-  const unresolvedWhere = unresolvedNameWhere({
-    userId,
+  const lastFmWindow = await getCanonicalLastFmHistoryWindow(userId);
+  const unresolvedExtra = unresolvedNameExtra({
     trackName,
     artistName,
     albumName,
   });
-  const canonicalWhere: Prisma.TrackListeningEventWhereInput = spotifyTrackId
-    ? {
-        userId,
-        spotifyTrackId,
-        playedAt: { gt: LISTENING_HISTORY_EPOCH },
-      }
-    : unresolvedWhere;
+  const unresolvedWhere = buildCanonicalListeningEventWhere({
+    userId,
+    lastFmWindow,
+    extra: unresolvedExtra,
+  });
+  const canonicalWhere = buildCanonicalListeningEventWhere({
+    userId,
+    lastFmWindow,
+    extra: spotifyTrackId ? { spotifyTrackId } : unresolvedExtra,
+  });
 
   const [aggregate, sources, unresolvedAggregate] = await Promise.all([
     prisma.trackListeningEvent.aggregate({
@@ -171,16 +180,13 @@ export async function getTrackListeningStats(
   };
 }
 
-function unresolvedNameWhere(input: {
-  userId: string;
+function unresolvedNameExtra(input: {
   trackName: string;
   artistName: string;
   albumName: string | null;
 }): Prisma.TrackListeningEventWhereInput {
   return {
-    userId: input.userId,
     spotifyTrackId: null,
-    playedAt: { gt: LISTENING_HISTORY_EPOCH },
     trackName: { equals: input.trackName, mode: "insensitive" },
     artistName: { equals: input.artistName, mode: "insensitive" },
     ...(input.albumName

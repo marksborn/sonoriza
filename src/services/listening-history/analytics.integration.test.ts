@@ -11,7 +11,7 @@ import {
 const integrationTest = process.env.DATABASE_URL ? test : test.skip;
 
 integrationTest(
-  "derives confirmed play count while keeping unresolved Last.fm identity candidates separate",
+  "derives confirmed play count while excluding Last.fm residue outside the authoritative window",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const user = await prisma.user.create({
@@ -22,8 +22,28 @@ integrationTest(
       await prisma.user.delete({ where: { id: user.id } });
     });
 
+    await prisma.lastFmBackfillRun.create({
+      data: {
+        userId: user.id,
+        username: `analytics-${suffix}`,
+        status: "SUCCESS",
+        from: new Date("2013-11-12T12:17:22.000Z"),
+        to: new Date("2020-01-01T00:00:00.000Z"),
+        finishedAt: new Date("2020-01-01T00:00:01.000Z"),
+      },
+    });
+
     await prisma.trackListeningEvent.createMany({
       data: [
+        {
+          userId: user.id,
+          trackName: "Track A",
+          artistName: "Artist A",
+          albumName: "Album A",
+          playedAt: new Date("1970-01-01T00:00:01.000Z"),
+          source: "LASTFM_SCROBBLE",
+          sourceEventKey: `lastfm-synthetic-${suffix}`,
+        },
         {
           userId: user.id,
           trackName: "Track A",
