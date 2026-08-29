@@ -120,36 +120,36 @@ export async function getListeningHistoryStats(
       `),
       prisma.$queryRaw<TrackRankingRow[]>(Prisma.sql`
         SELECT
-          MIN(e."trackName") AS "trackName",
-          MIN(e."artistName") AS "artistName",
+          (array_agg(e."trackName" ORDER BY e."playedAt" DESC, e."id" DESC))[1] AS "trackName",
+          (array_agg(e."artistName" ORDER BY e."playedAt" DESC, e."id" DESC))[1] AS "artistName",
           COUNT(*)::bigint AS "playCount"
         FROM "TrackListeningEvent" e
         WHERE ${where}
         GROUP BY ${NORMALIZED_ARTIST_SQL}, ${NORMALIZED_TRACK_SQL}
-        ORDER BY COUNT(*) DESC, MIN(e."artistName") ASC, MIN(e."trackName") ASC
+        ORDER BY COUNT(*) DESC, ${NORMALIZED_ARTIST_SQL} ASC, ${NORMALIZED_TRACK_SQL} ASC
         LIMIT 5
       `),
       prisma.$queryRaw<ArtistRankingRow[]>(Prisma.sql`
         SELECT
-          MIN(e."artistName") AS "artistName",
+          (array_agg(e."artistName" ORDER BY e."playedAt" DESC, e."id" DESC))[1] AS "artistName",
           COUNT(*)::bigint AS "playCount"
         FROM "TrackListeningEvent" e
         WHERE ${where}
         GROUP BY ${NORMALIZED_ARTIST_SQL}
-        ORDER BY COUNT(*) DESC, MIN(e."artistName") ASC
+        ORDER BY COUNT(*) DESC, ${NORMALIZED_ARTIST_SQL} ASC
         LIMIT 5
       `),
       prisma.$queryRaw<AlbumRankingRow[]>(Prisma.sql`
         SELECT
-          MIN(e."albumName") AS "albumName",
-          MIN(e."artistName") AS "artistName",
+          (array_agg(e."albumName" ORDER BY e."playedAt" DESC, e."id" DESC))[1] AS "albumName",
+          (array_agg(e."artistName" ORDER BY e."playedAt" DESC, e."id" DESC))[1] AS "artistName",
           COUNT(*)::bigint AS "playCount"
         FROM "TrackListeningEvent" e
         WHERE ${where}
           AND e."albumName" IS NOT NULL
           AND btrim(e."albumName") <> ''
         GROUP BY ${NORMALIZED_ARTIST_SQL}, ${NORMALIZED_ALBUM_SQL}
-        ORDER BY COUNT(*) DESC, MIN(e."artistName") ASC, MIN(e."albumName") ASC
+        ORDER BY COUNT(*) DESC, ${NORMALIZED_ARTIST_SQL} ASC, ${NORMALIZED_ALBUM_SQL} ASC
         LIMIT 5
       `),
     ]);
