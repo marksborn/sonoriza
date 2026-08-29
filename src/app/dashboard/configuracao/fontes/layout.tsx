@@ -10,6 +10,8 @@ import {
   setNativeLikedTrackSourceEnabled,
 } from "@/services/music-preference/native-source-preference";
 
+import { SourcesRouteOnly } from "./sources-route-only";
+
 async function toggleNativeLikedTrackSource(formData: FormData) {
   "use server";
 
@@ -58,102 +60,104 @@ export default async function SourcesLayout({ children }: { children: ReactNode 
 
   return (
     <>
-      <section className="relative overflow-hidden border-b border-line-dark/40 bg-canvas-dark px-5 pt-8 sm:px-8 lg:px-10">
-        <div className="product-ambient" />
-        <div className="relative mx-auto max-w-6xl pb-2">
-          <div className="product-panel p-5 sm:p-6">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex min-w-0 gap-4">
-                <div className="product-icon-tile-accent">
-                  <UiIcon name="music" size={22} />
-                </div>
+      <SourcesRouteOnly>
+        <section className="relative overflow-hidden border-b border-line-dark/40 bg-canvas-dark px-5 pt-8 sm:px-8 lg:px-10">
+          <div className="product-ambient" />
+          <div className="relative mx-auto max-w-6xl pb-2">
+            <div className="product-panel p-5 sm:p-6">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 gap-4">
+                  <div className="product-icon-tile-accent">
+                    <UiIcon name="music" size={22} />
+                  </div>
 
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
-                      Fonte nativa
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
+                        Fonte nativa
+                      </p>
+                      <span className="product-badge">Fonte pessoal fixa</span>
+                      <span
+                        className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-black ${
+                          source.enabled
+                            ? "border-success/30 bg-success-soft text-success"
+                            : "border-line-dark/60 bg-surface-elevated/70 text-muted-inverse"
+                        }`}
+                      >
+                        <UiIcon name={source.enabled ? "check" : "music"} size={14} />
+                        Preferência {source.enabled ? "ativada" : "desativada"}
+                      </span>
+                    </div>
+
+                    <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-ink-inverse">
+                      Músicas Curtidas
+                    </h2>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
+                      Biblioteca pessoal persistente. As músicas continuam nesta fonte depois de serem usadas e permanecem sujeitas às regras normais de repetição, diversidade e qualidade do Sonoriza.
                     </p>
-                    <span className="product-badge">Fonte pessoal fixa</span>
-                    <span
-                      className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-black ${
+
+                    <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold text-muted-inverse">
+                      <span className="product-badge">
+                        {compactNumber(source.counts.activeLikedTracks)} músicas
+                      </span>
+                      <span className="product-badge">
+                        {compactNumber(source.counts.available)} disponíveis
+                      </span>
+                      {source.counts.unavailable > 0 && (
+                        <span className="product-badge">
+                          {compactNumber(source.counts.unavailable)} indisponíveis
+                        </span>
+                      )}
+                      {source.counts.invalid > 0 && (
+                        <span className="product-badge">
+                          {compactNumber(source.counts.invalid)} inválidas
+                        </span>
+                      )}
+                      <span className="product-badge">
+                        {relativeFreshness(source.freshness.latestObservedAt)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="shrink-0 lg:w-64">
+                  <form action={toggleNativeLikedTrackSource}>
+                    <input type="hidden" name="enabled" value={String(nextEnabled)} />
+                    <button
+                      type="submit"
+                      className={
                         source.enabled
-                          ? "border-success/30 bg-success-soft text-success"
-                          : "border-line-dark/60 bg-surface-elevated/70 text-muted-inverse"
-                      }`}
+                          ? "inline-flex w-full items-center justify-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-3 text-sm font-black text-ink-inverse transition hover:border-brand-400/55 hover:bg-surface-elevated"
+                          : "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-black text-brand-900 shadow-action transition hover:bg-accent-400"
+                      }
                     >
-                      <UiIcon name={source.enabled ? "check" : "music"} size={14} />
-                      Preferência {source.enabled ? "ativada" : "desativada"}
-                    </span>
-                  </div>
-
-                  <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] text-ink-inverse">
-                    Músicas Curtidas
-                  </h2>
-                  <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
-                    Biblioteca pessoal persistente. As músicas continuam nesta fonte depois de serem usadas e permanecem sujeitas às regras normais de repetição, diversidade e qualidade do Sonoriza.
+                      <UiIcon name={source.enabled ? "repeat" : "check"} size={17} />
+                      {source.enabled ? "Desativar preferência" : "Habilitar preferência"}
+                    </button>
+                  </form>
+                  <p className="mt-2 text-xs leading-5 text-muted-inverse">
+                    O ajuste é salvo no Sonoriza e não remove nenhuma música da sua biblioteca.
                   </p>
-
-                  <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold text-muted-inverse">
-                    <span className="product-badge">
-                      {compactNumber(source.counts.activeLikedTracks)} músicas
-                    </span>
-                    <span className="product-badge">
-                      {compactNumber(source.counts.available)} disponíveis
-                    </span>
-                    {source.counts.unavailable > 0 && (
-                      <span className="product-badge">
-                        {compactNumber(source.counts.unavailable)} indisponíveis
-                      </span>
-                    )}
-                    {source.counts.invalid > 0 && (
-                      <span className="product-badge">
-                        {compactNumber(source.counts.invalid)} inválidas
-                      </span>
-                    )}
-                    <span className="product-badge">
-                      {relativeFreshness(source.freshness.latestObservedAt)}
-                    </span>
-                  </div>
                 </div>
               </div>
 
-              <div className="shrink-0 lg:w-64">
-                <form action={toggleNativeLikedTrackSource}>
-                  <input type="hidden" name="enabled" value={String(nextEnabled)} />
-                  <button
-                    type="submit"
-                    className={
-                      source.enabled
-                        ? "inline-flex w-full items-center justify-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-3 text-sm font-black text-ink-inverse transition hover:border-brand-400/55 hover:bg-surface-elevated"
-                        : "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-3 text-sm font-black text-brand-900 shadow-action transition hover:bg-accent-400"
-                    }
-                  >
-                    <UiIcon name={source.enabled ? "repeat" : "check"} size={17} />
-                    {source.enabled ? "Desativar preferência" : "Habilitar preferência"}
-                  </button>
-                </form>
-                <p className="mt-2 text-xs leading-5 text-muted-inverse">
-                  O ajuste é salvo no Sonoriza e não remove nenhuma música da sua biblioteca.
-                </p>
+              <div className="status-info mt-5 rounded-2xl border px-4 py-3 text-xs font-bold leading-5">
+                Músicas Curtidas só participa do planner quando esta preferência e o rollout operacional estiverem habilitados. Desativar aqui interrompe a influência no planner sem alterar sua biblioteca nem a sincronização da fonte.
               </div>
             </div>
 
-            <div className="status-info mt-5 rounded-2xl border px-4 py-3 text-xs font-bold leading-5">
-              Músicas Curtidas só participa do planner quando esta preferência e o rollout operacional estiverem habilitados. Desativar aqui interrompe a influência no planner sem alterar sua biblioteca nem a sincronização da fonte.
+            <div className="mt-3 flex justify-end">
+              <Link
+                href="/dashboard/configuracao/fontes/podcasts"
+                className="inline-flex items-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-2.5 text-sm font-black text-ink-inverse transition hover:border-brand-400/55 hover:bg-surface-elevated"
+              >
+                <UiIcon name="repeat" size={16} />
+                Políticas de podcasts
+              </Link>
             </div>
           </div>
-
-          <div className="mt-3 flex justify-end">
-            <Link
-              href="/dashboard/configuracao/fontes/podcasts"
-              className="inline-flex items-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-2.5 text-sm font-black text-ink-inverse transition hover:border-brand-400/55 hover:bg-surface-elevated"
-            >
-              <UiIcon name="repeat" size={16} />
-              Políticas de podcasts
-            </Link>
-          </div>
-        </div>
-      </section>
+        </section>
+      </SourcesRouteOnly>
 
       {children}
     </>

@@ -50,7 +50,6 @@ export function PodcastPolicyClient({
   const directShow = initialOpenId
     ? shows.find((show) => show.id === initialOpenId) ?? null
     : null;
-  const directMode = directShow !== null;
 
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(initialOpenId);
@@ -68,25 +67,24 @@ export function PodcastPolicyClient({
   if (directShow) {
     return (
       <>
-        <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-accent/25 bg-accent/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-accent-400">
-              Editando agora
-            </p>
-            <p className="mt-1 truncate text-sm font-black text-ink-inverse">
-              {directShow.name}
-            </p>
-          </div>
+        <div className="mt-5 flex items-center justify-between gap-2">
+          <Link
+            href="/dashboard/configuracao/fontes"
+            className={secondaryButtonClass}
+          >
+            <UiIcon name="arrow-left" size={16} />
+            Fontes
+          </Link>
           <Link
             href="/dashboard/configuracao/fontes/podcasts"
             className={secondaryButtonClass}
           >
             <UiIcon name="list" size={16} />
-            Ver todos os programas
+            Todos os programas
           </Link>
         </div>
 
-        <div className="mt-4">
+        <div className="mt-3">
           <PodcastPolicyCard
             show={directShow}
             open
@@ -173,37 +171,37 @@ function PodcastPolicyCard({
 
   return (
     <section className="product-panel overflow-hidden">
-      <div className="p-4 sm:p-5">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="product-badge">Programa</span>
-              <span
-                className={
-                  show.enabled
-                    ? "status-success rounded-full border px-2.5 py-1 text-xs font-black"
-                    : "product-badge"
-                }
-              >
-                {show.enabled ? "Ativo" : "Desativado"}
-              </span>
-            </div>
-            <h2 className="mt-2 truncate text-lg font-black text-ink-inverse sm:text-xl">
-              {show.name}
-            </h2>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {summaryChips(policy).map((chip) => (
-                <span key={chip} className="product-badge">
-                  {chip}
+      {!directMode && (
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="product-badge">Programa</span>
+                <span
+                  className={
+                    show.enabled
+                      ? "status-success rounded-full border px-2.5 py-1 text-xs font-black"
+                      : "product-badge"
+                  }
+                >
+                  {show.enabled ? "Ativo" : "Desativado"}
                 </span>
-              ))}
+              </div>
+              <h2 className="mt-2 truncate text-lg font-black text-ink-inverse sm:text-xl">
+                {show.name}
+              </h2>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {summaryChips(policy).map((chip) => (
+                  <span key={chip} className="product-badge">
+                    {chip}
+                  </span>
+                ))}
+              </div>
+              <p className="mt-2 text-xs leading-5 text-muted-inverse/70">
+                {memoryDescription(policy)}
+              </p>
             </div>
-            <p className="mt-2 text-xs leading-5 text-muted-inverse/70">
-              {memoryDescription(policy)}
-            </p>
-          </div>
 
-          {!directMode && (
             <button
               type="button"
               onClick={onToggle}
@@ -214,12 +212,34 @@ function PodcastPolicyCard({
               <span className="hidden sm:inline">{open ? "Fechar" : "Editar política"}</span>
               <span className="sm:hidden">{open ? "Fechar" : "Editar"}</span>
             </button>
-          )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {directMode && (
+        <div className="flex items-center justify-between gap-3 border-b border-line-dark/55 px-4 py-3 sm:px-5">
+          <div className="min-w-0">
+            <p className="text-[0.68rem] font-black uppercase tracking-[0.14em] text-accent-400">
+              Editar política
+            </p>
+            <h2 className="mt-0.5 truncate text-lg font-black text-ink-inverse">
+              {show.name}
+            </h2>
+          </div>
+          <span
+            className={
+              show.enabled
+                ? "status-success rounded-full border px-2.5 py-1 text-xs font-black"
+                : "product-badge"
+            }
+          >
+            {show.enabled ? "Ativo" : "Desativado"}
+          </span>
+        </div>
+      )}
 
       {open && (
-        <div className="border-t border-line-dark/55 bg-surface-subtle/30 p-4 sm:p-5">
+        <div className={`${directMode ? "" : "border-t border-line-dark/55"} bg-surface-subtle/30 p-4 sm:p-5`}>
           <form action={updateShowPolicyAction} className="grid gap-4 lg:grid-cols-2">
             <input type="hidden" name="sourcePlaylistId" value={show.id} />
 
@@ -235,7 +255,10 @@ function PodcastPolicyCard({
               </select>
             </Field>
 
-            <Field label="Ordem" help="Vale para o catálogo completo do programa.">
+            <Field
+              label="Ordem dos episódios"
+              help="Define a ordem de seleção no catálogo completo deste programa."
+            >
               <select
                 name="episodeOrder"
                 value={order}
