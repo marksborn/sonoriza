@@ -135,14 +135,17 @@ export async function confirmProbableLike(input: {
     const orderedAffectedArtistIds = [...affectedArtistIds].sort();
 
     for (const spotifyArtistId of orderedAffectedArtistIds) {
-      // Two-int transaction-scoped advisory lock. hashtext collisions can only
-      // cause extra serialization, never incorrect state. Sorted acquisition
-      // avoids deadlocks when a track identity change touches two artists.
-      await tx.$queryRaw`
-        SELECT pg_advisory_xact_lock(
-          hashtext(${`history04-like:${input.userId}`}),
-          hashtext(${spotifyArtistId})
-        )
+      // Two-int transaction-scoped advisory lock. The volatile lock function
+      // is executed inside a subquery while only an int is returned to Prisma;
+      // Prisma cannot deserialize PostgreSQL's native `void` return type.
+      await tx.$queryRaw<Array<{ acquired: number }>>`
+        SELECT 1::int AS acquired
+        FROM (
+          SELECT pg_advisory_xact_lock(
+            hashtext(${`history04-like:${input.userId}`}),
+            hashtext(${spotifyArtistId})
+          )
+        ) AS lock_row
       `;
     }
 
