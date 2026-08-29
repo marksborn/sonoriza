@@ -98,6 +98,9 @@ export function ProbableLikesShadowPanel({
         <span>{result.evaluatedTrackCount.toLocaleString("pt-BR")} faixas avaliadas</span>
         <span>{result.excludedLikedCount.toLocaleString("pt-BR")} já curtidas excluídas</span>
         <span>{result.excludedStrongNegativeCount.toLocaleString("pt-BR")} excluídas por sinal negativo forte</span>
+        {result.excludedShortContentCount > 0 ? (
+          <span>{result.excludedShortContentCount.toLocaleString("pt-BR")} ultracurtas excluídas</span>
+        ) : null}
       </div>
     </section>
   );
