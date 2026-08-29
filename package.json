@@ -18,6 +18,7 @@
     "test:spotify": "tsx --test src/services/spotify/*.test.ts",
     "test:incremental": "tsx --test src/jobs/*.test.ts",
     "test:simulation": "tsx --test src/services/simulation-presentation.test.ts src/services/configuration-readiness.test.ts",
+    "test:config-04": "tsx --test src/services/http-api-response.test.ts",
     "test:lastfm": "tsx --test src/services/lastfm/*.test.ts",
     "test:history": "tsx --test src/services/listening-history/*.test.ts",
     "test:music-preference": "tsx --test src/services/music-preference/*.test.ts",
