@@ -38,7 +38,7 @@ export const LIKED_TRACK_SOURCE_SHADOW_POLICY = {
  * product preference. Missing, disabled or unreadable consent always abstains.
  */
 export const LIKED_TRACK_SOURCE_PLANNER_PILOT_POLICY = {
-  version: "source-liked-gate5b2-v1",
+  version: "source-liked-gate5b2-v2",
   mode: "PILOT_PRODUCTIVE",
   exposurePercent: 5,
   activationRule:
@@ -47,6 +47,13 @@ export const LIKED_TRACK_SOURCE_PLANNER_PILOT_POLICY = {
   fallbackRule: "ABSTAIN_AND_KEEP_READY_BASELINE_PLAN",
   providerReads: false,
 } as const;
+
+/**
+ * A sub-second planner difference is operational noise, not a meaningful loss
+ * of destination coverage. The productive guard therefore compares deficit to
+ * the target budget and allows at most one second of additional deficit.
+ */
+export const LIKED_TRACK_SOURCE_DURATION_DEFICIT_TOLERANCE_MS = 1_000;
 
 export type LikedTrackSourceShadowPolicyReason =
   | "MASTER_DISABLED"
@@ -722,6 +729,20 @@ export function buildLikedTrackProductivePilotPlan(input: {
     const variantLiked = variantTarget.result.items.filter(
       (item) => item.type === "MUSIC" && likedUris.has(item.uri),
     );
+    const runTarget = context.targets.find(
+      (target) => target.targetPlaylistId === currentTarget.targetPlaylistId,
+    );
+    const durationGuard = evaluateLikedTrackDurationGuard({
+      targetDurationMs:
+        currentTarget.result.stats.segmentation?.targetDurationMs ??
+        variantTarget.result.stats.segmentation?.targetDurationMs ??
+        runTarget?.rules.targetDurationMs ??
+        currentTarget.result.stats.totalDurationMs,
+      currentDurationMs: currentTarget.result.stats.totalDurationMs,
+      variantDurationMs: variantTarget.result.stats.totalDurationMs,
+      currentDeficitMs: currentTarget.result.stats.segmentation?.deficitMs,
+      variantDeficitMs: variantTarget.result.stats.segmentation?.deficitMs,
+    });
 
     if (!allowlisted && currentFingerprint !== variantFingerprint) {
       guardFailures.push({
@@ -748,16 +769,18 @@ export function buildLikedTrackProductivePilotPlan(input: {
           reason: "SEQUENCE_QUALITY_REGRESSION",
         });
       }
-      if (
-        variantTarget.result.stats.totalDurationMs <
-        currentTarget.result.stats.totalDurationMs
-      ) {
+      if (durationGuard.regressed) {
         guardFailures.push({
           targetPlaylistId: currentTarget.targetPlaylistId,
           targetName: currentTarget.name,
           reason: "DURATION_REGRESSION",
           currentDurationMs: currentTarget.result.stats.totalDurationMs,
           variantDurationMs: variantTarget.result.stats.totalDurationMs,
+          durationTargetMs: durationGuard.targetDurationMs,
+          currentDurationDeficitMs: durationGuard.currentDeficitMs,
+          variantDurationDeficitMs: durationGuard.variantDeficitMs,
+          durationDeficitDeltaMs: durationGuard.deficitDeltaMs,
+          durationDeficitToleranceMs: durationGuard.toleranceMs,
         });
       }
       if (
@@ -813,6 +836,11 @@ export function buildLikedTrackProductivePilotPlan(input: {
       durationDeltaMs:
         variantTarget.result.stats.totalDurationMs -
         currentTarget.result.stats.totalDurationMs,
+      durationTargetMs: durationGuard.targetDurationMs,
+      currentDurationDeficitMs: durationGuard.currentDeficitMs,
+      productiveDurationDeficitMs: durationGuard.variantDeficitMs,
+      durationDeficitDeltaMs: durationGuard.deficitDeltaMs,
+      durationDeficitToleranceMs: durationGuard.toleranceMs,
       distinctArtistDelta:
         variantTarget.result.stats.distinctArtistCount -
         currentTarget.result.stats.distinctArtistCount,
@@ -829,6 +857,48 @@ export function buildLikedTrackProductivePilotPlan(input: {
     guardFailures,
     targetInputs,
     targets,
+  };
+}
+
+export function evaluateLikedTrackDurationGuard(input: {
+  targetDurationMs: number;
+  currentDurationMs: number;
+  variantDurationMs: number;
+  currentDeficitMs?: number | null;
+  variantDeficitMs?: number | null;
+  toleranceMs?: number;
+}): {
+  regressed: boolean;
+  targetDurationMs: number;
+  currentDeficitMs: number;
+  variantDeficitMs: number;
+  deficitDeltaMs: number;
+  toleranceMs: number;
+} {
+  const targetDurationMs = Math.max(0, input.targetDurationMs);
+  const currentDeficitMs = resolveDurationDeficitMs(
+    input.currentDeficitMs,
+    targetDurationMs,
+    input.currentDurationMs,
+  );
+  const variantDeficitMs = resolveDurationDeficitMs(
+    input.variantDeficitMs,
+    targetDurationMs,
+    input.variantDurationMs,
+  );
+  const toleranceMs = Math.max(
+    0,
+    input.toleranceMs ?? LIKED_TRACK_SOURCE_DURATION_DEFICIT_TOLERANCE_MS,
+  );
+  const deficitDeltaMs = variantDeficitMs - currentDeficitMs;
+
+  return {
+    regressed: deficitDeltaMs > toleranceMs,
+    targetDurationMs,
+    currentDeficitMs,
+    variantDeficitMs,
+    deficitDeltaMs,
+    toleranceMs,
   };
 }
 
@@ -1029,6 +1099,17 @@ function dedupeByUri(candidates: readonly Candidate[]): Candidate[] {
     result.push(candidate);
   }
   return result;
+}
+
+function resolveDurationDeficitMs(
+  explicitDeficitMs: number | null | undefined,
+  targetDurationMs: number,
+  actualDurationMs: number,
+): number {
+  if (typeof explicitDeficitMs === "number" && Number.isFinite(explicitDeficitMs)) {
+    return Math.max(0, explicitDeficitMs);
+  }
+  return Math.max(0, targetDurationMs - Math.max(0, actualDurationMs));
 }
 
 function parseBoolean(value: string | null | undefined): boolean {
