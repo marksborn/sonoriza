@@ -11,7 +11,8 @@ import { prisma } from "@/lib/prisma";
 
 // Scopes the engine needs. Google: read the calendar to compute trip durations.
 // Spotify: discover source playlists/shows/episodes, read podcast playback
-// position and recent music playback, and create/modify target playlists.
+// position and recent music playback, create/modify target playlists, and let
+// explicit HISTORY-04 likes save tracks into the user's Spotify library.
 const GOOGLE_SCOPES = [
   "openid",
   "email",
@@ -23,6 +24,7 @@ const SPOTIFY_SCOPES = [
   "user-read-email",
   "user-read-private",
   "user-library-read",
+  "user-library-modify",
   "user-read-playback-position",
   "user-read-recently-played",
   "playlist-read-private",
@@ -52,9 +54,10 @@ const nextAuth = NextAuth({
       clientId: process.env.AUTH_SPOTIFY_ID,
       clientSecret: process.env.AUTH_SPOTIFY_SECRET,
       // The endpoint stays explicit because Auth.js loses it when authorization
-      // is replaced with params only. Library access powers CONFIG-02,
-      // playback-position access lets PODCAST-01 budget episode progress, and
-      // recently-played access powers MUSIC-01 without mutating source playlists.
+      // is replaced with params only. Library read powers CONFIG-02 and
+      // SOURCE-LIKED-01; library modify lets an explicit HISTORY-04 confirmation
+      // become a real Spotify Saved Track. Existing grants must reconnect once
+      // after this scope is introduced so Spotify can issue the expanded grant.
       authorization: {
         url: "https://accounts.spotify.com/authorize",
         params: { scope: SPOTIFY_SCOPES },
