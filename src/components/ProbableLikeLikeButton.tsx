@@ -43,7 +43,7 @@ export function ProbableLikeLikeButton({
   }
 
   return (
-    <div className="mt-3">
+    <div>
       <button
         type="button"
         disabled={busy}
@@ -52,7 +52,7 @@ export function ProbableLikeLikeButton({
       >
         {busy ? "Curtindo…" : "♥ Curtir no Sonoriza"}
       </button>
-      <p className="mt-1.5 text-[10px] font-semibold leading-4 text-muted-inverse/75">
+      <p className="mt-1.5 max-w-xs text-[10px] font-semibold leading-4 text-muted-inverse/75">
         Preferência explícita e produtiva no Sonoriza. O Spotify não é alterado neste gate.
       </p>
       {error ? (
