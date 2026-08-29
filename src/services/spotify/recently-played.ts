@@ -336,6 +336,14 @@ export async function syncRecentlyPlayed(
     sourceEventKey: event.sourceEventKey,
     contextType: event.contextType,
     contextUri: event.contextUri,
+    metadata:
+      event.durationMs === null
+        ? undefined
+        : {
+            spotifyRecentlyPlayed: {
+              trackDurationMs: event.durationMs,
+            },
+          },
   }));
   const eventRows = lastFmHandoff
     ? candidateEventRows.filter((event) => event.playedAt >= lastFmHandoff.to)
