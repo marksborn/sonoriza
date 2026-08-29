@@ -1,0 +1,35 @@
+// ---------------------------------------------------------------------------
+// HISTORY-04 Gate 5 — explicit LIKE confirmation from probable-like history.
+//
+// LikedTrackPreference remains the canonical preference state owned by LIKED-01.
+// This row only preserves the product provenance of an explicit confirmation
+// made from HISTORY-04, because the older LikedTrackPreferenceProvenance enum
+// predates this surface and intentionally remains provider-sync oriented.
+// ---------------------------------------------------------------------------
+
+enum HistoryLikeActionSource {
+  PROBABLE_LIKE
+}
+
+model HistoryLikeAction {
+  id                    String                  @id @default(cuid())
+  userId                String
+  spotifyTrackId        String
+  source                HistoryLikeActionSource @default(PROBABLE_LIKE)
+  trackName             String
+  artistName            String
+  primaryArtistId       String?
+  candidateScore        Int
+  candidateReasons      Json
+  artistAffinityUpdated Boolean                 @default(false)
+  providerWriteAttempted Boolean                @default(false)
+  firstConfirmedAt      DateTime                @default(now())
+  lastConfirmedAt       DateTime
+  confirmCount          Int                     @default(1)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@unique([userId, spotifyTrackId, source])
+  @@index([userId, lastConfirmedAt])
+  @@index([userId, source, lastConfirmedAt])
+}
