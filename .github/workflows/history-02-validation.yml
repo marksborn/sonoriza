@@ -11,12 +11,14 @@ on:
       - "src/services/spotify/listening-events.test.ts"
       - "src/services/spotify/recently-played.ts"
       - "src/services/spotify/recently-played.test.ts"
+      - "src/components/ProbableLike*"
+      - "src/app/api/history/**"
       - "src/app/dashboard/historico/**"
       - "src/app/dashboard/layout.tsx"
       - "src/lib/prisma.ts"
       - "scripts/import-spotify-extended-history.ts"
       - "prisma/migrations/**"
-      - "prisma/schema.prisma"
+      - "prisma/*.prisma"
       - "package.json"
       - ".github/workflows/history-02-validation.yml"
   pull_request:
@@ -27,12 +29,14 @@ on:
       - "src/services/spotify/listening-events.test.ts"
       - "src/services/spotify/recently-played.ts"
       - "src/services/spotify/recently-played.test.ts"
+      - "src/components/ProbableLike*"
+      - "src/app/api/history/**"
       - "src/app/dashboard/historico/**"
       - "src/app/dashboard/layout.tsx"
       - "src/lib/prisma.ts"
       - "scripts/import-spotify-extended-history.ts"
       - "prisma/migrations/**"
-      - "prisma/schema.prisma"
+      - "prisma/*.prisma"
       - "package.json"
       - ".github/workflows/history-02-validation.yml"
 
@@ -75,6 +79,7 @@ jobs:
       - run: npm ci
       - run: npx prisma validate
       - run: npx prisma migrate deploy
+      - run: npx prisma generate
       - run: npm run test:spotify-history
       - run: npm run test:history
       - run: npx tsx --test src/services/spotify/listening-events.test.ts src/services/spotify/recently-played.test.ts
