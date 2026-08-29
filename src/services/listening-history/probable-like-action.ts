@@ -6,6 +6,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { saveSpotifyTrackToLibrary } from "@/services/spotify/library";
 import { getProbableLikeShadow } from "./probable-like";
 
 export type ProbableLikeConfirmationResult = {
@@ -14,27 +15,33 @@ export type ProbableLikeConfirmationResult = {
   artistName: string;
   alreadyLiked: boolean;
   artistAffinityUpdated: boolean;
-  providerWriteAttempted: false;
-  providerWriteReason: "USER_LIBRARY_MODIFY_SCOPE_NOT_ENABLED";
+  providerWriteAttempted: boolean;
+  providerWriteSucceeded: boolean;
+  providerWriteReason: "SAVED_TO_SPOTIFY_LIBRARY" | "ALREADY_LIKED";
 };
+
+type SaveTrackToSpotify = (input: {
+  userId: string;
+  spotifyTrackId: string;
+}) => Promise<void>;
 
 /**
  * HISTORY-04 Gate 5 — explicit one-track LIKE from the History surface.
  *
- * The internal LIKE is authoritative and does not depend on Spotify writes.
- * We deliberately reuse LIKED-01's canonical LikedTrackPreference and artist
- * affinity tables so #184 and SOURCE-LIKED-01 see the same preference instead
- * of a parallel History-only state.
- *
- * The current OAuth grant has user-library-read, not user-library-modify, so
- * this gate does not attempt a provider write. HistoryLikeAction preserves the
- * exact product provenance while LikedTrackPreference continues using the
- * existing LIKED_TRACK_SYNC provenance contract.
+ * Product success means the track is saved to Spotify's Music Library and then
+ * materialized in Sonoriza's canonical LikedTrackPreference/artist-affinity
+ * state. Provider write intentionally happens before the local transaction: if
+ * Spotify rejects the action, the candidate remains visible and can be retried.
+ * If the provider succeeds but the local transaction fails, the next LIKED-01
+ * sync repairs the local canonical state from Spotify.
  */
-export async function confirmProbableLike(input: {
-  userId: string;
-  spotifyTrackId: string;
-}): Promise<ProbableLikeConfirmationResult> {
+export async function confirmProbableLike(
+  input: {
+    userId: string;
+    spotifyTrackId: string;
+  },
+  dependencies: { saveTrackToSpotify?: SaveTrackToSpotify } = {},
+): Promise<ProbableLikeConfirmationResult> {
   const existingPreference = await prisma.likedTrackPreference.findUnique({
     where: {
       userId_spotifyTrackId: {
@@ -52,7 +59,8 @@ export async function confirmProbableLike(input: {
       alreadyLiked: true,
       artistAffinityUpdated: Boolean(existingPreference.primaryArtistId),
       providerWriteAttempted: false,
-      providerWriteReason: "USER_LIBRARY_MODIFY_SCOPE_NOT_ENABLED",
+      providerWriteSucceeded: true,
+      providerWriteReason: "ALREADY_LIKED",
     };
   }
 
@@ -111,8 +119,17 @@ export async function confirmProbableLike(input: {
     candidate.knownTrackDurationMs ?? existingPreference?.durationMs ?? null;
   const availability =
     existingPreference?.availability ?? LikedTrackAvailability.AVAILABLE;
-  const now = new Date();
 
+  // Do not create a local-only success. The explicit action first saves the
+  // track to Spotify. This call is idempotent on Spotify's Library endpoint.
+  const saveTrackToSpotify =
+    dependencies.saveTrackToSpotify ?? saveSpotifyTrackToLibrary;
+  await saveTrackToSpotify({
+    userId: input.userId,
+    spotifyTrackId: candidate.spotifyTrackId,
+  });
+
+  const now = new Date();
   const artistAffinityUpdated = await prisma.$transaction(async (tx) => {
     // Read the current track evidence before mutating anything so we know every
     // artist whose aggregate may change. The advisory locks below serialize all
@@ -166,7 +183,7 @@ export async function confirmProbableLike(input: {
         albumId,
         albumName,
         durationMs,
-        addedAt: null,
+        addedAt: now,
         isLiked: true,
         availability,
         firstProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
@@ -183,6 +200,7 @@ export async function confirmProbableLike(input: {
         albumId,
         albumName,
         durationMs,
+        addedAt: existingPreference?.addedAt ?? now,
         isLiked: true,
         availability,
         lastProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
@@ -292,7 +310,7 @@ export async function confirmProbableLike(input: {
         candidateScore: candidate.score,
         candidateReasons: candidate.reasons,
         artistAffinityUpdated: Boolean(primaryArtistId),
-        providerWriteAttempted: false,
+        providerWriteAttempted: true,
         firstConfirmedAt: now,
         lastConfirmedAt: now,
         confirmCount: 1,
@@ -304,7 +322,7 @@ export async function confirmProbableLike(input: {
         candidateScore: candidate.score,
         candidateReasons: candidate.reasons,
         artistAffinityUpdated: Boolean(primaryArtistId),
-        providerWriteAttempted: false,
+        providerWriteAttempted: true,
         lastConfirmedAt: now,
         confirmCount: { increment: 1 },
       },
@@ -319,8 +337,9 @@ export async function confirmProbableLike(input: {
     artistName: candidate.artistName,
     alreadyLiked: false,
     artistAffinityUpdated,
-    providerWriteAttempted: false,
-    providerWriteReason: "USER_LIBRARY_MODIFY_SCOPE_NOT_ENABLED",
+    providerWriteAttempted: true,
+    providerWriteSucceeded: true,
+    providerWriteReason: "SAVED_TO_SPOTIFY_LIBRARY",
   };
 }
 
