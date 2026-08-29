@@ -1,5 +1,6 @@
 import {
   ArtistAffinityEvidenceType,
+  HistoryLikeActionSource,
   LikedTrackAvailability,
   LikedTrackPreferenceProvenance,
 } from "@prisma/client";
@@ -50,6 +51,12 @@ export type ExistingLikedTrackAffinityState = {
   tracks: ExistingLikedTrack[];
   evidence: ExistingArtistAffinityEvidence[];
   affinityStates: ExistingArtistAffinityState[];
+  /**
+   * Durable Sonoriza-owned LIKE confirmations. These survive absence from the
+   * Spotify Saved Tracks snapshot because provider sync is not authoritative
+   * over explicit preference created inside Sonoriza.
+   */
+  localExplicitTrackIds?: string[];
 };
 
 export type PlannedLikedTrack = {
@@ -81,7 +88,10 @@ export type PlannedAffinityState = {
 export type LikedTrackAffinityPlan = {
   generatedAt: Date;
   provenance: LikedTrackPreferenceProvenance;
+  /** Effective canonical likes: provider snapshot union explicit local likes. */
   currentTracks: PlannedLikedTrack[];
+  /** Provider-only distinct canonical count, kept separate for diagnostics. */
+  providerCanonicalTrackCount: number;
   technicalDuplicateRows: number;
   tracksWithoutCanonicalId: number;
   tracksWithoutResolvedPrimaryArtist: number;
@@ -146,16 +156,13 @@ export type LikedTrackAffinitySyncReport = {
 };
 
 /**
- * LIKED-01 Gate 2.
+ * LIKED-01 Gate 2 + HISTORY-04 Gate 5 compatibility.
  *
- * Reconciles Spotify Saved Tracks into Sonoriza-owned preference state and
- * derives one explicit artist-affinity evidence row from each liked track's
- * canonical primary artist. The resulting state is shadow-only in this gate:
- * planner/discovery never reads these tables yet and Spotify is never written.
- *
- * PREVIEW is the default intended operational mode. APPLY is explicit and is
- * reserved for the later pilot/backfill gate after its before/after report has
- * been reviewed.
+ * Spotify Saved Tracks remains authoritative for provider-originated likes and
+ * removals, but it is not allowed to erase an explicit LIKE confirmed inside
+ * Sonoriza. The effective canonical set is therefore provider snapshot UNION
+ * durable local explicit likes. Artist affinity is derived from that effective
+ * set so local preference survives provider reconciliation end-to-end.
  */
 export async function syncLikedTrackAffinity(
   userId: string,
@@ -184,7 +191,7 @@ export async function syncLikedTrackAffinity(
 export async function loadExistingLikedTrackAffinityState(
   userId: string,
 ): Promise<ExistingLikedTrackAffinityState> {
-  const [tracks, evidence, affinityStates] = await Promise.all([
+  const [tracks, evidence, affinityStates, localExplicitActions] = await Promise.all([
     prisma.likedTrackPreference.findMany({
       where: { userId },
       select: {
@@ -223,9 +230,21 @@ export async function loadExistingLikedTrackAffinityState(
         active: true,
       },
     }),
+    prisma.historyLikeAction.findMany({
+      where: {
+        userId,
+        source: HistoryLikeActionSource.PROBABLE_LIKE,
+      },
+      select: { spotifyTrackId: true },
+    }),
   ]);
 
-  return { tracks, evidence, affinityStates };
+  return {
+    tracks,
+    evidence,
+    affinityStates,
+    localExplicitTrackIds: localExplicitActions.map((row) => row.spotifyTrackId),
+  };
 }
 
 export function buildLikedTrackAffinityPlan(
@@ -253,10 +272,24 @@ export function buildLikedTrackAffinityPlan(
     currentByTrackId.set(trackId, betterInventoryItem(current, item));
   }
 
-  const currentTracks = [...currentByTrackId.values()]
-    .map(toPlannedTrack)
-    .sort((left, right) => left.spotifyTrackId.localeCompare(right.spotifyTrackId));
+  const providerCanonicalTrackCount = currentByTrackId.size;
+  const currentTracks = [...currentByTrackId.values()].map(toPlannedTrack);
   const currentTrackIds = new Set(currentTracks.map((track) => track.spotifyTrackId));
+  const localExplicitTrackIds = new Set(existing.localExplicitTrackIds ?? []);
+
+  // A local explicit LIKE is a first-class Sonoriza preference. Preserve it in
+  // the effective canonical set even when it is absent from Spotify Saved
+  // Tracks. Existing metadata is sufficient; no provider read is introduced.
+  for (const track of existing.tracks) {
+    if (!localExplicitTrackIds.has(track.spotifyTrackId)) continue;
+    if (currentTrackIds.has(track.spotifyTrackId)) continue;
+    currentTracks.push(existingLikedTrackToPlannedTrack(track));
+    currentTrackIds.add(track.spotifyTrackId);
+  }
+  currentTracks.sort((left, right) =>
+    left.spotifyTrackId.localeCompare(right.spotifyTrackId),
+  );
+
   const existingTrackById = new Map(
     existing.tracks.map((track) => [track.spotifyTrackId, track]),
   );
@@ -379,6 +412,7 @@ export function buildLikedTrackAffinityPlan(
     generatedAt,
     provenance,
     currentTracks,
+    providerCanonicalTrackCount,
     technicalDuplicateRows,
     tracksWithoutCanonicalId,
     tracksWithoutResolvedPrimaryArtist: currentTracks.filter(
@@ -578,7 +612,7 @@ function buildSyncReport(
     provenance: plan.provenance,
     provider: {
       rows: provider.items.length,
-      distinctCanonicalTracks: plan.currentTracks.length,
+      distinctCanonicalTracks: plan.providerCanonicalTrackCount,
       technicalDuplicateRows: plan.technicalDuplicateRows,
       rowsWithoutCanonicalId: plan.tracksWithoutCanonicalId,
       pagesRead: provider.pagesRead,
@@ -626,6 +660,21 @@ function toPlannedTrack(item: LikedTrackInventoryItem): PlannedLikedTrack {
     addedAt: parseDate(item.addedAt),
     durationMs: normalizeDurationMs(item.durationMs),
     availability: availabilityFromInventory(item.status),
+  };
+}
+
+function existingLikedTrackToPlannedTrack(track: ExistingLikedTrack): PlannedLikedTrack {
+  return {
+    spotifyTrackId: track.spotifyTrackId,
+    spotifyUri: normalizeText(track.spotifyUri),
+    trackName: normalizeText(track.trackName),
+    primaryArtistId: normalizeText(track.primaryArtistId),
+    primaryArtistName: normalizeText(track.primaryArtistName),
+    albumId: normalizeText(track.albumId),
+    albumName: normalizeText(track.albumName),
+    addedAt: track.addedAt,
+    durationMs: normalizeDurationMs(track.durationMs),
+    availability: track.availability,
   };
 }
 
