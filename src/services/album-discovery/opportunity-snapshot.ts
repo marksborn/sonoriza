@@ -4,17 +4,20 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import type { AlbumOpportunityCandidate } from "./opportunity";
-import { getAlbumOpportunityReport } from "./opportunity-report";
+import {
+  getAlbumOpportunityReport,
+  type AlbumOpportunityCatalogProgress,
+} from "./opportunity-report";
 import { loadAlbumRecommendationMemories } from "./queue-memory";
 
 export const ALBUM_OPPORTUNITY_SNAPSHOT_POLICY = {
-  version: "album-ui-opportunity-snapshot-v1",
+  version: "album-ui-opportunity-snapshot-v2",
   refreshAfterMs: 12 * 60 * 60_000,
   staleAfterMs: 48 * 60 * 60_000,
   persistedCandidateCount: 50,
   uiDefaultTop: 5,
   note:
-    "ALBUM-01 is computed outside the page request and persisted as an atomic filesystem cache. The snapshot is advisory/read-only; QUEUED memory remains authoritative and is re-applied on every UI read.",
+    "ALBUM-01 is computed outside the page request and persisted as an atomic filesystem cache. A request-budget stop may persist a truthful PARTIAL ranking and subsequent refreshes converge it to COMPLETE. The snapshot is advisory/read-only; QUEUED memory remains authoritative and is re-applied on every UI read.",
 } as const;
 
 type SerializedAlbumOpportunityCandidate = Omit<AlbumOpportunityCandidate, "coverage"> & {
@@ -33,6 +36,7 @@ export type AlbumOpportunitySnapshotPayload = {
   asOf: string;
   candidateCount: number;
   providerFailureCount: number;
+  catalogProgress: AlbumOpportunityCatalogProgress;
   ranked: SerializedAlbumOpportunityCandidate[];
 };
 
@@ -41,6 +45,8 @@ export type AlbumOpportunitySnapshotStatus = "READY" | "STALE" | "MISSING";
 export type AlbumOpportunitySnapshotView = {
   snapshot: {
     status: AlbumOpportunitySnapshotStatus;
+    completeness: AlbumOpportunityCatalogProgress["completeness"] | null;
+    partialReason: AlbumOpportunityCatalogProgress["reason"];
     generatedAt: Date | null;
     asOf: Date | null;
     ageMs: number | null;
@@ -62,14 +68,23 @@ export type RefreshAlbumOpportunitySnapshotResult = {
   candidateCount: number;
   persistedCandidateCount: number;
   providerFailureCount: number;
+  completeness: AlbumOpportunityCatalogProgress["completeness"];
+  nextRequestPath: string | null;
   filePath: string;
 };
 
 export function assertAlbumOpportunitySnapshotRefreshUsable(input: {
   candidateCount: number;
   providerFailureCount: number;
+  catalogCompleteness?: AlbumOpportunityCatalogProgress["completeness"];
   providerFailures?: Array<{ subject: string; error: string }>;
 }): void {
+  if (input.catalogCompleteness === "PARTIAL" && input.candidateCount === 0) {
+    throw new Error(
+      "Album opportunity partial snapshot refresh rejected: request budget ended before any usable candidate was ranked; preserving the previous snapshot.",
+    );
+  }
+
   if (input.candidateCount === 0 && input.providerFailureCount > 0) {
     const details = (input.providerFailures ?? [])
       .slice(0, 3)
@@ -97,6 +112,7 @@ export async function refreshAlbumOpportunitySnapshot(
   assertAlbumOpportunitySnapshotRefreshUsable({
     candidateCount: report.candidateCount,
     providerFailureCount,
+    catalogCompleteness: report.catalogProgress.completeness,
     providerFailures: report.providerMetrics.failures,
   });
 
@@ -105,6 +121,7 @@ export async function refreshAlbumOpportunitySnapshot(
     asOf: report.asOf,
     candidateCount: report.candidateCount,
     providerFailureCount,
+    catalogProgress: report.catalogProgress,
     ranked: report.ranked,
   });
   const filePath = await writeSnapshot(userId, payload);
@@ -115,6 +132,8 @@ export async function refreshAlbumOpportunitySnapshot(
     candidateCount: payload.candidateCount,
     persistedCandidateCount: payload.ranked.length,
     providerFailureCount: payload.providerFailureCount,
+    completeness: payload.catalogProgress.completeness,
+    nextRequestPath: payload.catalogProgress.nextRequestPath,
     filePath,
   };
 }
@@ -145,6 +164,8 @@ export async function getAlbumOpportunitySnapshotView(
     return {
       snapshot: {
         status: "MISSING",
+        completeness: null,
+        partialReason: null,
         generatedAt: null,
         asOf: null,
         ageMs: null,
@@ -171,6 +192,8 @@ export async function getAlbumOpportunitySnapshotView(
     snapshot: {
       status:
         ageMs > ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.staleAfterMs ? "STALE" : "READY",
+      completeness: payload.catalogProgress.completeness,
+      partialReason: payload.catalogProgress.reason,
       generatedAt,
       asOf,
       ageMs,
@@ -192,6 +215,7 @@ export async function getAlbumOpportunitySnapshotRefreshState(
   now: Date = new Date(),
 ): Promise<{
   status: AlbumOpportunitySnapshotStatus;
+  completeness: AlbumOpportunityCatalogProgress["completeness"] | null;
   generatedAt: Date | null;
   ageMs: number | null;
   shouldRefresh: boolean;
@@ -200,6 +224,7 @@ export async function getAlbumOpportunitySnapshotRefreshState(
   if (!payload) {
     return {
       status: "MISSING",
+      completeness: null,
       generatedAt: null,
       ageMs: null,
       shouldRefresh: true,
@@ -211,10 +236,24 @@ export async function getAlbumOpportunitySnapshotRefreshState(
   return {
     status:
       ageMs > ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.staleAfterMs ? "STALE" : "READY",
+    completeness: payload.catalogProgress.completeness,
     generatedAt,
     ageMs,
-    shouldRefresh: ageMs >= ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.refreshAfterMs,
+    shouldRefresh: shouldRefreshAlbumOpportunitySnapshot({
+      completeness: payload.catalogProgress.completeness,
+      ageMs,
+    }),
   };
+}
+
+export function shouldRefreshAlbumOpportunitySnapshot(input: {
+  completeness: AlbumOpportunityCatalogProgress["completeness"];
+  ageMs: number;
+}): boolean {
+  return (
+    input.completeness === "PARTIAL" ||
+    input.ageMs >= ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.refreshAfterMs
+  );
 }
 
 export function serializeAlbumOpportunitySnapshotPayload(input: {
@@ -222,6 +261,7 @@ export function serializeAlbumOpportunitySnapshotPayload(input: {
   asOf: Date;
   candidateCount: number;
   providerFailureCount: number;
+  catalogProgress: AlbumOpportunityCatalogProgress;
   ranked: AlbumOpportunityCandidate[];
 }): AlbumOpportunitySnapshotPayload {
   return {
@@ -230,6 +270,7 @@ export function serializeAlbumOpportunitySnapshotPayload(input: {
     asOf: input.asOf.toISOString(),
     candidateCount: input.candidateCount,
     providerFailureCount: input.providerFailureCount,
+    catalogProgress: { ...input.catalogProgress },
     ranked: input.ranked.map((candidate) => ({
       ...candidate,
       coverage: {
@@ -339,12 +380,19 @@ function snapshotFilePath(userId: string): string {
 function isSnapshotPayload(value: unknown): value is AlbumOpportunitySnapshotPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Partial<AlbumOpportunitySnapshotPayload>;
+  const progress = candidate.catalogProgress;
+  const validProgress =
+    Boolean(progress) &&
+    (progress?.completeness === "COMPLETE" || progress?.completeness === "PARTIAL") &&
+    (progress?.reason === null || progress?.reason === "REQUEST_BUDGET_EXHAUSTED") &&
+    (progress?.nextRequestPath === null || typeof progress?.nextRequestPath === "string");
   return (
     candidate.version === ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.version &&
     typeof candidate.generatedAt === "string" &&
     typeof candidate.asOf === "string" &&
     typeof candidate.candidateCount === "number" &&
     typeof candidate.providerFailureCount === "number" &&
+    validProgress &&
     Array.isArray(candidate.ranked)
   );
 }
