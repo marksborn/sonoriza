@@ -1,3 +1,4 @@
+import { ProbableLikeLikeButton } from "@/components/ProbableLikeLikeButton";
 import { ProbableLikePilotFeedbackControls } from "@/components/ProbableLikePilotFeedbackControls";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
@@ -28,18 +29,18 @@ export async function ProbableLikesShadowPanel({
           </span>
           <div>
             <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
-              Gate 4 · Validação piloto
+              Gate 5 · Curtir
             </p>
             <h2 className="mt-1 text-xl font-black tracking-tight text-ink-inverse">
               Talvez você queira curtir
             </h2>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-inverse">
-              O ranking continua shadow. Sua avaliação abaixo mede a qualidade da sugestão e não cria LIKE, dislike, cooldown ou alteração no Spotify.
+              O ranking continua explicável, mas agora você pode confirmar um LIKE explícito no Sonoriza. A faixa sai desta fila e passa a alimentar a afinidade da #184 e a fonte de Músicas Curtidas.
             </p>
           </div>
         </div>
-        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-accent-400/30 bg-accent-400/10 px-3 py-1.5 text-xs font-black text-accent-300">
-          Piloto
+        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-success/30 bg-success-soft/70 px-3 py-1.5 text-xs font-black text-success">
+          Curtir ativo
         </span>
       </div>
 
@@ -51,7 +52,7 @@ export async function ProbableLikesShadowPanel({
           <PilotMetric label="Não gostei" value={pilot.dislikedCount} />
           <div className="col-span-2 rounded-xl border border-success/25 bg-success-soft/60 px-3 py-2 sm:col-span-1">
             <p className="text-[10px] font-black uppercase tracking-wide text-success/80">
-              Precisão
+              Precisão piloto
             </p>
             <p className="mt-0.5 text-lg font-black text-success">
               {pilot.precisionPercent.toLocaleString("pt-BR", {
@@ -62,7 +63,7 @@ export async function ProbableLikesShadowPanel({
         </div>
       ) : (
         <div className="mt-5 rounded-2xl border border-dashed border-accent-400/30 bg-accent-400/5 px-4 py-3 text-xs leading-5 text-muted-inverse">
-          Avalie as candidatas como <strong className="text-ink-inverse">Gostei mesmo</strong>, <strong className="text-ink-inverse">Indiferente</strong> ou <strong className="text-ink-inverse">Não gostei</strong>. A precisão do piloto aparecerá aqui.
+          A avaliação do piloto continua disponível como medição separada. <strong className="text-ink-inverse">Curtir no Sonoriza</strong> é uma ação explícita e produtiva diferente de “Gostei mesmo”.
         </div>
       )}
 
@@ -119,15 +120,18 @@ export async function ProbableLikesShadowPanel({
                     <p className="mt-3 text-[11px] font-bold text-muted-inverse/80">
                       Última reprodução: {dateFormatter.format(candidate.lastPlayedAt)}
                     </p>
-                    <a
-                      href={`https://open.spotify.com/track/${encodeURIComponent(candidate.spotifyTrackId)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-3 inline-flex items-center gap-2 rounded-xl border border-success/30 bg-success-soft/70 px-3 py-2 text-xs font-black text-success transition hover:border-success/50 hover:bg-success-soft"
-                    >
-                      <UiIcon name="play" size={15} />
-                      Abrir no Spotify
-                    </a>
+                    <div className="mt-3 flex flex-wrap items-start gap-2">
+                      <a
+                        href={`https://open.spotify.com/track/${encodeURIComponent(candidate.spotifyTrackId)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 rounded-xl border border-success/30 bg-success-soft/70 px-3 py-2 text-xs font-black text-success transition hover:border-success/50 hover:bg-success-soft"
+                      >
+                        <UiIcon name="play" size={15} />
+                        Abrir no Spotify
+                      </a>
+                      <ProbableLikeLikeButton spotifyTrackId={candidate.spotifyTrackId} />
+                    </div>
                     <ProbableLikePilotFeedbackControls
                       spotifyTrackId={candidate.spotifyTrackId}
                       initialVerdict={currentFeedback?.verdict ?? null}
