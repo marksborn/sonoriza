@@ -220,12 +220,13 @@ function preferAlbumMatch(
   evidence: HistoricalSpotifyTrackEvidence,
   tracks: SpotifyCatalogTrackSummary[],
 ): SpotifyCatalogTrackSummary | null {
-  if (!evidence.albumName) return null;
+  const albumName = evidence.albumName;
+  if (!albumName) return null;
   return (
     tracks.find(
       (track) =>
         track.albumName !== null &&
-        normalizeIdentityText(track.albumName) === normalizeIdentityText(evidence.albumName),
+        normalizeIdentityText(track.albumName) === normalizeIdentityText(albumName),
     ) ?? null
   );
 }
