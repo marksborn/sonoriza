@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import { BrandLogo } from "@/components/BrandLogo";
 import { HistoryStatsPanel } from "@/components/HistoryStatsPanel";
+import { ProbableLikesShadowPanel } from "@/components/ProbableLikesShadowPanel";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { getListeningHistorySummary } from "@/services/listening-history/analytics";
@@ -15,6 +16,7 @@ import {
   type ListeningHistoryFilters,
   type ListeningHistoryPeriod,
 } from "@/services/listening-history/explorer";
+import { getProbableLikeShadow } from "@/services/listening-history/probable-like";
 import { getListeningHistoryStats } from "@/services/listening-history/stats";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -52,10 +54,11 @@ export default async function ListeningHistoryPage({
 
   const params = (await searchParams) ?? {};
   const filters = resolveListeningHistoryFilters(params);
-  const [history, summary, stats] = await Promise.all([
+  const [history, summary, stats, probableLikes] = await Promise.all([
     listListeningHistory(session.user.id, filters),
     getListeningHistorySummary(session.user.id),
     getListeningHistoryStats(session.user.id, filters),
+    getProbableLikeShadow(session.user.id),
   ]);
 
   return (
@@ -237,6 +240,8 @@ export default async function ListeningHistoryPage({
         </section>
 
         <HistoryStatsPanel stats={stats} />
+
+        <ProbableLikesShadowPanel result={probableLikes} />
 
         <section className="product-panel overflow-hidden p-5 sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
