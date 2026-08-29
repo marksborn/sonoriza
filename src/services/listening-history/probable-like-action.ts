@@ -434,7 +434,9 @@ export async function confirmProbableLike(
     trackName: resolved.trackName,
     artistName: resolved.primaryArtistName,
     identityResolution: resolved.resolution,
-    alreadyLiked: false,
+    alreadyLiked: Boolean(
+      historicalPreference?.isLiked || currentPreference?.isLiked,
+    ),
     artistAffinityUpdated,
     providerWriteAttempted: true,
     providerWriteSucceeded: true,
