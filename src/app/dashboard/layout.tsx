@@ -37,6 +37,17 @@ export default async function DashboardLayout({
           Descobrir
         </Link>
         <Link
+          href="/dashboard/historico"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-line-dark/70 bg-surface-elevated/95 px-3 py-2 text-xs font-black text-ink-inverse shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-brand-400/55 hover:bg-surface-subtle sm:gap-2 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-sm"
+        >
+          <UiIcon
+            name="history"
+            size={19}
+            className="h-[17px] w-[17px] sm:h-[19px] sm:w-[19px]"
+          />
+          Histórico
+        </Link>
+        <Link
           href="/dashboard/configuracao"
           className="inline-flex items-center gap-1.5 rounded-xl border border-line-dark/70 bg-surface-elevated/95 px-3 py-2 text-xs font-black text-ink-inverse shadow-product-card backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-brand-400/55 hover:bg-surface-subtle sm:gap-2 sm:rounded-2xl sm:px-4 sm:py-3 sm:text-sm"
         >
