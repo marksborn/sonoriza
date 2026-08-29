@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { UiIcon } from "@/components/UiIcon";
@@ -46,6 +47,11 @@ export function PodcastPolicyClient({
   updateShowPolicyAction: ServerFormAction;
   resetShowProgressAction: ServerFormAction;
 }) {
+  const directShow = initialOpenId
+    ? shows.find((show) => show.id === initialOpenId) ?? null
+    : null;
+  const directMode = directShow !== null;
+
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(initialOpenId);
   const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
@@ -58,6 +64,41 @@ export function PodcastPolicyClient({
         : shows,
     [normalizedQuery, shows],
   );
+
+  if (directShow) {
+    return (
+      <>
+        <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-accent/25 bg-accent/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-accent-400">
+              Editando agora
+            </p>
+            <p className="mt-1 truncate text-sm font-black text-ink-inverse">
+              {directShow.name}
+            </p>
+          </div>
+          <Link
+            href="/dashboard/configuracao/fontes/podcasts"
+            className={secondaryButtonClass}
+          >
+            <UiIcon name="list" size={16} />
+            Ver todos os programas
+          </Link>
+        </div>
+
+        <div className="mt-4">
+          <PodcastPolicyCard
+            show={directShow}
+            open
+            onToggle={() => undefined}
+            directMode
+            updateShowPolicyAction={updateShowPolicyAction}
+            resetShowProgressAction={resetShowProgressAction}
+          />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -96,6 +137,7 @@ export function PodcastPolicyClient({
               show={show}
               open={openId === show.id}
               onToggle={() => setOpenId(openId === show.id ? null : show.id)}
+              directMode={false}
               updateShowPolicyAction={updateShowPolicyAction}
               resetShowProgressAction={resetShowProgressAction}
             />
@@ -110,12 +152,14 @@ function PodcastPolicyCard({
   show,
   open,
   onToggle,
+  directMode,
   updateShowPolicyAction,
   resetShowProgressAction,
 }: {
   show: PodcastPolicyClientShow;
   open: boolean;
   onToggle: () => void;
+  directMode: boolean;
   updateShowPolicyAction: ServerFormAction;
   resetShowProgressAction: ServerFormAction;
 }) {
@@ -159,16 +203,18 @@ function PodcastPolicyCard({
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-expanded={open}
-            className={secondaryButtonClass}
-          >
-            <UiIcon name={open ? "close" : "settings"} size={16} />
-            <span className="hidden sm:inline">{open ? "Fechar" : "Editar política"}</span>
-            <span className="sm:hidden">{open ? "Fechar" : "Editar"}</span>
-          </button>
+          {!directMode && (
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={open}
+              className={secondaryButtonClass}
+            >
+              <UiIcon name={open ? "close" : "settings"} size={16} />
+              <span className="hidden sm:inline">{open ? "Fechar" : "Editar política"}</span>
+              <span className="sm:hidden">{open ? "Fechar" : "Editar"}</span>
+            </button>
+          )}
         </div>
       </div>
 
