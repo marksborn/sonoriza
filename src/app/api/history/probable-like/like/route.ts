@@ -6,6 +6,7 @@ import {
   ProbableLikeCandidateNotFoundError,
   confirmProbableLike,
 } from "@/services/listening-history/probable-like-action";
+import { ProbableLikeSpotifyIdentityNotResolvedError } from "@/services/listening-history/probable-like-spotify-identity";
 import { SpotifyBackoffActiveError } from "@/services/spotify/backoff";
 import { isSpotifyApiError } from "@/services/spotify/errors";
 import { SpotifyLibraryModifyScopeRequiredError } from "@/services/spotify/library";
@@ -43,6 +44,15 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof ProbableLikeCandidateNotFoundError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof ProbableLikeSpotifyIdentityNotResolvedError) {
+      return NextResponse.json(
+        {
+          code: "SPOTIFY_TRACK_IDENTITY_NOT_RESOLVED",
+          error: error.message,
+        },
+        { status: 409 },
+      );
     }
     if (error instanceof SpotifyLibraryModifyScopeRequiredError) {
       return NextResponse.json(
