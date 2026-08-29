@@ -1,4 +1,4 @@
-name: HISTORY-02 validation
+name: HISTORY validation
 
 on:
   push:
@@ -6,6 +6,9 @@ on:
       - "agent/history-02-extended-dry-run"
     paths:
       - "src/services/spotify-extended-history/**"
+      - "src/services/listening-history/**"
+      - "src/app/dashboard/historico/**"
+      - "src/app/dashboard/layout.tsx"
       - "src/lib/prisma.ts"
       - "scripts/import-spotify-extended-history.ts"
       - "prisma/migrations/**"
@@ -15,6 +18,9 @@ on:
   pull_request:
     paths:
       - "src/services/spotify-extended-history/**"
+      - "src/services/listening-history/**"
+      - "src/app/dashboard/historico/**"
+      - "src/app/dashboard/layout.tsx"
       - "src/lib/prisma.ts"
       - "scripts/import-spotify-extended-history.ts"
       - "prisma/migrations/**"
