@@ -4,8 +4,41 @@ import test from "node:test";
 import { prisma } from "@/lib/prisma";
 import { confirmProbableLike } from "./probable-like-action";
 import { getProbableLikeShadow } from "./probable-like";
+import type { ResolvedProbableLikeSpotifyIdentity } from "./probable-like-spotify-identity";
 
 const integrationTest = process.env.DATABASE_URL ? test : test.skip;
+
+function resolvedIdentity(input: {
+  historicalSpotifyTrackId: string;
+  spotifyTrackId?: string;
+  trackName: string;
+  artistName: string;
+  artistId: string;
+  albumId?: string | null;
+  albumName?: string | null;
+  isrc?: string | null;
+}): ResolvedProbableLikeSpotifyIdentity {
+  const spotifyTrackId = input.spotifyTrackId ?? input.historicalSpotifyTrackId;
+  return {
+    historicalSpotifyTrackId: input.historicalSpotifyTrackId,
+    spotifyTrackId,
+    spotifyUri: `spotify:track:${spotifyTrackId}`,
+    spotifyUrl: `https://open.spotify.com/track/${spotifyTrackId}`,
+    trackName: input.trackName,
+    primaryArtistId: input.artistId,
+    primaryArtistName: input.artistName,
+    albumId: input.albumId ?? null,
+    albumName: input.albumName ?? null,
+    durationMs: 210_000,
+    isrc: input.isrc ?? null,
+    resolution:
+      spotifyTrackId === input.historicalSpotifyTrackId
+        ? "HISTORICAL_ID_STILL_CURRENT"
+        : input.isrc
+          ? "ISRC_MATCH"
+          : "TRACK_ARTIST_ALBUM_MATCH",
+  };
+}
 
 integrationTest(
   "Gate 5 saves to Spotify first, confirms one canonical LIKE and propagates affinity idempotently",
@@ -27,6 +60,15 @@ integrationTest(
       );
       providerWrites.push(input.spotifyTrackId);
     };
+    const resolveSpotifyIdentity = async () =>
+      resolvedIdentity({
+        historicalSpotifyTrackId: spotifyTrackId,
+        trackName: "Gate 5 Candidate",
+        artistName: "Gate 5 Artist",
+        artistId: spotifyArtistId,
+        albumId: `gate5-album-${suffix}`,
+        albumName: "Gate 5 Album",
+      });
 
     t.after(async () => {
       await prisma.historyLikeAction.deleteMany({ where: { userId: user.id } });
@@ -89,10 +131,12 @@ integrationTest(
 
     const first = await confirmProbableLike(
       { userId: user.id, spotifyTrackId },
-      { saveTrackToSpotify },
+      { saveTrackToSpotify, resolveSpotifyIdentity },
     );
     assert.deepEqual(providerWrites, [spotifyTrackId]);
+    assert.equal(first.historicalSpotifyTrackId, spotifyTrackId);
     assert.equal(first.spotifyTrackId, spotifyTrackId);
+    assert.equal(first.identityResolution, "HISTORICAL_ID_STILL_CURRENT");
     assert.equal(first.alreadyLiked, false);
     assert.equal(first.artistAffinityUpdated, true);
     assert.equal(first.providerWriteAttempted, true);
@@ -150,7 +194,7 @@ integrationTest(
     // provider write, preference, affinity evidence or product provenance.
     const retry = await confirmProbableLike(
       { userId: user.id, spotifyTrackId },
-      { saveTrackToSpotify },
+      { saveTrackToSpotify, resolveSpotifyIdentity },
     );
     assert.equal(retry.alreadyLiked, true);
     assert.deepEqual(providerWrites, [spotifyTrackId]);
@@ -188,6 +232,7 @@ integrationTest(
       data: { email: `probable-like-provider-failure-${suffix}@example.test` },
     });
     const spotifyTrackId = `provider-failure-${suffix}`;
+    const spotifyArtistId = `provider-failure-artist-${suffix}`;
 
     t.after(async () => {
       await prisma.historyLikeAction.deleteMany({ where: { userId: user.id } });
@@ -205,7 +250,7 @@ integrationTest(
         spotifyUri: `spotify:track:${spotifyTrackId}`,
         trackName: "Provider Failure Candidate",
         artistName: "Provider Failure Artist",
-        primaryArtistId: `provider-failure-artist-${suffix}`,
+        primaryArtistId: spotifyArtistId,
         playedAt: new Date(`2026-08-${day}T10:00:00.000Z`),
         source: "SPOTIFY_EXTENDED_HISTORY" as const,
         sourceEventKey: `provider-failure-${index}-${suffix}`,
@@ -226,6 +271,13 @@ integrationTest(
       confirmProbableLike(
         { userId: user.id, spotifyTrackId },
         {
+          resolveSpotifyIdentity: async () =>
+            resolvedIdentity({
+              historicalSpotifyTrackId: spotifyTrackId,
+              trackName: "Provider Failure Candidate",
+              artistName: "Provider Failure Artist",
+              artistId: spotifyArtistId,
+            }),
           saveTrackToSpotify: async () => {
             throw new Error("provider unavailable");
           },
@@ -249,5 +301,133 @@ integrationTest(
 
     const after = await getProbableLikeShadow(user.id, { limit: 25 });
     assert.ok(after.candidates.some((item) => item.spotifyTrackId === spotifyTrackId));
+  },
+);
+
+integrationTest(
+  "Gate 5 relinks an obsolete historical Spotify id without mutating listening history",
+  async (t) => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const user = await prisma.user.create({
+      data: { email: `probable-like-relinked-${suffix}@example.test` },
+    });
+    const historicalSpotifyTrackId = `historical-track-${suffix}`;
+    const currentSpotifyTrackId = `current-track-${suffix}`;
+    const currentSpotifyArtistId = `soilwork-current-${suffix}`;
+    const providerWrites: string[] = [];
+
+    t.after(async () => {
+      await prisma.historyLikeAction.deleteMany({ where: { userId: user.id } });
+      await prisma.artistAffinityEvidence.deleteMany({ where: { userId: user.id } });
+      await prisma.artistAffinityState.deleteMany({ where: { userId: user.id } });
+      await prisma.likedTrackPreference.deleteMany({ where: { userId: user.id } });
+      await prisma.trackListeningEvent.deleteMany({ where: { userId: user.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+    });
+
+    await prisma.trackListeningEvent.createMany({
+      data: [20, 22, 24].map((day, index) => ({
+        userId: user.id,
+        spotifyTrackId: historicalSpotifyTrackId,
+        spotifyUri: `spotify:track:${historicalSpotifyTrackId}`,
+        trackName: "Light the Torch",
+        artistName: "Soilwork",
+        primaryArtistId: `soilwork-historical-${suffix}`,
+        albumId: `figure-number-five-old-${suffix}`,
+        albumName: "Figure Number Five",
+        isrc: "SEVAA0300104",
+        playedAt: new Date(`2026-08-${day}T10:00:00.000Z`),
+        source: "SPOTIFY_EXTENDED_HISTORY" as const,
+        sourceEventKey: `relinked-${index}-${suffix}`,
+        metadata: {
+          spotifyExtendedHistory: {
+            msPlayed: 210_000,
+            reasonEnd: "trackdone",
+            explicitSkip: false,
+          },
+        },
+      })),
+    });
+
+    const before = await getProbableLikeShadow(user.id, { limit: 25 });
+    assert.ok(
+      before.candidates.some(
+        (item) => item.spotifyTrackId === historicalSpotifyTrackId,
+      ),
+    );
+
+    const result = await confirmProbableLike(
+      { userId: user.id, spotifyTrackId: historicalSpotifyTrackId },
+      {
+        resolveSpotifyIdentity: async () =>
+          resolvedIdentity({
+            historicalSpotifyTrackId,
+            spotifyTrackId: currentSpotifyTrackId,
+            trackName: "Light The Torch",
+            artistName: "Soilwork",
+            artistId: currentSpotifyArtistId,
+            albumId: `figure-number-five-current-${suffix}`,
+            albumName: "Figure Number Five",
+            isrc: "SEVAA0300104",
+          }),
+        saveTrackToSpotify: async ({ spotifyTrackId }) => {
+          providerWrites.push(spotifyTrackId);
+        },
+      },
+    );
+
+    assert.deepEqual(providerWrites, [currentSpotifyTrackId]);
+    assert.equal(result.historicalSpotifyTrackId, historicalSpotifyTrackId);
+    assert.equal(result.spotifyTrackId, currentSpotifyTrackId);
+    assert.equal(result.identityResolution, "ISRC_MATCH");
+
+    const currentPreference = await prisma.likedTrackPreference.findUniqueOrThrow({
+      where: {
+        userId_spotifyTrackId: {
+          userId: user.id,
+          spotifyTrackId: currentSpotifyTrackId,
+        },
+      },
+    });
+    assert.equal(currentPreference.isLiked, true);
+    assert.equal(currentPreference.trackName, "Light The Torch");
+    assert.equal(currentPreference.primaryArtistId, currentSpotifyArtistId);
+
+    assert.equal(
+      await prisma.likedTrackPreference.count({
+        where: {
+          userId: user.id,
+          spotifyTrackId: historicalSpotifyTrackId,
+          isLiked: true,
+        },
+      }),
+      0,
+    );
+    assert.equal(
+      await prisma.trackListeningEvent.count({
+        where: { userId: user.id, spotifyTrackId: historicalSpotifyTrackId },
+      }),
+      3,
+    );
+
+    const action = await prisma.historyLikeAction.findUniqueOrThrow({
+      where: {
+        userId_spotifyTrackId_source: {
+          userId: user.id,
+          spotifyTrackId: historicalSpotifyTrackId,
+          source: "PROBABLE_LIKE",
+        },
+      },
+    });
+    assert.equal(action.providerWriteAttempted, true);
+    assert.equal(action.primaryArtistId, currentSpotifyArtistId);
+
+    const after = await getProbableLikeShadow(user.id, { limit: 25 });
+    assert.equal(
+      after.candidates.some(
+        (item) => item.spotifyTrackId === historicalSpotifyTrackId,
+      ),
+      false,
+    );
   },
 );
