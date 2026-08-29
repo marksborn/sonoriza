@@ -2,8 +2,12 @@ import type { ListeningEventSource, Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
+import {
+  buildCanonicalListeningEventWhere,
+  type LastFmHistoryWindow,
+} from "./canonical";
+
 export const LISTENING_HISTORY_PAGE_SIZE = 50;
-export const LISTENING_HISTORY_EPOCH = new Date(0);
 
 export const LISTENING_HISTORY_SOURCES = [
   "SPOTIFY_RECENTLY_PLAYED",
@@ -126,12 +130,15 @@ export function resolveListeningHistoryFilters(
 export function buildListeningHistoryWhere(
   userId: string,
   filters: Pick<ListeningHistoryFilters, "from" | "toExclusive" | "query" | "source">,
+  lastFmWindow: LastFmHistoryWindow = null,
 ): Prisma.TrackListeningEventWhereInput {
-  const playedAt: Prisma.DateTimeFilter = {
-    gt: LISTENING_HISTORY_EPOCH,
-    ...(filters.from ? { gte: filters.from } : {}),
-    ...(filters.toExclusive ? { lt: filters.toExclusive } : {}),
-  };
+  const playedAt =
+    filters.from || filters.toExclusive
+      ? {
+          ...(filters.from ? { gte: filters.from } : {}),
+          ...(filters.toExclusive ? { lt: filters.toExclusive } : {}),
+        }
+      : undefined;
 
   const search = filters.query
     ? {
@@ -143,19 +150,31 @@ export function buildListeningHistoryWhere(
       }
     : {};
 
-  return {
+  return buildCanonicalListeningEventWhere({
     userId,
-    playedAt,
-    ...(filters.source ? { source: filters.source } : {}),
-    ...search,
-  };
+    lastFmWindow,
+    extra: {
+      ...(playedAt ? { playedAt } : {}),
+      ...(filters.source ? { source: filters.source } : {}),
+      ...search,
+    },
+  });
 }
 
 export async function listListeningHistory(
   userId: string,
   filters: ListeningHistoryFilters,
 ): Promise<ListeningHistoryPage> {
-  const where = buildListeningHistoryWhere(userId, filters);
+  const backfill = await prisma.lastFmBackfillRun.findFirst({
+    where: { userId, status: "SUCCESS" },
+    orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
+    select: { from: true, to: true },
+  });
+  const where = buildListeningHistoryWhere(
+    userId,
+    filters,
+    backfill ? { from: backfill.from, to: backfill.to } : null,
+  );
   const pageSize = LISTENING_HISTORY_PAGE_SIZE;
   const skip = (filters.page - 1) * pageSize;
 
