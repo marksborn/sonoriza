@@ -58,10 +58,24 @@ integrationTest(
     });
 
     const results = await Promise.all(
-      trackIds.map((spotifyTrackId) =>
+      trackIds.map((spotifyTrackId, trackIndex) =>
         confirmProbableLike(
           { userId: user.id, spotifyTrackId },
           {
+            resolveSpotifyIdentity: async () => ({
+              historicalSpotifyTrackId: spotifyTrackId,
+              spotifyTrackId,
+              spotifyUri: `spotify:track:${spotifyTrackId}`,
+              spotifyUrl: `https://open.spotify.com/track/${spotifyTrackId}`,
+              trackName: `Concurrent Candidate ${trackIndex + 1}`,
+              primaryArtistId: spotifyArtistId,
+              primaryArtistName: "Concurrent Artist",
+              albumId: `concurrent-album-${trackIndex}-${suffix}`,
+              albumName: `Concurrent Album ${trackIndex + 1}`,
+              durationMs: 205_000,
+              isrc: null,
+              resolution: "HISTORICAL_ID_STILL_CURRENT" as const,
+            }),
             saveTrackToSpotify: async ({ spotifyTrackId: providerTrackId }) => {
               providerWrites.push(providerTrackId);
             },
