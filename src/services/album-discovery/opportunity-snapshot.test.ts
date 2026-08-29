@@ -5,13 +5,17 @@ import { SpotifyCatalogRequestBudgetExceededError } from "@/services/spotify/cat
 import { SpotifyApiError } from "@/services/spotify/errors";
 
 import type { AlbumOpportunityCandidate } from "./opportunity";
-import { isAlbumOpportunityTerminalProviderError } from "./opportunity-report";
+import {
+  isAlbumOpportunityResumableBudgetStop,
+  isAlbumOpportunityTerminalProviderError,
+} from "./opportunity-report";
 import {
   ALBUM_OPPORTUNITY_SNAPSHOT_POLICY,
   assertAlbumOpportunitySnapshotRefreshUsable,
   hydrateAlbumOpportunitySnapshotCandidates,
   selectSnapshotCandidates,
   serializeAlbumOpportunitySnapshotPayload,
+  shouldRefreshAlbumOpportunitySnapshot,
 } from "./opportunity-snapshot";
 
 function candidate(
@@ -89,11 +93,17 @@ test("snapshot serialization preserves ALBUM-01 candidate facts and restores Dat
     asOf: new Date("2026-08-24T00:59:00.000Z"),
     candidateCount: 9,
     providerFailureCount: 2,
+    catalogProgress: {
+      completeness: "COMPLETE",
+      reason: null,
+      nextRequestPath: null,
+    },
     ranked: [original],
   });
 
   assert.equal(payload.version, ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.version);
   assert.equal(payload.generatedAt, "2026-08-24T01:00:00.000Z");
+  assert.equal(payload.catalogProgress.completeness, "COMPLETE");
   assert.equal(payload.ranked[0]?.coverage.firstObservedAt, "2025-01-02T03:04:05.000Z");
   assert.equal(payload.ranked[0]?.coverage.lastObservedAt, "2026-08-20T12:34:56.000Z");
 
@@ -108,6 +118,27 @@ test("snapshot serialization preserves ALBUM-01 candidate facts and restores Dat
     hydrated[0]?.coverage.lastObservedAt?.toISOString(),
     original.coverage.lastObservedAt?.toISOString(),
   );
+});
+
+test("snapshot serialization preserves explicit partial catalog progress", () => {
+  const payload = serializeAlbumOpportunitySnapshotPayload({
+    generatedAt: new Date("2026-08-29T09:00:00.000Z"),
+    asOf: new Date("2026-08-29T09:00:00.000Z"),
+    candidateCount: 4,
+    providerFailureCount: 0,
+    catalogProgress: {
+      completeness: "PARTIAL",
+      reason: "REQUEST_BUDGET_EXHAUSTED",
+      nextRequestPath: "/albums/next/tracks?limit=50",
+    },
+    ranked: [candidate("album-1", 90)],
+  });
+
+  assert.deepEqual(payload.catalogProgress, {
+    completeness: "PARTIAL",
+    reason: "REQUEST_BUDGET_EXHAUSTED",
+    nextRequestPath: "/albums/next/tracks?limit=50",
+  });
 });
 
 test("snapshot UI selection reapplies current QUEUED memory and backfills the top list", () => {
@@ -138,7 +169,7 @@ test("snapshot UI selection never mutates candidate ranking state", () => {
   assert.deepEqual(rows, before);
 });
 
-test("snapshot refresh rejects provider outage disguised as an empty recommendation set", () => {
+test("snapshot refresh rejects provider outage or empty partial ranking", () => {
   assert.throws(
     () =>
       assertAlbumOpportunitySnapshotRefreshUsable({
@@ -158,10 +189,21 @@ test("snapshot refresh rejects provider outage disguised as an empty recommendat
     },
   );
 
+  assert.throws(
+    () =>
+      assertAlbumOpportunitySnapshotRefreshUsable({
+        candidateCount: 0,
+        providerFailureCount: 0,
+        catalogCompleteness: "PARTIAL",
+      }),
+    /partial snapshot refresh rejected/,
+  );
+
   assert.doesNotThrow(() =>
     assertAlbumOpportunitySnapshotRefreshUsable({
       candidateCount: 0,
       providerFailureCount: 0,
+      catalogCompleteness: "COMPLETE",
     }),
   );
 
@@ -169,11 +211,45 @@ test("snapshot refresh rejects provider outage disguised as an empty recommendat
     assertAlbumOpportunitySnapshotRefreshUsable({
       candidateCount: 3,
       providerFailureCount: 1,
+      catalogCompleteness: "PARTIAL",
     }),
   );
 });
 
-test("album opportunity report treats provider quota and local request budget as terminal", () => {
+test("partial snapshots always keep converging while fresh complete snapshots can wait", () => {
+  assert.equal(
+    shouldRefreshAlbumOpportunitySnapshot({ completeness: "PARTIAL", ageMs: 60_000 }),
+    true,
+  );
+  assert.equal(
+    shouldRefreshAlbumOpportunitySnapshot({
+      completeness: "COMPLETE",
+      ageMs: ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.refreshAfterMs - 1,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRefreshAlbumOpportunitySnapshot({
+      completeness: "COMPLETE",
+      ageMs: ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.refreshAfterMs,
+    }),
+    true,
+  );
+});
+
+test("local request budget becomes resumable only after a real candidate exists", () => {
+  const budgetStop = new SpotifyCatalogRequestBudgetExceededError(
+    4,
+    4,
+    "/albums/next/tracks?limit=50",
+  );
+
+  assert.equal(isAlbumOpportunityResumableBudgetStop(budgetStop, 1), true);
+  assert.equal(isAlbumOpportunityResumableBudgetStop(budgetStop, 0), false);
+  assert.equal(isAlbumOpportunityResumableBudgetStop(spotifyError("QUOTA_EXCEEDED"), 10), false);
+});
+
+test("album opportunity report treats provider quota and local request budget as terminal by default", () => {
   assert.equal(
     isAlbumOpportunityTerminalProviderError(spotifyError("QUOTA_EXCEEDED")),
     true,
