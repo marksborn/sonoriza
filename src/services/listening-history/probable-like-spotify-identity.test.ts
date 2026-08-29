@@ -9,6 +9,8 @@ import {
   type HistoricalSpotifyTrackEvidence,
 } from "./probable-like-spotify-identity";
 
+const integrationTest = process.env.DATABASE_URL ? test : test.skip;
+
 function evidence(
   overrides: Partial<HistoricalSpotifyTrackEvidence> = {},
 ): HistoricalSpotifyTrackEvidence {
@@ -112,54 +114,57 @@ test("ISRC resolves collaborations even when history stores joined artist names"
   assert.equal(result?.resolution, "ISRC_MATCH");
 });
 
-test("resolver retries a joined collaboration using the first artist as search hint", async () => {
-  const queriedArtists: string[] = [];
-  const result = await resolveProbableLikeSpotifyIdentity(
-    {
-      userId: "test-user",
-      historicalSpotifyTrackId: "old-collaboration",
-      fallbackEvidence: {
-        trackName: "Collaboration Song",
-        artistName: "Artist A, Artist B",
-        primaryArtistId: "artist-a",
-        albumName: "Together",
-        isrc: "BRABC2600001",
+integrationTest(
+  "resolver retries a joined collaboration using the first artist as search hint",
+  async () => {
+    const queriedArtists: string[] = [];
+    const result = await resolveProbableLikeSpotifyIdentity(
+      {
+        userId: "test-user",
+        historicalSpotifyTrackId: "old-collaboration",
+        fallbackEvidence: {
+          trackName: "Collaboration Song",
+          artistName: "Artist A, Artist B",
+          primaryArtistId: "artist-a",
+          albumName: "Together",
+          isrc: "BRABC2600001",
+        },
       },
-    },
-    {
-      searchTracks: async ({ artistName }) => {
-        queriedArtists.push(artistName);
-        if (artistName === "Artist A, Artist B") return [];
-        return [
-          track({
-            id: "current-collaboration",
-            name: "Collaboration Song",
-            albumName: "Together",
-            isrc: "BR-ABC-26-00001",
-            artists: [
-              {
-                id: "artist-a",
-                name: "Artist A",
-                uri: "spotify:artist:artist-a",
-                spotifyUrl: null,
-              },
-              {
-                id: "artist-b",
-                name: "Artist B",
-                uri: "spotify:artist:artist-b",
-                spotifyUrl: null,
-              },
-            ],
-          }),
-        ];
+      {
+        searchTracks: async ({ artistName }) => {
+          queriedArtists.push(artistName);
+          if (artistName === "Artist A, Artist B") return [];
+          return [
+            track({
+              id: "current-collaboration",
+              name: "Collaboration Song",
+              albumName: "Together",
+              isrc: "BR-ABC-26-00001",
+              artists: [
+                {
+                  id: "artist-a",
+                  name: "Artist A",
+                  uri: "spotify:artist:artist-a",
+                  spotifyUrl: null,
+                },
+                {
+                  id: "artist-b",
+                  name: "Artist B",
+                  uri: "spotify:artist:artist-b",
+                  spotifyUrl: null,
+                },
+              ],
+            }),
+          ];
+        },
       },
-    },
-  );
+    );
 
-  assert.deepEqual(queriedArtists, ["Artist A, Artist B", "Artist A"]);
-  assert.equal(result.spotifyTrackId, "current-collaboration");
-  assert.equal(result.resolution, "ISRC_MATCH");
-});
+    assert.deepEqual(queriedArtists, ["Artist A, Artist B", "Artist A"]);
+    assert.equal(result.spotifyTrackId, "current-collaboration");
+    assert.equal(result.resolution, "ISRC_MATCH");
+  },
+);
 
 test("uses exact title artist and album when historical ISRC is unavailable", () => {
   const result = selectStrongSpotifyTrackMatch(evidence({ isrc: null }), [
