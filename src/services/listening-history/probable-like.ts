@@ -10,6 +10,7 @@ import {
   getCanonicalLastFmHistoryWindow,
   type LastFmHistoryWindow,
 } from "./canonical";
+import { probableLikeTrackIdentityKey } from "./probable-like-spotify-identity";
 
 export type ProbableLikeCandidate = {
   spotifyTrackId: string;
@@ -108,7 +109,11 @@ export async function getProbableLikeShadow(
       loadProbableLikeAggregates(userId, lastFmWindow),
       prisma.likedTrackPreference.findMany({
         where: { userId, isLiked: true },
-        select: { spotifyTrackId: true },
+        select: {
+          spotifyTrackId: true,
+          trackName: true,
+          primaryArtistName: true,
+        },
       }),
       prisma.musicPreferenceSignal.groupBy({
         by: ["spotifyTrackId"],
@@ -118,9 +123,19 @@ export async function getProbableLikeShadow(
       loadRecentInferredCompletionCounts(userId, now),
     ]);
 
+  const likedTrackIdentityKeys = new Set<string>();
+  for (const row of likedRows) {
+    const key = probableLikeTrackIdentityKey({
+      trackName: row.trackName,
+      artistName: row.primaryArtistName,
+    });
+    if (key) likedTrackIdentityKeys.add(key);
+  }
+
   return rankProbableLikeAggregates({
     aggregates,
     likedTrackIds: new Set(likedRows.map((row) => row.spotifyTrackId)),
+    likedTrackIdentityKeys,
     inferredSkipCounts: new Map(
       skipRows.map((row) => [row.spotifyTrackId, row._count._all]),
     ),
@@ -133,6 +148,7 @@ export async function getProbableLikeShadow(
 export function rankProbableLikeAggregates(input: {
   aggregates: ProbableLikeAggregate[];
   likedTrackIds: ReadonlySet<string>;
+  likedTrackIdentityKeys?: ReadonlySet<string>;
   inferredSkipCounts?: ReadonlyMap<string, number>;
   inferredCompleteCounts?: ReadonlyMap<string, number>;
   now?: Date;
@@ -140,6 +156,7 @@ export function rankProbableLikeAggregates(input: {
 }): ProbableLikeShadowResult {
   const now = input.now ?? new Date();
   const limit = clamp(Math.trunc(input.limit ?? DEFAULT_LIMIT), 1, 25);
+  const likedTrackIdentityKeys = input.likedTrackIdentityKeys ?? new Set<string>();
   const inferredSkips = input.inferredSkipCounts ?? new Map<string, number>();
   const inferredCompletes =
     input.inferredCompleteCounts ?? new Map<string, number>();
@@ -150,7 +167,11 @@ export function rankProbableLikeAggregates(input: {
   const candidates: ProbableLikeCandidate[] = [];
 
   for (const aggregate of input.aggregates) {
-    if (input.likedTrackIds.has(aggregate.spotifyTrackId)) {
+    const aggregateIdentityKey = probableLikeTrackIdentityKey(aggregate);
+    if (
+      input.likedTrackIds.has(aggregate.spotifyTrackId) ||
+      (aggregateIdentityKey !== null && likedTrackIdentityKeys.has(aggregateIdentityKey))
+    ) {
       excludedLikedCount += 1;
       continue;
     }
