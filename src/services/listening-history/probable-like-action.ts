@@ -8,11 +8,17 @@ import {
 import { prisma } from "@/lib/prisma";
 import { saveSpotifyTrackToLibrary } from "@/services/spotify/library";
 import { getProbableLikeShadow } from "./probable-like";
+import {
+  resolveProbableLikeSpotifyIdentity,
+  type ResolvedProbableLikeSpotifyIdentity,
+} from "./probable-like-spotify-identity";
 
 export type ProbableLikeConfirmationResult = {
+  historicalSpotifyTrackId: string;
   spotifyTrackId: string;
   trackName: string;
   artistName: string;
+  identityResolution: ResolvedProbableLikeSpotifyIdentity["resolution"] | "UNCHANGED_ALREADY_LIKED";
   alreadyLiked: boolean;
   artistAffinityUpdated: boolean;
   providerWriteAttempted: boolean;
@@ -25,37 +31,45 @@ type SaveTrackToSpotify = (input: {
   spotifyTrackId: string;
 }) => Promise<void>;
 
+type ResolveSpotifyIdentity = (input: {
+  userId: string;
+  historicalSpotifyTrackId: string;
+}) => Promise<ResolvedProbableLikeSpotifyIdentity>;
+
 /**
  * HISTORY-04 Gate 5 — explicit one-track LIKE from the History surface.
  *
- * Product success means the track is saved to Spotify's Music Library and then
- * materialized in Sonoriza's canonical LikedTrackPreference/artist-affinity
- * state. Provider write intentionally happens before the local transaction: if
- * Spotify rejects the action, the candidate remains visible and can be retried.
- * If the provider succeeds but the local transaction fails, the next LIKED-01
- * sync repairs the local canonical state from Spotify.
+ * Historical listening events remain immutable evidence. Before opening or
+ * liking, the current Spotify catalog identity is resolved from strong local
+ * evidence (ISRC when available, otherwise exact track/artist/album matching).
+ * Product success means the current Spotify track is saved first and only then
+ * materialized in Sonoriza's canonical liked-track/artist-affinity state.
  */
 export async function confirmProbableLike(
   input: {
     userId: string;
     spotifyTrackId: string;
   },
-  dependencies: { saveTrackToSpotify?: SaveTrackToSpotify } = {},
+  dependencies: {
+    saveTrackToSpotify?: SaveTrackToSpotify;
+    resolveSpotifyIdentity?: ResolveSpotifyIdentity;
+  } = {},
 ): Promise<ProbableLikeConfirmationResult> {
   const saveTrackToSpotify =
     dependencies.saveTrackToSpotify ?? saveSpotifyTrackToLibrary;
+  const resolveSpotifyIdentity =
+    dependencies.resolveSpotifyIdentity ?? resolveProbableLikeSpotifyIdentity;
 
-  const existingPreference = await prisma.likedTrackPreference.findUnique({
-    where: {
-      userId_spotifyTrackId: {
-        userId: input.userId,
-        spotifyTrackId: input.spotifyTrackId,
+  const [historicalPreference, historyAction] = await Promise.all([
+    prisma.likedTrackPreference.findUnique({
+      where: {
+        userId_spotifyTrackId: {
+          userId: input.userId,
+          spotifyTrackId: input.spotifyTrackId,
+        },
       },
-    },
-  });
-
-  if (existingPreference?.isLiked) {
-    const historyAction = await prisma.historyLikeAction.findUnique({
+    }),
+    prisma.historyLikeAction.findUnique({
       where: {
         userId_spotifyTrackId_source: {
           userId: input.userId,
@@ -63,47 +77,24 @@ export async function confirmProbableLike(
           source: HistoryLikeActionSource.PROBABLE_LIKE,
         },
       },
-      select: { id: true, providerWriteAttempted: true },
-    });
+    }),
+  ]);
 
-    // Gate 5 originally allowed a Sonoriza-only LIKE. If such a legacy action
-    // reaches this endpoint before provider reconciliation demotes it, finish
-    // the user's original explicit intent by saving it to Spotify first. A
-    // normal Spotify-originated liked track has no pending History action and
-    // can return immediately without a redundant provider write.
-    if (historyAction && !historyAction.providerWriteAttempted) {
-      await saveTrackToSpotify({
-        userId: input.userId,
-        spotifyTrackId: input.spotifyTrackId,
-      });
-      const now = new Date();
-      await prisma.historyLikeAction.update({
-        where: { id: historyAction.id },
-        data: {
-          providerWriteAttempted: true,
-          lastConfirmedAt: now,
-          confirmCount: { increment: 1 },
-        },
-      });
-
-      return {
-        spotifyTrackId: existingPreference.spotifyTrackId,
-        trackName: existingPreference.trackName ?? "Faixa curtida",
-        artistName: existingPreference.primaryArtistName ?? "Artista",
-        alreadyLiked: true,
-        artistAffinityUpdated: Boolean(existingPreference.primaryArtistId),
-        providerWriteAttempted: true,
-        providerWriteSucceeded: true,
-        providerWriteReason: "SAVED_TO_SPOTIFY_LIBRARY",
-      };
-    }
-
+  // A provider-originated current ID needs no catalog lookup or redundant PUT.
+  // A legacy Gate 5 action with providerWriteAttempted=false is deliberately
+  // not returned here: it still needs to be resolved/backfilled to Spotify.
+  if (
+    historicalPreference?.isLiked &&
+    (!historyAction || historyAction.providerWriteAttempted)
+  ) {
     return {
-      spotifyTrackId: existingPreference.spotifyTrackId,
-      trackName: existingPreference.trackName ?? "Faixa curtida",
-      artistName: existingPreference.primaryArtistName ?? "Artista",
+      historicalSpotifyTrackId: input.spotifyTrackId,
+      spotifyTrackId: historicalPreference.spotifyTrackId,
+      trackName: historicalPreference.trackName ?? "Faixa curtida",
+      artistName: historicalPreference.primaryArtistName ?? "Artista",
+      identityResolution: "UNCHANGED_ALREADY_LIKED",
       alreadyLiked: true,
-      artistAffinityUpdated: Boolean(existingPreference.primaryArtistId),
+      artistAffinityUpdated: Boolean(historicalPreference.primaryArtistId),
       providerWriteAttempted: false,
       providerWriteSucceeded: true,
       providerWriteReason: "ALREADY_LIKED",
@@ -114,91 +105,124 @@ export async function confirmProbableLike(
   const candidate = ranking.candidates.find(
     (item) => item.spotifyTrackId === input.spotifyTrackId,
   );
-  if (!candidate) throw new ProbableLikeCandidateNotFoundError();
+  const pendingLegacyConfirmation = Boolean(
+    historicalPreference?.isLiked &&
+      historyAction &&
+      !historyAction.providerWriteAttempted,
+  );
 
-  const [eventWithArtist, latestEvent] = await Promise.all([
-    prisma.trackListeningEvent.findFirst({
-      where: {
-        userId: input.userId,
-        spotifyTrackId: input.spotifyTrackId,
-        primaryArtistId: { not: null },
-      },
-      orderBy: [{ playedAt: "desc" }, { id: "desc" }],
-      select: {
-        spotifyUri: true,
-        primaryArtistId: true,
-        artistName: true,
-        albumId: true,
-        albumName: true,
-      },
-    }),
-    prisma.trackListeningEvent.findFirst({
-      where: {
-        userId: input.userId,
-        spotifyTrackId: input.spotifyTrackId,
-      },
-      orderBy: [{ playedAt: "desc" }, { id: "desc" }],
-      select: {
-        spotifyUri: true,
-        primaryArtistId: true,
-        artistName: true,
-        albumId: true,
-        albumName: true,
-      },
-    }),
-  ]);
+  if (!candidate && !pendingLegacyConfirmation) {
+    throw new ProbableLikeCandidateNotFoundError();
+  }
 
-  const identityEvent = eventWithArtist ?? latestEvent;
-  const primaryArtistId =
-    identityEvent?.primaryArtistId ?? existingPreference?.primaryArtistId ?? null;
-  const primaryArtistName =
-    identityEvent?.artistName ??
-    existingPreference?.primaryArtistName ??
-    candidate.artistName;
-  const spotifyUri =
-    identityEvent?.spotifyUri ??
-    existingPreference?.spotifyUri ??
-    `spotify:track:${candidate.spotifyTrackId}`;
-  const albumId = identityEvent?.albumId ?? existingPreference?.albumId ?? null;
-  const albumName = identityEvent?.albumName ?? existingPreference?.albumName ?? null;
-  const durationMs =
-    candidate.knownTrackDurationMs ?? existingPreference?.durationMs ?? null;
-  const availability =
-    existingPreference?.availability ?? LikedTrackAvailability.AVAILABLE;
+  const snapshot = candidate
+    ? {
+        trackName: candidate.trackName,
+        artistName: candidate.artistName,
+        score: candidate.score,
+        reasons: candidate.reasons,
+        knownTrackDurationMs: candidate.knownTrackDurationMs,
+      }
+    : {
+        trackName: historyAction!.trackName,
+        artistName: historyAction!.artistName,
+        score: historyAction!.candidateScore,
+        reasons: readStringArray(historyAction!.candidateReasons),
+        knownTrackDurationMs: historicalPreference?.durationMs ?? null,
+      };
 
-  // Do not create a local-only success. The explicit action first saves the
-  // track to Spotify. This call is idempotent on Spotify's Library endpoint.
+  const resolved = await resolveSpotifyIdentity({
+    userId: input.userId,
+    historicalSpotifyTrackId: input.spotifyTrackId,
+  });
+
+  const currentPreference =
+    resolved.spotifyTrackId === input.spotifyTrackId
+      ? historicalPreference
+      : await prisma.likedTrackPreference.findUnique({
+          where: {
+            userId_spotifyTrackId: {
+              userId: input.userId,
+              spotifyTrackId: resolved.spotifyTrackId,
+            },
+          },
+        });
+
+  // If reconciliation has already observed the resolved current ID, the user
+  // intent is fulfilled. A pending legacy action is marked completed without a
+  // redundant PUT when its old historical ID relinked to this provider-backed
+  // current preference.
+  if (
+    currentPreference?.isLiked &&
+    !(pendingLegacyConfirmation && resolved.spotifyTrackId === input.spotifyTrackId)
+  ) {
+    if (historyAction && !historyAction.providerWriteAttempted) {
+      await prisma.historyLikeAction.update({
+        where: { id: historyAction.id },
+        data: {
+          providerWriteAttempted: true,
+          lastConfirmedAt: new Date(),
+          confirmCount: { increment: 1 },
+        },
+      });
+    }
+
+    return {
+      historicalSpotifyTrackId: input.spotifyTrackId,
+      spotifyTrackId: currentPreference.spotifyTrackId,
+      trackName: currentPreference.trackName ?? resolved.trackName,
+      artistName:
+        currentPreference.primaryArtistName ?? resolved.primaryArtistName,
+      identityResolution: resolved.resolution,
+      alreadyLiked: true,
+      artistAffinityUpdated: Boolean(currentPreference.primaryArtistId),
+      providerWriteAttempted: false,
+      providerWriteSucceeded: true,
+      providerWriteReason: "ALREADY_LIKED",
+    };
+  }
+
+  // Never create a local-only success. The current resolved Spotify recording
+  // is saved first. If the provider rejects it, the historical candidate stays
+  // visible and no canonical Sonoriza preference is materialized.
   await saveTrackToSpotify({
     userId: input.userId,
-    spotifyTrackId: candidate.spotifyTrackId,
+    spotifyTrackId: resolved.spotifyTrackId,
   });
 
   const now = new Date();
+  const historicalTrackId = input.spotifyTrackId;
+  const currentTrackId = resolved.spotifyTrackId;
+  const durationMs =
+    resolved.durationMs > 0
+      ? resolved.durationMs
+      : snapshot.knownTrackDurationMs ?? currentPreference?.durationMs ?? null;
+  const availability =
+    currentPreference?.availability ?? LikedTrackAvailability.AVAILABLE;
+
   const artistAffinityUpdated = await prisma.$transaction(async (tx) => {
-    // Read the current track evidence before mutating anything so we know every
-    // artist whose aggregate may change. The advisory locks below serialize all
-    // count/recompute work for the same user+artist, preventing two concurrent
-    // likes by one artist from both writing a stale likedTrackCount=1.
+    const trackIds =
+      historicalTrackId === currentTrackId
+        ? [currentTrackId]
+        : [historicalTrackId, currentTrackId];
+
     const activeEvidence = await tx.artistAffinityEvidence.findMany({
       where: {
         userId: input.userId,
-        spotifyTrackId: candidate.spotifyTrackId,
+        spotifyTrackId: { in: trackIds },
         type: ArtistAffinityEvidenceType.LIKED_TRACK,
         active: true,
       },
-      select: { id: true, spotifyArtistId: true },
+      select: { id: true, spotifyTrackId: true, spotifyArtistId: true },
     });
 
     const affectedArtistIds = new Set<string>(
       activeEvidence.map((evidence) => evidence.spotifyArtistId),
     );
-    if (primaryArtistId) affectedArtistIds.add(primaryArtistId);
+    affectedArtistIds.add(resolved.primaryArtistId);
     const orderedAffectedArtistIds = [...affectedArtistIds].sort();
 
     for (const spotifyArtistId of orderedAffectedArtistIds) {
-      // Two-int transaction-scoped advisory lock. The volatile lock function
-      // is executed inside a subquery while only an int is returned to Prisma;
-      // Prisma cannot deserialize PostgreSQL's native `void` return type.
       await tx.$queryRaw<Array<{ acquired: number }>>`
         SELECT 1::int AS acquired
         FROM (
@@ -210,26 +234,44 @@ export async function confirmProbableLike(
       `;
     }
 
+    // A historical ID can become obsolete/relinked. Preserve its listening
+    // events, but do not keep a second active canonical LIKE beside the current
+    // Spotify identity.
+    if (historicalTrackId !== currentTrackId) {
+      await tx.likedTrackPreference.updateMany({
+        where: {
+          userId: input.userId,
+          spotifyTrackId: historicalTrackId,
+          isLiked: true,
+        },
+        data: {
+          isLiked: false,
+          lastProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
+          lastObservedAt: now,
+          unlikedAt: now,
+        },
+      });
+    }
+
     await tx.likedTrackPreference.upsert({
       where: {
         userId_spotifyTrackId: {
           userId: input.userId,
-          spotifyTrackId: candidate.spotifyTrackId,
+          spotifyTrackId: currentTrackId,
         },
       },
       create: {
         userId: input.userId,
-        spotifyTrackId: candidate.spotifyTrackId,
-        spotifyUri,
-        trackName: candidate.trackName,
-        primaryArtistId,
-        primaryArtistName,
-        albumId,
-        albumName,
+        spotifyTrackId: currentTrackId,
+        spotifyUri: resolved.spotifyUri,
+        trackName: resolved.trackName,
+        primaryArtistId: resolved.primaryArtistId,
+        primaryArtistName: resolved.primaryArtistName,
+        albumId: resolved.albumId,
+        albumName: resolved.albumName,
         durationMs,
-        // `addedAt` is a provider watermark. A local post-response clock can
-        // leap over unsynchronized Saved Tracks and make incremental sync skip
-        // them permanently. Leave it unknown until Spotify reports added_at.
+        // `addedAt` remains a provider watermark. The Spotify Library write
+        // does not return added_at; reconciliation will fill it authoritatively.
         addedAt: null,
         isLiked: true,
         availability,
@@ -240,12 +282,12 @@ export async function confirmProbableLike(
         unlikedAt: null,
       },
       update: {
-        spotifyUri,
-        trackName: candidate.trackName,
-        primaryArtistId,
-        primaryArtistName,
-        albumId,
-        albumName,
+        spotifyUri: resolved.spotifyUri,
+        trackName: resolved.trackName,
+        primaryArtistId: resolved.primaryArtistId,
+        primaryArtistName: resolved.primaryArtistName,
+        albumId: resolved.albumId,
+        albumName: resolved.albumName,
         durationMs,
         addedAt: null,
         isLiked: true,
@@ -257,7 +299,12 @@ export async function confirmProbableLike(
     });
 
     for (const evidence of activeEvidence) {
-      if (evidence.spotifyArtistId === primaryArtistId) continue;
+      if (
+        evidence.spotifyTrackId === currentTrackId &&
+        evidence.spotifyArtistId === resolved.primaryArtistId
+      ) {
+        continue;
+      }
       await tx.artistAffinityEvidence.update({
         where: { id: evidence.id },
         data: {
@@ -269,38 +316,36 @@ export async function confirmProbableLike(
       });
     }
 
-    if (primaryArtistId) {
-      await tx.artistAffinityEvidence.upsert({
-        where: {
-          userId_type_spotifyTrackId_spotifyArtistId: {
-            userId: input.userId,
-            type: ArtistAffinityEvidenceType.LIKED_TRACK,
-            spotifyTrackId: candidate.spotifyTrackId,
-            spotifyArtistId: primaryArtistId,
-          },
-        },
-        create: {
+    await tx.artistAffinityEvidence.upsert({
+      where: {
+        userId_type_spotifyTrackId_spotifyArtistId: {
           userId: input.userId,
-          spotifyTrackId: candidate.spotifyTrackId,
-          spotifyArtistId: primaryArtistId,
-          artistName: primaryArtistName,
           type: ArtistAffinityEvidenceType.LIKED_TRACK,
-          active: true,
-          firstProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
-          lastProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
-          firstObservedAt: now,
-          lastChangedAt: now,
-          removedAt: null,
+          spotifyTrackId: currentTrackId,
+          spotifyArtistId: resolved.primaryArtistId,
         },
-        update: {
-          artistName: primaryArtistName,
-          active: true,
-          lastProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
-          lastChangedAt: now,
-          removedAt: null,
-        },
-      });
-    }
+      },
+      create: {
+        userId: input.userId,
+        spotifyTrackId: currentTrackId,
+        spotifyArtistId: resolved.primaryArtistId,
+        artistName: resolved.primaryArtistName,
+        type: ArtistAffinityEvidenceType.LIKED_TRACK,
+        active: true,
+        firstProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
+        lastProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
+        firstObservedAt: now,
+        lastChangedAt: now,
+        removedAt: null,
+      },
+      update: {
+        artistName: resolved.primaryArtistName,
+        active: true,
+        lastProvenance: LikedTrackPreferenceProvenance.LIKED_TRACK_SYNC,
+        lastChangedAt: now,
+        removedAt: null,
+      },
+    });
 
     for (const spotifyArtistId of orderedAffectedArtistIds) {
       const likedTrackCount = await tx.artistAffinityEvidence.count({
@@ -312,7 +357,9 @@ export async function confirmProbableLike(
         },
       });
       const artistName =
-        spotifyArtistId === primaryArtistId ? primaryArtistName : undefined;
+        spotifyArtistId === resolved.primaryArtistId
+          ? resolved.primaryArtistName
+          : undefined;
 
       await tx.artistAffinityState.upsert({
         where: {
@@ -343,51 +390,61 @@ export async function confirmProbableLike(
       where: {
         userId_spotifyTrackId_source: {
           userId: input.userId,
-          spotifyTrackId: candidate.spotifyTrackId,
+          // Keep the product action attached to the historical candidate that
+          // the user actually saw. The current provider ID is canonicalized in
+          // LikedTrackPreference and affinity evidence instead.
+          spotifyTrackId: historicalTrackId,
           source: HistoryLikeActionSource.PROBABLE_LIKE,
         },
       },
       create: {
         userId: input.userId,
-        spotifyTrackId: candidate.spotifyTrackId,
+        spotifyTrackId: historicalTrackId,
         source: HistoryLikeActionSource.PROBABLE_LIKE,
-        trackName: candidate.trackName,
-        artistName: candidate.artistName,
-        primaryArtistId,
-        candidateScore: candidate.score,
-        candidateReasons: candidate.reasons,
-        artistAffinityUpdated: Boolean(primaryArtistId),
+        trackName: snapshot.trackName,
+        artistName: snapshot.artistName,
+        primaryArtistId: resolved.primaryArtistId,
+        candidateScore: snapshot.score,
+        candidateReasons: snapshot.reasons,
+        artistAffinityUpdated: true,
         providerWriteAttempted: true,
         firstConfirmedAt: now,
         lastConfirmedAt: now,
         confirmCount: 1,
       },
       update: {
-        trackName: candidate.trackName,
-        artistName: candidate.artistName,
-        primaryArtistId,
-        candidateScore: candidate.score,
-        candidateReasons: candidate.reasons,
-        artistAffinityUpdated: Boolean(primaryArtistId),
+        trackName: snapshot.trackName,
+        artistName: snapshot.artistName,
+        primaryArtistId: resolved.primaryArtistId,
+        candidateScore: snapshot.score,
+        candidateReasons: snapshot.reasons,
+        artistAffinityUpdated: true,
         providerWriteAttempted: true,
         lastConfirmedAt: now,
         confirmCount: { increment: 1 },
       },
     });
 
-    return Boolean(primaryArtistId);
+    return true;
   });
 
   return {
-    spotifyTrackId: candidate.spotifyTrackId,
-    trackName: candidate.trackName,
-    artistName: candidate.artistName,
+    historicalSpotifyTrackId: historicalTrackId,
+    spotifyTrackId: currentTrackId,
+    trackName: resolved.trackName,
+    artistName: resolved.primaryArtistName,
+    identityResolution: resolved.resolution,
     alreadyLiked: false,
     artistAffinityUpdated,
     providerWriteAttempted: true,
     providerWriteSucceeded: true,
     providerWriteReason: "SAVED_TO_SPOTIFY_LIBRARY",
   };
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 export class ProbableLikeCandidateNotFoundError extends Error {
