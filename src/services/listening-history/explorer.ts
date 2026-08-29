@@ -3,6 +3,7 @@ import type { ListeningEventSource, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export const LISTENING_HISTORY_PAGE_SIZE = 50;
+export const LISTENING_HISTORY_EPOCH = new Date(0);
 
 export const LISTENING_HISTORY_SOURCES = [
   "SPOTIFY_RECENTLY_PLAYED",
@@ -126,13 +127,11 @@ export function buildListeningHistoryWhere(
   userId: string,
   filters: Pick<ListeningHistoryFilters, "from" | "toExclusive" | "query" | "source">,
 ): Prisma.TrackListeningEventWhereInput {
-  const playedAt =
-    filters.from || filters.toExclusive
-      ? {
-          ...(filters.from ? { gte: filters.from } : {}),
-          ...(filters.toExclusive ? { lt: filters.toExclusive } : {}),
-        }
-      : undefined;
+  const playedAt: Prisma.DateTimeFilter = {
+    gt: LISTENING_HISTORY_EPOCH,
+    ...(filters.from ? { gte: filters.from } : {}),
+    ...(filters.toExclusive ? { lt: filters.toExclusive } : {}),
+  };
 
   const search = filters.query
     ? {
@@ -146,7 +145,7 @@ export function buildListeningHistoryWhere(
 
   return {
     userId,
-    ...(playedAt ? { playedAt } : {}),
+    playedAt,
     ...(filters.source ? { source: filters.source } : {}),
     ...search,
   };
