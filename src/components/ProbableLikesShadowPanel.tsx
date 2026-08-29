@@ -122,7 +122,7 @@ export async function ProbableLikesShadowPanel({
                     </p>
                     <div className="mt-3 flex flex-wrap items-start gap-2">
                       <a
-                        href={`https://open.spotify.com/track/${encodeURIComponent(candidate.spotifyTrackId)}`}
+                        href={`/api/history/probable-like/open?spotifyTrackId=${encodeURIComponent(candidate.spotifyTrackId)}`}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-2 rounded-xl border border-success/30 bg-success-soft/70 px-3 py-2 text-xs font-black text-success transition hover:border-success/50 hover:bg-success-soft"

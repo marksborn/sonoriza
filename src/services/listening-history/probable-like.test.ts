@@ -5,6 +5,7 @@ import {
   rankProbableLikeAggregates,
   type ProbableLikeAggregate,
 } from "./probable-like";
+import { probableLikeTrackIdentityKey } from "./probable-like-spotify-identity";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 
@@ -34,6 +35,26 @@ test("explicitly liked tracks never enter probable-like shadow ranking", () => {
   const result = rankProbableLikeAggregates({
     aggregates: [aggregate({ spotifyTrackId: "liked" })],
     likedTrackIds: new Set(["liked"]),
+    now,
+  });
+
+  assert.equal(result.candidates.length, 0);
+  assert.equal(result.excludedLikedCount, 1);
+});
+
+test("relinked historical id stays excluded when current Spotify like has same track and artist", () => {
+  const relinked = aggregate({
+    spotifyTrackId: "historical-id",
+    trackName: "Light the Torch",
+    artistName: "Soilwork",
+  });
+  const identityKey = probableLikeTrackIdentityKey(relinked);
+  assert.ok(identityKey);
+
+  const result = rankProbableLikeAggregates({
+    aggregates: [relinked],
+    likedTrackIds: new Set(["current-spotify-id"]),
+    likedTrackIdentityKeys: new Set([identityKey]),
     now,
   });
 
