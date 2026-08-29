@@ -261,7 +261,14 @@ function normalizedDateInput(value: string): string {
 
 function parseLocalDateInput(value: string): Date | null {
   if (!value) return null;
-  const [year, month, day] = value.split("-").map(Number);
+  const parts = value.split("-");
+  if (parts.length !== 3) return null;
+
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+  if (![year, month, day].every(Number.isInteger)) return null;
+
   const result = new Date(year, month - 1, day);
   if (
     result.getFullYear() !== year ||
