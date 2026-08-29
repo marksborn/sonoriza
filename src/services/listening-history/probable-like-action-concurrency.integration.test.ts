@@ -15,6 +15,7 @@ integrationTest(
     });
     const spotifyArtistId = `same-artist-${suffix}`;
     const trackIds = [`same-artist-a-${suffix}`, `same-artist-b-${suffix}`];
+    const providerWrites: string[] = [];
 
     t.after(async () => {
       await prisma.historyLikeAction.deleteMany({ where: { userId: user.id } });
@@ -58,10 +59,18 @@ integrationTest(
 
     const results = await Promise.all(
       trackIds.map((spotifyTrackId) =>
-        confirmProbableLike({ userId: user.id, spotifyTrackId }),
+        confirmProbableLike(
+          { userId: user.id, spotifyTrackId },
+          {
+            saveTrackToSpotify: async ({ spotifyTrackId: providerTrackId }) => {
+              providerWrites.push(providerTrackId);
+            },
+          },
+        ),
       ),
     );
     assert.equal(results.every((result) => result.artistAffinityUpdated), true);
+    assert.deepEqual(new Set(providerWrites), new Set(trackIds));
 
     assert.equal(
       await prisma.likedTrackPreference.count({
