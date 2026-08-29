@@ -6,6 +6,7 @@ import {
   ProbableLikeCandidateNotFoundError,
   confirmProbableLike,
 } from "@/services/listening-history/probable-like-action";
+import { SpotifyBackoffActiveError } from "@/services/spotify/backoff";
 import { isSpotifyApiError } from "@/services/spotify/errors";
 import { SpotifyLibraryModifyScopeRequiredError } from "@/services/spotify/library";
 
@@ -51,6 +52,22 @@ export async function POST(request: Request) {
           reconnectPath: "/dashboard/configuracao/revisao",
         },
         { status: 428 },
+      );
+    }
+    if (error instanceof SpotifyBackoffActiveError) {
+      return NextResponse.json(
+        {
+          code: error.code,
+          error: `O Spotify pediu para aguardar antes de tentar novamente (${error.retryAfterSecondsRemaining}s).`,
+          retryAfterSecondsRemaining: error.retryAfterSecondsRemaining,
+          blockedUntil: error.blockedUntil.toISOString(),
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(error.retryAfterSecondsRemaining),
+          },
+        },
       );
     }
     if (isSpotifyApiError(error)) {
