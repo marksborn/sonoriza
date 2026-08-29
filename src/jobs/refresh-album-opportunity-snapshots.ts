@@ -17,6 +17,8 @@ export type AlbumOpportunitySnapshotRefreshJobResult = {
     candidateCount?: number;
     persistedCandidateCount?: number;
     providerFailureCount?: number;
+    completeness?: "COMPLETE" | "PARTIAL";
+    nextRequestPath?: string | null;
     ageMs?: number | null;
     error?: string;
   }>;
@@ -61,6 +63,7 @@ export async function runAlbumOpportunitySnapshotRefresh(input: {
           userId: user.id,
           status: "skipped_fresh",
           generatedAt: state.generatedAt?.toISOString(),
+          completeness: state.completeness ?? undefined,
           ageMs: state.ageMs,
         });
         continue;
@@ -74,6 +77,8 @@ export async function runAlbumOpportunitySnapshotRefresh(input: {
         candidateCount: refreshed.candidateCount,
         persistedCandidateCount: refreshed.persistedCandidateCount,
         providerFailureCount: refreshed.providerFailureCount,
+        completeness: refreshed.completeness,
+        nextRequestPath: refreshed.nextRequestPath,
       });
     } catch (error) {
       results.push({
