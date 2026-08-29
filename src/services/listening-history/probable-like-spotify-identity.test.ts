@@ -15,8 +15,8 @@ function evidence(
     historicalSpotifyTrackId: overrides.historicalSpotifyTrackId ?? "old-id",
     trackName: overrides.trackName ?? "Light the Torch",
     artistName: overrides.artistName ?? "Soilwork",
-    albumName: overrides.albumName ?? "Figure Number Five",
-    isrc: overrides.isrc ?? "SEVAA0300104",
+    albumName: "albumName" in overrides ? (overrides.albumName ?? null) : "Figure Number Five",
+    isrc: "isrc" in overrides ? (overrides.isrc ?? null) : "SEVAA0300104",
   };
 }
 
@@ -29,7 +29,7 @@ function track(
     uri: overrides.uri ?? `spotify:track:${overrides.id}`,
     spotifyUrl:
       overrides.spotifyUrl ?? `https://open.spotify.com/track/${overrides.id}`,
-    isrc: overrides.isrc ?? "SEVAA0300104",
+    isrc: "isrc" in overrides ? (overrides.isrc ?? null) : "SEVAA0300104",
     artists:
       overrides.artists ?? [
         {
@@ -40,7 +40,10 @@ function track(
         },
       ],
     albumId: overrides.albumId ?? "figure-number-five-current",
-    albumName: overrides.albumName ?? "Figure Number Five",
+    albumName:
+      "albumName" in overrides
+        ? (overrides.albumName ?? null)
+        : "Figure Number Five",
     durationMs: overrides.durationMs ?? 222_000,
   };
 }
