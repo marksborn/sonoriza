@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 
 import {
@@ -56,17 +58,18 @@ test("HISTORY-04 query builder combines filters with the authoritative Last.fm w
     to: new Date("2027-01-01T00:00:00.000Z"),
   };
   const where = buildListeningHistoryWhere("user-a", filters, lastFmWindow);
-  const clauses = where.AND as Array<Record<string, any>>;
+  const clauses = where.AND as Prisma.TrackListeningEventWhereInput[];
 
   assert.equal(clauses[0]?.userId, "user-a");
-  const canonicalOr = clauses[1]?.OR as Array<Record<string, any>>;
+  const canonicalOr = clauses[1]?.OR as Prisma.TrackListeningEventWhereInput[];
   assert.equal(canonicalOr[1]?.source, "LASTFM_SCROBBLE");
+  const canonicalPlayedAt = canonicalOr[1]?.playedAt as Prisma.DateTimeFilter;
   assert.equal(
-    canonicalOr[1]?.playedAt?.gte?.toISOString(),
+    (canonicalPlayedAt.gte as Date | undefined)?.toISOString(),
     "2013-11-12T12:17:22.000Z",
   );
   assert.equal(
-    canonicalOr[1]?.playedAt?.lt?.toISOString(),
+    (canonicalPlayedAt.lt as Date | undefined)?.toISOString(),
     "2027-01-01T00:00:00.000Z",
   );
   assert.equal(clauses[2]?.source, "LASTFM_SCROBBLE");
