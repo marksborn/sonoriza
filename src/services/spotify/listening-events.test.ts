@@ -15,6 +15,7 @@ test("maps Spotify Recently Played metadata into an individual history event", (
       id: "replacement",
       uri: "spotify:track:replacement",
       name: "Track",
+      duration_ms: 245_321,
       linked_from: { id: "original" },
       artists: [
         { id: "artist-1", name: "Artist One" },
@@ -34,6 +35,7 @@ test("maps Spotify Recently Played metadata into an individual history event", (
   assert.equal(event.albumId, "album-1");
   assert.equal(event.albumName, "Album");
   assert.equal(event.isrc, "BRABC1234567");
+  assert.equal(event.durationMs, 245_321);
   assert.equal(event.contextType, "playlist");
   assert.equal(event.contextUri, "spotify:playlist:car");
   assert.equal(event.source, "SPOTIFY_RECENTLY_PLAYED");
@@ -71,6 +73,7 @@ test("Spotify event key is deterministic and independent of context metadata", (
   assert.ok(withoutContext);
   assert.equal(withContext.sourceEventKey, expected);
   assert.equal(withoutContext.sourceEventKey, expected);
+  assert.equal(withContext.durationMs, null);
 });
 
 test("rejects event rows without stable track identity or human-readable metadata", () => {

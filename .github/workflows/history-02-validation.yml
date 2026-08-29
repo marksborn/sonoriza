@@ -7,6 +7,10 @@ on:
     paths:
       - "src/services/spotify-extended-history/**"
       - "src/services/listening-history/**"
+      - "src/services/spotify/listening-events.ts"
+      - "src/services/spotify/listening-events.test.ts"
+      - "src/services/spotify/recently-played.ts"
+      - "src/services/spotify/recently-played.test.ts"
       - "src/app/dashboard/historico/**"
       - "src/app/dashboard/layout.tsx"
       - "src/lib/prisma.ts"
@@ -19,6 +23,10 @@ on:
     paths:
       - "src/services/spotify-extended-history/**"
       - "src/services/listening-history/**"
+      - "src/services/spotify/listening-events.ts"
+      - "src/services/spotify/listening-events.test.ts"
+      - "src/services/spotify/recently-played.ts"
+      - "src/services/spotify/recently-played.test.ts"
       - "src/app/dashboard/historico/**"
       - "src/app/dashboard/layout.tsx"
       - "src/lib/prisma.ts"
@@ -69,6 +77,7 @@ jobs:
       - run: npx prisma migrate deploy
       - run: npm run test:spotify-history
       - run: npm run test:history
+      - run: npx tsx --test src/services/spotify/listening-events.test.ts src/services/spotify/recently-played.test.ts
       - run: npm run test:lastfm
       - run: npm run typecheck
       - run: npm run build

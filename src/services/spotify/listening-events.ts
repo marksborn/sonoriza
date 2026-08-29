@@ -6,6 +6,7 @@ export type SpotifyRecentTrackForHistory = {
   id?: string | null;
   uri?: string | null;
   name?: string | null;
+  duration_ms?: number | null;
   linked_from?: { id?: string | null } | null;
   artists?: Array<{ id?: string | null; name?: string | null }> | null;
   album?: { id?: string | null; name?: string | null } | null;
@@ -28,6 +29,7 @@ export type SpotifyListeningEventInput = {
   albumName: string | null;
   albumId: string | null;
   isrc: string | null;
+  durationMs: number | null;
   playedAt: Date;
   contextType: string | null;
   contextUri: string | null;
@@ -62,6 +64,7 @@ export function mapSpotifyRecentlyPlayedEvent(input: {
     albumName: clean(input.track.album?.name),
     albumId: clean(input.track.album?.id),
     isrc: clean(input.track.external_ids?.isrc),
+    durationMs: positiveDurationMs(input.track.duration_ms),
     playedAt: input.playedAt,
     contextType: clean(input.context?.type),
     contextUri: clean(input.context?.uri),
@@ -89,4 +92,11 @@ function clean(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const cleaned = value.trim();
   return cleaned ? cleaned : null;
+}
+
+function positiveDurationMs(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return Math.trunc(value);
 }
