@@ -1,0 +1,30 @@
+// ---------------------------------------------------------------------------
+// HISTORY-04 Gate 4 — pilot-only validation of probable-like suggestions.
+//
+// This model is deliberately isolated from canonical LIKE/dislike and from
+// MusicPreferenceSignal. A pilot verdict measures ranking quality only; it must
+// not influence planner/discovery or write to any provider.
+// ---------------------------------------------------------------------------
+
+enum ProbableLikePilotVerdict {
+  LIKED
+  INDIFFERENT
+  DISLIKED
+}
+
+model ProbableLikePilotFeedback {
+  id               String                   @id @default(cuid())
+  userId           String
+  spotifyTrackId   String
+  trackName        String
+  artistName       String
+  verdict          ProbableLikePilotVerdict
+  candidateScore   Int
+  candidateReasons Json
+  evaluatedAt      DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@unique([userId, spotifyTrackId])
+  @@index([userId, evaluatedAt])
+  @@index([userId, verdict, evaluatedAt])
+}
