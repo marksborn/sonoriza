@@ -161,22 +161,24 @@ export default async function PodcastPoliciesPage({
   return (
     <main className="min-h-screen bg-canvas-dark px-5 py-8 sm:px-8 lg:px-10">
       <div className="mx-auto max-w-6xl">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
-              PODCAST-05
-            </p>
-            <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse">
-              Políticas de podcasts
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
-              Um único lugar para configurar cada programa. A lista fica compacta e somente o show que você estiver editando abre o formulário completo.
-            </p>
+        {!initialOpenId && (
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
+                PODCAST-05
+              </p>
+              <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse">
+                Políticas de podcasts
+              </h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
+                Um único lugar para configurar cada programa. A lista fica compacta e somente o show que você estiver editando abre o formulário completo.
+              </p>
+            </div>
+            <Link href="/dashboard/configuracao/fontes" className={secondaryButtonClass}>
+              Voltar para Fontes
+            </Link>
           </div>
-          <Link href="/dashboard/configuracao/fontes" className={secondaryButtonClass}>
-            Voltar para Fontes
-          </Link>
-        </div>
+        )}
 
         {params.salvo === "1" && (
           <div className="status-success mt-5 rounded-2xl border p-4 text-sm font-bold">
