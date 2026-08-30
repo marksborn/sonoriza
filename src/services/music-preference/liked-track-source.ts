@@ -5,6 +5,11 @@ import { prisma } from "@/lib/prisma";
 export const LIKED_TRACKS_NATIVE_SOURCE_TYPE = "LIKED_TRACKS" as const;
 export const LIKED_TRACKS_NATIVE_SOURCE_KEY = "native:liked-tracks" as const;
 
+export const LIKED_TRACK_SOURCE_READINESS_LIMITS = {
+  maxBlockedAvailableTracks: 25,
+  maxBlockedAvailablePercent: 1,
+} as const;
+
 export type LikedTrackSourceRow = {
   spotifyTrackId: string;
   spotifyUri: string | null;
@@ -51,10 +56,23 @@ export type LikedTrackSourceSnapshot = {
   };
   plannerMaterialization: {
     ready: boolean;
-    blocker: "DURATION_INCOMPLETE" | "IDENTITY_INCOMPLETE" | null;
+    degraded: boolean;
+    blocker:
+      | "DURATION_INCOMPLETE"
+      | "IDENTITY_INCOMPLETE"
+      | "INCOMPLETE_TRACK_LIMIT_EXCEEDED"
+      | null;
     requiredMissingField: "durationMs" | null;
     eligibleAvailableTracks: number;
     blockedAvailableTracks: number;
+    blockedAvailablePercent: number;
+    limits: typeof LIKED_TRACK_SOURCE_READINESS_LIMITS;
+    blockedSample: Array<{
+      spotifyTrackId: string;
+      title: string | null;
+      artist: string | null;
+      missingFields: Array<"spotifyUri" | "trackName" | "durationMs">;
+    }>;
     note: string;
   };
   sample: Array<{
@@ -119,13 +137,29 @@ export function buildLikedTrackSourceSnapshot(
   const plannerReadyAvailable = identityReadyAvailable.filter(
     (row) => validDurationMs(row.durationMs) != null,
   );
+  const plannerReadyTrackIds = new Set(
+    plannerReadyAvailable.map((row) => row.spotifyTrackId),
+  );
+  const blockedAvailable = available.filter(
+    (row) => !plannerReadyTrackIds.has(row.spotifyTrackId),
+  );
+  const blockedAvailablePercent =
+    available.length > 0 ? (blockedAvailable.length / available.length) * 100 : 0;
+  const degraded =
+    blockedAvailable.length > 0 &&
+    plannerReadyAvailable.length > 0 &&
+    blockedAvailable.length <=
+      LIKED_TRACK_SOURCE_READINESS_LIMITS.maxBlockedAvailableTracks &&
+    blockedAvailablePercent <=
+      LIKED_TRACK_SOURCE_READINESS_LIMITS.maxBlockedAvailablePercent;
   const addedAt = rows
     .flatMap((row) => (row.addedAt ? [row.addedAt] : []))
     .sort((a, b) => a.getTime() - b.getTime());
   const observedAt = rows
     .map((row) => row.lastObservedAt)
     .sort((a, b) => a.getTime() - b.getTime());
-  const ready = plannerReadyAvailable.length === available.length;
+  const ready =
+    plannerReadyAvailable.length === available.length || degraded;
 
   return {
     generatedAt,
@@ -167,20 +201,43 @@ export function buildLikedTrackSourceSnapshot(
     },
     plannerMaterialization: {
       ready,
+      degraded,
       blocker: ready
         ? null
-        : availableMissingDuration.length > 0
-          ? "DURATION_INCOMPLETE"
-          : identityReadyAvailable.length < available.length
-            ? "IDENTITY_INCOMPLETE"
-            : null,
+        : blockedAvailable.length >
+              LIKED_TRACK_SOURCE_READINESS_LIMITS.maxBlockedAvailableTracks ||
+            blockedAvailablePercent >
+              LIKED_TRACK_SOURCE_READINESS_LIMITS.maxBlockedAvailablePercent
+          ? "INCOMPLETE_TRACK_LIMIT_EXCEEDED"
+          : availableMissingDuration.length > 0
+            ? "DURATION_INCOMPLETE"
+            : identityReadyAvailable.length < available.length
+              ? "IDENTITY_INCOMPLETE"
+              : null,
       requiredMissingField:
-        !ready && availableMissingDuration.length > 0 ? "durationMs" : null,
+        availableMissingDuration.length > 0 ? "durationMs" : null,
       eligibleAvailableTracks: plannerReadyAvailable.length,
-      blockedAvailableTracks: Math.max(0, available.length - plannerReadyAvailable.length),
-      note: ready
-        ? "All currently available liked tracks have the local identity and duration required to become planner candidates in the next shadow gate. Planner influence is still disabled."
-        : "The native liked-track source remains blocked from planner shadowing until every available track has local candidate identity and durationMs.",
+      blockedAvailableTracks: blockedAvailable.length,
+      blockedAvailablePercent,
+      limits: LIKED_TRACK_SOURCE_READINESS_LIMITS,
+      blockedSample: blockedAvailable.slice(0, 10).map((row) => ({
+        spotifyTrackId: row.spotifyTrackId,
+        title: clean(row.trackName),
+        artist: clean(row.primaryArtistName),
+        missingFields: [
+          ...(!clean(row.spotifyUri) ? (["spotifyUri"] as const) : []),
+          ...(!clean(row.trackName) ? (["trackName"] as const) : []),
+          ...(validDurationMs(row.durationMs) == null
+            ? (["durationMs"] as const)
+            : []),
+        ],
+      })),
+      note:
+        blockedAvailable.length === 0
+          ? "All currently available liked tracks have the local identity and duration required to become planner candidates."
+          : degraded
+            ? "A bounded number of incomplete available tracks was excluded locally; valid candidates remain eligible and no provider read is performed during generation."
+            : "The native liked-track source is fail-closed because incomplete available tracks exceed the safe count or percentage limit.",
     },
     sample: rows.slice(0, 10).map((row) => ({
       spotifyTrackId: row.spotifyTrackId,
