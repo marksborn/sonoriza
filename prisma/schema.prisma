@@ -1143,8 +1143,24 @@ model PrelaunchSignup {
   submissionCount   Int                     @default(1)
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
+  statusEvents      PrelaunchSignupStatusEvent[]
 
   @@index([status, createdAt])
+}
+
+model PrelaunchSignupStatusEvent {
+  id                  String                @id @default(cuid())
+  prelaunchSignupId   String
+  previousStatus      PrelaunchSignupStatus
+  status              PrelaunchSignupStatus
+  actorUserId         String
+  actorEmail          String
+  createdAt           DateTime              @default(now())
+
+  prelaunchSignup PrelaunchSignup @relation(fields: [prelaunchSignupId], references: [id], onDelete: Cascade)
+
+  @@index([prelaunchSignupId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 model PrelaunchRateLimitBucket {

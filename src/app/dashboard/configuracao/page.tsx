@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { UiIcon, type UiIconName } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
+import { isPrelaunchAdmin } from "@/lib/prelaunch-admin";
 import { prisma } from "@/lib/prisma";
 import { countActivePushSubscriptions } from "@/services/notifications";
 
@@ -190,6 +191,18 @@ export default async function ConfigurationHubPage() {
             description="Receba no PWA o resultado das gerações, manutenções, limpezas e bloqueios."
             action="Configurar notificações"
           />
+
+          {isPrelaunchAdmin(session.user.email) ? (
+            <ConfigCard
+              href="/dashboard/configuracao/prelaunch"
+              icon="mail"
+              badge="Acesso interno"
+              code="PRELAUNCH-01"
+              title="Lista de pré-lançamento"
+              description="Consulte interessados e controle a passagem segura para a etapa de convite."
+              action="Gerenciar interessados"
+            />
+          ) : null}
 
           <ConfigCard
             href="/dashboard/configuracao/revisao"
