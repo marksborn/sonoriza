@@ -99,10 +99,80 @@ test("buildLikedTrackSourceSnapshot exposes a local persistent native source", (
   });
 
   assert.equal(snapshot.plannerMaterialization.ready, false);
-  assert.equal(snapshot.plannerMaterialization.blocker, "DURATION_INCOMPLETE");
+  assert.equal(snapshot.plannerMaterialization.degraded, false);
+  assert.equal(
+    snapshot.plannerMaterialization.blocker,
+    "INCOMPLETE_TRACK_LIMIT_EXCEEDED",
+  );
   assert.equal(snapshot.plannerMaterialization.requiredMissingField, "durationMs");
   assert.equal(snapshot.plannerMaterialization.eligibleAvailableTracks, 0);
   assert.equal(snapshot.plannerMaterialization.blockedAvailableTracks, 1);
+  assert.equal(snapshot.plannerMaterialization.blockedAvailablePercent, 100);
+  assert.deepEqual(snapshot.plannerMaterialization.blockedSample, [
+    {
+      spotifyTrackId: "a",
+      title: "Track",
+      artist: "Artist",
+      missingFields: ["durationMs"],
+    },
+  ]);
+});
+
+test("buildLikedTrackSourceSnapshot tolerates one incomplete row in a large ready library", () => {
+  const rows = [
+    ...Array.from({ length: 2_825 }, (_, index) =>
+      row({ spotifyTrackId: `ready-${index}` }),
+    ),
+    row({
+      spotifyTrackId: "transient-incomplete",
+      trackName: "My Generation",
+      primaryArtistName: "Limp Bizkit",
+      durationMs: null,
+      addedAt: null,
+    }),
+  ];
+
+  const snapshot = buildLikedTrackSourceSnapshot(rows, NOW);
+
+  assert.equal(snapshot.plannerMaterialization.ready, true);
+  assert.equal(snapshot.plannerMaterialization.degraded, true);
+  assert.equal(snapshot.plannerMaterialization.blocker, null);
+  assert.equal(snapshot.plannerMaterialization.eligibleAvailableTracks, 2_825);
+  assert.equal(snapshot.plannerMaterialization.blockedAvailableTracks, 1);
+  assert.ok(snapshot.plannerMaterialization.blockedAvailablePercent < 0.04);
+  assert.deepEqual(snapshot.plannerMaterialization.limits, {
+    maxBlockedAvailableTracks: 25,
+    maxBlockedAvailablePercent: 1,
+  });
+  assert.deepEqual(snapshot.plannerMaterialization.blockedSample, [
+    {
+      spotifyTrackId: "transient-incomplete",
+      title: "My Generation",
+      artist: "Limp Bizkit",
+      missingFields: ["durationMs"],
+    },
+  ]);
+});
+
+test("buildLikedTrackSourceSnapshot stays fail-closed above the incomplete-row limit", () => {
+  const rows = [
+    ...Array.from({ length: 100 }, (_, index) =>
+      row({ spotifyTrackId: `ready-${index}` }),
+    ),
+    row({ spotifyTrackId: "missing-a", durationMs: null }),
+    row({ spotifyTrackId: "missing-b", durationMs: null }),
+  ];
+
+  const snapshot = buildLikedTrackSourceSnapshot(rows, NOW);
+
+  assert.equal(snapshot.plannerMaterialization.ready, false);
+  assert.equal(snapshot.plannerMaterialization.degraded, false);
+  assert.equal(
+    snapshot.plannerMaterialization.blocker,
+    "INCOMPLETE_TRACK_LIMIT_EXCEEDED",
+  );
+  assert.equal(snapshot.plannerMaterialization.blockedAvailableTracks, 2);
+  assert.ok(snapshot.plannerMaterialization.blockedAvailablePercent > 1);
 });
 
 test("buildLikedTrackSourceSnapshot becomes shadow-ready only when available rows have duration", () => {
@@ -123,6 +193,7 @@ test("buildLikedTrackSourceSnapshot becomes shadow-ready only when available row
   assert.equal(snapshot.counts.withDuration, 2);
   assert.equal(snapshot.counts.plannerReadyAvailable, 2);
   assert.equal(snapshot.plannerMaterialization.ready, true);
+  assert.equal(snapshot.plannerMaterialization.degraded, false);
   assert.equal(snapshot.plannerMaterialization.blocker, null);
   assert.equal(snapshot.plannerMaterialization.requiredMissingField, null);
   assert.equal(snapshot.plannerMaterialization.blockedAvailableTracks, 0);
