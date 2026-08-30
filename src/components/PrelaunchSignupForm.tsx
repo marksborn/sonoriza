@@ -12,6 +12,7 @@ type SubmissionState =
 
 export function PrelaunchSignupForm() {
   const [state, setState] = useState<SubmissionState>({ kind: "idle" });
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -41,6 +42,7 @@ export function PrelaunchSignupForm() {
       }
 
       form.reset();
+      setPrivacyAccepted(false);
       setState({
         kind: "success",
         message: payload.message || "Seu interesse foi registrado.",
@@ -97,7 +99,7 @@ export function PrelaunchSignupForm() {
             />
             <button
               type="submit"
-              disabled={state.kind === "submitting"}
+              disabled={state.kind === "submitting" || !privacyAccepted}
               className="primary-button min-h-12 disabled:cursor-wait disabled:opacity-60"
             >
               {state.kind === "submitting" ? "Registrando…" : "Quero participar"}
@@ -114,6 +116,8 @@ export function PrelaunchSignupForm() {
             <input
               name="privacyAccepted"
               type="checkbox"
+              checked={privacyAccepted}
+              onChange={(event) => setPrivacyAccepted(event.target.checked)}
               required
               className="mt-1 h-4 w-4 shrink-0 accent-brand-400"
             />

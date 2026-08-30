@@ -114,39 +114,54 @@ export default async function HomePage() {
               <section className="mt-9 max-w-xl space-y-5" aria-label="Acesso ao Sonoriza">
                 <PrelaunchSignupForm />
 
-                <div className="border-t border-line-dark/60 pt-5">
-                  <p className="text-xs font-black uppercase tracking-[0.14em] text-brand-400">
-                    Já recebeu seu convite?
-                  </p>
-                  <p className="mt-1 text-sm leading-5 text-muted-inverse">
-                    Entre com o mesmo e-mail que foi liberado para o piloto.
-                  </p>
+                <details className="group rounded-2xl border border-line-dark/60 bg-surface-subtle/45">
+                  <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-4 py-3 font-bold text-ink-inverse transition hover:bg-surface-elevated focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400">
+                    <span>
+                      <span className="block text-xs font-black uppercase tracking-[0.14em] text-brand-400">
+                        Já recebeu seu convite?
+                      </span>
+                      <span className="mt-0.5 block text-sm text-muted-inverse">
+                        Entrar no Sonoriza
+                      </span>
+                    </span>
+                    <UiIcon
+                      name="arrow-right"
+                      size={18}
+                      className="rotate-90 text-brand-400 transition group-open:-rotate-90"
+                    />
+                  </summary>
 
-                  <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-                    <form action={signInWithGoogle} className="flex-1">
-                      <button
-                        type="submit"
-                        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full border border-line-dark/70 bg-surface-elevated px-5 py-3 font-bold text-ink-inverse shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-surface-subtle"
-                      >
-                        <GoogleIcon />
-                        Entrar com Google
-                      </button>
-                    </form>
-                    <form action={signInWithSpotify} className="flex-1">
-                      <button
-                        type="submit"
-                        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full border border-line-dark/70 bg-surface-elevated px-5 py-3 font-bold text-ink-inverse shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-surface-subtle"
-                      >
-                        <SpotifyIcon />
-                        Entrar com Spotify
-                      </button>
-                    </form>
+                  <div className="border-t border-line-dark/60 px-4 pb-4 pt-3">
+                    <p className="text-xs leading-5 text-muted-inverse">
+                      Entre com o mesmo e-mail que foi liberado para o piloto.
+                    </p>
+
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <form action={signInWithGoogle}>
+                        <button
+                          type="submit"
+                          className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full border border-line-dark/70 bg-surface-elevated px-4 py-2.5 text-sm font-bold text-ink-inverse transition hover:border-brand-400/45 hover:bg-surface-subtle"
+                        >
+                          <GoogleIcon />
+                          Google
+                        </button>
+                      </form>
+                      <form action={signInWithSpotify}>
+                        <button
+                          type="submit"
+                          className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full border border-line-dark/70 bg-surface-elevated px-4 py-2.5 text-sm font-bold text-ink-inverse transition hover:border-brand-400/45 hover:bg-surface-subtle"
+                        >
+                          <SpotifyIcon />
+                          Spotify
+                        </button>
+                      </form>
+                    </div>
+
+                    <p className="mt-3 text-[11px] leading-4 text-muted-inverse/75">
+                      Entrar é exclusivo para e-mails já liberados. A lista de espera não cria conta automaticamente.
+                    </p>
                   </div>
-
-                  <p className="mt-3 text-xs leading-5 text-muted-inverse/80">
-                    O cadastro na lista de espera não cria uma conta nem libera o acesso automaticamente.
-                  </p>
-                </div>
+                </details>
               </section>
             )}
 
