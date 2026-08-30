@@ -1,5 +1,6 @@
 import { ProbableLikeDismissButton } from "@/components/ProbableLikeDismissButton";
 import { ProbableLikeLikeButton } from "@/components/ProbableLikeLikeButton";
+import { ProgressiveList } from "@/components/ProgressiveList";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import type { ProbableLikeShadowResult } from "@/services/listening-history/probable-like";
@@ -21,6 +22,8 @@ export async function ProbableLikesShadowPanel({
 
   const cooldown = await applyProbableLikeCooldowns(session.user.id, result);
   const visibleResult = cooldown.result;
+  const visibleCandidates = visibleResult.candidates.slice(0, 6);
+  const additionalCandidateCount = Math.max(0, visibleCandidates.length - 3);
 
   return (
     <section className="product-panel overflow-hidden p-4 sm:p-6">
@@ -54,8 +57,14 @@ export async function ProbableLikesShadowPanel({
           </p>
         </div>
       ) : (
-        <ol className="mt-4 grid gap-3 lg:grid-cols-2">
-          {visibleResult.candidates.slice(0, 6).map((candidate, index) => (
+        <ProgressiveList
+          initialCount={3}
+          className="mt-4 grid gap-3 lg:grid-cols-2"
+          moreLabel={`Ver mais ${additionalCandidateCount} ${
+            additionalCandidateCount === 1 ? "sugestão" : "sugestões"
+          }`}
+        >
+          {visibleCandidates.map((candidate, index) => (
             <li
               key={candidate.spotifyTrackId}
               className="rounded-2xl border border-line-dark/60 bg-surface-subtle/60 p-3.5 sm:p-4"
@@ -136,7 +145,7 @@ export async function ProbableLikesShadowPanel({
               </div>
             </li>
           ))}
-        </ol>
+        </ProgressiveList>
       )}
 
       <details className="group mt-4 border-t border-line-dark/45 pt-2 text-[11px] font-bold text-muted-inverse/85">
