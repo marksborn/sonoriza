@@ -6,8 +6,10 @@ import { useState } from "react";
 
 export function ProbableLikeLikeButton({
   spotifyTrackId,
+  compact = false,
 }: {
   spotifyTrackId: string;
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -52,20 +54,25 @@ export function ProbableLikeLikeButton({
   }
 
   return (
-    <div>
+    <div className={compact ? "min-w-0" : undefined}>
       <button
         type="button"
         disabled={busy}
         onClick={() => void like()}
-        className="inline-flex items-center justify-center rounded-xl border border-success/50 bg-success-soft px-3.5 py-2 text-xs font-black text-success transition hover:border-success/80 disabled:cursor-wait disabled:opacity-60"
+        title="Salvar em Músicas Curtidas do Spotify e confirmar no Sonoriza"
+        className={`inline-flex min-h-11 items-center justify-center rounded-xl border border-success/60 bg-success px-4 py-2 text-xs font-black text-canvas-dark shadow-sm transition hover:border-success hover:bg-success/90 disabled:cursor-wait disabled:opacity-60 ${
+          compact ? "w-full" : ""
+        }`}
       >
         {busy ? "Curtindo…" : "♥ Curtir"}
       </button>
-      <p className="mt-1.5 max-w-xs text-[10px] font-semibold leading-4 text-muted-inverse/75">
-        Salva em Músicas Curtidas do Spotify e confirma a preferência no Sonoriza.
-      </p>
+      {!compact ? (
+        <p className="mt-1.5 max-w-xs text-[10px] font-semibold leading-4 text-muted-inverse/75">
+          Salva em Músicas Curtidas do Spotify e confirma a preferência no Sonoriza.
+        </p>
+      ) : null}
       {error ? (
-        <div className="mt-2 text-[11px] font-bold text-rose-300">
+        <div className="mt-2 text-[11px] font-bold text-rose-300" role="alert">
           <p>{error}</p>
           {reconnectPath ? (
             <Link
