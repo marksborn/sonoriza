@@ -1114,3 +1114,44 @@ model PushDelivery {
   @@index([status, nextAttemptAt])
   @@index([userId, createdAt])
 }
+
+// ---------------------------------------------------------------------------
+// PRELAUNCH-01 — public waitlist and DB-backed abuse throttling.
+// ---------------------------------------------------------------------------
+
+enum PrelaunchSignupStatus {
+  PENDING_CONFIRMATION
+  WAITING
+  INVITED
+  ACTIVATED
+  DECLINED
+  UNSUBSCRIBED
+  BOUNCED
+}
+
+model PrelaunchSignup {
+  id                String                  @id @default(cuid())
+  email             String                  @unique
+  status            PrelaunchSignupStatus   @default(WAITING)
+  source            String                  @default("HOME")
+  privacyVersion    String
+  privacyAcceptedAt DateTime
+  confirmedAt       DateTime?
+  invitedAt         DateTime?
+  activatedAt       DateTime?
+  lastSubmittedAt   DateTime                @default(now())
+  submissionCount   Int                     @default(1)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model PrelaunchRateLimitBucket {
+  keyHash         String   @id
+  windowStartedAt DateTime
+  attemptCount    Int      @default(0)
+  updatedAt       DateTime @updatedAt
+
+  @@index([windowStartedAt])
+}

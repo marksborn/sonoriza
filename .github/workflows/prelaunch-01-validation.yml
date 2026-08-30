@@ -1,0 +1,50 @@
+name: PRELAUNCH-01 validation
+
+on:
+  pull_request:
+    paths:
+      - "prisma/schema.prisma"
+      - "prisma/migrations/**"
+      - "src/app/page.tsx"
+      - "src/app/api/prelaunch/**"
+      - "src/components/PrelaunchSignupForm.tsx"
+      - "src/services/prelaunch-**"
+      - ".github/workflows/prelaunch-01-validation.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza?schema=public
+      AUTH_SECRET: prelaunch-01-ci-only-not-production
+      AUTH_GOOGLE_ID: prelaunch-01-ci
+      AUTH_GOOGLE_SECRET: prelaunch-01-ci
+      AUTH_SPOTIFY_ID: prelaunch-01-ci
+      AUTH_SPOTIFY_SECRET: prelaunch-01-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npx tsx --test src/services/prelaunch-signup.test.ts
+      - run: npm run typecheck
+      - run: npm run build

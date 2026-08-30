@@ -10,6 +10,7 @@ export type UiIconName =
   | "history"
   | "list"
   | "logout"
+  | "mail"
   | "music"
   | "play"
   | "plus"
@@ -99,6 +100,12 @@ const ICON_PATHS: Record<UiIconName, ReactNode> = {
       <path d="M10 17l5-5-5-5" />
       <path d="M15 12H3" />
       <path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5" />
+    </>
+  ),
+  mail: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
     </>
   ),
   music: (

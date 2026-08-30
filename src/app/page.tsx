@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BrandLogo } from "@/components/BrandLogo";
+import { PrelaunchSignupForm } from "@/components/PrelaunchSignupForm";
 import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn } from "@/lib/auth";
 
@@ -134,6 +135,8 @@ export default async function HomePage() {
                 </p>
               </section>
             )}
+
+            {!session?.user ? <PrelaunchSignupForm /> : null}
 
             <ul className="mt-10 grid gap-3 text-sm font-semibold text-ink-inverse sm:grid-cols-3">
               {highlights.map((highlight) => (
