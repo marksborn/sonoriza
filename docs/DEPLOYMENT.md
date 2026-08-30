@@ -101,3 +101,52 @@ npm run db:deploy
 npm run build
 pm2 reload sonoriza
 ```
+
+
+## 6. Read-only production SQL diagnostics
+
+For production diagnostics that must return rows, use the PostgreSQL `psql`
+client. Do not use `prisma db execute` for `SELECT` diagnostics: it executes
+the statement but only reports `Script executed successfully`, without printing
+the result set.
+
+Prefer a temporary SQL file over nested shell heredocs. This avoids broken quotes
+and truncated SQL when commands are pasted from a mobile terminal.
+
+```bash
+cat > /tmp/sonoriza-diagnostic.sql <<'SQL'
+\\pset pager off
+\\x on
+
+SELECT now() AS database_time;
+SQL
+
+chmod 644 /tmp/sonoriza-diagnostic.sql
+
+sudo -u itsoft-sonoriza -H bash -lc '
+set -Eeuo pipefail
+cd /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br
+set -a
+source .env
+set +a
+DB_URL="${DATABASE_URL%%\\?*}"
+psql "$DB_URL" -f /tmp/sonoriza-diagnostic.sql
+'
+```
+
+Operational rules:
+
+- run the command as the CloudPanel site user, not as `root`;
+- never print `DATABASE_URL` or embed credentials in the SQL file;
+- remove the Prisma-only `?schema=...` query string before passing the URL to
+  `psql`;
+- use `\\pset pager off` so unattended output does not stop in a pager;
+- use `\\x on` for readable wide diagnostic records;
+- keep diagnostic SQL read-only unless a separately reviewed operation explicitly
+  requires a write;
+- use a task-specific filename under `/tmp`, then replace or remove it after the
+  investigation when appropriate.
+
+If `psql` is unavailable, install/use the matching PostgreSQL client through the
+server's normal administration process. Do not fall back to exposing database
+credentials on the command line or in shell history.
