@@ -124,9 +124,11 @@ export default async function HomePage() {
                         Entrar no Sonoriza
                       </span>
                     </span>
-                    <span aria-hidden="true" className="text-brand-400 transition group-open:rotate-180">
-                      ⌄
-                    </span>
+                    <UiIcon
+                      name="arrow-right"
+                      size={18}
+                      className="rotate-90 text-brand-400 transition group-open:-rotate-90"
+                    />
                   </summary>
 
                   <div className="border-t border-line-dark/60 px-4 pb-4 pt-3">
