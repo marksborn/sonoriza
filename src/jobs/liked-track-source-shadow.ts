@@ -38,7 +38,7 @@ export const LIKED_TRACK_SOURCE_SHADOW_POLICY = {
  * product preference. Missing, disabled or unreadable consent always abstains.
  */
 export const LIKED_TRACK_SOURCE_PLANNER_PILOT_POLICY = {
-  version: "source-liked-gate5b2-v2",
+  version: "source-liked-gate5b2-v3",
   mode: "PILOT_PRODUCTIVE",
   exposurePercent: 5,
   activationRule:
@@ -276,6 +276,13 @@ export async function prepareLikedTrackSourceShadowForCurrentRun(): Promise<Prep
       repeatBlockedCandidates: repeat.recentlyPlayedSkippedCount,
       missingTrackIdentityCandidates: repeat.missingTrackIdentitySkippedCount,
       sourceBlocker: snapshot.plannerMaterialization.blocker,
+      sourceDegraded: snapshot.plannerMaterialization.degraded,
+      sourceBlockedAvailableCount:
+        snapshot.plannerMaterialization.blockedAvailableTracks,
+      sourceBlockedAvailablePercent:
+        snapshot.plannerMaterialization.blockedAvailablePercent,
+      sourceReadinessLimits: snapshot.plannerMaterialization.limits,
+      sourceBlockedAvailableSample: snapshot.plannerMaterialization.blockedSample,
       attempted: false,
       reason: shadowPolicy.enabled
         ? sourceReady
@@ -286,6 +293,14 @@ export async function prepareLikedTrackSourceShadowForCurrentRun(): Promise<Prep
         ...existingProductive,
         sourceReady,
         sourceBlocker: snapshot.plannerMaterialization.blocker,
+        sourceDegraded: snapshot.plannerMaterialization.degraded,
+        sourceBlockedAvailableCount:
+          snapshot.plannerMaterialization.blockedAvailableTracks,
+        sourceBlockedAvailablePercent:
+          snapshot.plannerMaterialization.blockedAvailablePercent,
+        sourceReadinessLimits: snapshot.plannerMaterialization.limits,
+        sourceBlockedAvailableSample:
+          snapshot.plannerMaterialization.blockedSample,
         likedSourceTrackCount: snapshot.counts.activeLikedTracks,
         likedSourceResolvedCount: snapshot.counts.plannerReadyAvailable,
         likedSourceUnavailableCount: snapshot.counts.unavailable,

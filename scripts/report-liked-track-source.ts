@@ -73,10 +73,31 @@ async function main() {
 
   console.log("Planner materialization:");
   p("  ready:", report.plannerMaterialization.ready);
+  p("  degraded:", report.plannerMaterialization.degraded);
   p("  blocker:", report.plannerMaterialization.blocker ?? "-");
   p("  missing field:", report.plannerMaterialization.requiredMissingField ?? "-");
   p("  eligible available:", report.plannerMaterialization.eligibleAvailableTracks);
   p("  blocked available:", report.plannerMaterialization.blockedAvailableTracks);
+  p(
+    "  blocked available percent:",
+    `${report.plannerMaterialization.blockedAvailablePercent.toFixed(4)}%`,
+  );
+  p(
+    "  max blocked available:",
+    report.plannerMaterialization.limits.maxBlockedAvailableTracks,
+  );
+  p(
+    "  max blocked percent:",
+    `${report.plannerMaterialization.limits.maxBlockedAvailablePercent}%`,
+  );
+  if (report.plannerMaterialization.blockedSample.length > 0) {
+    console.log("  blocked sample:");
+    for (const item of report.plannerMaterialization.blockedSample) {
+      console.log(
+        `    - ${item.artist ?? "?"} — ${item.title ?? "?"} | ${item.spotifyTrackId} | missing=${item.missingFields.join(",")}`,
+      );
+    }
+  }
   console.log(`  note: ${report.plannerMaterialization.note}`);
   console.log();
 
