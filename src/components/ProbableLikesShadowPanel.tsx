@@ -86,7 +86,7 @@ export async function ProbableLikesShadowPanel({
                   </p>
 
                   <details className="group mt-1.5 text-xs text-muted-inverse">
-                    <summary className="min-h-10 cursor-pointer list-none py-2 font-black text-brand-300 transition hover:text-accent-300 focus-visible:outline-none group-open:text-accent-300">
+                    <summary className="min-h-10 cursor-pointer list-none rounded-lg py-2 font-black text-brand-300 transition hover:text-accent-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400 group-open:text-accent-300">
                       <span className="inline-flex items-center gap-1.5">
                         <UiIcon name="list" size={14} />
                         Ver evidências
@@ -140,7 +140,7 @@ export async function ProbableLikesShadowPanel({
       )}
 
       <details className="group mt-4 border-t border-line-dark/45 pt-2 text-[11px] font-bold text-muted-inverse/85">
-        <summary className="min-h-10 cursor-pointer list-none py-2 text-brand-300 transition hover:text-accent-300 focus-visible:outline-none">
+        <summary className="min-h-10 cursor-pointer list-none rounded-lg py-2 text-brand-300 transition hover:text-accent-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400">
           <span className="inline-flex items-center gap-1.5">
             Sobre este ranking
             <span aria-hidden="true" className="transition group-open:rotate-180">⌄</span>
