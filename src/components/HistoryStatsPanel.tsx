@@ -2,10 +2,12 @@ import { UiIcon } from "@/components/UiIcon";
 import type { ListeningHistoryStats } from "@/services/listening-history/stats";
 
 export function HistoryStatsPanel({ stats }: { stats: ListeningHistoryStats }) {
+  const hasUnmeasuredEvents =
+    stats.playCount > 0 && stats.measuredPlayEvents === 0;
+
   return (
     <section className="product-panel overflow-hidden p-5 sm:p-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3">
           <span className="product-icon-tile h-11 w-11 shrink-0">
             <UiIcon name="list" size={20} />
           </span>
@@ -17,11 +19,6 @@ export function HistoryStatsPanel({ stats }: { stats: ListeningHistoryStats }) {
               Seu padrão neste filtro
             </h2>
           </div>
-        </div>
-        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-line-dark/65 bg-surface-subtle/70 px-3 py-1.5 text-xs font-bold text-muted-inverse">
-          <UiIcon name="history" size={15} />
-          Histórico local
-        </span>
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -38,19 +35,38 @@ export function HistoryStatsPanel({ stats }: { stats: ListeningHistoryStats }) {
           label="Álbuns distintos"
         />
         <StatCard
-          value={formatListeningDuration(stats.measuredListeningMs)}
-          label="Tempo medido"
+          value={
+            hasUnmeasuredEvents
+              ? "Sem duração medida"
+              : formatListeningDuration(stats.measuredListeningMs)
+          }
+          label={
+            hasUnmeasuredEvents
+              ? `${stats.playCount.toLocaleString("pt-BR")} eventos sem cobertura`
+              : "Tempo medido"
+          }
+          compact={hasUnmeasuredEvents}
           detail={
-            stats.playCount > 0
-              ? `${stats.measuredPlayEvents.toLocaleString("pt-BR")} de ${stats.playCount.toLocaleString("pt-BR")} eventos · ${formatPercent(stats.measuredCoveragePercent)}`
-              : "Sem eventos neste filtro"
+            stats.playCount === 0
+              ? "Sem eventos neste filtro"
+              : hasUnmeasuredEvents
+                ? undefined
+                : `${stats.measuredPlayEvents.toLocaleString("pt-BR")} de ${stats.playCount.toLocaleString("pt-BR")} eventos · ${formatPercent(stats.measuredCoveragePercent)}`
           }
         />
       </div>
 
-      <p className="mt-3 text-[11px] leading-5 text-muted-inverse/85">
-        Tempo medido soma apenas reproduções com evidência factual de duração do Spotify Extended History. Eventos sem essa evidência continuam nas contagens e rankings, sem duração estimada.
-      </p>
+      <details className="group mt-2 text-[11px] text-muted-inverse/85">
+        <summary className="min-h-10 cursor-pointer list-none rounded-lg py-2 font-black text-brand-300 transition hover:text-accent-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400">
+          <span className="inline-flex items-center gap-1.5">
+            Como calculamos o tempo
+            <span aria-hidden="true" className="transition group-open:rotate-180">⌄</span>
+          </span>
+        </summary>
+        <p className="rounded-xl border border-line-dark/50 bg-surface-elevated/45 p-3 leading-5">
+          Somamos apenas reproduções com duração factual disponível no histórico importado. Eventos sem essa informação continuam nas contagens e rankings, sem estimativa de tempo.
+        </p>
+      </details>
 
       <div
         className="-mx-5 mt-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-2 sm:-mx-6 sm:px-6 lg:mx-0 lg:grid lg:grid-cols-3 lg:overflow-visible lg:px-0 lg:pb-0"
@@ -95,14 +111,16 @@ function StatCard({
   value,
   label,
   detail,
+  compact = false,
 }: {
   value: string;
   label: string;
   detail?: string;
+  compact?: boolean;
 }) {
   return (
     <div className="rounded-2xl border border-line-dark/55 bg-surface-subtle/65 px-4 py-4">
-      <p className="text-xl font-black text-ink-inverse sm:text-2xl">{value}</p>
+      <p className={`${compact ? "text-base leading-5 sm:text-lg" : "text-xl sm:text-2xl"} font-black text-ink-inverse`}>{value}</p>
       <p className="mt-1 text-xs font-semibold text-muted-inverse">{label}</p>
       {detail ? <p className="mt-1 text-[10px] leading-4 text-muted-inverse/75">{detail}</p> : null}
     </div>
