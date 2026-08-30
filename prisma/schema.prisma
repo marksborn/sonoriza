@@ -1144,6 +1144,7 @@ model PrelaunchSignup {
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
   statusEvents      PrelaunchSignupStatusEvent[]
+  invites           PrelaunchInvite[]
 
   @@index([status, createdAt])
 }
@@ -1161,6 +1162,24 @@ model PrelaunchSignupStatusEvent {
 
   @@index([prelaunchSignupId, createdAt])
   @@index([actorUserId, createdAt])
+}
+
+model PrelaunchInvite {
+  id                  String   @id @default(cuid())
+  prelaunchSignupId   String
+  tokenHash           String   @unique
+  expectedEmail       String
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  revokedAt           DateTime?
+  createdByUserId     String
+  createdByEmail      String
+  createdAt           DateTime @default(now())
+
+  prelaunchSignup PrelaunchSignup @relation(fields: [prelaunchSignupId], references: [id], onDelete: Cascade)
+
+  @@index([prelaunchSignupId, createdAt])
+  @@index([expectedEmail, expiresAt])
 }
 
 model PrelaunchRateLimitBucket {
