@@ -111,7 +111,7 @@ export async function ProbableLikesShadowPanel({
                     </div>
                   </details>
 
-                  <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <div className="mt-2.5 grid grid-cols-3 gap-2">
                     <ProbableLikeLikeButton
                       spotifyTrackId={candidate.spotifyTrackId}
                       compact
@@ -125,7 +125,7 @@ export async function ProbableLikesShadowPanel({
                       <UiIcon name="play" size={15} />
                       Spotify
                     </a>
-                    <div className="col-span-2 sm:col-span-1">
+                    <div className="min-w-0">
                       <ProbableLikeDismissButton
                         spotifyTrackId={candidate.spotifyTrackId}
                         compact

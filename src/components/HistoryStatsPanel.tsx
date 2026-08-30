@@ -52,7 +52,10 @@ export function HistoryStatsPanel({ stats }: { stats: ListeningHistoryStats }) {
         Tempo medido soma apenas reproduções com evidência factual de duração do Spotify Extended History. Eventos sem essa evidência continuam nas contagens e rankings, sem duração estimada.
       </p>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-3">
+      <div
+        className="-mx-5 mt-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-2 sm:-mx-6 sm:px-6 lg:mx-0 lg:grid lg:grid-cols-3 lg:overflow-visible lg:px-0 lg:pb-0"
+        aria-label="Rankings do período"
+      >
         <RankingCard
           title="Faixas mais ouvidas"
           empty="Nenhuma faixa neste filtro"
@@ -121,7 +124,7 @@ function RankingCard({
   empty: string;
 }) {
   return (
-    <div className="rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4">
+    <div className="w-[84%] shrink-0 snap-start rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 sm:w-[55%] lg:w-auto">
       <h3 className="text-sm font-black text-ink-inverse">{title}</h3>
       {rows.length === 0 ? (
         <p className="mt-4 text-xs text-muted-inverse">{empty}</p>

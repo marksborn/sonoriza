@@ -152,7 +152,18 @@ export default async function ListeningHistoryPage({
             ))}
           </div>
 
-          <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_auto]">
+          <details
+            open={Boolean(filters.query || filters.source || filters.period === "custom")}
+            className="group mt-4 border-t border-line-dark/45 pt-2"
+          >
+            <summary className="min-h-11 cursor-pointer list-none rounded-lg py-3 text-sm font-black text-brand-300 transition hover:text-accent-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400">
+              <span className="inline-flex items-center gap-2">
+                <UiIcon name="search" size={16} />
+                Busca e período personalizado
+                <span aria-hidden="true" className="transition group-open:rotate-180">⌄</span>
+              </span>
+            </summary>
+            <div className="mt-2 grid gap-4 xl:grid-cols-[1fr_auto]">
             <form method="get" className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,0.45fr)_auto]">
               <input type="hidden" name="period" value={filters.period} />
               {filters.period === "custom" ? (
@@ -225,18 +236,19 @@ export default async function ListeningHistoryPage({
                 Período
               </button>
             </form>
-          </div>
+            </div>
 
-          {(filters.query || filters.source || filters.period === "custom") ? (
-            <div className="mt-4">
+            {(filters.query || filters.source || filters.period === "custom") ? (
+              <div className="mt-4">
               <Link
                 href="/dashboard/historico?period=7d"
                 className="text-xs font-bold text-brand-400 transition hover:text-accent-400"
               >
                 Limpar filtros
               </Link>
-            </div>
-          ) : null}
+              </div>
+            ) : null}
+          </details>
         </section>
 
         <HistoryStatsPanel stats={stats} />
@@ -277,12 +289,12 @@ export default async function ListeningHistoryPage({
               {history.items.map((item) => {
                 const strongIdentity = Boolean(item.spotifyTrackId || item.trackMbid || item.isrc);
                 return (
-                  <li key={item.id} className="px-4 py-4 sm:px-5">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0">
+                  <li key={item.id} className="px-3.5 py-3 sm:px-5 sm:py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-start gap-3">
-                          <span className="product-icon-tile mt-0.5 h-10 w-10 shrink-0">
-                            <UiIcon name="music" size={18} />
+                          <span className="product-icon-tile mt-0.5 h-9 w-9 shrink-0 rounded-xl">
+                            <UiIcon name="music" size={16} />
                           </span>
                           <div className="min-w-0">
                             <p className="truncate font-black text-ink-inverse">{item.trackName}</p>
@@ -290,18 +302,9 @@ export default async function ListeningHistoryPage({
                               {item.artistName}
                               {item.albumName ? ` · ${item.albumName}` : ""}
                             </p>
-                            <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-bold">
+                            <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-bold">
                               <span className="rounded-full border border-line-dark/60 bg-surface-elevated/70 px-2.5 py-1 text-muted-inverse">
                                 {listeningHistorySourceLabel(item.source)}
-                              </span>
-                              <span
-                                className={`rounded-full border px-2.5 py-1 ${
-                                  strongIdentity
-                                    ? "border-success/30 bg-success-soft text-success"
-                                    : "border-warning/30 bg-warning-soft text-warning"
-                                }`}
-                              >
-                                {strongIdentity ? "Identidade vinculada" : "Identidade por metadados"}
                               </span>
                               {item.contextType ? (
                                 <span className="rounded-full border border-line-dark/60 bg-surface-elevated/70 px-2.5 py-1 text-muted-inverse">
@@ -314,7 +317,8 @@ export default async function ListeningHistoryPage({
                       </div>
                       <time
                         dateTime={item.playedAt.toISOString()}
-                        className="shrink-0 pl-[3.25rem] text-xs font-bold text-muted-inverse sm:pl-0 sm:text-right"
+                        title={strongIdentity ? "Identidade vinculada" : "Identidade por metadados"}
+                        className="w-[5.25rem] shrink-0 text-right text-[11px] font-bold leading-4 text-muted-inverse sm:w-auto sm:text-xs"
                       >
                         {dateTimeFormatter.format(item.playedAt)}
                       </time>
