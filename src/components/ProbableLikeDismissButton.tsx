@@ -5,8 +5,10 @@ import { useState } from "react";
 
 export function ProbableLikeDismissButton({
   spotifyTrackId,
+  compact = false,
 }: {
   spotifyTrackId: string;
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -41,20 +43,27 @@ export function ProbableLikeDismissButton({
   }
 
   return (
-    <div>
+    <div className={compact ? "min-w-0" : undefined}>
       <button
         type="button"
         disabled={busy}
         onClick={() => void dismiss()}
-        className="inline-flex items-center justify-center rounded-xl border border-warning/40 bg-warning-soft px-3.5 py-2 text-xs font-black text-warning transition hover:border-warning/70 disabled:cursor-wait disabled:opacity-60"
+        title="Ocultar por 90 dias; esta ação não é um dislike"
+        className={`inline-flex min-h-11 items-center justify-center rounded-xl border border-line-dark/70 bg-transparent px-3.5 py-2 text-xs font-black text-muted-inverse transition hover:border-warning/60 hover:bg-warning-soft/45 hover:text-warning disabled:cursor-wait disabled:opacity-60 ${
+          compact ? "w-full" : ""
+        }`}
       >
         {busy ? "Ocultando…" : "Agora não"}
       </button>
-      <p className="mt-1.5 max-w-xs text-[10px] font-semibold leading-4 text-muted-inverse/75">
-        Oculta esta sugestão por 90 dias. Não é dislike.
-      </p>
+      {!compact ? (
+        <p className="mt-1.5 max-w-xs text-[10px] font-semibold leading-4 text-muted-inverse/75">
+          Oculta esta sugestão por 90 dias. Não é dislike.
+        </p>
+      ) : null}
       {error ? (
-        <p className="mt-2 text-[11px] font-bold text-rose-300">{error}</p>
+        <p className="mt-2 text-[11px] font-bold text-rose-300" role="alert">
+          {error}
+        </p>
       ) : null}
     </div>
   );

@@ -23,42 +23,42 @@ export async function ProbableLikesShadowPanel({
   const visibleResult = cooldown.result;
 
   return (
-    <section className="product-panel overflow-hidden p-5 sm:p-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex items-start gap-3">
-          <span className="product-icon-tile h-11 w-11 shrink-0">
-            <UiIcon name="music" size={20} />
-          </span>
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
-              Gate 6 · Curadoria
-            </p>
-            <h2 className="mt-1 text-xl font-black tracking-tight text-ink-inverse">
+    <section className="product-panel overflow-hidden p-4 sm:p-6">
+      <div className="flex items-start gap-3">
+        <span className="product-icon-tile h-10 w-10 shrink-0 sm:h-11 sm:w-11">
+          <UiIcon name="music" size={20} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
+            Curadoria
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-black tracking-tight text-ink-inverse">
               Talvez você queira curtir
             </h2>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-inverse">
-              Confirme uma curtida ou use “Agora não” para tirar temporariamente uma sugestão da fila. O cooldown não cria dislike e a música pode voltar a ser considerada no futuro.
-            </p>
+            <span className="inline-flex items-center rounded-full border border-warning/30 bg-warning-soft/70 px-2.5 py-1 text-[10px] font-black text-warning">
+              Cooldown de 90 dias
+            </span>
           </div>
+          <p className="mt-1 max-w-2xl text-sm leading-5 text-muted-inverse">
+            Músicas que você já ouviu e demonstrou gostar.
+          </p>
         </div>
-        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-warning/30 bg-warning-soft/70 px-3 py-1.5 text-xs font-black text-warning">
-          Cooldown ativo
-        </span>
       </div>
 
       {visibleResult.candidates.length === 0 ? (
-        <div className="mt-5 rounded-2xl border border-dashed border-line-dark/70 bg-surface-subtle/55 px-5 py-8 text-center">
+        <div className="mt-4 rounded-2xl border border-dashed border-line-dark/70 bg-surface-subtle/55 px-4 py-7 text-center">
           <p className="font-black text-ink-inverse">Nenhuma candidata forte agora</p>
           <p className="mt-1 text-sm text-muted-inverse">
-            O ranking exige repetição em dias diferentes e evidência positiva suficiente; sugestões em cooldown ficam ocultas temporariamente.
+            Novas sugestões aparecem quando há evidência positiva suficiente.
           </p>
         </div>
       ) : (
-        <ol className="mt-5 grid gap-3 lg:grid-cols-2">
+        <ol className="mt-4 grid gap-3 lg:grid-cols-2">
           {visibleResult.candidates.slice(0, 6).map((candidate, index) => (
             <li
               key={candidate.spotifyTrackId}
-              className="rounded-2xl border border-line-dark/60 bg-surface-subtle/60 p-4"
+              className="rounded-2xl border border-line-dark/60 bg-surface-subtle/60 p-3.5 sm:p-4"
             >
               <div className="flex items-start gap-3">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-brand-400/30 bg-brand/10 text-xs font-black text-brand-300">
@@ -71,44 +71,66 @@ export async function ProbableLikesShadowPanel({
                   <p className="mt-0.5 truncate text-sm font-semibold text-muted-inverse">
                     {candidate.artistName}
                   </p>
-                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold">
+
+                  <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px] font-bold">
                     <span className="rounded-full border border-line-dark/60 bg-surface-elevated/70 px-2.5 py-1 text-muted-inverse">
                       {candidate.playCount} reproduções
                     </span>
                     <span className="rounded-full border border-line-dark/60 bg-surface-elevated/70 px-2.5 py-1 text-muted-inverse">
                       {candidate.distinctDays} dias
                     </span>
-                    {candidate.factualCompleteCount > 0 ? (
-                      <span className="rounded-full border border-success/30 bg-success-soft px-2.5 py-1 text-success">
-                        {candidate.factualCompleteCount} factual
-                      </span>
-                    ) : null}
-                    {candidate.inferredCompleteCount > 0 ? (
-                      <span className="rounded-full border border-accent-400/30 bg-accent-400/10 px-2.5 py-1 text-accent-300">
-                        {candidate.inferredCompleteCount} inferida
-                      </span>
-                    ) : null}
                   </div>
-                  <ul className="mt-3 space-y-1 text-xs leading-5 text-muted-inverse">
-                    {candidate.reasons.slice(0, 3).map((reason) => (
-                      <li key={reason}>• {reason}</li>
-                    ))}
-                  </ul>
-                  <p className="mt-3 text-[11px] font-bold text-muted-inverse/80">
-                    Última reprodução: {dateFormatter.format(candidate.lastPlayedAt)}
+
+                  <p className="mt-2.5 line-clamp-2 text-xs leading-5 text-muted-inverse">
+                    {candidate.reasons[0] ?? "Seu histórico indica afinidade com esta música."}
                   </p>
-                  <div className="mt-3 flex flex-wrap items-start gap-2">
+
+                  <details className="group mt-1.5 text-xs text-muted-inverse">
+                    <summary className="min-h-10 cursor-pointer list-none rounded-lg py-2 font-black text-brand-300 transition hover:text-accent-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400 group-open:text-accent-300">
+                      <span className="inline-flex items-center gap-1.5">
+                        <UiIcon name="list" size={14} />
+                        Ver evidências
+                        <span aria-hidden="true" className="transition group-open:rotate-180">⌄</span>
+                      </span>
+                    </summary>
+                    <div className="rounded-xl border border-line-dark/50 bg-surface-elevated/45 p-3">
+                      <ul className="space-y-1 leading-5">
+                        {candidate.reasons.map((reason) => (
+                          <li key={reason}>• {reason}</li>
+                        ))}
+                      </ul>
+                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-bold text-muted-inverse/80">
+                        {candidate.factualCompleteCount > 0 ? (
+                          <span>{candidate.factualCompleteCount} conclusões factuais</span>
+                        ) : null}
+                        {candidate.inferredCompleteCount > 0 ? (
+                          <span>{candidate.inferredCompleteCount} conclusões inferidas</span>
+                        ) : null}
+                        <span>Última: {dateFormatter.format(candidate.lastPlayedAt)}</span>
+                      </div>
+                    </div>
+                  </details>
+
+                  <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <ProbableLikeLikeButton
+                      spotifyTrackId={candidate.spotifyTrackId}
+                      compact
+                    />
                     <a
                       href={`/api/history/probable-like/open?spotifyTrackId=${encodeURIComponent(candidate.spotifyTrackId)}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-2 rounded-xl border border-success/30 bg-success-soft/70 px-3 py-2 text-xs font-black text-success transition hover:border-success/50 hover:bg-success-soft"
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-success/35 bg-success-soft/60 px-3 py-2 text-center text-xs font-black text-success transition hover:border-success/60 hover:bg-success-soft"
                     >
                       <UiIcon name="play" size={15} />
-                      Abrir no Spotify
+                      Spotify
                     </a>
-                    <ProbableLikeLikeButton spotifyTrackId={candidate.spotifyTrackId} />
-                    <ProbableLikeDismissButton spotifyTrackId={candidate.spotifyTrackId} />
+                    <div className="col-span-2 sm:col-span-1">
+                      <ProbableLikeDismissButton
+                        spotifyTrackId={candidate.spotifyTrackId}
+                        compact
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -117,17 +139,25 @@ export async function ProbableLikesShadowPanel({
         </ol>
       )}
 
-      <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-line-dark/45 pt-4 text-[11px] font-bold text-muted-inverse/85">
-        <span>{visibleResult.evaluatedTrackCount.toLocaleString("pt-BR")} faixas examinadas pelo ranking</span>
-        <span>{visibleResult.excludedLikedCount.toLocaleString("pt-BR")} já curtidas excluídas</span>
-        <span>{visibleResult.excludedStrongNegativeCount.toLocaleString("pt-BR")} excluídas por sinal negativo forte</span>
-        {visibleResult.excludedShortContentCount > 0 ? (
-          <span>{visibleResult.excludedShortContentCount.toLocaleString("pt-BR")} ultracurtas excluídas</span>
-        ) : null}
-        {cooldown.excludedCooldownCount > 0 ? (
-          <span>{cooldown.excludedCooldownCount.toLocaleString("pt-BR")} em cooldown nesta janela</span>
-        ) : null}
-      </div>
+      <details className="group mt-4 border-t border-line-dark/45 pt-2 text-[11px] font-bold text-muted-inverse/85">
+        <summary className="min-h-10 cursor-pointer list-none rounded-lg py-2 text-brand-300 transition hover:text-accent-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400">
+          <span className="inline-flex items-center gap-1.5">
+            Sobre este ranking
+            <span aria-hidden="true" className="transition group-open:rotate-180">⌄</span>
+          </span>
+        </summary>
+        <div className="flex flex-wrap gap-x-5 gap-y-2 pb-1">
+          <span>{visibleResult.evaluatedTrackCount.toLocaleString("pt-BR")} faixas examinadas</span>
+          <span>{visibleResult.excludedLikedCount.toLocaleString("pt-BR")} já curtidas excluídas</span>
+          <span>{visibleResult.excludedStrongNegativeCount.toLocaleString("pt-BR")} excluídas por sinal negativo forte</span>
+          {visibleResult.excludedShortContentCount > 0 ? (
+            <span>{visibleResult.excludedShortContentCount.toLocaleString("pt-BR")} ultracurtas excluídas</span>
+          ) : null}
+          {cooldown.excludedCooldownCount > 0 ? (
+            <span>{cooldown.excludedCooldownCount.toLocaleString("pt-BR")} em cooldown</span>
+          ) : null}
+        </div>
+      </details>
     </section>
   );
 }
