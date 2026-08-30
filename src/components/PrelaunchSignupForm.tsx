@@ -54,7 +54,7 @@ export function PrelaunchSignupForm() {
   }
 
   return (
-    <div className="product-panel mt-6 max-w-xl p-4 sm:p-5">
+    <div className="product-panel max-w-xl p-4 sm:p-5">
       <div className="flex items-start gap-3">
         <span className="product-icon-tile-accent h-10 w-10 shrink-0">
           <UiIcon name="mail" size={19} />

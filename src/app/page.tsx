@@ -31,7 +31,7 @@ function GoogleIcon() {
 function SpotifyIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
-      <circle cx="12" cy="12" r="11" fill="currentColor" />
+      <circle cx="12" cy="12" r="11" fill="#1ED760" />
       <path
         d="M6.6 9.3c3.7-1.1 8.2-.8 11.2.9M7.4 12.7c3.1-.8 6.9-.5 9.5.8M8.2 15.8c2.6-.6 5.4-.3 7.7.7"
         fill="none"
@@ -111,32 +111,45 @@ export default async function HomePage() {
                 </Link>
               </div>
             ) : (
-              <section className="mt-9 space-y-4" aria-label="Entrar no Sonoriza">
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <form action={signInWithGoogle}>
-                    <button
-                      type="submit"
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-line-dark/70 bg-surface-elevated px-5 py-3 font-bold text-ink-inverse shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-surface-subtle sm:w-auto"
-                    >
-                      <GoogleIcon />
-                      Entrar com Google
-                    </button>
-                  </form>
-                  <form action={signInWithSpotify}>
-                    <button type="submit" className="primary-button w-full sm:w-auto">
-                      <SpotifyIcon />
-                      Entrar com Spotify
-                    </button>
-                  </form>
+              <section className="mt-9 max-w-xl space-y-5" aria-label="Acesso ao Sonoriza">
+                <PrelaunchSignupForm />
+
+                <div className="border-t border-line-dark/60 pt-5">
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-brand-400">
+                    Já recebeu seu convite?
+                  </p>
+                  <p className="mt-1 text-sm leading-5 text-muted-inverse">
+                    Entre com o mesmo e-mail que foi liberado para o piloto.
+                  </p>
+
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                    <form action={signInWithGoogle} className="flex-1">
+                      <button
+                        type="submit"
+                        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full border border-line-dark/70 bg-surface-elevated px-5 py-3 font-bold text-ink-inverse shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-surface-subtle"
+                      >
+                        <GoogleIcon />
+                        Entrar com Google
+                      </button>
+                    </form>
+                    <form action={signInWithSpotify} className="flex-1">
+                      <button
+                        type="submit"
+                        className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full border border-line-dark/70 bg-surface-elevated px-5 py-3 font-bold text-ink-inverse shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-surface-subtle"
+                      >
+                        <SpotifyIcon />
+                        Entrar com Spotify
+                      </button>
+                    </form>
+                  </div>
+
+                  <p className="mt-3 text-xs leading-5 text-muted-inverse/80">
+                    O cadastro na lista de espera não cria uma conta nem libera o acesso automaticamente.
+                  </p>
                 </div>
-                <p className="max-w-xl text-sm leading-6 text-muted-inverse">
-                  Escolha um provedor no primeiro acesso. No painel, conecte o outro
-                  para entrar depois com qualquer um deles no mesmo usuário.
-                </p>
               </section>
             )}
 
-            {!session?.user ? <PrelaunchSignupForm /> : null}
 
             <ul className="mt-10 grid gap-3 text-sm font-semibold text-ink-inverse sm:grid-cols-3">
               {highlights.map((highlight) => (
