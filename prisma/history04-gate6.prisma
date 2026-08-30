@@ -1,0 +1,32 @@
+// ---------------------------------------------------------------------------
+// HISTORY-04 Gate 6 — light rejection / temporary suppression.
+//
+// "Agora não" is deliberately NOT a dislike. It only suppresses the probable-
+// like suggestion until suppressUntil, while preserving provenance and timing
+// so the candidate can be reconsidered later.
+// ---------------------------------------------------------------------------
+
+enum HistoryProbableLikeDismissalSource {
+  PROBABLE_LIKE
+}
+
+model HistoryProbableLikeDismissal {
+  id                String                             @id @default(cuid())
+  userId            String
+  spotifyTrackId    String
+  source            HistoryProbableLikeDismissalSource @default(PROBABLE_LIKE)
+  trackName         String
+  artistName        String
+  candidateScore    Int
+  candidateReasons  Json
+  firstDismissedAt  DateTime                           @default(now())
+  lastDismissedAt   DateTime
+  suppressUntil     DateTime
+  dismissCount      Int                                @default(1)
+  createdAt         DateTime                           @default(now())
+  updatedAt         DateTime                           @updatedAt
+
+  @@unique([userId, spotifyTrackId, source])
+  @@index([userId, suppressUntil])
+  @@index([userId, source, lastDismissedAt])
+}
