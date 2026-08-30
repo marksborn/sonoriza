@@ -1,6 +1,7 @@
 import { ProbableLikeDismissButton } from "@/components/ProbableLikeDismissButton";
 import { ProbableLikeLikeButton } from "@/components/ProbableLikeLikeButton";
 import { ProgressiveList } from "@/components/ProgressiveList";
+import { ProductSectionHeader } from "@/components/ProductSectionHeader";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import type { ProbableLikeShadowResult } from "@/services/listening-history/probable-like";
@@ -27,27 +28,18 @@ export async function ProbableLikesShadowPanel({
 
   return (
     <section className="product-panel overflow-hidden p-4 sm:p-6">
-      <div className="flex items-start gap-3">
-        <span className="product-icon-tile h-10 w-10 shrink-0 sm:h-11 sm:w-11">
-          <UiIcon name="music" size={20} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
-            Curadoria
-          </p>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h2 className="text-xl font-black tracking-tight text-ink-inverse">
-              Talvez você queira curtir
-            </h2>
-            <span className="inline-flex items-center rounded-full border border-warning/30 bg-warning-soft/70 px-2.5 py-1 text-[10px] font-black text-warning">
-              Cooldown de 90 dias
-            </span>
-          </div>
-          <p className="mt-1 max-w-2xl text-sm leading-5 text-muted-inverse">
-            Músicas que você já ouviu e demonstrou gostar.
-          </p>
-        </div>
-      </div>
+      <ProductSectionHeader
+        eyebrow="Curadoria"
+        title="Talvez você queira curtir"
+        description="Músicas que você já ouviu e demonstrou gostar."
+        icon="music"
+        iconTone="accent"
+        titleAccessory={
+          <span className="inline-flex items-center rounded-full border border-warning/30 bg-warning-soft/70 px-2.5 py-1 text-[10px] font-black text-warning">
+            Cooldown de 90 dias
+          </span>
+        }
+      />
 
       {visibleResult.candidates.length === 0 ? (
         <div className="mt-4 rounded-2xl border border-dashed border-line-dark/70 bg-surface-subtle/55 px-4 py-7 text-center">
