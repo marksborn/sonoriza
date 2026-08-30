@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { ProductSectionHeader } from "@/components/ProductSectionHeader";
 import { UiIcon, type UiIconName } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import {
@@ -26,33 +27,24 @@ export default async function ForYouPage() {
   return (
     <div className="space-y-5">
       <section className="product-panel p-5 sm:p-7">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex items-start gap-4">
-            <span className="product-icon-tile-accent h-12 w-12 shrink-0">
-              <UiIcon name="music" size={22} />
-            </span>
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
-                Para você
-              </p>
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-ink-inverse sm:text-3xl">
-                Seu mix pessoal de descoberta
-              </h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-inverse">
-                Familiaridade, redescoberta e músicas novas escolhidas pelo seu histórico real. O Sonoriza mostra poucas opções e explica por que cada uma apareceu.
-              </p>
-            </div>
-          </div>
-
-          {report ? (
-            <div className="flex flex-wrap gap-2 text-xs font-bold text-muted-inverse sm:justify-end">
-              <span className="product-badge px-3 py-1.5">
-                {formatCount(report.coverage.totalCanonicalEvents)} escutas analisadas
-              </span>
-              <span className="product-badge px-3 py-1.5">DISCOVERY-01</span>
-            </div>
-          ) : null}
-        </div>
+        <ProductSectionHeader
+          eyebrow="Para você"
+          title="Seu mix pessoal de descoberta"
+          description="Familiaridade, redescoberta e músicas novas escolhidas pelo seu histórico real. O Sonoriza mostra poucas opções e explica por que cada uma apareceu."
+          icon="music"
+          iconTone="accent"
+          large
+          aside={
+            report ? (
+              <div className="flex flex-wrap gap-2 text-xs font-bold text-muted-inverse sm:justify-end">
+                <span className="product-badge px-3 py-1.5">
+                  {formatCount(report.coverage.totalCanonicalEvents)} escutas analisadas
+                </span>
+                <span className="product-badge px-3 py-1.5">DISCOVERY-01</span>
+              </div>
+            ) : null
+          }
+        />
       </section>
 
       {loadFailed || !report ? (

@@ -1,4 +1,5 @@
-import { UiIcon } from "@/components/UiIcon";
+import { ProductMetricCard } from "@/components/ProductMetricCard";
+import { ProductSectionHeader } from "@/components/ProductSectionHeader";
 import type { ListeningHistoryStats } from "@/services/listening-history/stats";
 
 export function HistoryStatsPanel({ stats }: { stats: ListeningHistoryStats }) {
@@ -7,34 +8,27 @@ export function HistoryStatsPanel({ stats }: { stats: ListeningHistoryStats }) {
 
   return (
     <section className="product-panel overflow-hidden p-5 sm:p-6">
-      <div className="flex items-start gap-3">
-          <span className="product-icon-tile h-11 w-11 shrink-0">
-            <UiIcon name="list" size={20} />
-          </span>
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
-              Estatísticas
-            </p>
-            <h2 className="mt-1 text-xl font-black tracking-tight text-ink-inverse">
-              Seu padrão neste filtro
-            </h2>
-          </div>
-      </div>
+      <ProductSectionHeader
+        eyebrow="Estatísticas"
+        title="Seu padrão neste filtro"
+        icon="list"
+        iconTone="accent"
+      />
 
       <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard
+        <ProductMetricCard
           value={stats.distinctTracks.toLocaleString("pt-BR")}
           label="Faixas distintas"
         />
-        <StatCard
+        <ProductMetricCard
           value={stats.distinctArtists.toLocaleString("pt-BR")}
           label="Artistas distintos"
         />
-        <StatCard
+        <ProductMetricCard
           value={stats.distinctAlbums.toLocaleString("pt-BR")}
           label="Álbuns distintos"
         />
-        <StatCard
+        <ProductMetricCard
           value={
             hasUnmeasuredEvents
               ? "Sem duração medida"
@@ -104,26 +98,6 @@ export function HistoryStatsPanel({ stats }: { stats: ListeningHistoryStats }) {
         />
       </div>
     </section>
-  );
-}
-
-function StatCard({
-  value,
-  label,
-  detail,
-  compact = false,
-}: {
-  value: string;
-  label: string;
-  detail?: string;
-  compact?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-line-dark/55 bg-surface-subtle/65 px-4 py-4">
-      <p className={`${compact ? "text-base leading-5 sm:text-lg" : "text-xl sm:text-2xl"} font-black text-ink-inverse`}>{value}</p>
-      <p className="mt-1 text-xs font-semibold text-muted-inverse">{label}</p>
-      {detail ? <p className="mt-1 text-[10px] leading-4 text-muted-inverse/75">{detail}</p> : null}
-    </div>
   );
 }
 
