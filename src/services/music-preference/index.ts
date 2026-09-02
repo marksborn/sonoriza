@@ -23,6 +23,8 @@ export {
   FIRST_PARTY_PREFERENCE_SUBJECT_KEY_MAX_LENGTH,
   PLAYBACK_PREFERENCE_POLICIES,
   PLAYBACK_PREFERENCE_SUBJECT_TYPES,
+  assertFirstPartyPreferenceSource,
+  isFirstPartyPreferenceSource,
   lineageForFirstPartyPreference,
   normalizeFirstPartyPreferenceSubjectKey,
   normalizeSetFirstPartyPlaybackPreferenceInput,
