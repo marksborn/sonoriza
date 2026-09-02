@@ -11,7 +11,7 @@ import {
 const integrationTest = process.env.DATABASE_URL ? test : test.skip;
 
 integrationTest(
-  "derives confirmed play count while excluding Last.fm residue outside the authoritative window",
+  "Gate 5C preserves backfill status but quarantines provider-derived listening metrics",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const user = await prisma.user.create({
@@ -29,6 +29,9 @@ integrationTest(
         status: "SUCCESS",
         from: new Date("2013-11-12T12:17:22.000Z"),
         to: new Date("2020-01-01T00:00:00.000Z"),
+        acceptedEvents: 2,
+        insertedEvents: 2,
+        duplicateEvents: 0,
         finishedAt: new Date("2020-01-01T00:00:01.000Z"),
       },
     });
@@ -40,27 +43,9 @@ integrationTest(
           trackName: "Track A",
           artistName: "Artist A",
           albumName: "Album A",
-          playedAt: new Date("1970-01-01T00:00:01.000Z"),
-          source: "LASTFM_SCROBBLE",
-          sourceEventKey: `lastfm-synthetic-${suffix}`,
-        },
-        {
-          userId: user.id,
-          trackName: "Track A",
-          artistName: "Artist A",
-          albumName: "Album A",
           playedAt: new Date("2015-01-01T12:00:00.000Z"),
           source: "LASTFM_SCROBBLE",
-          sourceEventKey: `lastfm-1-${suffix}`,
-        },
-        {
-          userId: user.id,
-          trackName: "track a",
-          artistName: "artist a",
-          albumName: "album a",
-          playedAt: new Date("2018-01-01T12:00:00.000Z"),
-          source: "LASTFM_SCROBBLE",
-          sourceEventKey: `lastfm-2-${suffix}`,
+          sourceEventKey: `lastfm-${suffix}`,
         },
         {
           userId: user.id,
@@ -71,7 +56,7 @@ integrationTest(
           albumName: "Album A",
           playedAt: new Date("2026-08-12T20:00:00.000Z"),
           source: "SPOTIFY_RECENTLY_PLAYED",
-          sourceEventKey: `spotify-1-${suffix}`,
+          sourceEventKey: `spotify-${suffix}`,
         },
       ],
     });
@@ -83,21 +68,11 @@ integrationTest(
       albumName: "Album A",
     });
     assert.equal(track.identityBasis, "SPOTIFY_ID");
-    assert.equal(track.playCount, 1);
-    assert.equal(track.firstPlayedAt?.toISOString(), "2026-08-12T20:00:00.000Z");
-    assert.equal(track.lastPlayedAt?.toISOString(), "2026-08-12T20:00:00.000Z");
-    assert.deepEqual(track.sources, [
-      { source: "SPOTIFY_RECENTLY_PLAYED", count: 1 },
-    ]);
-    assert.equal(track.unresolvedHistoricalCandidates.count, 2);
-    assert.equal(
-      track.unresolvedHistoricalCandidates.firstPlayedAt?.toISOString(),
-      "2015-01-01T12:00:00.000Z",
-    );
-    assert.equal(
-      track.unresolvedHistoricalCandidates.lastPlayedAt?.toISOString(),
-      "2018-01-01T12:00:00.000Z",
-    );
+    assert.equal(track.playCount, 0);
+    assert.equal(track.firstPlayedAt, null);
+    assert.equal(track.lastPlayedAt, null);
+    assert.deepEqual(track.sources, []);
+    assert.equal(track.unresolvedHistoricalCandidates.count, 0);
 
     const unresolved = await getTrackListeningStats(user.id, {
       trackName: "Track A",
@@ -105,12 +80,14 @@ integrationTest(
       albumName: "Album A",
     });
     assert.equal(unresolved.identityBasis, "UNRESOLVED_NAME");
-    assert.equal(unresolved.playCount, 2);
-    assert.equal(unresolved.unresolvedHistoricalCandidates.count, 0);
+    assert.equal(unresolved.playCount, 0);
 
     const summary = await getListeningHistorySummary(user.id);
-    assert.equal(summary.totalPlayEvents, 3);
-    assert.equal(summary.firstPlayedAt?.toISOString(), "2015-01-01T12:00:00.000Z");
-    assert.equal(summary.lastPlayedAt?.toISOString(), "2026-08-12T20:00:00.000Z");
+    assert.equal(summary.totalPlayEvents, 0);
+    assert.equal(summary.firstPlayedAt, null);
+    assert.equal(summary.lastPlayedAt, null);
+    assert.deepEqual(summary.sources, []);
+    assert.equal(summary.lastFmBackfill?.status, "SUCCESS");
+    assert.equal(summary.lastFmBackfill?.acceptedEvents, 2);
   },
 );
