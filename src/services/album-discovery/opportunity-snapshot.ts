@@ -3,6 +3,8 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { spotifyCatalogRecommendationCapability } from "@/services/data-policy";
+
 import type { AlbumOpportunityCandidate } from "./opportunity";
 import {
   getAlbumOpportunityReport,
@@ -17,7 +19,7 @@ export const ALBUM_OPPORTUNITY_SNAPSHOT_POLICY = {
   persistedCandidateCount: 50,
   uiDefaultTop: 5,
   note:
-    "ALBUM-01 is computed outside the page request and persisted as an atomic filesystem cache. A request-budget stop may persist a truthful PARTIAL ranking and subsequent refreshes converge it to COMPLETE. The snapshot is advisory/read-only; QUEUED memory remains authoritative and is re-applied on every UI read.",
+    "ALBUM-01 is computed outside the page request and persisted as an atomic filesystem cache. Gate 5C suppresses legacy ranked snapshots unless Spotify catalog recommendation capability is explicitly ALLOW. QUEUED memory remains independent and authoritative.",
 } as const;
 
 type SerializedAlbumOpportunityCandidate = Omit<AlbumOpportunityCandidate, "coverage"> & {
@@ -159,6 +161,32 @@ export async function getAlbumOpportunitySnapshotView(
       .map((memory) => memory.spotifyAlbumId),
   );
   const queuedCount = queuedIds.size;
+  const capability = spotifyCatalogRecommendationCapability();
+
+  // Gate 5C: do not resurrect a pre-compliance ranking merely because it was
+  // already serialized to disk. User-explicit QUEUED memory remains available,
+  // but the recommendation snapshot is represented as absent.
+  if (!capability.allowed) {
+    return {
+      snapshot: {
+        status: "MISSING",
+        completeness: null,
+        partialReason: null,
+        generatedAt: null,
+        asOf: null,
+        ageMs: null,
+        source: ALBUM_OPPORTUNITY_SNAPSHOT_POLICY.version,
+      },
+      ranked: [],
+      queueMemory: {
+        queuedCount,
+        suppressedAlbumCount: payload?.ranked.length ?? 0,
+      },
+      providerMetrics: {
+        failureCount: 0,
+      },
+    };
+  }
 
   if (!payload) {
     return {
@@ -220,6 +248,17 @@ export async function getAlbumOpportunitySnapshotRefreshState(
   ageMs: number | null;
   shouldRefresh: boolean;
 }> {
+  const capability = spotifyCatalogRecommendationCapability();
+  if (!capability.allowed) {
+    return {
+      status: "MISSING",
+      completeness: null,
+      generatedAt: null,
+      ageMs: null,
+      shouldRefresh: false,
+    };
+  }
+
   const payload = await readAlbumOpportunitySnapshot(userId);
   if (!payload) {
     return {
