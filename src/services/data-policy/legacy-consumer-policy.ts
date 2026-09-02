@@ -54,6 +54,22 @@ export const ALBUM_RECOMMENDATION_USES = [
   "RECOMMENDATION",
 ] as const satisfies readonly PolicyUse[];
 
+export const SAVED_TRACKS_PROFILE_MATERIALIZATION_BLOCK_CODE =
+  "DATA_POLICY_SAVED_TRACKS_PROFILE_MATERIALIZATION_BLOCKED" as const;
+
+export class SavedTracksProfileMaterializationPolicyError extends Error {
+  readonly code = SAVED_TRACKS_PROFILE_MATERIALIZATION_BLOCK_CODE;
+  readonly capability: RequiredPolicyUsesEvaluation;
+
+  constructor(capability: RequiredPolicyUsesEvaluation) {
+    super(
+      "Spotify Saved Tracks cannot materialize behavioral profile or ArtistAffinity state under the current data-policy capability matrix.",
+    );
+    this.name = "SavedTracksProfileMaterializationPolicyError";
+    this.capability = capability;
+  }
+}
+
 /**
  * Gate 5C central fail-closed evaluator for legacy consumers.
  * REVIEW_REQUIRED is not productive permission: every required use must be
@@ -127,6 +143,14 @@ export function spotifySavedTracksProfileMaterializationCapability(): RequiredPo
     "SPOTIFY_SAVED_TRACKS",
     SAVED_TRACKS_PROFILE_MATERIALIZATION_USES,
   );
+}
+
+export function assertSpotifySavedTracksProfileMaterializationAllowed(): RequiredPolicyUsesEvaluation {
+  const capability = spotifySavedTracksProfileMaterializationCapability();
+  if (!capability.allowed) {
+    throw new SavedTracksProfileMaterializationPolicyError(capability);
+  }
+  return capability;
 }
 
 export function spotifyCatalogRecommendationCapability(): RequiredPolicyUsesEvaluation {
