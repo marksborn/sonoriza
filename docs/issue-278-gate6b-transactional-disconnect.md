@@ -37,7 +37,7 @@ An integration test creates new configuration after preview and proves the stale
 
 ## Concurrency and transaction
 
-The real executor uses a Prisma interactive transaction at PostgreSQL `SERIALIZABLE` isolation.
+The real executor uses a Prisma interactive transaction at PostgreSQL `SERIALIZABLE` isolation, with a 10-second connection wait and a 120-second transaction timeout.
 
 Before re-inventorying, it obtains `SHARE ROW EXCLUSIVE` locks on every table that the disconnect can read/write for retention. This intentionally favors correctness over concurrency because disconnect is rare and destructive. The locks block concurrent provider/cron writers during snapshot, purge and postcheck while ordinary reads may continue.
 
@@ -45,7 +45,7 @@ Integration tests inject a no-op lock function so validating Gate 6B against a l
 
 ## Retention contract expansion discovered in 6B
 
-The 6B audit found provider-bearing state that was not explicit in the initial 6A inventory. Contract version 3 now includes it.
+The 6B audit found provider-bearing state that was not explicit in the initial 6A inventory. Contract version 4 now includes it.
 
 ### Runtime payload cleared
 
@@ -90,10 +90,13 @@ The following rows keep structural/timing/explicit-user information but lose pro
 - `MusicSourceCleanupRun`;
 - `MusicIngestionRun`;
 - `TargetScheduleRun` / `TargetScheduleAttempt`;
+- `PushDelivery` payload/error while Web Push subscriptions remain untouched;
 - `GenerationRun` / `GenerationItem` / `GenerationLog`;
 - `ProbableLikePilotFeedback`;
 - `HistoryLikeAction`;
 - `HistoryProbableLikeDismissal`.
+
+Push delivery status, category, event key, retry/timing and subscription relationship survive. Persisted notification title/body/url/tag are replaced with a generic redacted payload and `lastError` is cleared because notifications can embed a provider-derived source name or reason.
 
 For History rows, explicit verdict/confirmation/dismissal timing survives. Spotify track/artist identity, catalog text and ranking score/reasons are replaced with deterministic redacted placeholders or neutral values.
 
@@ -110,6 +113,7 @@ The postcheck protects row counts for:
 - `PodcastShowPolicy`;
 - `MusicIngestionRule`;
 - cleanup/ingestion/schedule/generation audit rows;
+- `PushDelivery` rows and their non-Spotify Web Push subscriptions;
 - History explicit feedback/action/dismissal rows;
 - `FirstPartyPlaybackPreference`;
 - `NativeSourcePreference`.
@@ -127,7 +131,7 @@ Expected final state after a successful local disconnect:
 - no local Spotify OAuth account/token;
 - no provider-derived behavioral/profile rows covered by the contract;
 - no Spotify enrichment on independently sourced history;
-- no provider payload in retained audit/runtime fields covered by the inventory;
+- no provider payload in retained audit/runtime/notification fields covered by the inventory;
 - Sonoriza user and preserved configuration still present.
 
 ## What Gate 6B does not do
@@ -137,6 +141,7 @@ Expected final state after a successful local disconnect:
 - no Spotify-side token revocation HTTP call;
 - no full Sonoriza account deletion flow;
 - no deletion of preserved first-party preferences/configuration;
+- no cleanup of external infrastructure logs, database backups or operator-owned source files outside these Sonoriza database tables;
 - no schema/migration change;
 - no merge/deploy in this gate without separate authorization.
 
@@ -149,7 +154,7 @@ Added pure tests for:
 - stale preview rejection;
 - exact confirmation requirement;
 - provider-residue postcheck;
-- first-party row-count preservation postcheck.
+- first-party/audit row-count preservation postcheck.
 
 Added integration coverage with synthetic users for:
 
@@ -159,6 +164,7 @@ Added integration coverage with synthetic users for:
 - first-party configuration survival;
 - redacted History/generation audit survival;
 - optional Auth profile cleanup and generation duration redaction;
+- persisted PushDelivery payload/error redaction while subscription survives;
 - stale preview rejection before mutation.
 
 The integration tests intentionally operate only on synthetic users created inside the test and clean them up afterwards.
