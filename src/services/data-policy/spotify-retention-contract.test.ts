@@ -67,8 +67,9 @@ test("explicit Sonoriza configuration and the user account survive provider disc
   }
 });
 
-test("provider caches and runtime state are cleared without deleting first-party bindings", () => {
+test("provider caches, optional Auth profile and runtime state are cleared without deleting first-party bindings", () => {
   for (const dataset of [
+    "USER_PROFILE_PROVIDER_FIELDS",
     "SOURCE_PLAYLIST_CACHE",
     "MUSIC_PLAYBACK_RUNTIME_STATE",
     "PODCAST_SHOW_RUNTIME_STATE",
@@ -103,6 +104,7 @@ test("first-party audit survives only after provider fields are redacted", () =>
 test("disconnect preview accounts for mixed lineage and the expanded runtime/audit inventory", () => {
   const inventory: SpotifyDisconnectInventory = {
     oauthAccount: 1,
+    userProfileProviderFields: 2,
     sourcePlaylistCache: 2,
     sourcePlaylistBinding: 3,
     targetPlaylistBinding: 4,
@@ -144,7 +146,7 @@ test("disconnect preview accounts for mixed lineage and the expanded runtime/aud
   assert.equal(preview.destructive, true);
   assert.equal(history?.affectedRows, 31);
   assert.equal(preview.sanitizeRows, 31);
-  assert.equal(preview.clearPayloadRows, 23);
+  assert.equal(preview.clearPayloadRows, 25);
   assert.equal(preview.redactRows, 146);
   assert.equal(preview.retainedFirstPartyRows, 93);
 });
