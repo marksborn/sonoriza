@@ -29,7 +29,6 @@ export {
   normalizeFirstPartyPreferenceSubjectKey,
   normalizeSetFirstPartyPlaybackPreferenceInput,
   type FirstPartyPlaybackPreference,
-  type FirstPartyPlaybackPreferenceValue,
   type FirstPartyPreferenceSource,
   type PlaybackPreferencePolicy,
   type PlaybackPreferenceSubjectType,
