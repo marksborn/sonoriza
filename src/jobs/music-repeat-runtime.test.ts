@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { MusicRepeatWindowUnit } from "@prisma/client";
 
+import { firstPartySpotifyTrackSubjectKey } from "@/services/music-preference";
 import type { Candidate, RunTarget } from "@/services/playlist-planner";
 
 import {
@@ -97,6 +98,8 @@ function state(blocked: string[]): MusicRepeatRunState {
     preWriteRevalidated: false,
     preWriteBlockedCount: 0,
     preWriteMissingIdentityCount: 0,
+    firstPartyPlaybackPreferences: [],
+    firstPartyPreferenceEvidence: null,
   };
 }
 
@@ -118,6 +121,46 @@ test("recent track is removed before planner and later eligible music can fill t
   assert.equal(music.calls, 2);
   assert.deepEqual(result.pools.music.map((item) => item.spotifyTrackId), ["eligible"]);
   assert.equal(runtime.recentlyPlayedSkippedCount, 1);
+});
+
+test("Gate 5B explicit track preference is applied before planner selection", async () => {
+  const music = source("music-first-party", "MUSIC", [
+    {
+      candidates: [
+        candidate("excluded", "MUSIC", 300_000),
+        candidate("eligible", "MUSIC", 300_000),
+      ],
+      done: true,
+    },
+  ]);
+  const runtime = state([]);
+  runtime.firstPartyPlaybackPreferences = [
+    {
+      id: "pref-1",
+      userId: runtime.userId,
+      subjectType: "TRACK",
+      subjectKey: firstPartySpotifyTrackSubjectKey("excluded"),
+      policy: "EXCLUDED",
+      source: "USER_EXPLICIT",
+      createdAt: new Date("2026-09-02T19:30:00.000Z"),
+      updatedAt: new Date("2026-09-02T19:30:00.000Z"),
+    },
+  ];
+  const musicOnlyTarget = target();
+  musicOnlyTarget.rules.targetDurationMs = 300_000;
+  musicOnlyTarget.rules.sequencePattern = ["MUSIC"];
+  musicOnlyTarget.rules.podcastPercent = 0;
+
+  const result = await runWithMusicRepeatState(runtime, () =>
+    collectIncrementally({ sources: [music], targets: [musicOnlyTarget] }),
+  );
+
+  assert.deepEqual(
+    result.plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
+    ["eligible"],
+  );
+  assert.equal(runtime.firstPartyPreferenceEvidence?.excludedCandidateCount, 1);
+  assert.equal(runtime.firstPartyPreferenceEvidence?.applicablePreferenceCount, 1);
 });
 
 test("blocked music from another source cannot re-enter the shared pool", async () => {
