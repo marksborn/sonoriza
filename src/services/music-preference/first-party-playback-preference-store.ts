@@ -8,6 +8,7 @@ import {
 import { prisma } from "@/lib/prisma";
 
 import {
+  normalizeFirstPartyPreferenceSubjectKey,
   normalizeSetFirstPartyPlaybackPreferenceInput,
   type FirstPartyPlaybackPreference,
   type FirstPartyPlaybackPreferenceValue,
@@ -157,13 +158,7 @@ export const prismaFirstPartyPlaybackPreferenceStore: FirstPartyPlaybackPreferen
   },
 
   async remove(userId, subjectType, subjectKey) {
-    const normalizedKey = normalizeSetFirstPartyPlaybackPreferenceInput({
-      userId,
-      subjectType,
-      subjectKey,
-      policy: "NORMAL",
-      source: "USER_EXPLICIT",
-    }).subjectKey;
+    const normalizedKey = normalizeFirstPartyPreferenceSubjectKey(subjectKey);
 
     const result = await prisma.firstPartyPlaybackPreference.deleteMany({
       where: {
