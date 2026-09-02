@@ -3,3 +3,4 @@ export * from "./prisma-origin-mapping";
 export * from "./ai-ingestion-guard";
 export * from "./discovery-profile-policy";
 export * from "./discovery-profile-policy-client";
+export * from "./legacy-consumer-policy";
