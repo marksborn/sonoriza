@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { evaluateLikedTrackReconciliationSafety } from "./liked-track-reconciliation";
+import { SavedTracksProfileMaterializationPolicyError } from "@/services/data-policy";
+import {
+  evaluateLikedTrackReconciliationSafety,
+  reconcileLikedTracks,
+} from "./liked-track-reconciliation";
+
+test("Gate 5C full reconciliation stops before local/provider reads", async () => {
+  await assert.rejects(
+    () => reconcileLikedTracks("unused-user", { mode: "APPLY" }),
+    SavedTracksProfileMaterializationPolicyError,
+  );
+});
 
 test("Gate 4C requires an explicit baseline before any full reconciliation", () => {
   assert.deepEqual(
