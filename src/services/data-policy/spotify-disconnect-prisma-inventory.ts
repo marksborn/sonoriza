@@ -6,14 +6,26 @@ import type {
   SpotifyDisconnectInventory,
   SpotifyDisconnectInventoryStore,
 } from "./spotify-disconnect-preview";
+import {
+  SPOTIFY_DISCONNECT_REDACTED_ID_PREFIX,
+  SPOTIFY_DISCONNECT_REDACTED_TEXT,
+  SPOTIFY_DISCONNECT_REDACTED_URI,
+} from "./spotify-disconnect-redaction";
 
 type InventoryRow = {
   oauthAccount: bigint;
   sourcePlaylistCache: bigint;
   sourcePlaylistBinding: bigint;
   targetPlaylistBinding: bigint;
+  musicPlaybackRuntimeState: bigint;
+  musicPlaybackPolicy: bigint;
+  podcastShowRuntimeState: bigint;
+  podcastShowPolicy: bigint;
   musicIngestionRuntimeState: bigint;
   musicIngestionBinding: bigint;
+  musicSourceCleanupAudit: bigint;
+  musicIngestionAudit: bigint;
+  targetScheduleAudit: bigint;
   trackListeningState: bigint;
   spotifyListeningEvent: bigint;
   mixedListeningEvent: bigint;
@@ -26,6 +38,9 @@ type InventoryRow = {
   artistSimilarityEdge: bigint;
   musicPreferenceSignal: bigint;
   albumRecommendationMemory: bigint;
+  probableLikePilotFeedback: bigint;
+  historyLikeAction: bigint;
+  historyProbableLikeDismissal: bigint;
   generationAuditWithProviderFields: bigint;
   firstPartyPlaybackPreference: bigint;
   nativeSourcePreference: bigint;
@@ -47,7 +62,8 @@ export class PrismaSpotifyDisconnectInventoryStore
         (SELECT COUNT(*) FROM "SourcePlaylist"
           WHERE "userId" = ${userId}
             AND (
-              "cachedCandidates" IS NOT NULL
+              "name" IS NOT NULL
+              OR "cachedCandidates" IS NOT NULL
               OR "spotifySnapshotId" IS NOT NULL
               OR "cacheUpdatedAt" IS NOT NULL
             )) AS "sourcePlaylistCache",
@@ -55,10 +71,32 @@ export class PrismaSpotifyDisconnectInventoryStore
           WHERE "userId" = ${userId}) AS "sourcePlaylistBinding",
         (SELECT COUNT(*) FROM "TargetPlaylist"
           WHERE "userId" = ${userId} AND "spotifyPlaylistId" IS NOT NULL) AS "targetPlaylistBinding",
+        (SELECT COUNT(*) FROM "MusicPlaybackPolicy"
+          WHERE "userId" = ${userId}
+            AND (
+              "historyKnownSince" IS NOT NULL
+              OR "lastSyncAt" IS NOT NULL
+              OR "syncAfterCursor" IS NOT NULL
+            )) AS "musicPlaybackRuntimeState",
+        (SELECT COUNT(*) FROM "MusicPlaybackPolicy"
+          WHERE "userId" = ${userId}) AS "musicPlaybackPolicy",
+        (SELECT COUNT(*) FROM "PodcastShowPolicy" policy
+          INNER JOIN "SourcePlaylist" source ON source."id" = policy."sourcePlaylistId"
+          WHERE source."userId" = ${userId}
+            AND (
+              policy."sequenceCursorEpisodeId" IS NOT NULL
+              OR policy."sequenceCompleted" = true
+              OR policy."randomRound" <> 0
+              OR policy."randomConsumedEpisodeIds" <> '[]'::jsonb
+            )) AS "podcastShowRuntimeState",
+        (SELECT COUNT(*) FROM "PodcastShowPolicy" policy
+          INNER JOIN "SourcePlaylist" source ON source."id" = policy."sourcePlaylistId"
+          WHERE source."userId" = ${userId}) AS "podcastShowPolicy",
         (SELECT COUNT(*) FROM "MusicIngestionRule"
           WHERE "userId" = ${userId}
             AND (
-              "state" IS NOT NULL
+              "sourceName" IS NOT NULL
+              OR "state" IS NOT NULL
               OR "lastSyncAt" IS NOT NULL
               OR "lastSuccessAt" IS NOT NULL
               OR "capabilityStatus" <> 'UNKNOWN'::"MusicIngestionCapabilityStatus"
@@ -66,6 +104,35 @@ export class PrismaSpotifyDisconnectInventoryStore
             )) AS "musicIngestionRuntimeState",
         (SELECT COUNT(*) FROM "MusicIngestionRule"
           WHERE "userId" = ${userId}) AS "musicIngestionBinding",
+        (SELECT COUNT(*) FROM "MusicSourceCleanupRun"
+          WHERE "userId" = ${userId}
+            AND (
+              "snapshotBefore" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              OR "snapshotAfter" IS NOT NULL
+              OR "planHash" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              OR "plannedUris" <> '[]'::jsonb
+              OR "removedUris" IS NOT NULL
+              OR "failedUris" IS NOT NULL
+              OR "error" IS NOT NULL
+            )) AS "musicSourceCleanupAudit",
+        (SELECT COUNT(*) FROM "MusicIngestionRun"
+          WHERE "userId" = ${userId}
+            AND ("details" IS NOT NULL OR "error" IS NOT NULL)) AS "musicIngestionAudit",
+        (
+          (SELECT COUNT(*) FROM "TargetScheduleRun"
+            WHERE "userId" = ${userId}
+              AND (
+                "snapshotBefore" IS NOT NULL
+                OR "snapshotAfter" IS NOT NULL
+                OR "reason" IS NOT NULL
+                OR "details" IS NOT NULL
+              ))
+          +
+          (SELECT COUNT(*) FROM "TargetScheduleAttempt" attempt
+            INNER JOIN "TargetScheduleRun" run ON run."id" = attempt."targetScheduleRunId"
+            WHERE run."userId" = ${userId}
+              AND (attempt."reason" IS NOT NULL OR attempt."details" IS NOT NULL))
+        ) AS "targetScheduleAudit",
         (SELECT COUNT(*) FROM "TrackListeningState"
           WHERE "userId" = ${userId}) AS "trackListeningState",
         (SELECT COUNT(*) FROM "TrackListeningEvent"
@@ -80,7 +147,14 @@ export class PrismaSpotifyDisconnectInventoryStore
               'SPOTIFY_RECENTLY_PLAYED'::"ListeningEventSource",
               'SPOTIFY_EXTENDED_HISTORY'::"ListeningEventSource"
             )
-            AND (COALESCE("metadata", '{}'::jsonb) ? 'spotifyExtendedHistory')) AS "mixedListeningEvent",
+            AND (
+              COALESCE("metadata", '{}'::jsonb) ? 'spotifyExtendedHistory'
+              OR "spotifyTrackId" IS NOT NULL
+              OR "spotifyUri" IS NOT NULL
+              OR "primaryArtistId" IS NOT NULL
+              OR "albumId" IS NOT NULL
+              OR COALESCE("contextUri", '') LIKE 'spotify:%'
+            )) AS "mixedListeningEvent",
         (SELECT COUNT(*) FROM "SpotifyExtendedHistoryImportRun"
           WHERE "userId" = ${userId}) AS "spotifyExtendedHistoryImportRun",
         (SELECT COUNT(*) FROM "EpisodeListeningState"
@@ -99,17 +173,64 @@ export class PrismaSpotifyDisconnectInventoryStore
           WHERE "userId" = ${userId}) AS "musicPreferenceSignal",
         (SELECT COUNT(*) FROM "AlbumRecommendationMemory"
           WHERE "userId" = ${userId}) AS "albumRecommendationMemory",
+        (SELECT COUNT(*) FROM "ProbableLikePilotFeedback"
+          WHERE "userId" = ${userId}
+            AND (
+              "spotifyTrackId" NOT LIKE ${`${SPOTIFY_DISCONNECT_REDACTED_ID_PREFIX}%`}
+              OR "trackName" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              OR "artistName" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              OR "candidateScore" <> 0
+              OR "candidateReasons" <> '[]'::jsonb
+            )) AS "probableLikePilotFeedback",
+        (SELECT COUNT(*) FROM "HistoryLikeAction"
+          WHERE "userId" = ${userId}
+            AND (
+              "spotifyTrackId" NOT LIKE ${`${SPOTIFY_DISCONNECT_REDACTED_ID_PREFIX}%`}
+              OR "trackName" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              OR "artistName" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              OR "primaryArtistId" IS NOT NULL
+              OR "candidateScore" <> 0
+              OR "candidateReasons" <> '[]'::jsonb
+              OR "artistAffinityUpdated" = true
+            )) AS "historyLikeAction",
+        (SELECT COUNT(*) FROM "HistoryProbableLikeDismissal"
+          WHERE "userId" = ${userId}
+            AND (
+              "spotifyTrackId" NOT LIKE ${`${SPOTIFY_DISCONNECT_REDACTED_ID_PREFIX}%`}
+              OR "trackName" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              OR "artistName" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              OR "candidateScore" <> 0
+              OR "candidateReasons" <> '[]'::jsonb
+            )) AS "historyProbableLikeDismissal",
         (
           (SELECT COUNT(*) FROM "GenerationRun"
-            WHERE "userId" = ${userId} AND "summary" IS NOT NULL)
+            WHERE "userId" = ${userId}
+              AND ("summary" IS NOT NULL OR "error" IS NOT NULL))
           +
           (SELECT COUNT(*) FROM "GenerationItem" item
             INNER JOIN "GenerationRun" run ON run."id" = item."runId"
-            WHERE run."userId" = ${userId})
+            WHERE run."userId" = ${userId}
+              AND (
+                item."spotifyUri" <> ${SPOTIFY_DISCONNECT_REDACTED_URI}
+                OR item."title" IS NOT NULL
+                OR item."subtitle" IS NOT NULL
+                OR item."programId" IS NOT NULL
+                OR item."spotifyTrackId" IS NOT NULL
+                OR item."primaryArtistId" IS NOT NULL
+                OR item."albumId" IS NOT NULL
+                OR item."originalDurationMs" IS NOT NULL
+                OR item."resumePositionMs" IS NOT NULL
+                OR item."sourceSpotifyType" IS NOT NULL
+                OR item."sourceSpotifyId" IS NOT NULL
+              ))
           +
           (SELECT COUNT(*) FROM "GenerationLog" log
             INNER JOIN "GenerationRun" run ON run."id" = log."runId"
-            WHERE run."userId" = ${userId} AND log."data" IS NOT NULL)
+            WHERE run."userId" = ${userId}
+              AND (
+                log."data" IS NOT NULL
+                OR log."message" <> ${SPOTIFY_DISCONNECT_REDACTED_TEXT}
+              ))
         ) AS "generationAuditWithProviderFields",
         (SELECT COUNT(*) FROM "FirstPartyPlaybackPreference"
           WHERE "userId" = ${userId}) AS "firstPartyPlaybackPreference",
@@ -127,8 +248,15 @@ export class PrismaSpotifyDisconnectInventoryStore
       sourcePlaylistCache: asCount(row.sourcePlaylistCache),
       sourcePlaylistBinding: asCount(row.sourcePlaylistBinding),
       targetPlaylistBinding: asCount(row.targetPlaylistBinding),
+      musicPlaybackRuntimeState: asCount(row.musicPlaybackRuntimeState),
+      musicPlaybackPolicy: asCount(row.musicPlaybackPolicy),
+      podcastShowRuntimeState: asCount(row.podcastShowRuntimeState),
+      podcastShowPolicy: asCount(row.podcastShowPolicy),
       musicIngestionRuntimeState: asCount(row.musicIngestionRuntimeState),
       musicIngestionBinding: asCount(row.musicIngestionBinding),
+      musicSourceCleanupAudit: asCount(row.musicSourceCleanupAudit),
+      musicIngestionAudit: asCount(row.musicIngestionAudit),
+      targetScheduleAudit: asCount(row.targetScheduleAudit),
       trackListeningState: asCount(row.trackListeningState),
       spotifyListeningEvent: asCount(row.spotifyListeningEvent),
       mixedListeningEvent: asCount(row.mixedListeningEvent),
@@ -141,6 +269,9 @@ export class PrismaSpotifyDisconnectInventoryStore
       artistSimilarityEdge: asCount(row.artistSimilarityEdge),
       musicPreferenceSignal: asCount(row.musicPreferenceSignal),
       albumRecommendationMemory: asCount(row.albumRecommendationMemory),
+      probableLikePilotFeedback: asCount(row.probableLikePilotFeedback),
+      historyLikeAction: asCount(row.historyLikeAction),
+      historyProbableLikeDismissal: asCount(row.historyProbableLikeDismissal),
       generationAuditWithProviderFields: asCount(row.generationAuditWithProviderFields),
       firstPartyPlaybackPreference: asCount(row.firstPartyPlaybackPreference),
       nativeSourcePreference: asCount(row.nativeSourcePreference),
