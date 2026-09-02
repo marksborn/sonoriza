@@ -2,7 +2,6 @@ import {
   FirstPartyPreferenceSource as PrismaFirstPartyPreferenceSource,
   PlaybackPreferencePolicy as PrismaPlaybackPreferencePolicy,
   PlaybackPreferenceSubjectType as PrismaPlaybackPreferenceSubjectType,
-  Prisma,
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -11,7 +10,6 @@ import {
   normalizeFirstPartyPreferenceSubjectKey,
   normalizeSetFirstPartyPlaybackPreferenceInput,
   type FirstPartyPlaybackPreference,
-  type FirstPartyPlaybackPreferenceValue,
   type FirstPartyPreferenceSource,
   type PlaybackPreferencePolicy,
   type PlaybackPreferenceSubjectType,
@@ -59,19 +57,12 @@ const PRISMA_POLICY = {
   Record<PlaybackPreferencePolicy, PrismaPlaybackPreferencePolicy>
 >;
 
-function toPrismaJsonValue(value: FirstPartyPlaybackPreferenceValue | undefined) {
-  if (value === undefined) return Prisma.DbNull;
-  if (value === null) return Prisma.JsonNull;
-  return value as Prisma.InputJsonValue;
-}
-
 function fromPrismaRow(row: {
   id: string;
   userId: string;
   subjectType: PrismaPlaybackPreferenceSubjectType;
   subjectKey: string;
   policy: PrismaPlaybackPreferencePolicy;
-  value: Prisma.JsonValue | null;
   source: PrismaFirstPartyPreferenceSource;
   createdAt: Date;
   updatedAt: Date;
@@ -82,7 +73,6 @@ function fromPrismaRow(row: {
     subjectType: row.subjectType,
     subjectKey: row.subjectKey,
     policy: row.policy,
-    value: row.value as FirstPartyPlaybackPreferenceValue | null,
     source: row.source,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -95,7 +85,6 @@ const SELECT_FIRST_PARTY_PREFERENCE = {
   subjectType: true,
   subjectKey: true,
   policy: true,
-  value: true,
   source: true,
   createdAt: true,
   updatedAt: true,
@@ -126,12 +115,10 @@ export const prismaFirstPartyPlaybackPreferenceStore: FirstPartyPlaybackPreferen
         subjectType,
         subjectKey: normalized.subjectKey,
         policy: PRISMA_POLICY[normalized.policy],
-        value: toPrismaJsonValue(normalized.value),
         source: PRISMA_SOURCE[normalized.source],
       },
       update: {
         policy: PRISMA_POLICY[normalized.policy],
-        value: toPrismaJsonValue(normalized.value),
         source: PRISMA_SOURCE[normalized.source],
       },
       select: SELECT_FIRST_PARTY_PREFERENCE,
