@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import type { RequiredPolicyUsesEvaluation } from "@/services/data-policy";
 import {
   applyFirstPartyPlaybackPreferencesToMusicCandidates,
   type FirstPartyPlaybackPreference,
@@ -34,6 +35,8 @@ export type MusicRepeatRunState = {
   simulate: boolean;
   context: MusicRepeatContext;
   initialSync: RecentlyPlayedSyncResult;
+  /** Gate 5C capability decision for Spotify Recently Played planner use. */
+  repeatCompliance: RequiredPolicyUsesEvaluation;
   recentlyPlayedSkippedCount: number;
   missingTrackIdentitySkippedCount: number;
   preWriteSync: RecentlyPlayedSyncResult | null;
@@ -75,7 +78,17 @@ export function filterMusicBatchForCurrentRun(candidates: Candidate[]): {
     };
   }
 
-  const repeatFiltered = filterMusicCandidatesForRepeat(candidates, state.context);
+  // Gate 5C: Spotify Recently Played only affects planner eligibility when the
+  // central capability matrix explicitly ALLOWs every required use. The current
+  // matrix is REVIEW_REQUIRED, so the productive path is a no-op instead of
+  // silently treating the historical cooldown projection as first-party.
+  const repeatFiltered = state.repeatCompliance.allowed
+    ? filterMusicCandidatesForRepeat(candidates, state.context)
+    : {
+        candidates,
+        recentlyPlayedSkippedCount: 0,
+        missingTrackIdentitySkippedCount: 0,
+      };
   state.recentlyPlayedSkippedCount += repeatFiltered.recentlyPlayedSkippedCount;
   state.missingTrackIdentitySkippedCount +=
     repeatFiltered.missingTrackIdentitySkippedCount;
@@ -96,18 +109,21 @@ export function filterMusicBatchForCurrentRun(candidates: Candidate[]): {
 
 /**
  * Called after the final plan has been computed but before it is returned to
- * the generator. A real run re-syncs Spotify here and rejects a plan that
- * became stale while collection/planning was in progress. DISCOVER-DEST-01
- * also revalidates the per-target discovery policy through an independent
- * runtime context. Because the writer is created only after this returns, a
- * rejection causes zero Spotify playlist writes.
+ * the generator. Gate 5C keeps the old revalidation implementation behind the
+ * same central capability decision. Under the current matrix the Spotify
+ * Recently Played re-sync is not performed and cannot veto a plan.
  */
 export async function revalidateMusicRepeatBeforeRealWrite(
   plan: PlanRunResult,
 ): Promise<void> {
   const state = currentMusicRepeatState();
 
-  if (state && !state.simulate && state.context.enabled) {
+  if (
+    state &&
+    state.repeatCompliance.allowed &&
+    !state.simulate &&
+    state.context.enabled
+  ) {
     const refreshed = await refreshMusicRepeatContext(state.userId, new Date());
     state.preWriteSync = refreshed.sync;
     state.context = refreshed.context;
