@@ -5,9 +5,12 @@ import {
   FIRST_PARTY_PREFERENCE_SOURCES,
   PLAYBACK_PREFERENCE_POLICIES,
   PLAYBACK_PREFERENCE_SUBJECT_TYPES,
+  assertFirstPartyPreferenceSource,
+  isFirstPartyPreferenceSource,
   lineageForFirstPartyPreference,
   normalizeFirstPartyPreferenceSubjectKey,
   normalizeSetFirstPartyPlaybackPreferenceInput,
+  type FirstPartyPreferenceSource,
 } from "./first-party-playback-preference";
 
 test("Gate 4 first-party sources exclude provider-derived provenance", () => {
@@ -15,22 +18,19 @@ test("Gate 4 first-party sources exclude provider-derived provenance", () => {
     "USER_EXPLICIT",
     "SONORIZA_INTERACTION",
   ]);
-  assert.equal(
-    (FIRST_PARTY_PREFERENCE_SOURCES as readonly string[]).includes(
-      "PROVIDER_RESTRICTED",
-    ),
-    false,
+  assert.equal(isFirstPartyPreferenceSource("PROVIDER_RESTRICTED"), false);
+  assert.equal(isFirstPartyPreferenceSource("SPOTIFY"), false);
+  assert.equal(isFirstPartyPreferenceSource("LIKED_TRACK_SYNC"), false);
+});
+
+test("forged provider source is rejected before FIRST_PARTY lineage is assigned", () => {
+  const forgedSpotify = "SPOTIFY" as FirstPartyPreferenceSource;
+
+  assert.throws(
+    () => lineageForFirstPartyPreference(forgedSpotify),
+    /Not a first-party preference source: SPOTIFY/,
   );
-  assert.equal(
-    (FIRST_PARTY_PREFERENCE_SOURCES as readonly string[]).includes("SPOTIFY"),
-    false,
-  );
-  assert.equal(
-    (FIRST_PARTY_PREFERENCE_SOURCES as readonly string[]).includes(
-      "LIKED_TRACK_SYNC",
-    ),
-    false,
-  );
+  assert.throws(() => assertFirstPartyPreferenceSource("LIKED_TRACK_SYNC"));
 });
 
 test("explicit and Sonoriza-interaction preferences both carry FIRST_PARTY lineage", () => {
