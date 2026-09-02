@@ -88,6 +88,7 @@ test("first-party audit survives only after provider fields are redacted", () =>
     "MUSIC_SOURCE_CLEANUP_AUDIT",
     "MUSIC_INGESTION_AUDIT",
     "TARGET_SCHEDULE_AUDIT",
+    "NOTIFICATION_DELIVERY_AUDIT",
     "PROBABLE_LIKE_PILOT_FEEDBACK",
     "HISTORY_LIKE_ACTION",
     "HISTORY_PROBABLE_LIKE_DISMISSAL",
@@ -117,6 +118,7 @@ test("disconnect preview accounts for mixed lineage and the expanded runtime/aud
     musicSourceCleanupAudit: 11,
     musicIngestionAudit: 12,
     targetScheduleAudit: 13,
+    notificationDeliveryAudit: 14,
     trackListeningState: 14,
     spotifyListeningEvent: 15,
     mixedListeningEvent: 16,
@@ -147,6 +149,6 @@ test("disconnect preview accounts for mixed lineage and the expanded runtime/aud
   assert.equal(history?.affectedRows, 31);
   assert.equal(preview.sanitizeRows, 31);
   assert.equal(preview.clearPayloadRows, 25);
-  assert.equal(preview.redactRows, 146);
+  assert.equal(preview.redactRows, 160);
   assert.equal(preview.retainedFirstPartyRows, 93);
 });
