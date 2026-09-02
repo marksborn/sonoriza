@@ -17,6 +17,7 @@ function inventory(
 ): SpotifyDisconnectInventory {
   return {
     oauthAccount: 0,
+    userProfileProviderFields: 0,
     sourcePlaylistCache: 0,
     sourcePlaylistBinding: 0,
     targetPlaylistBinding: 0,
