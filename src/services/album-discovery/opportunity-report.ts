@@ -18,6 +18,7 @@ import {
   loadAlbumRecommendationMemories,
   suppressQueuedAlbumOpportunities,
 } from "@/services/album-discovery/queue-memory";
+import { spotifyCatalogRecommendationCapability } from "@/services/data-policy";
 import {
   SpotifyAlbumCatalogClient,
   type SpotifyAlbumCatalogSummary,
@@ -79,6 +80,17 @@ export type AlbumOpportunityCatalogProgress = {
   nextRequestPath: string | null;
 };
 
+export class AlbumOpportunityComplianceQuarantinedError extends Error {
+  readonly code = "ALBUM_OPPORTUNITY_COMPLIANCE_QUARANTINED";
+
+  constructor() {
+    super(
+      "ALBUM-01 recommendation is quarantined because Spotify catalog lineage is not allowed for RECOMMENDATION.",
+    );
+    this.name = "AlbumOpportunityComplianceQuarantinedError";
+  }
+}
+
 export function isAlbumOpportunityTerminalProviderError(error: unknown): boolean {
   if (isSpotifyCatalogRequestBudgetExceededError(error)) return true;
   return (
@@ -94,10 +106,20 @@ export function isAlbumOpportunityResumableBudgetStop(
   return candidateCount > 0 && error instanceof SpotifyCatalogRequestBudgetExceededError;
 }
 
+/**
+ * Gate 5C blocks ALBUM-01 before profile aggregation or Spotify catalog access.
+ * A report is a recommendation artifact, so DISPLAY permission for catalog data
+ * is not enough; SPOTIFY_CATALOG must be explicitly ALLOW for RECOMMENDATION.
+ */
 export async function getAlbumOpportunityReport(
   userId: string,
   options: AlbumOpportunityReportOptions = {},
 ): Promise<AlbumOpportunityReport> {
+  const capability = spotifyCatalogRecommendationCapability();
+  if (!capability.allowed) {
+    throw new AlbumOpportunityComplianceQuarantinedError();
+  }
+
   if (options.asOf) {
     return computeAlbumOpportunityReport(userId, options);
   }
@@ -202,11 +224,6 @@ async function computeAlbumOpportunityReport(
     nextRequestPath: null,
   };
 
-  // Phase 1: resolve identities and populate the cheap artist-album catalog first.
-  // With a small request budget, repeated refreshes therefore finish all artist
-  // lists before spending quota on per-album tracklists. Successful pages remain
-  // cached across runs. A budget stop here remains terminal because no album
-  // candidates have been scored yet.
   for (const artistCandidate of selectedArtists) {
     const identity = await loadHistoricalArtistIdentity({
       userId,
@@ -283,11 +300,6 @@ async function computeAlbumOpportunityReport(
     }
   }
 
-  // Phase 2: enrich exact editions incrementally. Because catalog concurrency is
-  // intentionally one request at a time, committing each scored album to the
-  // report as soon as it is available lets a local request-budget stop return a
-  // truthful partial ranking. Provider quota/rate-limit and cache-write failures
-  // remain terminal and preserve the previous snapshot.
   phase2: for (const prepared of preparedArtists) {
     const {
       artistCandidate,
