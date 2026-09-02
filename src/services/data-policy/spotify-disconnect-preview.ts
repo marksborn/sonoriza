@@ -6,6 +6,7 @@ import {
 
 export type SpotifyDisconnectInventory = Readonly<{
   oauthAccount: number;
+  userProfileProviderFields: number;
   sourcePlaylistCache: number;
   sourcePlaylistBinding: number;
   targetPlaylistBinding: number;
@@ -64,6 +65,7 @@ const countByDataset: Readonly<
   Record<SpotifyRetentionDataset, keyof SpotifyDisconnectInventory>
 > = {
   OAUTH_ACCOUNT: "oauthAccount",
+  USER_PROFILE_PROVIDER_FIELDS: "userProfileProviderFields",
   SOURCE_PLAYLIST_CACHE: "sourcePlaylistCache",
   SOURCE_PLAYLIST_BINDING: "sourcePlaylistBinding",
   TARGET_PLAYLIST_BINDING: "targetPlaylistBinding",
