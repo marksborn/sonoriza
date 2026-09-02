@@ -59,9 +59,7 @@ const PRISMA_POLICY = {
   Record<PlaybackPreferencePolicy, PrismaPlaybackPreferencePolicy>
 >;
 
-function toPrismaJsonValue(
-  value: FirstPartyPlaybackPreferenceValue | undefined,
-): Prisma.InputJsonValue | typeof Prisma.DbNull | typeof Prisma.JsonNull {
+function toPrismaJsonValue(value: FirstPartyPlaybackPreferenceValue | undefined) {
   if (value === undefined) return Prisma.DbNull;
   if (value === null) return Prisma.JsonNull;
   return value as Prisma.InputJsonValue;
