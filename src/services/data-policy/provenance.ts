@@ -57,16 +57,6 @@ export const ROOT_DATA_SOURCES = [
 
 export type RootDataSource = (typeof ROOT_DATA_SOURCES)[number];
 
-export type ListeningEventSourceValue =
-  | "SPOTIFY_RECENTLY_PLAYED"
-  | "SPOTIFY_EXTENDED_HISTORY"
-  | "LASTFM_SCROBBLE"
-  | "IMPORT";
-
-export type LikedTrackPreferenceProvenanceValue =
-  | "LIKED_TRACK_BACKFILL"
-  | "LIKED_TRACK_SYNC";
-
 type OriginPolicy = Readonly<Record<PolicyUse, PolicyDecision>>;
 
 const ORIGIN_ORDER = new Map<DataOrigin, number>(
@@ -183,35 +173,6 @@ export function lineageFromRootSource(source: RootDataSource): DataLineage {
 
 export function mergeLineages(...lineages: readonly DataLineage[]): DataLineage {
   return lineageFromOrigins(lineages.flatMap((lineage) => lineage.origins));
-}
-
-export function originForListeningEventSource(
-  source: ListeningEventSourceValue,
-): DataOrigin {
-  switch (source) {
-    case "SPOTIFY_RECENTLY_PLAYED":
-    case "SPOTIFY_EXTENDED_HISTORY":
-      return "SPOTIFY";
-    case "LASTFM_SCROBBLE":
-      return "LASTFM";
-    case "IMPORT":
-      return "USER_IMPORT";
-  }
-}
-
-/**
- * Legacy liked-track provenance records provider synchronization lifecycle, not
- * first-party intent. Both values are therefore classified conservatively as
- * Spotify-originated until the explicit Sonoriza action is modeled separately.
- */
-export function originForLikedTrackPreferenceProvenance(
-  provenance: LikedTrackPreferenceProvenanceValue,
-): DataOrigin {
-  switch (provenance) {
-    case "LIKED_TRACK_BACKFILL":
-    case "LIKED_TRACK_SYNC":
-      return "SPOTIFY";
-  }
 }
 
 export function policyDecisionForOrigin(
