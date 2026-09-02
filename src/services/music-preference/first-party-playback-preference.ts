@@ -11,6 +11,10 @@ import {
  * the identity of a referenced track/artist operationally, but that provider
  * metadata must keep its own lineage and must never change the origin of the
  * user's explicit preference.
+ *
+ * The record is deliberately narrow: subject + policy + first-party source.
+ * There is no generic payload/evidence field where provider-derived data could
+ * be smuggled into a row classified as FIRST_PARTY.
  */
 export const FIRST_PARTY_PREFERENCE_SOURCES = [
   "USER_EXPLICIT",
@@ -41,21 +45,12 @@ export const PLAYBACK_PREFERENCE_POLICIES = [
 export type PlaybackPreferencePolicy =
   (typeof PLAYBACK_PREFERENCE_POLICIES)[number];
 
-export type FirstPartyPlaybackPreferenceValue =
-  | string
-  | number
-  | boolean
-  | null
-  | readonly FirstPartyPlaybackPreferenceValue[]
-  | { readonly [key: string]: FirstPartyPlaybackPreferenceValue };
-
 export type FirstPartyPlaybackPreference = Readonly<{
   id: string;
   userId: string;
   subjectType: PlaybackPreferenceSubjectType;
   subjectKey: string;
   policy: PlaybackPreferencePolicy;
-  value: FirstPartyPlaybackPreferenceValue | null;
   source: FirstPartyPreferenceSource;
   createdAt: Date;
   updatedAt: Date;
@@ -66,7 +61,6 @@ export type SetFirstPartyPlaybackPreferenceInput = Readonly<{
   subjectType: PlaybackPreferenceSubjectType;
   subjectKey: string;
   policy: PlaybackPreferencePolicy;
-  value?: FirstPartyPlaybackPreferenceValue;
   source: FirstPartyPreferenceSource;
 }>;
 
