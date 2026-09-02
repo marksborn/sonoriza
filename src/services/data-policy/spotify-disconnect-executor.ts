@@ -74,6 +74,7 @@ export type SpotifyDisconnectPreservationSnapshot = Readonly<{
 }>;
 
 export type SpotifyDisconnectMutationCounts = Readonly<{
+  userProfileProviderFieldsCleared: number;
   sourcePayloadsCleared: number;
   musicPlaybackRuntimeCleared: number;
   podcastRuntimeCleared: number;
@@ -315,6 +316,12 @@ async function applySpotifyDisconnectMutations(
   tx: Prisma.TransactionClient,
   userId: string,
 ): Promise<SpotifyDisconnectMutationCounts> {
+  const userProfileProviderFieldsCleared = await tx.$executeRaw(Prisma.sql`
+    UPDATE "User"
+    SET "name" = NULL, "image" = NULL
+    WHERE "id" = ${userId} AND ("name" IS NOT NULL OR "image" IS NOT NULL)
+  `);
+
   const sourcePayloadsCleared = await tx.$executeRaw(Prisma.sql`
     UPDATE "SourcePlaylist"
     SET
@@ -566,6 +573,7 @@ async function applySpotifyDisconnectMutations(
       "title" = NULL,
       "subtitle" = NULL,
       "programId" = NULL,
+      "durationMs" = 0,
       "spotifyTrackId" = NULL,
       "primaryArtistId" = NULL,
       "albumId" = NULL,
@@ -594,6 +602,7 @@ async function applySpotifyDisconnectMutations(
   `);
 
   return {
+    userProfileProviderFieldsCleared,
     sourcePayloadsCleared,
     musicPlaybackRuntimeCleared,
     podcastRuntimeCleared,
