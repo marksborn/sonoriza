@@ -4,7 +4,7 @@
 
 - Date: 2026-09-02
 - Base: Gate 2 `c65d1355f087dd73253299086267ca4072440623`
-- Branch: `issue-278-gate3-ai-export-guard`
+- Branch: `issue-278-gate3-ai-guard`
 - Canonical scope: **hard guard AI only**
 - Runtime AI/LLM integration added: **none**
 - Spotify calls/writes: **none**
