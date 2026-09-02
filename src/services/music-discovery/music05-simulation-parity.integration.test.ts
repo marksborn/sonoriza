@@ -12,7 +12,7 @@ function at(minutes: number): Date {
 }
 
 integrationTest(
-  "Gate 5H simulation sees a currently inferable MUSIC-05 skip without persisting it",
+  "Gate 5H simulation quarantines a currently inferable MUSIC-05 skip without persisting it",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const user = await prisma.user.create({
@@ -32,7 +32,7 @@ integrationTest(
       },
     });
 
-    const appliedRun = await prisma.generationRun.create({
+    await prisma.generationRun.create({
       data: {
         userId: user.id,
         trigger: "MANUAL",
@@ -108,11 +108,10 @@ integrationTest(
     const pending = await loadPendingInferredSkips(user.id, [target.id]);
     const signals = pending.get(target.id) ?? [];
 
-    assert.equal(signals.length, 1);
-    assert.equal(signals[0]!.spotifyTrackId, "skipped");
-    assert.equal(signals[0]!.sourceGenerationRunId, appliedRun.id);
-    assert.equal(signals[0]!.position, 15);
-    assert.match(signals[0]!.id, /^preview:/);
+    // Gate 5B/5C deliberately quarantines the provider-derived inference at
+    // the productive service boundary. The legacy diagnostic algorithm may
+    // still recognize this A✓ B✕ C✓ shape, but Gate 5H must receive no block.
+    assert.deepEqual(signals, []);
 
     const after = await prisma.musicPreferenceSignal.count({
       where: { userId: user.id },
