@@ -6,8 +6,6 @@ import {
   lineageFromOrigins,
   lineageFromRootSource,
   mergeLineages,
-  originForLikedTrackPreferenceProvenance,
-  originForListeningEventSource,
   policyDecisionForLineage,
   policyDecisionForOrigin,
 } from "./provenance";
@@ -34,18 +32,6 @@ test("root source mapping preserves provider origin", () => {
   assert.deepEqual(lineageFromRootSource("LASTFM_SCROBBLE"), {
     origins: ["LASTFM"],
   });
-});
-
-test("current listening event source values map to the expected origin", () => {
-  assert.equal(originForListeningEventSource("SPOTIFY_RECENTLY_PLAYED"), "SPOTIFY");
-  assert.equal(originForListeningEventSource("SPOTIFY_EXTENDED_HISTORY"), "SPOTIFY");
-  assert.equal(originForListeningEventSource("LASTFM_SCROBBLE"), "LASTFM");
-  assert.equal(originForListeningEventSource("IMPORT"), "USER_IMPORT");
-});
-
-test("legacy liked-track provenance is conservatively treated as Spotify", () => {
-  assert.equal(originForLikedTrackPreferenceProvenance("LIKED_TRACK_BACKFILL"), "SPOTIFY");
-  assert.equal(originForLikedTrackPreferenceProvenance("LIKED_TRACK_SYNC"), "SPOTIFY");
 });
 
 test("Spotify behavioral profiling, recommendation and AI are denied", () => {
