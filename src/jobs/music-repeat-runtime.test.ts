@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { MusicRepeatWindowUnit } from "@prisma/client";
 
+import {
+  MUSIC_REPEAT_PRODUCTIVE_USES,
+  spotifyRecentlyPlayedPlannerCapability,
+  type RequiredPolicyUsesEvaluation,
+} from "@/services/data-policy";
 import { firstPartySpotifyTrackSubjectKey } from "@/services/music-preference";
 import type { Candidate, RunTarget } from "@/services/playlist-planner";
 
@@ -69,7 +74,11 @@ function target(): RunTarget {
   };
 }
 
-function state(blocked: string[]): MusicRepeatRunState {
+function state(
+  blocked: string[],
+  repeatCompliance: RequiredPolicyUsesEvaluation =
+    spotifyRecentlyPlayedPlannerCapability(),
+): MusicRepeatRunState {
   return {
     userId: "test-user",
     simulate: true,
@@ -92,6 +101,7 @@ function state(blocked: string[]): MusicRepeatRunState {
       historyKnownSince: new Date("2026-07-01T00:00:00.000Z"),
       lastSyncAt: new Date("2026-08-08T00:00:00.000Z"),
     },
+    repeatCompliance,
     recentlyPlayedSkippedCount: 0,
     missingTrackIdentitySkippedCount: 0,
     preWriteSync: null,
@@ -103,10 +113,22 @@ function state(blocked: string[]): MusicRepeatRunState {
   };
 }
 
-test("recent track is removed before planner and later eligible music can fill the sequence", async () => {
+function authorizedRepeatTestSeam(): RequiredPolicyUsesEvaluation {
+  return {
+    lineage: { origins: ["SPOTIFY"] },
+    uses: MUSIC_REPEAT_PRODUCTIVE_USES,
+    decisions: {
+      OPERATIONAL_PLANNING: "ALLOW",
+      PLANNER_ELIGIBILITY: "ALLOW",
+    },
+    allowed: true,
+  };
+}
+
+test("Gate 5C Spotify Recently Played no longer removes a planner candidate", async () => {
   const music = source("music", "MUSIC", [
     { candidates: [candidate("recent", "MUSIC", 300_000)], done: false },
-    { candidates: [candidate("eligible", "MUSIC", 300_000)], done: true },
+    { candidates: [candidate("later", "MUSIC", 300_000)], done: true },
   ]);
   const podcast = source("podcast", "PODCAST", [
     { candidates: [candidate("episode", "PODCAST", 300_000)], done: true },
@@ -117,13 +139,16 @@ test("recent track is removed before planner and later eligible music can fill t
     collectIncrementally({ sources: [music, podcast], targets: [target()] }),
   );
 
+  assert.equal(runtime.repeatCompliance.allowed, false);
   assert.equal(result.qualityFailures.length, 0);
-  assert.equal(music.calls, 2);
-  assert.deepEqual(result.pools.music.map((item) => item.spotifyTrackId), ["eligible"]);
-  assert.equal(runtime.recentlyPlayedSkippedCount, 1);
+  assert.deepEqual(
+    result.plan.targets[0]?.result.items.map((item) => item.uri),
+    ["spotify:track:recent", "spotify:episode:episode"],
+  );
+  assert.equal(runtime.recentlyPlayedSkippedCount, 0);
 });
 
-test("Gate 5B explicit track preference is applied before planner selection", async () => {
+test("Gate 5B explicit track preference remains authoritative after MUSIC-01 quarantine", async () => {
   const music = source("music-first-party", "MUSIC", [
     {
       candidates: [
@@ -133,7 +158,7 @@ test("Gate 5B explicit track preference is applied before planner selection", as
       done: true,
     },
   ]);
-  const runtime = state([]);
+  const runtime = state(["eligible"]);
   runtime.firstPartyPlaybackPreferences = [
     {
       id: "pref-1",
@@ -159,11 +184,12 @@ test("Gate 5B explicit track preference is applied before planner selection", as
     result.plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
     ["eligible"],
   );
+  assert.equal(runtime.recentlyPlayedSkippedCount, 0);
   assert.equal(runtime.firstPartyPreferenceEvidence?.excludedCandidateCount, 1);
   assert.equal(runtime.firstPartyPreferenceEvidence?.applicablePreferenceCount, 1);
 });
 
-test("blocked music from another source cannot re-enter the shared pool", async () => {
+test("provider cooldown state cannot suppress duplicate music from shared sources", async () => {
   const duplicate = candidate("recent", "MUSIC", 300_000);
   const musicA = source("music-a", "MUSIC", [{ candidates: [duplicate], done: true }]);
   const musicB = source("music-b", "MUSIC", [{ candidates: [duplicate], done: true }]);
@@ -176,17 +202,11 @@ test("blocked music from another source cannot re-enter the shared pool", async 
     collectIncrementally({ sources: [musicA, musicB, podcast], targets: [target()] }),
   );
 
-  assert.equal(result.pools.music.length, 0);
-  assert.equal(result.plan.targets[0]?.result.items.length, 0);
-  assert.equal(
-    result.plan.targets[0]?.result.stats.sequenceStopReason,
-    "NO_CANDIDATE_FOR_SLOT",
-  );
-  assert.equal(result.plan.targets[0]?.result.stats.sequenceUnfilledSlots, 1);
-  assert.equal(runtime.recentlyPlayedSkippedCount, 2);
+  assert.deepEqual(result.pools.music.map((item) => item.spotifyTrackId), ["recent"]);
+  assert.equal(runtime.recentlyPlayedSkippedCount, 0);
 });
 
-test("real-run revalidation is positioned before Spotify writer creation", () => {
+test("pre-write boundary remains positioned before Spotify writer creation", () => {
   const collector = readFileSync("src/jobs/incremental-planning.ts", "utf8");
   const generator = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
 
@@ -196,8 +216,7 @@ test("real-run revalidation is positioned before Spotify writer creation", () =>
   assert.ok(collectCall >= 0 && writerCreation > collectCall);
 });
 
-
-test("#37 cooldown rejection happens before diversity counters are consumed", async () => {
+test("provider cooldown does not consume diversity counters under current compliance", async () => {
   const recent = {
     ...candidate("recent", "MUSIC", 300_000),
     primaryArtistId: "artist-a",
@@ -209,8 +228,7 @@ test("#37 cooldown rejection happens before diversity counters are consumed", as
     albumId: "album-eligible",
   };
   const music = source("music", "MUSIC", [
-    { candidates: [recent], done: false },
-    { candidates: [eligible], done: true },
+    { candidates: [recent, eligible], done: true },
   ]);
   const runtime = state(["recent"]);
   const diversityTarget: RunTarget = {
@@ -233,16 +251,14 @@ test("#37 cooldown rejection happens before diversity counters are consumed", as
   );
 
   assert.equal(result.qualityFailures.length, 0);
-  assert.equal(music.calls, 2);
   assert.deepEqual(
     result.plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
-    ["eligible"],
+    ["recent"],
   );
-  assert.equal(result.plan.targets[0]?.result.stats.artistLimitRejectedCount, 0);
-  assert.equal(runtime.recentlyPlayedSkippedCount, 1);
+  assert.equal(runtime.recentlyPlayedSkippedCount, 0);
 });
 
-test("#92 real run replans locally when playback history changes before write", async () => {
+test("collector repair seam still works when an explicit authorized test capability is injected", async () => {
   const music = source("music-replan", "MUSIC", [
     {
       candidates: [
@@ -252,7 +268,7 @@ test("#92 real run replans locally when playback history changes before write", 
       done: true,
     },
   ]);
-  const runtime = state([]);
+  const runtime = state([], authorizedRepeatTestSeam());
   runtime.simulate = false;
   const musicOnlyTarget = target();
   musicOnlyTarget.rules.targetDurationMs = 300_000;
@@ -291,7 +307,7 @@ test("#92 real run replans locally when playback history changes before write", 
   );
 });
 
-test("#92 playback-history pre-write repair is bounded", async () => {
+test("authorized playback-history repair seam remains bounded", async () => {
   const music = source("music-replan-limit", "MUSIC", [
     {
       candidates: [
@@ -302,7 +318,7 @@ test("#92 playback-history pre-write repair is bounded", async () => {
       done: true,
     },
   ]);
-  const runtime = state([]);
+  const runtime = state([], authorizedRepeatTestSeam());
   runtime.simulate = false;
   const musicOnlyTarget = target();
   musicOnlyTarget.rules.targetDurationMs = 300_000;
