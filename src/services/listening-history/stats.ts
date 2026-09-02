@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import {
+  HISTORY_ANALYTICS_USES,
+  sqlAggregateListeningEventSourcesForUses,
+} from "@/services/data-policy";
 
 import { getCanonicalLastFmHistoryWindow, type LastFmHistoryWindow } from "./canonical";
 import type { ListeningHistoryFilters } from "./explorer";
@@ -33,6 +37,11 @@ export type ListeningHistoryStats = {
   topTracks: ListeningHistoryTrackRanking[];
   topArtists: ListeningHistoryArtistRanking[];
   topAlbums: ListeningHistoryAlbumRanking[];
+  policy: {
+    use: "BEHAVIORAL_ANALYTICS";
+    status: "ACTIVE" | "QUARANTINED";
+    allowedSources: readonly string[];
+  };
 };
 
 type StatsFilters = Pick<
@@ -80,21 +89,27 @@ const MEASURED_MS_TEXT_SQL = Prisma.raw(
 );
 
 /**
- * HISTORY-04 Gate 2 statistics.
+ * HISTORY-04 statistics boundary.
  *
- * All aggregates are computed from the same canonical, local timeline used by
- * the explorer. No provider read happens here. `measuredListeningMs` is
- * deliberately conservative: it only sums events that carry factual
- * Spotify Extended History `msPlayed` evidence (including rows enriched by the
- * extended-history import). Events without that evidence remain part of play
- * rankings/counts, but do not receive an invented duration.
+ * Gate 5C no longer lets a SQL aggregate see provider listening rows unless a
+ * source has both an explicit lineage-safe SQL contract and ALLOW for
+ * BEHAVIORAL_ANALYTICS. Under the current matrix that set is empty, so the
+ * analytics surface returns a truthful quarantined empty result while the raw
+ * explorer/display path remains separate.
  */
 export async function getListeningHistoryStats(
   userId: string,
   filters: StatsFilters,
 ): Promise<ListeningHistoryStats> {
+  const allowedSources = sqlAggregateListeningEventSourcesForUses(
+    HISTORY_ANALYTICS_USES,
+  );
+  if (allowedSources.length === 0) {
+    return emptyStats("QUARANTINED", allowedSources);
+  }
+
   const lastFmWindow = await getCanonicalLastFmHistoryWindow(userId);
-  const where = buildStatsWhere(userId, filters, lastFmWindow);
+  const where = buildStatsWhere(userId, filters, lastFmWindow, allowedSources);
 
   const [overviewRows, topTracksRows, topArtistsRows, topAlbumsRows] =
     await Promise.all([
@@ -188,6 +203,34 @@ export async function getListeningHistoryStats(
       artistName: row.artistName,
       playCount: toSafeNumber(row.playCount),
     })),
+    policy: {
+      use: "BEHAVIORAL_ANALYTICS",
+      status: "ACTIVE",
+      allowedSources,
+    },
+  };
+}
+
+function emptyStats(
+  status: "ACTIVE" | "QUARANTINED",
+  allowedSources: readonly string[],
+): ListeningHistoryStats {
+  return {
+    playCount: 0,
+    distinctTracks: 0,
+    distinctArtists: 0,
+    distinctAlbums: 0,
+    measuredPlayEvents: 0,
+    measuredListeningMs: 0,
+    measuredCoveragePercent: 0,
+    topTracks: [],
+    topArtists: [],
+    topAlbums: [],
+    policy: {
+      use: "BEHAVIORAL_ANALYTICS",
+      status,
+      allowedSources,
+    },
   };
 }
 
@@ -195,8 +238,16 @@ function buildStatsWhere(
   userId: string,
   filters: StatsFilters,
   lastFmWindow: LastFmHistoryWindow,
+  allowedSources: readonly string[],
 ): Prisma.Sql {
   const conditions: Prisma.Sql[] = [Prisma.sql`e."userId" = ${userId}`];
+  const sourceSql = Prisma.join(
+    allowedSources.map(
+      (source) => Prisma.sql`${source}::"ListeningEventSource"`,
+    ),
+    ", ",
+  );
+  conditions.push(Prisma.sql`e."source" IN (${sourceSql})`);
 
   if (lastFmWindow) {
     const lastFmBounds: Prisma.Sql[] = [
