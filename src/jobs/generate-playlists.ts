@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { spotifyRecentlyPlayedPlannerCapability } from "@/services/data-policy";
 import { prismaFirstPartyPlaybackPreferenceStore } from "@/services/music-preference";
 import { isSpotifyApiError } from "@/services/spotify";
 import { refreshMusicRepeatContext } from "@/services/spotify/recently-played";
@@ -30,25 +31,29 @@ import {
 export type { GeneratePlaylistsOptions, GeneratePlaylistsResult };
 
 /**
- * MUSIC-01 wrapper around the existing generator. Gate 4A establishes the
- * fail-closed DISCOVERY runtime context. DISCOVER-DEST-01 Gate 5 adds a second,
- * independently gated runtime context so per-target policy can be deployed
- * without changing production behavior until its rollout flag is authorized.
- * Gate 5B also loads explicit first-party preferences before planning so hard
- * exclusions and ranking preferences cannot be reconstructed from provider
- * behavior.
+ * Gate 5 generation wrapper.
+ *
+ * Gate 5B loads explicit first-party preferences. Gate 5C additionally puts
+ * MUSIC-01's Spotify Recently Played cooldown behind the central capability
+ * matrix. Under the current policy, generation does not sync/read Recently
+ * Played for planner eligibility and that provider history cannot veto a plan.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
 ): Promise<GeneratePlaylistsResult> {
   const simulate = opts.simulate ?? opts.trigger === "SIMULATION";
   const asOf = opts.date ?? new Date();
+  const repeatCompliance = spotifyRecentlyPlayedPlannerCapability();
   let prepared: Awaited<ReturnType<typeof refreshMusicRepeatContext>>;
 
-  try {
-    prepared = await refreshMusicRepeatContext(opts.userId, new Date());
-  } catch (error) {
-    return recordPlaybackHistorySyncFailure(opts, simulate, error);
+  if (repeatCompliance.allowed) {
+    try {
+      prepared = await refreshMusicRepeatContext(opts.userId, new Date());
+    } catch (error) {
+      return recordPlaybackHistorySyncFailure(opts, simulate, error);
+    }
+  } else {
+    prepared = quarantinedMusicRepeatPreparation();
   }
 
   const [user, firstPartyPlaybackPreferences] = await Promise.all([
@@ -102,6 +107,7 @@ export async function generatePlaylists(
     simulate,
     context: prepared.context,
     initialSync: prepared.sync,
+    repeatCompliance,
     recentlyPlayedSkippedCount: 0,
     missingTrackIdentitySkippedCount: 0,
     preWriteSync: null,
@@ -230,10 +236,44 @@ async function recordPlaybackHistorySyncFailure(
   return { runId: run.id, status: "FAILED" };
 }
 
+function quarantinedMusicRepeatPreparation(): Awaited<
+  ReturnType<typeof refreshMusicRepeatContext>
+> {
+  return {
+    sync: {
+      enabled: false,
+      eventsRead: 0,
+      identitiesUpdated: 0,
+      listeningEventsInserted: 0,
+      listeningEventsDuplicateCount: 0,
+      listeningEventsSuppressedByHandoff: 0,
+      historyKnownSince: null,
+      lastSyncAt: null,
+    },
+    context: {
+      enabled: false,
+      windowValue: null,
+      windowUnit: null,
+      cutoff: null,
+      historyKnownSince: null,
+      lastSyncAt: null,
+      blockedTrackIds: new Set<string>(),
+    },
+  };
+}
+
 function musicRepeatSummary(state: MusicRepeatRunState): Record<string, unknown> {
   const context = state.context;
   return {
     enabled: context.enabled,
+    compliance: {
+      source: "SPOTIFY_RECENTLY_PLAYED",
+      lineage: state.repeatCompliance.lineage,
+      uses: state.repeatCompliance.uses,
+      decisions: state.repeatCompliance.decisions,
+      productiveInfluenceAllowed: state.repeatCompliance.allowed,
+      status: state.repeatCompliance.allowed ? "AUTHORIZED" : "QUARANTINED",
+    },
     windowValue: context.windowValue,
     windowUnit: context.windowUnit,
     cutoff: context.cutoff?.toISOString() ?? null,
