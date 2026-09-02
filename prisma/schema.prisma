@@ -63,9 +63,9 @@ model Account {
   refresh_token     String? @db.Text
   access_token      String? @db.Text
   expires_at        Int?
-  token_type         String?
+  token_type        String?
   scope             String?
-  id_token           String? @db.Text
+  id_token          String? @db.Text
   session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -767,6 +767,7 @@ model GenerationItem {
 // inferred-skip models. Gate 4 performs no legacy backfill and no planner read.
 // A provider may help resolve a referenced entity operationally later, but that
 // provider metadata keeps its own lineage; it does not change preference origin.
+// The row intentionally has no generic payload/evidence column.
 // ---------------------------------------------------------------------------
 
 enum FirstPartyPreferenceSource {
@@ -795,7 +796,6 @@ model FirstPartyPlaybackPreference {
   subjectType PlaybackPreferenceSubjectType
   subjectKey  String
   policy      PlaybackPreferencePolicy
-  value       Json?
   source      FirstPartyPreferenceSource
   createdAt   DateTime                      @default(now())
   updatedAt   DateTime                      @updatedAt
@@ -1179,9 +1179,9 @@ enum PrelaunchSignupStatus {
 
 model PrelaunchSignup {
   id                String                  @id @default(cuid())
-  email             String                 @unique
-  status            PrelaunchSignupStatus  @default(WAITING)
-  source            String                 @default("HOME")
+  email             String                  @unique
+  status            PrelaunchSignupStatus   @default(WAITING)
+  source            String                  @default("HOME")
   privacyVersion    String
   privacyAcceptedAt DateTime
   confirmedAt       DateTime?
