@@ -3,6 +3,7 @@
 --
 -- Deliberately does NOT backfill/copy LikedTrackPreference, ArtistAffinityState,
 -- MusicPreferenceSignal or any other provider-derived/legacy profile data.
+-- The row is intentionally narrow: no generic JSON/provider payload column.
 
 CREATE TYPE "FirstPartyPreferenceSource" AS ENUM (
     'USER_EXPLICIT',
@@ -30,7 +31,6 @@ CREATE TABLE "FirstPartyPlaybackPreference" (
     "subjectType" "PlaybackPreferenceSubjectType" NOT NULL,
     "subjectKey" TEXT NOT NULL,
     "policy" "PlaybackPreferencePolicy" NOT NULL,
-    "value" JSONB,
     "source" "FirstPartyPreferenceSource" NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
