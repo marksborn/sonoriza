@@ -1,5 +1,6 @@
 import { LikedTrackPreferenceProvenance } from "@prisma/client";
 
+import { assertSpotifySavedTracksProfileMaterializationAllowed } from "@/services/data-policy";
 import {
   applyLikedTrackAffinityPlan,
   buildLikedTrackAffinityPlan,
@@ -96,8 +97,14 @@ export type LikedTrackReconciliationReport = {
  * therefore performs a complete read-only provider scan, compares it with the
  * canonical local liked-track state and reuses the LIKED-01 affinity plan.
  *
- * APPLY is guarded by a circuit breaker. Missing canonical IDs are a hard
- * blocker. Large removal sets require explicit manual review/force so a
+ * Gate 5C adds a capability barrier before any local state/token/provider read.
+ * Saved Tracks may not materialize or update ArtistAffinity/profile state while
+ * behavioral analytics or user profiling are not explicitly ALLOW. PREVIEW is
+ * blocked too because computing the affinity delta is itself a behavioral
+ * profile operation.
+ *
+ * APPLY is otherwise guarded by a circuit breaker. Missing canonical IDs are a
+ * hard blocker. Large removal sets require explicit manual review/force so a
  * truncated or otherwise suspicious provider response cannot mass-unlike the
  * local library automatically.
  */
@@ -109,6 +116,8 @@ export async function reconcileLikedTracks(
     limits?: Partial<LikedTrackReconciliationLimits>;
   } = {},
 ): Promise<LikedTrackReconciliationReport> {
+  assertSpotifySavedTracksProfileMaterializationAllowed();
+
   const mode = options.mode ?? "PREVIEW";
   const force = options.force === true;
   const generatedAt = new Date();
