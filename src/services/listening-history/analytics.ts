@@ -1,6 +1,10 @@
 import type { ListeningEventSource, Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import {
+  HISTORY_ANALYTICS_USES,
+  sqlAggregateListeningEventSourcesForUses,
+} from "@/services/data-policy";
 
 import {
   buildCanonicalListeningEventWhere,
@@ -49,19 +53,39 @@ export type TrackListeningStats = {
   };
 };
 
+/**
+ * Gate 5C keeps operational import/backfill status visible while behavioral
+ * timeline counts remain fail-closed. No current ListeningEventSource has an
+ * explicit lineage-safe SQL/aggregate contract plus ALLOW for analytics.
+ */
 export async function getListeningHistorySummary(
   userId: string,
 ): Promise<ListeningHistorySummary> {
-  const [lastFmWindow, backfill] = await Promise.all([
-    getCanonicalLastFmHistoryWindow(userId),
-    prisma.lastFmBackfillRun.findFirst({
-      where: { userId },
-      orderBy: { startedAt: "desc" },
-    }),
-  ]);
+  const backfill = await prisma.lastFmBackfillRun.findFirst({
+    where: { userId },
+    orderBy: { startedAt: "desc" },
+  });
+  const allowedSources = sqlAggregateListeningEventSourcesForUses(
+    HISTORY_ANALYTICS_USES,
+  );
+
+  if (allowedSources.length === 0) {
+    return {
+      totalPlayEvents: 0,
+      firstPlayedAt: null,
+      lastPlayedAt: null,
+      sources: [],
+      lastFmBackfill: toLastFmBackfillView(backfill),
+    };
+  }
+
+  const lastFmWindow = await getCanonicalLastFmHistoryWindow(userId);
   const canonicalWhere = buildCanonicalListeningEventWhere({
     userId,
     lastFmWindow,
+    extra: {
+      source: { in: allowedSources as ListeningEventSource[] },
+    },
   });
 
   const [aggregate, sources] = await Promise.all([
@@ -86,31 +110,14 @@ export async function getListeningHistorySummary(
       source: entry.source,
       count: entry._count._all,
     })),
-    lastFmBackfill: backfill
-      ? {
-          runId: backfill.id,
-          username: backfill.username,
-          status: backfill.status,
-          historyUntil: backfill.to,
-          profilePlayCount: backfill.profilePlayCount,
-          acceptedEvents: backfill.acceptedEvents,
-          insertedEvents: backfill.insertedEvents,
-          duplicateEvents: backfill.duplicateEvents,
-        }
-      : null,
+    lastFmBackfill: toLastFmBackfillView(backfill),
   };
 }
 
 /**
- * Counts a track without promoting fuzzy identity to canonical identity.
- *
- * When a Spotify id is known, `playCount` includes only rows explicitly linked
- * to that id. Unreconciled Last.fm rows with matching human-readable metadata
- * are reported separately as candidates until an identity-reconciliation pass
- * proves they refer to the same recording/version.
- *
- * When no Spotify id exists yet, name-based rows can still be inspected, but
- * the result explicitly reports `identityBasis=UNRESOLVED_NAME`.
+ * Counts are behavioral analytics, so provider rows are not queried while the
+ * capability set is empty. Identity labels remain input/display concerns; they
+ * do not grant permission to aggregate the underlying provider history.
  */
 export async function getTrackListeningStats(
   userId: string,
@@ -120,12 +127,33 @@ export async function getTrackListeningStats(
   const artistName = requiredText(input.artistName, "artistName");
   const albumName = input.albumName?.trim() || null;
   const spotifyTrackId = input.spotifyTrackId?.trim() || null;
+  const allowedSources = sqlAggregateListeningEventSourcesForUses(
+    HISTORY_ANALYTICS_USES,
+  );
+
+  if (allowedSources.length === 0) {
+    return {
+      identityBasis: spotifyTrackId ? "SPOTIFY_ID" : "UNRESOLVED_NAME",
+      playCount: 0,
+      firstPlayedAt: null,
+      lastPlayedAt: null,
+      sources: [],
+      unresolvedHistoricalCandidates: {
+        count: 0,
+        firstPlayedAt: null,
+        lastPlayedAt: null,
+      },
+    };
+  }
+
   const lastFmWindow = await getCanonicalLastFmHistoryWindow(userId);
-  const unresolvedExtra = unresolvedNameExtra({
-    trackName,
-    artistName,
-    albumName,
-  });
+  const sourceFilter = {
+    source: { in: allowedSources as ListeningEventSource[] },
+  } satisfies Prisma.TrackListeningEventWhereInput;
+  const unresolvedExtra = {
+    ...unresolvedNameExtra({ trackName, artistName, albumName }),
+    ...sourceFilter,
+  } satisfies Prisma.TrackListeningEventWhereInput;
   const unresolvedWhere = buildCanonicalListeningEventWhere({
     userId,
     lastFmWindow,
@@ -134,7 +162,9 @@ export async function getTrackListeningStats(
   const canonicalWhere = buildCanonicalListeningEventWhere({
     userId,
     lastFmWindow,
-    extra: spotifyTrackId ? { spotifyTrackId } : unresolvedExtra,
+    extra: spotifyTrackId
+      ? { spotifyTrackId, ...sourceFilter }
+      : unresolvedExtra,
   });
 
   const [aggregate, sources, unresolvedAggregate] = await Promise.all([
@@ -178,6 +208,23 @@ export async function getTrackListeningStats(
       lastPlayedAt: unresolvedAggregate._max.playedAt,
     },
   };
+}
+
+function toLastFmBackfillView(
+  backfill: Awaited<ReturnType<typeof prisma.lastFmBackfillRun.findFirst>>,
+): ListeningHistorySummary["lastFmBackfill"] {
+  return backfill
+    ? {
+        runId: backfill.id,
+        username: backfill.username,
+        status: backfill.status,
+        historyUntil: backfill.to,
+        profilePlayCount: backfill.profilePlayCount,
+        acceptedEvents: backfill.acceptedEvents,
+        insertedEvents: backfill.insertedEvents,
+        duplicateEvents: backfill.duplicateEvents,
+      }
+    : null;
 }
 
 function unresolvedNameExtra(input: {
