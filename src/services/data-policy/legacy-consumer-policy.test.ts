@@ -8,6 +8,7 @@ import {
   spotifyCatalogRecommendationCapability,
   spotifyRecentlyPlayedPlannerCapability,
   spotifySavedTracksPlannerCapability,
+  spotifySavedTracksRecommendationCapability,
   spotifySavedTracksShadowCapability,
   sqlAggregateListeningEventSourcesForUses,
 } from "./legacy-consumer-policy";
@@ -19,14 +20,19 @@ test("MUSIC-01 Spotify Recently Played is not productively authorized", () => {
   assert.equal(capability.decisions.PLANNER_ELIGIBILITY, "REVIEW_REQUIRED");
 });
 
-test("Saved Tracks is blocked for shadow analytics and planner eligibility", () => {
+test("Saved Tracks is blocked for shadow analytics, planner eligibility and recommendation", () => {
   const shadow = spotifySavedTracksShadowCapability();
   const planner = spotifySavedTracksPlannerCapability();
+  const recommendation = spotifySavedTracksRecommendationCapability();
   assert.equal(shadow.allowed, false);
   assert.equal(shadow.decisions.BEHAVIORAL_ANALYTICS, "DENY");
   assert.equal(planner.allowed, false);
   assert.equal(planner.decisions.OPERATIONAL_PLANNING, "REVIEW_REQUIRED");
   assert.equal(planner.decisions.PLANNER_ELIGIBILITY, "REVIEW_REQUIRED");
+  assert.equal(recommendation.allowed, false);
+  assert.equal(recommendation.decisions.BEHAVIORAL_ANALYTICS, "DENY");
+  assert.equal(recommendation.decisions.USER_PROFILING, "DENY");
+  assert.equal(recommendation.decisions.RECOMMENDATION, "DENY");
 });
 
 test("Spotify catalog cannot drive recommendation under the current matrix", () => {
