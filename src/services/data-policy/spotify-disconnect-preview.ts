@@ -19,6 +19,7 @@ export type SpotifyDisconnectInventory = Readonly<{
   musicSourceCleanupAudit: number;
   musicIngestionAudit: number;
   targetScheduleAudit: number;
+  notificationDeliveryAudit: number;
   trackListeningState: number;
   spotifyListeningEvent: number;
   mixedListeningEvent: number;
@@ -78,6 +79,7 @@ const countByDataset: Readonly<
   MUSIC_SOURCE_CLEANUP_AUDIT: "musicSourceCleanupAudit",
   MUSIC_INGESTION_AUDIT: "musicIngestionAudit",
   TARGET_SCHEDULE_AUDIT: "targetScheduleAudit",
+  NOTIFICATION_DELIVERY_AUDIT: "notificationDeliveryAudit",
   TRACK_LISTENING_STATE: "trackListeningState",
   TRACK_LISTENING_EVENT: "spotifyListeningEvent",
   SPOTIFY_EXTENDED_HISTORY_IMPORT_RUN: "spotifyExtendedHistoryImportRun",
