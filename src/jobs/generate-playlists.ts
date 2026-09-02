@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { prismaFirstPartyPlaybackPreferenceStore } from "@/services/music-preference";
 import { isSpotifyApiError } from "@/services/spotify";
 import { refreshMusicRepeatContext } from "@/services/spotify/recently-played";
 
@@ -33,6 +34,9 @@ export type { GeneratePlaylistsOptions, GeneratePlaylistsResult };
  * fail-closed DISCOVERY runtime context. DISCOVER-DEST-01 Gate 5 adds a second,
  * independently gated runtime context so per-target policy can be deployed
  * without changing production behavior until its rollout flag is authorized.
+ * Gate 5B also loads explicit first-party preferences before planning so hard
+ * exclusions and ranking preferences cannot be reconstructed from provider
+ * behavior.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -47,10 +51,13 @@ export async function generatePlaylists(
     return recordPlaybackHistorySyncFailure(opts, simulate, error);
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: opts.userId },
-    select: { email: true },
-  });
+  const [user, firstPartyPlaybackPreferences] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: opts.userId },
+      select: { email: true },
+    }),
+    prismaFirstPartyPlaybackPreferenceStore.list(opts.userId),
+  ]);
   const discoveryState = createDiscoveryGate4ARunState({
     userId: opts.userId,
     userEmail: user?.email ?? null,
@@ -101,6 +108,8 @@ export async function generatePlaylists(
     preWriteRevalidated: false,
     preWriteBlockedCount: 0,
     preWriteMissingIdentityCount: 0,
+    firstPartyPlaybackPreferences,
+    firstPartyPreferenceEvidence: null,
     likedTrackSourceShadow: null,
   };
 
@@ -166,6 +175,10 @@ async function appendRuntimeSummary(
         musicRecentlyPlayedSkippedCount: state.recentlyPlayedSkippedCount,
         musicMissingTrackIdentitySkippedCount:
           state.missingTrackIdentitySkippedCount,
+        firstPartyPlaybackPreferences: {
+          loadedCount: state.firstPartyPlaybackPreferences.length,
+          application: state.firstPartyPreferenceEvidence,
+        },
         discoveryRuntime: discoveryRuntimeSummary(discoveryState),
         targetDiscoveryRuntime: targetDiscoveryRuntimeSummary(targetDiscoveryState),
         likedTrackSourceShadow: state.likedTrackSourceShadow ?? null,
