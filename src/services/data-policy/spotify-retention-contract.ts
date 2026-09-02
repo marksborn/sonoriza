@@ -1,7 +1,8 @@
-export const SPOTIFY_DISCONNECT_CONTRACT_VERSION = 2 as const;
+export const SPOTIFY_DISCONNECT_CONTRACT_VERSION = 3 as const;
 
 export const SPOTIFY_RETENTION_DATASETS = [
   "OAUTH_ACCOUNT",
+  "USER_PROFILE_PROVIDER_FIELDS",
   "SOURCE_PLAYLIST_CACHE",
   "SOURCE_PLAYLIST_BINDING",
   "TARGET_PLAYLIST_BINDING",
@@ -70,6 +71,11 @@ export const SPOTIFY_DISCONNECT_RETENTION_CONTRACT: readonly SpotifyRetentionRul
     "OAUTH_ACCOUNT",
     "DELETE",
     "Access token, refresh token and Spotify OAuth grant must be removed on disconnect.",
+  ),
+  rule(
+    "USER_PROFILE_PROVIDER_FIELDS",
+    "CLEAR_PROVIDER_PAYLOAD",
+    "Optional Auth.js name/avatar fields have no provider provenance, so they are cleared conservatively while user id and email remain.",
   ),
   rule(
     "SOURCE_PLAYLIST_CACHE",
@@ -204,7 +210,7 @@ export const SPOTIFY_DISCONNECT_RETENTION_CONTRACT: readonly SpotifyRetentionRul
   rule(
     "GENERATION_AUDIT",
     "REDACT_PROVIDER_FIELDS",
-    "First-party run timing/status may remain, but Spotify URIs, ids, catalog text, provider payload and provider errors are redacted.",
+    "First-party run timing/status may remain, but Spotify URIs, ids, catalog text, duration metadata, provider payload and provider errors are redacted.",
   ),
   rule(
     "FIRST_PARTY_PLAYBACK_PREFERENCE",
