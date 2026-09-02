@@ -72,6 +72,29 @@ export type SetFirstPartyPlaybackPreferenceInput = Readonly<{
 
 export const FIRST_PARTY_PREFERENCE_SUBJECT_KEY_MAX_LENGTH = 512;
 
+const FIRST_PARTY_PREFERENCE_SOURCE_SET = new Set<string>(
+  FIRST_PARTY_PREFERENCE_SOURCES,
+);
+
+export function isFirstPartyPreferenceSource(
+  source: string,
+): source is FirstPartyPreferenceSource {
+  return FIRST_PARTY_PREFERENCE_SOURCE_SET.has(source);
+}
+
+/**
+ * Runtime fail-closed boundary. TypeScript types are not sufficient for request
+ * payloads or unsafe casts, so an unrecognized/provider-derived source is
+ * rejected before it can receive FIRST_PARTY lineage or be persisted.
+ */
+export function assertFirstPartyPreferenceSource(
+  source: string,
+): asserts source is FirstPartyPreferenceSource {
+  if (!isFirstPartyPreferenceSource(source)) {
+    throw new Error(`Not a first-party preference source: ${source}`);
+  }
+}
+
 /**
  * subjectKey is an opaque Sonoriza-domain reference, not a declaration of data
  * origin. It may eventually point to a Sonoriza canonical entity or an
@@ -101,12 +124,15 @@ export function normalizeFirstPartyPreferenceSubjectKey(subjectKey: string): str
 export function lineageForFirstPartyPreference(
   source: FirstPartyPreferenceSource,
 ): DataLineage {
+  assertFirstPartyPreferenceSource(source);
   return lineageFromRootSource(source);
 }
 
 export function normalizeSetFirstPartyPlaybackPreferenceInput(
   input: SetFirstPartyPlaybackPreferenceInput,
 ): SetFirstPartyPlaybackPreferenceInput {
+  assertFirstPartyPreferenceSource(input.source);
+
   return Object.freeze({
     ...input,
     subjectKey: normalizeFirstPartyPreferenceSubjectKey(input.subjectKey),
