@@ -7,11 +7,13 @@ import {
   LikedTrackPreferenceProvenance,
 } from "@prisma/client";
 
+import { SavedTracksProfileMaterializationPolicyError } from "@/services/data-policy";
 import { buildLikedTrackAffinityPlan } from "./liked-track-affinity";
 import {
   buildLikedTrackIncrementalBoundary,
   buildSyntheticLikedTrackInventory,
   readSpotifyLikedTrackIncremental,
+  syncLikedTrackIncremental,
   type LikedTrackIncrementalProviderRead,
 } from "./liked-track-incremental-sync";
 import type {
@@ -28,6 +30,13 @@ function jsonResponse(body: unknown): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+test("Gate 5C full incremental affinity sync stops before local/provider reads", async () => {
+  await assert.rejects(
+    () => syncLikedTrackIncremental("unused-user", { mode: "APPLY" }),
+    SavedTracksProfileMaterializationPolicyError,
+  );
+});
 
 test("Gate 4B derives the boundary from canonical addedAt, including unliked rows at the newest timestamp", () => {
   const tracks = [
