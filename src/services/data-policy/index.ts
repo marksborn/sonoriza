@@ -4,3 +4,5 @@ export * from "./ai-ingestion-guard";
 export * from "./discovery-profile-policy";
 export * from "./discovery-profile-policy-client";
 export * from "./legacy-consumer-policy";
+export * from "./spotify-retention-contract";
+export * from "./spotify-disconnect-preview";
