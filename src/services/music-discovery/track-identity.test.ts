@@ -63,50 +63,33 @@ test("identity evidence still reports distinct ISRC and artist conflicts", () =>
   ]);
 });
 
-test("runtime identity loader receives one final SQL-reduced row per track", async () => {
-  const expected = [
-    {
-      spotifyTrackId: "track-1",
-      isrc: "BRABC1234567",
-      primaryArtistId: "artist-1",
-      isrcConflict: false,
-      primaryArtistIdConflict: false,
-    },
-    {
-      spotifyTrackId: "track-2",
-      isrc: null,
-      primaryArtistId: null,
-      isrcConflict: true,
-      primaryArtistIdConflict: true,
-    },
-  ];
-
+test("Gate 5A runtime identity loader does not read provider listening history", async () => {
   let rawCalls = 0;
   let groupByCalls = 0;
   const client = {
     trackListeningEvent: {
       groupBy: async () => {
         groupByCalls += 1;
-        throw new Error("runtime identity path must not materialize distinct triples");
+        return [];
       },
     },
-    $queryRawUnsafe: async (query: string, userId: string) => {
+    $queryRawUnsafe: async () => {
       rawCalls += 1;
-      assert.equal(userId, "user-1");
-      assert.match(query, /regexp_replace/);
-      assert.match(query, /\[\^A-Za-z0-9\]/);
-      assert.match(query, /COUNT\(DISTINCT "normalizedIsrc"\)/);
-      assert.match(query, /COUNT\(DISTINCT "normalizedPrimaryArtistId"\)/);
-      assert.match(query, /"isrcCount" > 1/);
-      assert.match(query, /"primaryArtistIdCount" > 1/);
-      assert.match(query, /ORDER BY "spotifyTrackId" ASC/);
-      return expected;
+      return [
+        {
+          spotifyTrackId: "forbidden-provider-history",
+          isrc: "BRABC1234567",
+          primaryArtistId: "artist-1",
+          isrcConflict: false,
+          primaryArtistIdConflict: false,
+        },
+      ];
     },
   } as unknown as PrismaClient;
 
   const evidence = await getDiscoveryTrackIdentityEvidence("user-1", client);
 
-  assert.equal(rawCalls, 1);
+  assert.deepEqual(evidence, []);
+  assert.equal(rawCalls, 0);
   assert.equal(groupByCalls, 0);
-  assert.deepEqual(evidence, expected);
 });
