@@ -9,8 +9,15 @@ export type SpotifyDisconnectInventory = Readonly<{
   sourcePlaylistCache: number;
   sourcePlaylistBinding: number;
   targetPlaylistBinding: number;
+  musicPlaybackRuntimeState: number;
+  musicPlaybackPolicy: number;
+  podcastShowRuntimeState: number;
+  podcastShowPolicy: number;
   musicIngestionRuntimeState: number;
   musicIngestionBinding: number;
+  musicSourceCleanupAudit: number;
+  musicIngestionAudit: number;
+  targetScheduleAudit: number;
   trackListeningState: number;
   spotifyListeningEvent: number;
   mixedListeningEvent: number;
@@ -23,6 +30,9 @@ export type SpotifyDisconnectInventory = Readonly<{
   artistSimilarityEdge: number;
   musicPreferenceSignal: number;
   albumRecommendationMemory: number;
+  probableLikePilotFeedback: number;
+  historyLikeAction: number;
+  historyProbableLikeDismissal: number;
   generationAuditWithProviderFields: number;
   firstPartyPlaybackPreference: number;
   nativeSourcePreference: number;
@@ -57,8 +67,15 @@ const countByDataset: Readonly<
   SOURCE_PLAYLIST_CACHE: "sourcePlaylistCache",
   SOURCE_PLAYLIST_BINDING: "sourcePlaylistBinding",
   TARGET_PLAYLIST_BINDING: "targetPlaylistBinding",
+  MUSIC_PLAYBACK_RUNTIME_STATE: "musicPlaybackRuntimeState",
+  MUSIC_PLAYBACK_POLICY: "musicPlaybackPolicy",
+  PODCAST_SHOW_RUNTIME_STATE: "podcastShowRuntimeState",
+  PODCAST_SHOW_POLICY: "podcastShowPolicy",
   MUSIC_INGESTION_RUNTIME_STATE: "musicIngestionRuntimeState",
   MUSIC_INGESTION_BINDING: "musicIngestionBinding",
+  MUSIC_SOURCE_CLEANUP_AUDIT: "musicSourceCleanupAudit",
+  MUSIC_INGESTION_AUDIT: "musicIngestionAudit",
+  TARGET_SCHEDULE_AUDIT: "targetScheduleAudit",
   TRACK_LISTENING_STATE: "trackListeningState",
   TRACK_LISTENING_EVENT: "spotifyListeningEvent",
   SPOTIFY_EXTENDED_HISTORY_IMPORT_RUN: "spotifyExtendedHistoryImportRun",
@@ -70,6 +87,9 @@ const countByDataset: Readonly<
   ARTIST_SIMILARITY_EDGE: "artistSimilarityEdge",
   MUSIC_PREFERENCE_SIGNAL: "musicPreferenceSignal",
   ALBUM_RECOMMENDATION_MEMORY: "albumRecommendationMemory",
+  PROBABLE_LIKE_PILOT_FEEDBACK: "probableLikePilotFeedback",
+  HISTORY_LIKE_ACTION: "historyLikeAction",
+  HISTORY_PROBABLE_LIKE_DISMISSAL: "historyProbableLikeDismissal",
   GENERATION_AUDIT: "generationAuditWithProviderFields",
   FIRST_PARTY_PLAYBACK_PREFERENCE: "firstPartyPlaybackPreference",
   NATIVE_SOURCE_PREFERENCE: "nativeSourcePreference",
@@ -85,9 +105,9 @@ export async function previewSpotifyDisconnect(
 }
 
 /**
- * Pure preview. Gate 6A performs no deletion and no credential mutation.
- * `mixedListeningEvent` is reported separately because Gate 6B must sanitize
- * Spotify enrichment without deleting independently sourced evidence.
+ * Pure preview. `mixedListeningEvent` is reported separately because the
+ * executor sanitizes Spotify enrichment without deleting independently sourced
+ * evidence.
  */
 export function buildSpotifyDisconnectPreview(
   inventory: SpotifyDisconnectInventory,
