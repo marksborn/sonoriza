@@ -8,6 +8,7 @@ import {
   spotifyCatalogRecommendationCapability,
   spotifyRecentlyPlayedPlannerCapability,
   spotifySavedTracksPlannerCapability,
+  spotifySavedTracksProfileMaterializationCapability,
   spotifySavedTracksRecommendationCapability,
   spotifySavedTracksShadowCapability,
   sqlAggregateListeningEventSourcesForUses,
@@ -33,6 +34,13 @@ test("Saved Tracks is blocked for shadow analytics, planner eligibility and reco
   assert.equal(recommendation.decisions.BEHAVIORAL_ANALYTICS, "DENY");
   assert.equal(recommendation.decisions.USER_PROFILING, "DENY");
   assert.equal(recommendation.decisions.RECOMMENDATION, "DENY");
+});
+
+test("Saved Tracks cannot materialize ArtistAffinity/profile state", () => {
+  const capability = spotifySavedTracksProfileMaterializationCapability();
+  assert.equal(capability.allowed, false);
+  assert.equal(capability.decisions.BEHAVIORAL_ANALYTICS, "DENY");
+  assert.equal(capability.decisions.USER_PROFILING, "DENY");
 });
 
 test("Spotify catalog cannot drive recommendation under the current matrix", () => {
