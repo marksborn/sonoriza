@@ -1,10 +1,19 @@
+export const SPOTIFY_DISCONNECT_CONTRACT_VERSION = 2 as const;
+
 export const SPOTIFY_RETENTION_DATASETS = [
   "OAUTH_ACCOUNT",
   "SOURCE_PLAYLIST_CACHE",
   "SOURCE_PLAYLIST_BINDING",
   "TARGET_PLAYLIST_BINDING",
+  "MUSIC_PLAYBACK_RUNTIME_STATE",
+  "MUSIC_PLAYBACK_POLICY",
+  "PODCAST_SHOW_RUNTIME_STATE",
+  "PODCAST_SHOW_POLICY",
   "MUSIC_INGESTION_RUNTIME_STATE",
   "MUSIC_INGESTION_BINDING",
+  "MUSIC_SOURCE_CLEANUP_AUDIT",
+  "MUSIC_INGESTION_AUDIT",
+  "TARGET_SCHEDULE_AUDIT",
   "TRACK_LISTENING_STATE",
   "TRACK_LISTENING_EVENT",
   "SPOTIFY_EXTENDED_HISTORY_IMPORT_RUN",
@@ -16,6 +25,9 @@ export const SPOTIFY_RETENTION_DATASETS = [
   "ARTIST_SIMILARITY_EDGE",
   "MUSIC_PREFERENCE_SIGNAL",
   "ALBUM_RECOMMENDATION_MEMORY",
+  "PROBABLE_LIKE_PILOT_FEEDBACK",
+  "HISTORY_LIKE_ACTION",
+  "HISTORY_PROBABLE_LIKE_DISMISSAL",
   "GENERATION_AUDIT",
   "FIRST_PARTY_PLAYBACK_PREFERENCE",
   "NATIVE_SOURCE_PREFERENCE",
@@ -43,17 +55,15 @@ export type SpotifyRetentionRule = Readonly<{
 }>;
 
 /**
- * Gate 6A contract for disconnecting Spotify without deleting the Sonoriza
- * account. The contract is intentionally conservative: provider credentials,
- * provider-derived behavioral state and derived profiles are not retained;
- * first-party configuration and explicit Sonoriza preferences survive.
+ * Gate 6 retention contract for disconnecting Spotify without deleting the
+ * Sonoriza account. Provider credentials, provider-derived behavioral state and
+ * provider payload are not retained. First-party configuration and explicit
+ * Sonoriza intent survive.
  *
- * Mixed Last.fm + Spotify listening rows must not be deleted wholesale when an
- * independently sourced Last.fm event can be retained. They are sanitized so
- * Spotify enrichment is removed while the independent event remains.
- *
- * Operational configuration may keep stable provider references required for a
- * future reconnect, but provider payload/cache and behavioral evidence do not.
+ * Stable Spotify references that are part of user-authored configuration may be
+ * retained for reconnect. That does not authorize their use while disconnected
+ * and does not turn provider payload or behavioral evidence into first-party
+ * data.
  */
 export const SPOTIFY_DISCONNECT_RETENTION_CONTRACT: readonly SpotifyRetentionRule[] = [
   rule(
@@ -64,7 +74,7 @@ export const SPOTIFY_DISCONNECT_RETENTION_CONTRACT: readonly SpotifyRetentionRul
   rule(
     "SOURCE_PLAYLIST_CACHE",
     "CLEAR_PROVIDER_PAYLOAD",
-    "Cached Spotify candidates and snapshots are provider payload, not first-party configuration.",
+    "Spotify source names, cached candidates and provider snapshots can be rehydrated after reconnect.",
   ),
   rule(
     "SOURCE_PLAYLIST_BINDING",
@@ -77,14 +87,49 @@ export const SPOTIFY_DISCONNECT_RETENTION_CONTRACT: readonly SpotifyRetentionRul
     "The user's target configuration is Sonoriza-owned and may retain its stable playlist reference for reconnect.",
   ),
   rule(
+    "MUSIC_PLAYBACK_RUNTIME_STATE",
+    "CLEAR_PROVIDER_PAYLOAD",
+    "Recently Played sync cursors, provider sync timestamps and untyped history boundary state must be cleared.",
+  ),
+  rule(
+    "MUSIC_PLAYBACK_POLICY",
+    "RETAIN_FIRST_PARTY",
+    "Repeat-window configuration is Sonoriza-owned even when the current provider runtime is unavailable.",
+  ),
+  rule(
+    "PODCAST_SHOW_RUNTIME_STATE",
+    "CLEAR_PROVIDER_PAYLOAD",
+    "Provider episode cursor, completion round and consumed-episode runtime state are rehydratable provider state.",
+  ),
+  rule(
+    "PODCAST_SHOW_POLICY",
+    "RETAIN_FIRST_PARTY",
+    "Podcast ordering, limits and explicit start selection are user configuration and survive disconnect.",
+  ),
+  rule(
     "MUSIC_INGESTION_RUNTIME_STATE",
     "CLEAR_PROVIDER_PAYLOAD",
-    "Cursor/runtime state can contain Spotify-derived state and is not needed while disconnected.",
+    "Provider source name, cursor/runtime state, capability response and sync timestamps are not needed while disconnected.",
   ),
   rule(
     "MUSIC_INGESTION_BINDING",
     "RETAIN_FIRST_PARTY",
     "The ingestion rule itself is user configuration and may retain its stable source reference.",
+  ),
+  rule(
+    "MUSIC_SOURCE_CLEANUP_AUDIT",
+    "REDACT_PROVIDER_FIELDS",
+    "Cleanup timing and aggregate counts may remain, but provider snapshots, URIs and error payload are redacted.",
+  ),
+  rule(
+    "MUSIC_INGESTION_AUDIT",
+    "REDACT_PROVIDER_FIELDS",
+    "Ingestion run counts and timing may remain, but provider detail/error payload is redacted.",
+  ),
+  rule(
+    "TARGET_SCHEDULE_AUDIT",
+    "REDACT_PROVIDER_FIELDS",
+    "Schedule outcome/timing may remain, but provider snapshots, details and provider-derived reason text are redacted.",
   ),
   rule(
     "TRACK_LISTENING_STATE",
@@ -142,9 +187,24 @@ export const SPOTIFY_DISCONNECT_RETENTION_CONTRACT: readonly SpotifyRetentionRul
     "Current album recommendation lifecycle is keyed to Spotify catalog identity and derived recommendation state.",
   ),
   rule(
+    "PROBABLE_LIKE_PILOT_FEEDBACK",
+    "REDACT_PROVIDER_FIELDS",
+    "The user's explicit pilot verdict survives, while Spotify identity, catalog text and derived candidate score/reasons are redacted.",
+  ),
+  rule(
+    "HISTORY_LIKE_ACTION",
+    "REDACT_PROVIDER_FIELDS",
+    "The explicit confirmation audit survives, while Spotify identity, catalog text and derived ranking evidence are redacted.",
+  ),
+  rule(
+    "HISTORY_PROBABLE_LIKE_DISMISSAL",
+    "REDACT_PROVIDER_FIELDS",
+    "The user's explicit dismissal timing survives, while Spotify identity, catalog text and derived ranking evidence are redacted.",
+  ),
+  rule(
     "GENERATION_AUDIT",
     "REDACT_PROVIDER_FIELDS",
-    "First-party run audit may remain, but Spotify URIs/ids/provider payload must not be retained indefinitely after disconnect.",
+    "First-party run timing/status may remain, but Spotify URIs, ids, catalog text, provider payload and provider errors are redacted.",
   ),
   rule(
     "FIRST_PARTY_PLAYBACK_PREFERENCE",
