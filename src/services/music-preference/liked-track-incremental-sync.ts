@@ -3,6 +3,7 @@ import {
   LikedTrackPreferenceProvenance,
 } from "@prisma/client";
 
+import { assertSpotifySavedTracksProfileMaterializationAllowed } from "@/services/data-policy";
 import {
   applyLikedTrackAffinityPlan,
   buildLikedTrackAffinityPlan,
@@ -94,6 +95,12 @@ export type LikedTrackIncrementalSyncReport = {
  * the already validated LIKED-01 affinity reconciler against a synthetic full
  * snapshot made from local active likes + the newly observed provider rows.
  *
+ * Gate 5C adds a capability barrier before any state/token/provider read. Saved
+ * Tracks may not materialize ArtistAffinity/profile state while behavioral
+ * analytics or user profiling are not explicitly ALLOW in the data-policy
+ * matrix. This applies to PREVIEW and APPLY so a preview cannot become an
+ * ungoverned behavioral analytics path.
+ *
  * The synthetic snapshot is critical: an incremental provider prefix must
  * never be interpreted as evidence that older local likes were removed.
  */
@@ -101,6 +108,8 @@ export async function syncLikedTrackIncremental(
   userId: string,
   options: { mode?: LikedTrackIncrementalSyncMode } = {},
 ): Promise<LikedTrackIncrementalSyncReport> {
+  assertSpotifySavedTracksProfileMaterializationAllowed();
+
   const mode = options.mode ?? "PREVIEW";
   const generatedAt = new Date();
   const existing = await loadExistingLikedTrackAffinityState(userId);
