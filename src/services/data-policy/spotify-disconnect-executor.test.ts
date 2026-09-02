@@ -30,6 +30,7 @@ function inventory(
     musicSourceCleanupAudit: 0,
     musicIngestionAudit: 0,
     targetScheduleAudit: 0,
+    notificationDeliveryAudit: 0,
     trackListeningState: 0,
     spotifyListeningEvent: 0,
     mixedListeningEvent: 0,
@@ -66,6 +67,7 @@ function preservation(
     musicIngestionRuns: value,
     targetScheduleRuns: value,
     targetScheduleAttempts: value,
+    pushDeliveries: value,
     generationRuns: value,
     generationItems: value,
     generationLogs: value,
@@ -155,7 +157,7 @@ test("Gate 6B postcheck rejects any provider residue", () => {
     () =>
       assertSpotifyDisconnectPostcheck({
         beforeInventory: inventory({ oauthAccount: 1 }),
-        afterInventory: inventory({ spotifyListeningEvent: 1 }),
+        afterInventory: inventory({ notificationDeliveryAudit: 1 }),
         preservationBefore: preservation(),
         preservationAfter: preservation(),
       }),
