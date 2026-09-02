@@ -8,6 +8,7 @@ import type {
 } from "./spotify-disconnect-preview";
 import {
   SPOTIFY_DISCONNECT_REDACTED_ID_PREFIX,
+  SPOTIFY_DISCONNECT_REDACTED_NOTIFICATION_TAG,
   SPOTIFY_DISCONNECT_REDACTED_TEXT,
   SPOTIFY_DISCONNECT_REDACTED_URI,
 } from "./spotify-disconnect-redaction";
@@ -27,6 +28,7 @@ type InventoryRow = {
   musicSourceCleanupAudit: bigint;
   musicIngestionAudit: bigint;
   targetScheduleAudit: bigint;
+  notificationDeliveryAudit: bigint;
   trackListeningState: bigint;
   spotifyListeningEvent: bigint;
   mixedListeningEvent: bigint;
@@ -136,6 +138,17 @@ export class PrismaSpotifyDisconnectInventoryStore
             WHERE run."userId" = ${userId}
               AND (attempt."reason" IS NOT NULL OR attempt."details" IS NOT NULL))
         ) AS "targetScheduleAudit",
+        (SELECT COUNT(*) FROM "PushDelivery"
+          WHERE "userId" = ${userId}
+            AND (
+              "payload" <> jsonb_build_object(
+                'title', ${SPOTIFY_DISCONNECT_REDACTED_TEXT},
+                'body', ${SPOTIFY_DISCONNECT_REDACTED_TEXT},
+                'url', '/dashboard',
+                'tag', ${SPOTIFY_DISCONNECT_REDACTED_NOTIFICATION_TAG}
+              )
+              OR "lastError" IS NOT NULL
+            )) AS "notificationDeliveryAudit",
         (SELECT COUNT(*) FROM "TrackListeningState"
           WHERE "userId" = ${userId}) AS "trackListeningState",
         (SELECT COUNT(*) FROM "TrackListeningEvent"
@@ -262,6 +275,7 @@ export class PrismaSpotifyDisconnectInventoryStore
       musicSourceCleanupAudit: asCount(row.musicSourceCleanupAudit),
       musicIngestionAudit: asCount(row.musicIngestionAudit),
       targetScheduleAudit: asCount(row.targetScheduleAudit),
+      notificationDeliveryAudit: asCount(row.notificationDeliveryAudit),
       trackListeningState: asCount(row.trackListeningState),
       spotifyListeningEvent: asCount(row.spotifyListeningEvent),
       mixedListeningEvent: asCount(row.mixedListeningEvent),
