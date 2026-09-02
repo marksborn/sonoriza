@@ -14,6 +14,7 @@ import {
 
 type InventoryRow = {
   oauthAccount: bigint;
+  userProfileProviderFields: bigint;
   sourcePlaylistCache: bigint;
   sourcePlaylistBinding: bigint;
   targetPlaylistBinding: bigint;
@@ -59,6 +60,8 @@ export class PrismaSpotifyDisconnectInventoryStore
       SELECT
         (SELECT COUNT(*) FROM "Account"
           WHERE "userId" = ${userId} AND "provider" = 'spotify') AS "oauthAccount",
+        (SELECT COUNT(*) FROM "User"
+          WHERE "id" = ${userId} AND ("name" IS NOT NULL OR "image" IS NOT NULL)) AS "userProfileProviderFields",
         (SELECT COUNT(*) FROM "SourcePlaylist"
           WHERE "userId" = ${userId}
             AND (
@@ -215,6 +218,7 @@ export class PrismaSpotifyDisconnectInventoryStore
                 OR item."title" IS NOT NULL
                 OR item."subtitle" IS NOT NULL
                 OR item."programId" IS NOT NULL
+                OR item."durationMs" <> 0
                 OR item."spotifyTrackId" IS NOT NULL
                 OR item."primaryArtistId" IS NOT NULL
                 OR item."albumId" IS NOT NULL
@@ -245,6 +249,7 @@ export class PrismaSpotifyDisconnectInventoryStore
 
     return {
       oauthAccount: asCount(row.oauthAccount),
+      userProfileProviderFields: asCount(row.userProfileProviderFields),
       sourcePlaylistCache: asCount(row.sourcePlaylistCache),
       sourcePlaylistBinding: asCount(row.sourcePlaylistBinding),
       targetPlaylistBinding: asCount(row.targetPlaylistBinding),
