@@ -12,6 +12,7 @@ import {
 import { PrismaSpotifyDisconnectInventoryStore } from "./spotify-disconnect-prisma-inventory";
 import {
   SPOTIFY_DISCONNECT_REDACTED_ID_PREFIX,
+  SPOTIFY_DISCONNECT_REDACTED_NOTIFICATION_TAG,
   SPOTIFY_DISCONNECT_REDACTED_TEXT,
   SPOTIFY_DISCONNECT_REDACTED_URI,
 } from "./spotify-disconnect-redaction";
@@ -62,6 +63,7 @@ export type SpotifyDisconnectPreservationSnapshot = Readonly<{
   musicIngestionRuns: number;
   targetScheduleRuns: number;
   targetScheduleAttempts: number;
+  pushDeliveries: number;
   generationRuns: number;
   generationItems: number;
   generationLogs: number;
@@ -83,6 +85,7 @@ export type SpotifyDisconnectMutationCounts = Readonly<{
   musicIngestionAuditsRedacted: number;
   targetScheduleRunsRedacted: number;
   targetScheduleAttemptsRedacted: number;
+  notificationDeliveryAuditsRedacted: number;
   spotifyListeningEventsDeleted: number;
   mixedListeningEventsSanitized: number;
   trackListeningStatesDeleted: number;
@@ -270,7 +273,11 @@ export async function executeSpotifyDisconnect(
         preservationAfter,
       };
     },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 10_000,
+      timeout: 120_000,
+    },
   );
 }
 
@@ -433,6 +440,28 @@ async function applySpotifyDisconnectMutations(
     WHERE run."id" = attempt."targetScheduleRunId"
       AND run."userId" = ${userId}
       AND (attempt."reason" IS NOT NULL OR attempt."details" IS NOT NULL)
+  `);
+
+  const notificationDeliveryAuditsRedacted = await tx.$executeRaw(Prisma.sql`
+    UPDATE "PushDelivery"
+    SET
+      "payload" = jsonb_build_object(
+        'title', ${SPOTIFY_DISCONNECT_REDACTED_TEXT},
+        'body', ${SPOTIFY_DISCONNECT_REDACTED_TEXT},
+        'url', '/dashboard',
+        'tag', ${SPOTIFY_DISCONNECT_REDACTED_NOTIFICATION_TAG}
+      ),
+      "lastError" = NULL
+    WHERE "userId" = ${userId}
+      AND (
+        "payload" <> jsonb_build_object(
+          'title', ${SPOTIFY_DISCONNECT_REDACTED_TEXT},
+          'body', ${SPOTIFY_DISCONNECT_REDACTED_TEXT},
+          'url', '/dashboard',
+          'tag', ${SPOTIFY_DISCONNECT_REDACTED_NOTIFICATION_TAG}
+        )
+        OR "lastError" IS NOT NULL
+      )
   `);
 
   const spotifyListeningEventsDeleted = await tx.$executeRaw(Prisma.sql`
@@ -611,6 +640,7 @@ async function applySpotifyDisconnectMutations(
     musicIngestionAuditsRedacted,
     targetScheduleRunsRedacted,
     targetScheduleAttemptsRedacted,
+    notificationDeliveryAuditsRedacted,
     spotifyListeningEventsDeleted,
     mixedListeningEventsSanitized,
     trackListeningStatesDeleted,
@@ -653,6 +683,7 @@ async function loadPreservationSnapshot(
       (SELECT COUNT(*) FROM "TargetScheduleAttempt" attempt
         INNER JOIN "TargetScheduleRun" run ON run."id" = attempt."targetScheduleRunId"
         WHERE run."userId" = ${userId}) AS "targetScheduleAttempts",
+      (SELECT COUNT(*) FROM "PushDelivery" WHERE "userId" = ${userId}) AS "pushDeliveries",
       (SELECT COUNT(*) FROM "GenerationRun" WHERE "userId" = ${userId}) AS "generationRuns",
       (SELECT COUNT(*) FROM "GenerationItem" item
         INNER JOIN "GenerationRun" run ON run."id" = item."runId"
@@ -692,6 +723,7 @@ async function lockSpotifyDisconnectTables(
       "MusicIngestionRun",
       "TargetScheduleRun",
       "TargetScheduleAttempt",
+      "PushDelivery",
       "TrackListeningState",
       "TrackListeningEvent",
       "SpotifyExtendedHistoryImportRun",
