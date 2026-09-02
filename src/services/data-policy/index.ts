@@ -7,3 +7,5 @@ export * from "./legacy-consumer-policy";
 export * from "./spotify-retention-contract";
 export * from "./spotify-disconnect-preview";
 export * from "./spotify-disconnect-prisma-inventory";
+export * from "./spotify-disconnect-redaction";
+export * from "./spotify-disconnect-executor";
