@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { LikedTrackAvailability } from "@prisma/client";
 
+import { spotifyRecentlyPlayedPlannerCapability } from "@/services/data-policy";
 import { planRun, type Candidate, type RunTarget } from "@/services/playlist-planner";
 
 import {
@@ -35,7 +36,7 @@ type ShadowTestSummary = {
   targets?: ShadowTargetEvidence[];
 };
 
-test("Gate 3B policy is fail-closed until master, user and target are explicitly allowlisted", () => {
+test("legacy shadow rollout policy is still fail-closed operationally", () => {
   assert.equal(
     resolveLikedTrackSourceShadowPolicy({
       userEmail: "pilot@example.com",
@@ -84,7 +85,7 @@ test("native liked candidate materialization includes only available rows with c
   assert.equal(candidates[0]?.primaryArtistId, "artist-ready");
 });
 
-test("shadow appends liked source after the current pool without mutating the authoritative plan", async () => {
+test("legacy pure shadow comparison remains diagnostic and does not mutate the authoritative plan", async () => {
   const target = targetRule("target-1", 300_000);
   const currentCandidate = candidate("current", 200_000);
   const likedCandidate = candidate("liked", 100_000);
@@ -121,7 +122,7 @@ test("shadow appends liked source after the current pool without mutating the au
   assert.equal(summary.targets?.[0]?.shadow?.totalDurationMs, 300_000);
 });
 
-test("shadow keeps MUSIC-05 negative signals authoritative for liked candidates", async () => {
+test("legacy pure shadow still honors supplied negative-signal seams", async () => {
   const target = targetRule("target-1", 300_000);
   const currentCandidate = candidate("current", 200_000);
   const likedCandidate = candidate("liked", 100_000);
@@ -230,12 +231,15 @@ function runState(): MusicRepeatRunState {
       historyKnownSince: null,
       lastSyncAt: null,
     },
+    repeatCompliance: spotifyRecentlyPlayedPlannerCapability(),
     recentlyPlayedSkippedCount: 0,
     missingTrackIdentitySkippedCount: 0,
     preWriteSync: null,
     preWriteRevalidated: false,
     preWriteBlockedCount: 0,
     preWriteMissingIdentityCount: 0,
+    firstPartyPlaybackPreferences: [],
+    firstPartyPreferenceEvidence: null,
     likedTrackSourceShadow: null,
   };
 }
