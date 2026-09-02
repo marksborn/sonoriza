@@ -35,6 +35,11 @@ export const SAVED_TRACKS_RECOMMENDATION_USES = [
   "RECOMMENDATION",
 ] as const satisfies readonly PolicyUse[];
 
+export const SAVED_TRACKS_PROFILE_MATERIALIZATION_USES = [
+  "BEHAVIORAL_ANALYTICS",
+  "USER_PROFILING",
+] as const satisfies readonly PolicyUse[];
+
 export const HISTORY_ANALYTICS_USES = [
   "BEHAVIORAL_ANALYTICS",
 ] as const satisfies readonly PolicyUse[];
@@ -114,6 +119,13 @@ export function spotifySavedTracksRecommendationCapability(): RequiredPolicyUses
   return evaluateRootSourceForUses(
     "SPOTIFY_SAVED_TRACKS",
     SAVED_TRACKS_RECOMMENDATION_USES,
+  );
+}
+
+export function spotifySavedTracksProfileMaterializationCapability(): RequiredPolicyUsesEvaluation {
+  return evaluateRootSourceForUses(
+    "SPOTIFY_SAVED_TRACKS",
+    SAVED_TRACKS_PROFILE_MATERIALIZATION_USES,
   );
 }
 
