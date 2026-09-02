@@ -14,7 +14,14 @@ export {
 } from "./signal-store";
 export {
   analyzeAndRecordInferredSkips,
+  evaluateMusic05CompliancePolicy,
   loadPendingInferredSkips,
+  MUSIC_05_COMPLIANCE_QUARANTINE_REASON,
+  type Music05CompliancePolicy,
+} from "./compliant-inferred-skips";
+export {
+  analyzeAndRecordInferredSkips as analyzeAndRecordInferredSkipsLegacyDiagnostic,
+  loadPendingInferredSkips as loadPendingInferredSkipsLegacyDiagnostic,
   type InferredSkipAnalysisResult,
   type InferredSkipAnalysisTargetResult,
 } from "./analyze";
@@ -38,3 +45,13 @@ export {
   prismaFirstPartyPlaybackPreferenceStore,
   type FirstPartyPlaybackPreferenceStore,
 } from "./first-party-playback-preference-store";
+export {
+  FIRST_PARTY_PLANNER_POLICY_VERSION,
+  FIRST_PARTY_SPOTIFY_ARTIST_SUBJECT_PREFIX,
+  FIRST_PARTY_SPOTIFY_TRACK_SUBJECT_PREFIX,
+  applyFirstPartyPlaybackPreferencesToMusicCandidates,
+  firstPartySpotifyArtistSubjectKey,
+  firstPartySpotifyTrackSubjectKey,
+  type FirstPartyPlannerPreferenceEvidence,
+  type FirstPartyPlannerPreferenceResult,
+} from "./first-party-planner-preferences";
