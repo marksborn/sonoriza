@@ -1,4 +1,4 @@
-export const SPOTIFY_DISCONNECT_CONTRACT_VERSION = 3 as const;
+export const SPOTIFY_DISCONNECT_CONTRACT_VERSION = 4 as const;
 
 export const SPOTIFY_RETENTION_DATASETS = [
   "OAUTH_ACCOUNT",
@@ -15,6 +15,7 @@ export const SPOTIFY_RETENTION_DATASETS = [
   "MUSIC_SOURCE_CLEANUP_AUDIT",
   "MUSIC_INGESTION_AUDIT",
   "TARGET_SCHEDULE_AUDIT",
+  "NOTIFICATION_DELIVERY_AUDIT",
   "TRACK_LISTENING_STATE",
   "TRACK_LISTENING_EVENT",
   "SPOTIFY_EXTENDED_HISTORY_IMPORT_RUN",
@@ -136,6 +137,11 @@ export const SPOTIFY_DISCONNECT_RETENTION_CONTRACT: readonly SpotifyRetentionRul
     "TARGET_SCHEDULE_AUDIT",
     "REDACT_PROVIDER_FIELDS",
     "Schedule outcome/timing may remain, but provider snapshots, details and provider-derived reason text are redacted.",
+  ),
+  rule(
+    "NOTIFICATION_DELIVERY_AUDIT",
+    "REDACT_PROVIDER_FIELDS",
+    "Push delivery status/timing may remain, but persisted notification text and untyped error payload can contain provider-derived source names or reasons.",
   ),
   rule(
     "TRACK_LISTENING_STATE",
