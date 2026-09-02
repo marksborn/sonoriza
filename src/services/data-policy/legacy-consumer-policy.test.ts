@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   HISTORY_ANALYTICS_USES,
   HISTORY_RECOMMENDATION_USES,
+  SavedTracksProfileMaterializationPolicyError,
+  assertSpotifySavedTracksProfileMaterializationAllowed,
   evaluateListeningEventForUses,
   spotifyCatalogRecommendationCapability,
   spotifyRecentlyPlayedPlannerCapability,
@@ -41,6 +43,10 @@ test("Saved Tracks cannot materialize ArtistAffinity/profile state", () => {
   assert.equal(capability.allowed, false);
   assert.equal(capability.decisions.BEHAVIORAL_ANALYTICS, "DENY");
   assert.equal(capability.decisions.USER_PROFILING, "DENY");
+  assert.throws(
+    () => assertSpotifySavedTracksProfileMaterializationAllowed(),
+    SavedTracksProfileMaterializationPolicyError,
+  );
 });
 
 test("Spotify catalog cannot drive recommendation under the current matrix", () => {
