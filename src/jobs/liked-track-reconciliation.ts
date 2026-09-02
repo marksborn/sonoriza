@@ -1,5 +1,6 @@
 import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
+import { spotifySavedTracksProfileMaterializationCapability } from "@/services/data-policy";
 import {
   DEFAULT_LIKED_TRACK_RECONCILIATION_LIMITS,
   reconcileLikedTracks,
@@ -7,8 +8,8 @@ import {
 } from "@/services/music-preference/liked-track-reconciliation";
 
 export const LIKED_TRACK_RECONCILIATION_POLICY = {
-  version: "source-liked-gate4c-v1",
-  activationRule: "MASTER_FLAG_AND_USER_ALLOWLIST",
+  version: "source-liked-gate5c-v1",
+  activationRule: "SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
   scan: "FULL_SAVED_TRACKS",
   providerWrite: false,
   plannerInfluence: false,
@@ -18,6 +19,7 @@ export const LIKED_TRACK_RECONCILIATION_POLICY = {
 } as const;
 
 export type LikedTrackReconciliationPolicyReason =
+  | "SOURCE_CAPABILITY_BLOCKED"
   | "MASTER_DISABLED"
   | "USER_EMAIL_MISSING"
   | "USER_NOT_ALLOWLISTED"
@@ -49,10 +51,17 @@ export function resolveLikedTrackReconciliationPolicy(input: {
   userEmail: string | null | undefined;
   masterEnabled?: string | null;
   allowlistedEmails?: string | null;
+  sourceCapabilityAllowed?: boolean;
 }): {
   enabled: boolean;
   reason: LikedTrackReconciliationPolicyReason;
 } {
+  const sourceCapabilityAllowed =
+    input.sourceCapabilityAllowed ??
+    spotifySavedTracksProfileMaterializationCapability().allowed;
+  if (!sourceCapabilityAllowed) {
+    return { enabled: false, reason: "SOURCE_CAPABILITY_BLOCKED" };
+  }
   if (!parseBoolean(input.masterEnabled)) {
     return { enabled: false, reason: "MASTER_DISABLED" };
   }
@@ -73,16 +82,21 @@ export function resolveLikedTrackReconciliationPolicy(input: {
 }
 
 /**
- * Gate 4C periodic reconciliation runner.
+ * Gate 5C periodic reconciliation runner.
  *
- * This job is intentionally separate from the frequent incremental Saved
- * Tracks sync. It performs a full provider scan only for explicitly allowlisted
- * users and relies on the service circuit breaker before any local unlike is
- * applied. The master flag defaults to off.
+ * The Saved Tracks capability is evaluated before feature flags, local user
+ * enumeration and the full provider scan. Under the current data-policy matrix
+ * this job is inert because Saved Tracks is DENY for behavioral analytics and
+ * user profiling. Existing rollout and circuit-breaker controls become relevant
+ * only after the source capability itself is explicitly ALLOW.
  */
 export async function runLikedTrackReconciliationJob(): Promise<
   LikedTrackReconciliationJobResult[]
 > {
+  const sourceCapability = spotifySavedTracksProfileMaterializationCapability();
+  if (!sourceCapability.allowed) {
+    return [];
+  }
   if (!parseBoolean(process.env.LIKED_TRACK_RECONCILIATION_ENABLED)) {
     return [];
   }
@@ -110,6 +124,7 @@ export async function runLikedTrackReconciliationJob(): Promise<
       userEmail: user.email,
       masterEnabled: process.env.LIKED_TRACK_RECONCILIATION_ENABLED,
       allowlistedEmails: process.env.LIKED_TRACK_RECONCILIATION_USER_EMAILS,
+      sourceCapabilityAllowed: sourceCapability.allowed,
     });
     if (!policy.enabled || !user.email) continue;
 
