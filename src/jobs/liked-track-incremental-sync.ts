@@ -1,16 +1,18 @@
 import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
+import { spotifySavedTracksProfileMaterializationCapability } from "@/services/data-policy";
 import { syncLikedTrackIncremental } from "@/services/music-preference/liked-track-incremental-sync";
 
 export const LIKED_TRACK_INCREMENTAL_SYNC_POLICY = {
-  version: "source-liked-gate4b-v1",
-  activationRule: "MASTER_FLAG_AND_USER_ALLOWLIST",
+  version: "source-liked-gate5c-v1",
+  activationRule: "SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
   mode: "LOCAL_CANONICAL_APPLY",
   providerWrite: false,
   plannerInfluence: false,
 } as const;
 
 export type LikedTrackIncrementalSyncPolicyReason =
+  | "SOURCE_CAPABILITY_BLOCKED"
   | "MASTER_DISABLED"
   | "USER_EMAIL_MISSING"
   | "USER_NOT_ALLOWLISTED"
@@ -34,10 +36,17 @@ export function resolveLikedTrackIncrementalSyncPolicy(input: {
   userEmail: string | null | undefined;
   masterEnabled?: string | null;
   allowlistedEmails?: string | null;
+  sourceCapabilityAllowed?: boolean;
 }): {
   enabled: boolean;
   reason: LikedTrackIncrementalSyncPolicyReason;
 } {
+  const sourceCapabilityAllowed =
+    input.sourceCapabilityAllowed ??
+    spotifySavedTracksProfileMaterializationCapability().allowed;
+  if (!sourceCapabilityAllowed) {
+    return { enabled: false, reason: "SOURCE_CAPABILITY_BLOCKED" };
+  }
   if (!parseBoolean(input.masterEnabled)) {
     return { enabled: false, reason: "MASTER_DISABLED" };
   }
@@ -58,13 +67,19 @@ export function resolveLikedTrackIncrementalSyncPolicy(input: {
 }
 
 /**
- * Gate 4B cron runner. It is inert unless both feature master flag and user
- * allowlist opt in. Failures are returned/logged per user and must not block
- * the existing MUSIC-03 inbox rules that share the cron endpoint.
+ * Gate 5C cron runner. The Saved Tracks capability is evaluated before the
+ * feature flag, user enumeration and provider access. Under the current matrix
+ * this returns no work because Saved Tracks is DENY for behavioral analytics
+ * and user profiling. The legacy rollout controls remain available only after
+ * the source capability itself becomes explicitly ALLOW.
  */
 export async function runLikedTrackIncrementalSyncJob(): Promise<
   LikedTrackIncrementalJobResult[]
 > {
+  const sourceCapability = spotifySavedTracksProfileMaterializationCapability();
+  if (!sourceCapability.allowed) {
+    return [];
+  }
   if (!parseBoolean(process.env.LIKED_TRACK_INCREMENTAL_SYNC_ENABLED)) {
     return [];
   }
@@ -83,6 +98,7 @@ export async function runLikedTrackIncrementalSyncJob(): Promise<
       userEmail: user.email,
       masterEnabled: process.env.LIKED_TRACK_INCREMENTAL_SYNC_ENABLED,
       allowlistedEmails: process.env.LIKED_TRACK_INCREMENTAL_SYNC_USER_EMAILS,
+      sourceCapabilityAllowed: sourceCapability.allowed,
     });
     if (!policy.enabled || !user.email) continue;
 
