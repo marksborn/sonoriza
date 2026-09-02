@@ -1,3 +1,4 @@
+import { spotifySavedTracksRecommendationCapability } from "@/services/data-policy";
 import type { Candidate } from "@/services/playlist-planner";
 import type { Gate5FResolvedDiscoveryCandidate } from "@/services/music-discovery/planner-discovery-gate5f";
 import {
@@ -20,7 +21,7 @@ export const LIKED_DISCOVERY_PILOT_RUNTIME_POLICY = {
   mode: "CONTROLLED_RUNTIME",
   maxCandidatesPerRun: 1,
   activationRule:
-    "BASE_DISCOVERY_AND_MASTER_FLAG_AND_USER_ALLOWLIST_AND_TARGET_ID_ALLOWLIST",
+    "BASE_DISCOVERY_AND_MASTER_FLAG_AND_USER_ALLOWLIST_AND_TARGET_ID_ALLOWLIST_AND_SOURCE_CAPABILITY",
   targetRule: "TARGET_DISCOVERY_POLICY_MUST_ALLOW_EXTERNAL_DISCOVERY",
   fallbackRule: "ABSTAIN_AND_KEEP_EXISTING_PLAN",
   plannerRule: "REUSE_DISCOVERY_GATE5H_SURGICAL_PATH",
@@ -34,6 +35,7 @@ export type LikedDiscoveryPilotPolicyReason =
   | "USER_EMAIL_MISSING"
   | "USER_NOT_ALLOWLISTED"
   | "TARGET_ALLOWLIST_EMPTY"
+  | "SOURCE_CAPABILITY_BLOCKED"
   | "ENABLED";
 
 export type LikedDiscoveryPilotResolutionStatus =
@@ -79,6 +81,11 @@ export type LikedDiscoveryPilotResolution = {
   evidence: LikedDiscoveryPilotEvidence;
 };
 
+/**
+ * Gate 5C adds the central Saved Tracks capability as the final activation
+ * condition. Operational rollout flags and allowlists can never promote a
+ * provider-derived affinity/recommendation path by themselves.
+ */
 export function resolveLikedDiscoveryPilotPolicy(input: {
   baseDiscoveryEnabled: boolean;
   userEmail: string | null | undefined;
@@ -113,6 +120,12 @@ export function resolveLikedDiscoveryPilotPolicy(input: {
   if (targetIds.size === 0) {
     return { enabled: false, reason: "TARGET_ALLOWLIST_EMPTY", targetIds };
   }
+
+  const capability = spotifySavedTracksRecommendationCapability();
+  if (!capability.allowed) {
+    return { enabled: false, reason: "SOURCE_CAPABILITY_BLOCKED", targetIds };
+  }
+
   return { enabled: true, reason: "ENABLED", targetIds };
 }
 
@@ -379,7 +392,9 @@ function evidenceBase(
     reason: policy.reason,
     enabled: policy.enabled,
     userAllowlisted:
-      policy.reason === "ENABLED" || policy.reason === "TARGET_ALLOWLIST_EMPTY",
+      policy.reason === "ENABLED" ||
+      policy.reason === "TARGET_ALLOWLIST_EMPTY" ||
+      policy.reason === "SOURCE_CAPABILITY_BLOCKED",
     targetAllowlistSize: policy.targetIds.size,
     calibrationReadiness: null,
     calibrationReasons: [],
