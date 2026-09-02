@@ -9,6 +9,7 @@ import {
   isLikedDiscoveryPilotCandidate,
   mergeLikedPilotWithStandardDiscovery,
   resolveLikedDiscoveryPilotPolicy,
+  resolveLikedDiscoveryPilotRuntime,
   toGate5FDiscoveryCandidate,
 } from "./liked-discovery-pilot-runtime";
 import type { LikedExpansionResolvedCandidate } from "./liked-discovery-expansion-shadow";
@@ -113,7 +114,7 @@ function likedCandidate(): Gate5FResolvedDiscoveryCandidate {
   });
 }
 
-test("Gate 6C is fail-closed until base runtime, master, user and target allowlists all agree", () => {
+test("liked-discovery remains fail-closed through rollout checks and then source capability", () => {
   assert.equal(
     resolveLikedDiscoveryPilotPolicy({
       baseDiscoveryEnabled: false,
@@ -154,19 +155,40 @@ test("Gate 6C is fail-closed until base runtime, master, user and target allowli
     }).reason,
     "TARGET_ALLOWLIST_EMPTY",
   );
-  const enabled = resolveLikedDiscoveryPilotPolicy({
+
+  const quarantined = resolveLikedDiscoveryPilotPolicy({
     baseDiscoveryEnabled: true,
     userEmail: " PILOT@example.com ",
     masterEnabled: "true",
     allowlistedEmails: "pilot@example.com",
     allowlistedTargetIds: "target-a,target-b,target-a",
   });
-  assert.equal(enabled.enabled, true);
-  assert.equal(enabled.reason, "ENABLED");
-  assert.deepEqual(new Set(enabled.targetIds), new Set(["target-a", "target-b"]));
+  assert.equal(quarantined.enabled, false);
+  assert.equal(quarantined.reason, "SOURCE_CAPABILITY_BLOCKED");
+  assert.deepEqual(
+    new Set(quarantined.targetIds),
+    new Set(["target-a", "target-b"]),
+  );
 });
 
-test("Gate 6C hands the exact revalidated Spotify identity to Gate 5H", () => {
+test("liked-discovery runtime exits before expansion or Spotify catalog acquisition", async () => {
+  const result = await resolveLikedDiscoveryPilotRuntime({
+    userId: "no-database-or-provider-access-needed",
+    userEmail: "pilot@example.com",
+    baseDiscoveryEnabled: true,
+    masterEnabled: "true",
+    allowlistedEmails: "pilot@example.com",
+    allowlistedTargetIds: "target-a",
+  });
+
+  assert.equal(result.discovery, null);
+  assert.equal(result.evidence.status, "DISABLED");
+  assert.equal(result.evidence.reason, "SOURCE_CAPABILITY_BLOCKED");
+  assert.equal(result.evidence.spotifyCatalogCalls, 0);
+  assert.equal(result.evidence.revalidationSpotifyCatalogCalls, 0);
+});
+
+test("legacy pure handoff keeps exact revalidated Spotify identity for diagnostics", () => {
   const discovery = likedCandidate();
   assert.equal(discovery.candidateKey, "liked:candidate:choldra");
   assert.equal(discovery.adjustedScore, 74.485);
@@ -180,7 +202,7 @@ test("Gate 6C hands the exact revalidated Spotify identity to Gate 5H", () => {
   assert.equal(isLikedDiscoveryPilotCandidate(discovery), true);
 });
 
-test("Gate 6C refuses to materialize unresolved revalidation evidence", () => {
+test("legacy pure handoff refuses unresolved revalidation evidence", () => {
   const resolution: SpotifyDiscoveryResolution = {
     candidateKey: "liked-pilot:candidate:choldra",
     status: "NOT_FOUND",
@@ -198,7 +220,7 @@ test("Gate 6C refuses to materialize unresolved revalidation evidence", () => {
   );
 });
 
-test("Gate 6C LIKED candidates are visible only to explicitly allowlisted targets", () => {
+test("legacy LIKED candidate target projection remains a pure diagnostic helper", () => {
   const liked = likedCandidate();
   const normal = standard("normal-1");
   const pool = [normal, liked];
@@ -216,7 +238,7 @@ test("Gate 6C LIKED candidates are visible only to explicitly allowlisted target
   );
 });
 
-test("Gate 6C never duplicates a track already resolved by standard discovery", () => {
+test("legacy LIKED merge helper never duplicates an existing standard track", () => {
   const liked = likedCandidate();
   const duplicate = standard("spotify-track-choldra");
   const suppressed = mergeLikedPilotWithStandardDiscovery({
