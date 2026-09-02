@@ -1,5 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import {
+  applyFirstPartyPlaybackPreferencesToMusicCandidates,
+  type FirstPartyPlaybackPreference,
+  type FirstPartyPlannerPreferenceEvidence,
+} from "@/services/music-preference";
 import type { Candidate, PlanRunResult } from "@/services/playlist-planner";
 import {
   filterMusicCandidatesForRepeat,
@@ -35,6 +40,10 @@ export type MusicRepeatRunState = {
   preWriteRevalidated: boolean;
   preWriteBlockedCount: number;
   preWriteMissingIdentityCount: number;
+  /** Gate 5B: authoritative explicit Sonoriza preferences for this run. */
+  firstPartyPlaybackPreferences: readonly FirstPartyPlaybackPreference[];
+  /** Latest deterministic application evidence; raw subject keys are not logged. */
+  firstPartyPreferenceEvidence: FirstPartyPlannerPreferenceEvidence | null;
   /** SOURCE-LIKED-01 Gate 3B: observability only, never authoritative planner input. */
   likedTrackSourceShadow?: Record<string, unknown> | null;
 };
@@ -66,10 +75,23 @@ export function filterMusicBatchForCurrentRun(candidates: Candidate[]): {
     };
   }
 
-  const filtered = filterMusicCandidatesForRepeat(candidates, state.context);
-  state.recentlyPlayedSkippedCount += filtered.recentlyPlayedSkippedCount;
-  state.missingTrackIdentitySkippedCount += filtered.missingTrackIdentitySkippedCount;
-  return filtered;
+  const repeatFiltered = filterMusicCandidatesForRepeat(candidates, state.context);
+  state.recentlyPlayedSkippedCount += repeatFiltered.recentlyPlayedSkippedCount;
+  state.missingTrackIdentitySkippedCount +=
+    repeatFiltered.missingTrackIdentitySkippedCount;
+
+  const firstParty = applyFirstPartyPlaybackPreferencesToMusicCandidates(
+    repeatFiltered.candidates,
+    state.firstPartyPlaybackPreferences,
+  );
+  state.firstPartyPreferenceEvidence = firstParty.evidence;
+
+  return {
+    candidates: firstParty.candidates,
+    recentlyPlayedSkippedCount: repeatFiltered.recentlyPlayedSkippedCount,
+    missingTrackIdentitySkippedCount:
+      repeatFiltered.missingTrackIdentitySkippedCount,
+  };
 }
 
 /**
