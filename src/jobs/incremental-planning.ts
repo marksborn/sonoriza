@@ -1,3 +1,7 @@
+import {
+  spotifySavedTracksPlannerCapability,
+  spotifySavedTracksShadowCapability,
+} from "@/services/data-policy";
 import { projectTargetDiscoveryPlannerInput } from "@/services/music-discovery/target-discovery-planner";
 import {
   targetDiscoveryRuntimeCaps,
@@ -21,6 +25,7 @@ import {
   prepareLikedTrackSourceShadowForCurrentRun,
 } from "./liked-track-source-shadow";
 import {
+  currentMusicRepeatState,
   filterMusicBatchForCurrentRun,
   MusicRepeatPreWriteBlockedError,
   revalidateMusicRepeatBeforeRealWrite,
@@ -85,27 +90,15 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   sources: TSource[];
   targets: RunTarget[];
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
-  /** MUSIC-05: per-target Spotify track ids temporarily suppressed as new music. */
+  /** MUSIC-05 legacy seam; Gate 5B productive caller passes no provider-derived signals. */
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
   onBatch?: (source: TSource, batch: IncrementalSourceBatch) => void;
   onRound?: (round: IncrementalPlanningRound) => void;
   /** Test seam and bounded pre-write repair hook; production uses MUSIC-01 revalidation. */
   revalidateBeforeWrite?: (plan: PlanRunResult) => Promise<void>;
-  /**
-   * Optional caller policy. When enabled, the collector rebuilds and may settle
-   * after every individual source read instead of waiting for the whole source
-   * pass. Defaults false to preserve the production collector's current cadence.
-   */
   replanAfterEachSourceRead?: boolean;
-  /**
-   * Optional caller policy for SEQUENCE terminal underfill. A quality-passing
-   * plan that stops with NO_FITTING_CANDIDATE and a remaining duration at or
-   * below this threshold is considered terminal instead of triggering more
-   * source reads. Defaults 0, preserving current production behavior.
-   */
   sequenceTerminalUnderfillToleranceMs?: number;
-  /** Caller-owned fail-open policy for an isolated source read. Defaults false. */
   recoverSourceFailure?: (source: TSource, error: unknown) => boolean;
 };
 
@@ -128,7 +121,52 @@ export async function collectIncrementally<
 }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
-  const likedTrackSourceShadow = await prepareLikedTrackSourceShadowForCurrentRun();
+
+  // Gate 5C prevents SOURCE-LIKED shadow/reporting from even reading the local
+  // Spotify Saved Tracks materialization unless the central matrix explicitly
+  // permits its use. This is intentionally before prepareLikedTrack... so a
+  // denied shadow does not compute/persist behavioral comparison metrics.
+  const likedShadowCapability = spotifySavedTracksShadowCapability();
+  const likedPlannerCapability = spotifySavedTracksPlannerCapability();
+  const likedRuntimeAllowed =
+    likedShadowCapability.allowed || likedPlannerCapability.allowed;
+  const likedTrackSourceShadow = likedRuntimeAllowed
+    ? await prepareLikedTrackSourceShadowForCurrentRun()
+    : {
+        enabled: false,
+        targetIds: new Set<string>(),
+        candidates: [],
+        plannerPilotEnabled: false,
+        plannerPilotTargetIds: new Set<string>(),
+      };
+
+  if (!likedRuntimeAllowed) {
+    const repeatState = currentMusicRepeatState();
+    if (repeatState) {
+      repeatState.likedTrackSourceShadow = {
+        policyVersion: "source-liked-gate5c-compliance-v1",
+        status: "QUARANTINED",
+        reason: "SOURCE_CAPABILITY_BLOCKED",
+        plannerInfluence: false,
+        providerReads: false,
+        dbReads: false,
+        spotifyWrites: false,
+        shadowCapability: {
+          lineage: likedShadowCapability.lineage,
+          uses: likedShadowCapability.uses,
+          decisions: likedShadowCapability.decisions,
+          allowed: likedShadowCapability.allowed,
+        },
+        plannerCapability: {
+          lineage: likedPlannerCapability.lineage,
+          uses: likedPlannerCapability.uses,
+          decisions: likedPlannerCapability.decisions,
+          allowed: likedPlannerCapability.allowed,
+        },
+      };
+    }
+  }
+
   const discoveryState = currentDiscoveryRuntimeState();
   const targetDiscoveryState = currentTargetDiscoveryRuntimeState();
   const targetScopedRuntime = targetDiscoveryState?.enabled === true;
@@ -375,6 +413,7 @@ export async function collectIncrementally<
   };
 
   const captureLikedTrackSourceShadow = () => {
+    if (!likedRuntimeAllowed) return;
     applyLikedTrackSourceShadowForCurrentRun(likedTrackSourceShadow, {
       pools,
       plan,
