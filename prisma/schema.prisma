@@ -45,6 +45,7 @@ model User {
   pushSubscriptions                PushSubscription[]
   pushDeliveries                   PushDelivery[]
   musicPreferenceSignals           MusicPreferenceSignal[]
+  firstPartyPlaybackPreferences    FirstPartyPlaybackPreference[]
   likedTrackPreferences            LikedTrackPreference[]
   nativeSourcePreferences          NativeSourcePreference[]
   artistAffinityStates             ArtistAffinityState[]
@@ -62,9 +63,9 @@ model Account {
   refresh_token     String? @db.Text
   access_token      String? @db.Text
   expires_at        Int?
-  token_type        String?
+  token_type         String?
   scope             String?
-  id_token          String? @db.Text
+  id_token           String? @db.Text
   session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -760,6 +761,53 @@ model GenerationItem {
 }
 
 // ---------------------------------------------------------------------------
+// SPOTIFY-COMPLIANCE-01 Gate 4 — Sonoriza-owned explicit preferences.
+//
+// This table is intentionally separate from provider-derived liked/affinity/
+// inferred-skip models. Gate 4 performs no legacy backfill and no planner read.
+// A provider may help resolve a referenced entity operationally later, but that
+// provider metadata keeps its own lineage; it does not change preference origin.
+// ---------------------------------------------------------------------------
+
+enum FirstPartyPreferenceSource {
+  USER_EXPLICIT
+  SONORIZA_INTERACTION
+}
+
+enum PlaybackPreferenceSubjectType {
+  TRACK
+  ARTIST
+  VERSION_TRAIT
+  DISCOVERY
+  REPEAT
+}
+
+enum PlaybackPreferencePolicy {
+  PREFERRED
+  NORMAL
+  REDUCED
+  EXCLUDED
+}
+
+model FirstPartyPlaybackPreference {
+  id          String                        @id @default(cuid())
+  userId      String
+  subjectType PlaybackPreferenceSubjectType
+  subjectKey  String
+  policy      PlaybackPreferencePolicy
+  value       Json?
+  source      FirstPartyPreferenceSource
+  createdAt   DateTime                      @default(now())
+  updatedAt   DateTime                      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, subjectType, subjectKey])
+  @@index([userId, subjectType, policy])
+  @@index([userId, source])
+}
+
+// ---------------------------------------------------------------------------
 // SOURCE-LIKED-01 — provider-neutral preference for native Sonoriza sources.
 //
 // Gate 5B1 only persists and exposes the user's desired source state. The
@@ -1131,9 +1179,9 @@ enum PrelaunchSignupStatus {
 
 model PrelaunchSignup {
   id                String                  @id @default(cuid())
-  email             String                  @unique
-  status            PrelaunchSignupStatus   @default(WAITING)
-  source            String                  @default("HOME")
+  email             String                 @unique
+  status            PrelaunchSignupStatus  @default(WAITING)
+  source            String                 @default("HOME")
   privacyVersion    String
   privacyAcceptedAt DateTime
   confirmedAt       DateTime?
