@@ -1,3 +1,6 @@
+import { prisma as defaultPrisma } from "@/lib/prisma";
+import { createCompliantDiscoveryProfileClient } from "@/services/data-policy/discovery-profile-policy-client";
+
 import { getProjectedBatchedRetainedCompleteMusicDiscoveryProfile } from "./complete-profile-projected";
 import type {
   DiscoveryArtistProfile,
@@ -27,6 +30,11 @@ export type CompleteMusicDiscoveryProfile = {
  * bounded pages and projecting only the Extended History facts the canonical
  * aggregator actually consumes.
  *
+ * Gate 5A places the compliance boundary before that aggregation. Spotify,
+ * REVIEW_REQUIRED provider/import history, mixed Spotify enrichment, inferred
+ * skips and provenance-less TrackListeningState rows are quarantined by the
+ * policy client before they can influence productive DISCOVERY scoring.
+ *
  * Runtime scoring only needs the canonical historical artist/track universes
  * plus small profile context. The runtime loader therefore uses the lean
  * COMPLETE finalizer and never allocates the redundant diagnostic/window/
@@ -36,10 +44,16 @@ export async function getCompleteMusicDiscoveryProfile(
   userId: string,
   options: Omit<MusicDiscoveryProfileOptions, "topN" | "completeUniverse"> = {},
 ): Promise<CompleteMusicDiscoveryProfile> {
+  const policyClient = createCompliantDiscoveryProfileClient(
+    options.client ?? defaultPrisma,
+  );
   const retainedProfile =
     await getProjectedBatchedRetainedCompleteMusicDiscoveryProfile(
       userId,
-      options,
+      {
+        ...options,
+        client: policyClient,
+      },
     );
 
   return {
