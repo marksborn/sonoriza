@@ -2,6 +2,10 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import {
+  HISTORY_RECOMMENDATION_USES,
+  sqlAggregateListeningEventSourcesForUses,
+} from "@/services/data-policy";
+import {
   inferMusicEvidenceFromSequence,
   readFactualMusicEvidence,
   readRecentlyPlayedDurationMs,
@@ -80,33 +84,36 @@ const MIN_DISTINCT_DAYS = 2;
 const MAX_RANKED_AGGREGATES = 1_000;
 const DEFAULT_LIMIT = 10;
 
-// HISTORY-04 Gate 3B follow-up: tiny utility/jingle tracks can accumulate a
-// deceptively strong completion score simply because they last only a few
-// seconds. Fifteen seconds is intentionally conservative; historical fallback
-// additionally requires at least two factual completions before excluding a
-// track when catalog duration itself is not known locally.
 const SHORT_CONTENT_MAX_MS = 15_000;
 const MIN_SHORT_FACTUAL_COMPLETIONS = 2;
 
 /**
- * HISTORY-04 Gate 3B — read-only ranking of tracks the user has already shown
- * affinity for but has not explicitly liked.
+ * HISTORY-04 ranking runtime.
  *
- * No provider read or write occurs here. Factual completion/skip evidence comes
- * from persisted Spotify Extended History. Recent completion may be inferred
- * from bounded Recently Played sequence evidence introduced by Gate 3A.
+ * Gate 5C requires every source entering this behavioral/profile/recommendation
+ * aggregate to be explicitly lineage-safe and ALLOWed for all required uses.
+ * No current ListeningEventSource qualifies, so the runtime returns an empty
+ * ranking before reading history, Saved Tracks, inferred skips or sequence
+ * completion evidence. The pure ranker remains below for diagnostic tests only.
  */
 export async function getProbableLikeShadow(
   userId: string,
   options: { now?: Date; limit?: number } = {},
 ): Promise<ProbableLikeShadowResult> {
   const now = options.now ?? new Date();
+  const allowedSources = sqlAggregateListeningEventSourcesForUses(
+    HISTORY_RECOMMENDATION_USES,
+  );
+  if (allowedSources.length === 0) {
+    return emptyProbableLikeShadow(now);
+  }
+
   const limit = clamp(Math.trunc(options.limit ?? DEFAULT_LIMIT), 1, 25);
   const lastFmWindow = await getCanonicalLastFmHistoryWindow(userId);
 
   const [aggregates, likedRows, skipRows, inferredCompleteCounts] =
     await Promise.all([
-      loadProbableLikeAggregates(userId, lastFmWindow),
+      loadProbableLikeAggregates(userId, lastFmWindow, allowedSources),
       prisma.likedTrackPreference.findMany({
         where: { userId, isLiked: true },
         select: {
@@ -120,7 +127,7 @@ export async function getProbableLikeShadow(
         where: { userId, type: "INFERRED_SKIP" },
         _count: { _all: true },
       }),
-      loadRecentInferredCompletionCounts(userId, now),
+      loadRecentInferredCompletionCounts(userId, now, allowedSources),
     ]);
 
   const likedTrackIdentityKeys = new Set<string>();
@@ -263,8 +270,15 @@ export function rankProbableLikeAggregates(input: {
 async function loadProbableLikeAggregates(
   userId: string,
   lastFmWindow: LastFmHistoryWindow,
+  allowedSources: readonly string[],
 ): Promise<ProbableLikeAggregate[]> {
   const canonical = buildCanonicalSql(lastFmWindow);
+  const sourceSql = Prisma.join(
+    allowedSources.map(
+      (source) => Prisma.sql`${source}::"ListeningEventSource"`,
+    ),
+    ", ",
+  );
   const rows = await prisma.$queryRaw<AggregateRow[]>(Prisma.sql`
     SELECT
       e."spotifyTrackId" AS "spotifyTrackId",
@@ -300,6 +314,7 @@ async function loadProbableLikeAggregates(
       MAX(e."playedAt") AS "lastPlayedAt"
     FROM "TrackListeningEvent" e
     WHERE e."userId" = ${userId}
+      AND e."source" IN (${sourceSql})
       AND e."spotifyTrackId" IS NOT NULL
       AND ${canonical}
     GROUP BY e."spotifyTrackId"
@@ -328,6 +343,7 @@ async function loadProbableLikeAggregates(
 async function loadRecentInferredCompletionCounts(
   userId: string,
   now: Date,
+  allowedSources: readonly string[],
 ): Promise<Map<string, number>> {
   const cutoff = new Date(
     now.getTime() - RECENT_INFERENCE_WINDOW_DAYS * 86_400_000,
@@ -336,7 +352,7 @@ async function loadRecentInferredCompletionCounts(
     where: {
       userId,
       playedAt: { gte: cutoff },
-      source: { not: "LASTFM_SCROBBLE" },
+      source: { in: allowedSources as never[] },
     },
     orderBy: [{ playedAt: "asc" }, { id: "asc" }],
     select: {
@@ -359,9 +375,6 @@ async function loadRecentInferredCompletionCounts(
 
     const durationMs = readRecentlyPlayedDurationMs(event.metadata);
     if (!durationMs) continue;
-
-    // Never double-count an observation that was later enriched by Extended
-    // History. Factual evidence has precedence over the sequence inference.
     if (readFactualMusicEvidence(event.metadata, durationMs)) continue;
 
     const evidence = inferMusicEvidenceFromSequence({
@@ -399,6 +412,17 @@ function buildCanonicalSql(lastFmWindow: LastFmHistoryWindow): Prisma.Sql {
       AND ${Prisma.join(bounds, " AND ")}
     )
   )`;
+}
+
+function emptyProbableLikeShadow(now: Date): ProbableLikeShadowResult {
+  return {
+    generatedAt: now,
+    candidates: [],
+    evaluatedTrackCount: 0,
+    excludedLikedCount: 0,
+    excludedStrongNegativeCount: 0,
+    excludedShortContentCount: 0,
+  };
 }
 
 function isUltraShortContent(aggregate: ProbableLikeAggregate): boolean {
