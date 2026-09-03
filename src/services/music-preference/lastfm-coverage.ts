@@ -297,38 +297,44 @@ function buildCoverageWindows(
     const previousPlayedAt = previous.scrobble?.playedAt ?? null;
     const centerPlayedAt = center.scrobble?.playedAt ?? null;
     const nextPlayedAt = next.scrobble?.playedAt ?? null;
+    const previousPlayedAtMs = previousPlayedAt?.getTime() ?? null;
+    const centerPlayedAtMs = centerPlayedAt?.getTime() ?? null;
+    const nextPlayedAtMs = nextPlayedAt?.getTime() ?? null;
 
     if (
-      previousPlayedAt &&
-      nextPlayedAt &&
-      previousPlayedAt.getTime() >= nextPlayedAt.getTime()
+      previousPlayedAtMs !== null &&
+      nextPlayedAtMs !== null &&
+      previousPlayedAtMs >= nextPlayedAtMs
     ) {
       reasons.push("ANCHORS_NOT_CHRONOLOGICAL");
     }
 
     if (
-      previousPlayedAt &&
-      centerPlayedAt &&
-      nextPlayedAt &&
-      !(
-        previousPlayedAt.getTime() < centerPlayedAt.getTime() &&
-        centerPlayedAt.getTime() < nextPlayedAt.getTime()
-      )
+      previousPlayedAtMs !== null &&
+      centerPlayedAtMs !== null &&
+      nextPlayedAtMs !== null &&
+      !(previousPlayedAtMs < centerPlayedAtMs && centerPlayedAtMs < nextPlayedAtMs)
     ) {
       reasons.push("CENTER_SCROBBLE_OUTSIDE_ANCHORS");
     }
 
-    if (previousPlayedAt && nextPlayedAt && previousPlayedAt < nextPlayedAt) {
+    if (
+      previousPlayedAtMs !== null &&
+      nextPlayedAtMs !== null &&
+      previousPlayedAtMs < nextPlayedAtMs
+    ) {
       const allowedEventKeys = new Set(
         [previous.scrobble, center.scrobble, next.scrobble]
           .flatMap((row) => (row ? [row.sourceEventKey] : [])),
       );
-      const unrelatedBetween = scrobbles.some(
-        (scrobble) =>
-          scrobble.playedAt > previousPlayedAt &&
-          scrobble.playedAt < nextPlayedAt &&
-          !allowedEventKeys.has(scrobble.sourceEventKey),
-      );
+      const unrelatedBetween = scrobbles.some((scrobble) => {
+        const playedAtMs = scrobble.playedAt.getTime();
+        return (
+          playedAtMs > previousPlayedAtMs &&
+          playedAtMs < nextPlayedAtMs &&
+          !allowedEventKeys.has(scrobble.sourceEventKey)
+        );
+      });
       if (unrelatedBetween) {
         reasons.push("UNPLANNED_SCROBBLE_BETWEEN_ANCHORS");
       }
