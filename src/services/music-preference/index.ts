@@ -86,3 +86,15 @@ export {
   type Music06LastFmCoverageShadowReport,
   type Music06LastFmCoverageTargetReport,
 } from "./lastfm-coverage-shadow";
+export {
+  MUSIC_06_LASTFM_GAP_METHOD,
+  MUSIC_06_LASTFM_GAP_SHADOW_CONFIDENCE,
+  inferMusic06LastFmGapShadow,
+  type Music06LastFmGapShadowEvidence,
+  type Music06LastFmGapShadowResult,
+} from "./lastfm-gap-shadow";
+export {
+  buildMusic06LastFmGapShadowReport,
+  type Music06LastFmGapReport,
+  type Music06LastFmGapTargetShadowReport,
+} from "./lastfm-gap-shadow-report";
