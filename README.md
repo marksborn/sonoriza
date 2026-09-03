@@ -9,9 +9,14 @@ duração fixa ou calculada pela sua agenda, proporção entre músicas e podcas
 ordem de reprodução, limite de episódios por programa e exclusividade de
 conteúdo entre listas.
 
-O projeto começa atendendo ao uso pessoal, mas a arquitetura foi pensada para
-evoluir para uma aplicação pública multiusuário. Esta primeira etapa foca em uma
-base técnica **simples, segura e funcional** — sem monetização.
+O Sonoriza é um **projeto pessoal, gratuito e não comercial**, criado para organizar
+as playlists do autor e de um pequeno grupo de amigos autorizados. O foco é manter
+a experiência original: o Sonoriza planeja e gerencia playlists que podem misturar
+músicas e podcasts, enquanto o Spotify continua responsável pelo playback.
+
+A decisão de produto, os limites por fonte e as regras de provenance/compliance estão
+documentados em [`docs/PRODUCT-DECISION-PERSONAL.md`](docs/PRODUCT-DECISION-PERSONAL.md)
+e na issue `SPOTIFY-COMPLIANCE-01` (#278).
 
 ---
 
@@ -107,13 +112,22 @@ npm run generate:run -- --user <userId> --simulate
 Todas descritas em [`.env.example`](.env.example): `DATABASE_URL`, `AUTH_SECRET`,
 `AUTH_SPOTIFY_ID/SECRET`, `AUTH_GOOGLE_ID/SECRET` e `CRON_SECRET`.
 
-## Roadmap para multiusuário
+## Escopo do projeto
 
-A base já é multiusuário (todo dado é escopado por `userId`). Antes de abrir ao
-público, os próximos passos incluem: UI de configuração de origens/destinos e
-seleção de calendários, revisão do `allowDangerousEmailAccountLinking`, filas
-por usuário para respeitar rate limits, filtro de episódios já ouvidos e planos
-gratuito/pago.
+A base técnica pode continuar escopando dados por `userId`, mas isso **não representa
+um roadmap de abertura pública ou comercialização**.
+
+Enquanto a decisão registrada em [`docs/PRODUCT-DECISION-PERSONAL.md`](docs/PRODUCT-DECISION-PERSONAL.md)
+estiver vigente:
+
+- o projeto permanece pessoal e gratuito;
+- não existem planos Free/Pro ou billing;
+- não existe waitlist pública;
+- Spotify é tratado principalmente como provider operacional;
+- analytics musicais e discovery devem respeitar provenance por fonte, com Last.fm
+  e sinais first-party assumindo o papel analítico quando aplicável;
+- nenhum dado com lineage Spotify é enviado para IA/LLM/Tião Brain;
+- música e podcast continuam podendo coexistir na mesma playlist Spotify.
 
 ## Licença
 
