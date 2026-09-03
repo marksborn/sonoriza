@@ -98,3 +98,15 @@ export {
   type Music06LastFmGapReport,
   type Music06LastFmGapTargetShadowReport,
 } from "./lastfm-gap-shadow-report";
+export {
+  MUSIC_06_NEGATIVE_PROJECTION_IDENTITY_METHOD,
+  projectMusic06NegativeShadow,
+  type Music06ArtistNegativeProjection,
+  type Music06NegativeProjectionShadow,
+  type Music06RateWindow,
+  type Music06TrackNegativeProjection,
+} from "./lastfm-negative-projection-shadow";
+export {
+  buildMusic06NegativeProjectionShadowReport,
+  type Music06NegativeProjectionShadowReport,
+} from "./lastfm-negative-projection-shadow-report";
