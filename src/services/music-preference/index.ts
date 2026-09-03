@@ -110,3 +110,15 @@ export {
   buildMusic06NegativeProjectionShadowReport,
   type Music06NegativeProjectionShadowReport,
 } from "./lastfm-negative-projection-shadow-report";
+export {
+  DEFAULT_MUSIC_06_PLANNER_INFLUENCE_SHADOW_CONFIG,
+  MUSIC_06_PLANNER_INFLUENCE_SHADOW_POLICY_VERSION,
+  evaluateMusic06PlannerInfluenceCapability,
+  previewMusic06PlannerInfluenceShadow,
+  type Music06PlannerCandidateInfluence,
+  type Music06PlannerInfluenceCapability,
+  type Music06PlannerInfluenceConfig,
+  type Music06PlannerInfluenceReason,
+  type Music06PlannerInfluenceShadowResult,
+  type Music06PlannerShadowCandidate,
+} from "./lastfm-planner-influence-shadow";
