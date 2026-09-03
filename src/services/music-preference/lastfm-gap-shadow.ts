@@ -1,7 +1,6 @@
 import type {
   LastFmCoverageAssessment,
   LastFmOccurrenceMatch,
-  LastFmCoverageWindow,
 } from "./lastfm-coverage";
 
 export const MUSIC_06_LASTFM_GAP_METHOD =
@@ -112,6 +111,8 @@ export function inferMusic06LastFmGapShadow(
 
 function isMatchedAnchor(
   match: LastFmOccurrenceMatch,
-): match is LastFmOccurrenceMatch & { scrobble: NonNullable<LastFmOccurrenceMatch["scrobble"]> } {
+): match is LastFmOccurrenceMatch & {
+  scrobble: NonNullable<LastFmOccurrenceMatch["scrobble"]>;
+} {
   return match.status === "MATCHED" && match.scrobble !== null;
 }
