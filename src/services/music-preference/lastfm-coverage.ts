@@ -198,7 +198,7 @@ export function assessLastFmCoverage(input: {
       status: "UNAVAILABLE",
       reasons: [input.unavailableReason?.trim() || "LASTFM_UNAVAILABLE"],
       matches,
-      windows: buildCoverageWindows(matches, false),
+      windows: buildCoverageWindows(matches, [], false),
     });
   }
 
@@ -207,7 +207,11 @@ export function assessLastFmCoverage(input: {
     occurrences,
     scrobbles: observation.scrobbles,
   });
-  const windows = buildCoverageWindows(matches, observation.complete);
+  const windows = buildCoverageWindows(
+    matches,
+    observation.scrobbles,
+    observation.complete,
+  );
   const evaluableWindowCount = windows.filter((window) => window.evaluable).length;
 
   if (!observation.complete) {
@@ -245,7 +249,7 @@ export function normalizeMusicIdentityText(value: string | null | undefined): st
     .replace(/[\u0300-\u036f]/g, "")
     .toLocaleLowerCase("en-US")
     .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .replace(/\s+/g, " ");
 }
@@ -273,6 +277,7 @@ function countKeys(keys: readonly (string | null)[]): Map<string, number> {
 
 function buildCoverageWindows(
   matches: readonly LastFmOccurrenceMatch[],
+  scrobbles: readonly LastFmListeningEventInput[],
   observationComplete: boolean,
 ): LastFmCoverageWindow[] {
   const windows: LastFmCoverageWindow[] = [];
@@ -311,6 +316,22 @@ function buildCoverageWindows(
       )
     ) {
       reasons.push("CENTER_SCROBBLE_OUTSIDE_ANCHORS");
+    }
+
+    if (previousPlayedAt && nextPlayedAt && previousPlayedAt < nextPlayedAt) {
+      const allowedEventKeys = new Set(
+        [previous.scrobble, center.scrobble, next.scrobble]
+          .flatMap((row) => (row ? [row.sourceEventKey] : [])),
+      );
+      const unrelatedBetween = scrobbles.some(
+        (scrobble) =>
+          scrobble.playedAt > previousPlayedAt &&
+          scrobble.playedAt < nextPlayedAt &&
+          !allowedEventKeys.has(scrobble.sourceEventKey),
+      );
+      if (unrelatedBetween) {
+        reasons.push("UNPLANNED_SCROBBLE_BETWEEN_ANCHORS");
+      }
     }
 
     windows.push({
