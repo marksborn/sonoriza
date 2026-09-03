@@ -149,6 +149,31 @@ test("Gate 2 confirms evaluability for A/B/C when A and C are unique ordered anc
   assert.equal(assessment.matches[1]?.status, "UNMATCHED");
 });
 
+test("Gate 2 abstains when an unrelated Last.fm scrobble appears between published anchors", () => {
+  const assessment = assessLastFmCoverage({
+    occurrences: [
+      occurrence(1, "A", "Artist A"),
+      occurrence(2, "B", "Artist B"),
+      occurrence(3, "C", "Artist C"),
+    ],
+    observation: observation({
+      scrobbles: [
+        scrobble("a", "2026-09-03T12:10:00.000Z", "A", "Artist A"),
+        scrobble("outside", "2026-09-03T12:15:00.000Z", "Outside", "Other Artist"),
+        scrobble("c", "2026-09-03T12:20:00.000Z", "C", "Artist C"),
+      ],
+    }),
+  });
+
+  assert.equal(assessment.status, "UNKNOWN");
+  assert.equal(assessment.evaluableWindowCount, 0);
+  assert.ok(
+    assessment.windows[0]?.reasons.includes(
+      "UNPLANNED_SCROBBLE_BETWEEN_ANCHORS",
+    ),
+  );
+});
+
 test("Gate 2 does not confirm coverage when center scrobble is outside ordered anchors", () => {
   const assessment = assessLastFmCoverage({
     occurrences: [
