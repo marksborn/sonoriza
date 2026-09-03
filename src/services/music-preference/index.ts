@@ -55,3 +55,34 @@ export {
   type FirstPartyPlannerPreferenceEvidence,
   type FirstPartyPlannerPreferenceResult,
 } from "./first-party-planner-preferences";
+export {
+  LASTFM_COVERAGE_STATUSES,
+  LASTFM_OCCURRENCE_MATCH_BASIS,
+  LASTFM_OCCURRENCE_MATCH_STATUSES,
+  assessLastFmCoverage,
+  matchPublishedOccurrencesToLastFm,
+  normalizeMusicIdentityText,
+  type LastFmCoverageAssessment,
+  type LastFmCoverageStatus,
+  type LastFmCoverageWindow,
+  type LastFmOccurrenceMatch,
+  type LastFmOccurrenceMatchStatus,
+  type LastFmRecentObservation,
+  type PublishedMusicOccurrence,
+} from "./lastfm-coverage";
+export {
+  MUSIC_06_LASTFM_DEFAULT_MAX_PAGES,
+  readLastFmRecentObservation,
+  type LastFmRecentTracksReader,
+} from "./lastfm-coverage-reader";
+export {
+  loadPublishedMusicRun,
+  type PublishedMusicRun,
+  type PublishedMusicTarget,
+} from "./lastfm-coverage-prisma";
+export {
+  MUSIC_06_LASTFM_DEFAULT_WINDOW_HOURS,
+  buildMusic06LastFmCoverageShadowReport,
+  type Music06LastFmCoverageShadowReport,
+  type Music06LastFmCoverageTargetReport,
+} from "./lastfm-coverage-shadow";
