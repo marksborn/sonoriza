@@ -15,6 +15,7 @@ type ConfigurationHref =
 const SPOTIFY_LIBRARY_SCOPE = "user-library-read";
 const SPOTIFY_PLAYBACK_SCOPE = "user-read-playback-position";
 const SPOTIFY_RECENTLY_PLAYED_SCOPE = "user-read-recently-played";
+const CONFIGURATION_GATE_HISTORY_LIMIT = 100;
 
 export type ConfigurationIssue = {
   code: string;
@@ -86,11 +87,13 @@ export type FirstRunGate = {
   latestSimulationAt: Date | null;
 };
 
-export type LatestSimulationForGate = {
+export type SimulationForGate = {
   startedAt: Date;
   status: string;
   summary: unknown;
-} | null;
+};
+
+export type LatestSimulationForGate = SimulationForGate | null;
 
 function parseSequence(value: unknown): SequenceEntry[] {
   if (!Array.isArray(value)) return [];
@@ -734,20 +737,96 @@ export function evaluateCurrentSimulationGate(
   };
 }
 
+/**
+ * CONFIG-04 / #280
+ *
+ * Evaluate simulation history for the current configuration. Inconclusive
+ * provider failures are neutral: they do not approve anything, but they also
+ * do not invalidate an older successful/quality-approved simulation carrying
+ * the exact same configuration fingerprint. A newer conclusive result for the
+ * same fingerprint remains authoritative and fail-closed.
+ */
+export function evaluateCurrentSimulationHistoryGate(
+  current: ConfigurationAssessment,
+  simulations: readonly SimulationForGate[],
+): FirstRunGate {
+  if (current.issues.length > 0) {
+    return evaluateCurrentSimulationGate(current, null);
+  }
+
+  const ordered = [...simulations].sort(
+    (left, right) => right.startedAt.getTime() - left.startedAt.getTime(),
+  );
+  let latestCurrentFingerprintInconclusive: SimulationForGate | null = null;
+
+  for (const simulation of ordered) {
+    if (readConfigurationFingerprint(simulation.summary) !== current.fingerprint) {
+      continue;
+    }
+
+    if (readSimulationInconclusive(simulation.summary)) {
+      latestCurrentFingerprintInconclusive ??= simulation;
+      continue;
+    }
+
+    return evaluateCurrentSimulationGate(current, simulation);
+  }
+
+  if (latestCurrentFingerprintInconclusive) {
+    return {
+      realRunAllowed: false,
+      requiresSimulation: true,
+      reason:
+        "As tentativas desta configuração ficaram inconclusivas por indisponibilidade temporária do Spotify e não existe uma simulação válida anterior para reutilizar. Tente novamente quando o Spotify normalizar.",
+      latestSimulationAt: latestCurrentFingerprintInconclusive.startedAt,
+    };
+  }
+
+  if (ordered.length > 0) {
+    return {
+      realRunAllowed: false,
+      requiresSimulation: true,
+      reason:
+        "A configuração atual ainda não possui uma simulação aprovada. Simule novamente antes da geração real.",
+      latestSimulationAt: ordered[0]?.startedAt ?? null,
+    };
+  }
+
+  return evaluateCurrentSimulationGate(current, null);
+}
+
 export async function getFirstRunGate(
   userId: string,
   assessment?: ConfigurationAssessment,
 ): Promise<FirstRunGate> {
   const current = assessment ?? (await assessConfiguration(userId));
 
-  // Always evaluate the actual latest simulation for the current configuration.
-  // A previous real run is historical evidence only; it never bypasses a newer
-  // failed/inconclusive simulation or a changed configuration fingerprint.
-  const latestSimulation = await prisma.generationRun.findFirst({
-    where: { userId, simulation: true },
-    orderBy: { startedAt: "desc" },
-    select: { startedAt: true, status: true, summary: true },
-  });
+  if (current.issues.length > 0) {
+    return evaluateCurrentSimulationGate(current, null);
+  }
 
-  return evaluateCurrentSimulationGate(current, latestSimulation);
+  const simulations: SimulationForGate[] = [];
+  let cursorId: string | undefined;
+
+  for (let scanned = 0; scanned < CONFIGURATION_GATE_HISTORY_LIMIT; scanned += 1) {
+    const simulation = await prisma.generationRun.findFirst({
+      where: { userId, simulation: true },
+      orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+      ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+      select: { id: true, startedAt: true, status: true, summary: true },
+    });
+
+    if (!simulation) break;
+
+    simulations.push(simulation);
+    cursorId = simulation.id;
+
+    const sameFingerprint =
+      readConfigurationFingerprint(simulation.summary) === current.fingerprint;
+    if (sameFingerprint && !readSimulationInconclusive(simulation.summary)) {
+      break;
+    }
+  }
+
+  return evaluateCurrentSimulationHistoryGate(current, simulations);
 }
