@@ -1,0 +1,91 @@
+name: MUSIC-06 Gate 5B validation
+
+on:
+  push:
+    branches:
+      - issue-277-gate5b-productive-planner-influence
+    paths:
+      - "src/services/data-policy/music06-lastfm-planner-capability.ts"
+      - "src/services/data-policy/music06-lastfm-planner-capability.test.ts"
+      - "src/services/data-policy/index.ts"
+      - "src/services/music-preference/lastfm-*.ts"
+      - "src/services/music-preference/index.ts"
+      - "src/services/playlist-ordering.ts"
+      - "src/services/playlist-ordering*.test.ts"
+      - "src/jobs/generate-playlists.ts"
+      - "scripts/report-music-06-gate5b-runtime.ts"
+      - ".env.example"
+      - ".github/workflows/music-06-gate5b-validation.yml"
+  pull_request:
+    paths:
+      - "src/services/data-policy/music06-lastfm-planner-capability.ts"
+      - "src/services/data-policy/music06-lastfm-planner-capability.test.ts"
+      - "src/services/data-policy/index.ts"
+      - "src/services/music-preference/lastfm-*.ts"
+      - "src/services/music-preference/index.ts"
+      - "src/services/playlist-ordering.ts"
+      - "src/services/playlist-ordering*.test.ts"
+      - "src/jobs/generate-playlists.ts"
+      - "scripts/report-music-06-gate5b-runtime.ts"
+      - ".env.example"
+      - ".github/workflows/music-06-gate5b-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_music06_gate5b
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_music06_gate5b"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_music06_gate5b?schema=public
+      NEXTAUTH_SECRET: music06-gate5b-ci-secret
+      AUTH_SECRET: music06-gate5b-ci-secret
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+      LASTFM_API_KEY: test
+      LASTFM_USERNAME: test
+      MUSIC_06_LASTFM_PLANNER_ENABLED: "false"
+      MUSIC_06_LASTFM_PLANNER_USER_EMAILS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - name: MUSIC-06 Gate 2-5B regressions
+        run: >-
+          npx tsx --test
+          src/services/data-policy/music06-lastfm-planner-capability.test.ts
+          src/services/music-preference/lastfm-coverage-reader.test.ts
+          src/services/music-preference/lastfm-coverage.test.ts
+          src/services/music-preference/lastfm-gap-shadow.test.ts
+          src/services/music-preference/lastfm-negative-projection-shadow.test.ts
+          src/services/music-preference/lastfm-planner-influence-shadow.test.ts
+          src/services/music-preference/lastfm-planner-influence.test.ts
+          src/services/music-preference/lastfm-planner-runtime.test.ts
+          src/services/playlist-ordering.test.ts
+          src/services/playlist-ordering-music06.test.ts
+      - run: npm run typecheck
+      - run: npm run build
