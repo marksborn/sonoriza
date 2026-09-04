@@ -4,3 +4,4 @@ export * from "./ai-ingestion-guard";
 export * from "./discovery-profile-policy";
 export * from "./discovery-profile-policy-client";
 export * from "./legacy-consumer-policy";
+export * from "./music06-lastfm-planner-capability";

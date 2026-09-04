@@ -1,13 +1,21 @@
 import { createHash } from "node:crypto";
 
+import { applyMusic06PlannerInfluenceForCurrentRun } from "@/services/music-preference/lastfm-planner-runtime";
+
 export type MusicOrderMode = "STANDARD" | "RANDOMIZED";
 
 export type OrderablePlaylistItem = {
   uri: string;
   type: "MUSIC" | "PODCAST";
   position: number;
-  /** CALENDAR-02: items with a block index are randomized only inside that block. */
+  /** CALENDAR-02: items with a block index are randomized/reranked only inside that block. */
   planningBlockIndex?: number;
+  /** MUSIC-06 optional identity metadata. Absent fields make the item non-matchable, not unsafe. */
+  title?: string | null;
+  subtitle?: string | null;
+  spotifyTrackId?: string | null;
+  primaryArtistId?: string | null;
+  primaryArtistName?: string | null;
 };
 
 export type MusicOrderEvidence = {
@@ -62,6 +70,11 @@ export function playlistOrderHash(items: OrderablePlaylistItem[]) {
  * CALENDAR-02 narrows that same operation to each planning block. This prevents
  * differently-sized music items from moving across event boundaries after the
  * segmented planner has already proved that every item fits its own budget.
+ *
+ * MUSIC-06 Gate 5B then receives the post-ORDER-01 sequence. Its runtime hook is
+ * a no-op unless explicitly enabled/allowlisted with READY Last.fm evidence.
+ * When active it may only perform the same bounded MUSIC rerank validated in
+ * Gate 5A, preserving candidate set, podcast slots and planning blocks.
  */
 export function applyMusicOrder<T extends OrderablePlaylistItem>(
   items: T[],
@@ -69,16 +82,20 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
   seed: string | null,
   seedSource: MusicOrderEvidence["seedSource"] = seed ? "RUN" : null,
 ): { items: T[]; evidence: MusicOrderEvidence } {
+  const originalMusicUris = musicUris(items);
+
   if (mode === "STANDARD") {
-    const result = items.map((item) => ({ ...item })) as T[];
+    const standard = items.map((item) => ({ ...item })) as T[];
+    const result = applyMusic06PlannerInfluenceForCurrentRun(standard);
+    const finalMusicUris = musicUris(result);
     return {
       items: result,
       evidence: {
         mode,
         seed: null,
         seedSource: null,
-        changed: false,
-        musicCount: result.filter((item) => item.type === "MUSIC").length,
+        changed: musicOrderChanged(originalMusicUris, finalMusicUris),
+        musicCount: finalMusicUris.length,
         orderHash: playlistOrderHash(result),
       },
     };
@@ -108,7 +125,7 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
     musicIndexByGroup.set(group, 0);
   }
 
-  const result = items.map((slot) => {
+  const randomized = items.map((slot) => {
     if (slot.type !== "MUSIC") return { ...slot } as T;
     const group = orderGroup(slot);
     const ranked = rankedByGroup.get(group) ?? [];
@@ -125,12 +142,8 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
     } as T;
   });
 
-  const originalMusicUris = items
-    .filter((item) => item.type === "MUSIC")
-    .map((item) => item.uri);
-  const finalMusicUris = result
-    .filter((item) => item.type === "MUSIC")
-    .map((item) => item.uri);
+  const result = applyMusic06PlannerInfluenceForCurrentRun(randomized);
+  const finalMusicUris = musicUris(result);
 
   return {
     items: result,
@@ -138,11 +151,20 @@ export function applyMusicOrder<T extends OrderablePlaylistItem>(
       mode,
       seed,
       seedSource,
-      changed: originalMusicUris.some((uri, index) => finalMusicUris[index] !== uri),
+      changed: musicOrderChanged(originalMusicUris, finalMusicUris),
       musicCount: originalMusicUris.length,
       orderHash: playlistOrderHash(result),
     },
   };
+}
+
+function musicUris(items: readonly OrderablePlaylistItem[]): string[] {
+  return items.filter((item) => item.type === "MUSIC").map((item) => item.uri);
+}
+
+function musicOrderChanged(original: readonly string[], final: readonly string[]): boolean {
+  if (original.length !== final.length) return true;
+  return original.some((uri, index) => final[index] !== uri);
 }
 
 function groupMusic<T extends OrderablePlaylistItem>(

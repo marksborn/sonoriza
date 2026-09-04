@@ -2,7 +2,14 @@ import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { spotifyRecentlyPlayedPlannerCapability } from "@/services/data-policy";
-import { prismaFirstPartyPlaybackPreferenceStore } from "@/services/music-preference";
+import {
+  createMusic06PlannerRuntimeState,
+  music06PlannerRuntimeSummary,
+  prepareMusic06PlannerRuntime,
+  prismaFirstPartyPlaybackPreferenceStore,
+  runWithMusic06PlannerRuntimeState,
+  type Music06PlannerRuntimeState,
+} from "@/services/music-preference";
 import { isSpotifyApiError } from "@/services/spotify";
 import { refreshMusicRepeatContext } from "@/services/spotify/recently-played";
 
@@ -31,12 +38,18 @@ import {
 export type { GeneratePlaylistsOptions, GeneratePlaylistsResult };
 
 /**
- * Gate 5 generation wrapper.
+ * Generation wrapper with central policy/runtime contexts.
  *
- * Gate 5B loads explicit first-party preferences. Gate 5C additionally puts
- * MUSIC-01's Spotify Recently Played cooldown behind the central capability
- * matrix. Under the current policy, generation does not sync/read Recently
- * Played for planner eligibility and that provider history cannot veto a plan.
+ * MUSIC-06 Gate 5B prepares Last.fm + first-party published-order evidence only
+ * when the scoped personal capability, feature flag and user allowlist all
+ * permit it. Provider failure/incomplete coverage abstains and generation
+ * continues unchanged. The runtime can only perform a bounded MUSIC rerank;
+ * it never changes eligibility or candidate cardinality.
+ *
+ * Gate 5B also loads explicit first-party preferences. Gate 5C puts MUSIC-01's
+ * Spotify Recently Played cooldown behind the central capability matrix. Under
+ * the current policy, generation does not sync/read Recently Played for planner
+ * eligibility and that provider history cannot veto a plan.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -63,6 +76,19 @@ export async function generatePlaylists(
     }),
     prismaFirstPartyPlaybackPreferenceStore.list(opts.userId),
   ]);
+
+  // MUSIC-06 evidence is behavioral observation at execution time, not the
+  // calendar planning date supplied through opts.date.
+  const music06Preparation = await prepareMusic06PlannerRuntime({
+    userId: opts.userId,
+    userEmail: user?.email ?? null,
+    asOf: new Date(),
+  });
+  const music06State = createMusic06PlannerRuntimeState({
+    preparation: music06Preparation,
+    firstPartyPreferences: firstPartyPlaybackPreferences,
+  });
+
   const discoveryState = createDiscoveryGate4ARunState({
     userId: opts.userId,
     userEmail: user?.email ?? null,
@@ -120,9 +146,11 @@ export async function generatePlaylists(
   };
 
   const result = await runWithMusicRepeatState(state, () =>
-    runWithDiscoveryRuntimeState(discoveryState, () =>
-      runWithTargetDiscoveryRuntimeState(targetDiscoveryState, () =>
-        generatePlaylistsIncremental(opts),
+    runWithMusic06PlannerRuntimeState(music06State, () =>
+      runWithDiscoveryRuntimeState(discoveryState, () =>
+        runWithTargetDiscoveryRuntimeState(targetDiscoveryState, () =>
+          generatePlaylistsIncremental(opts),
+        ),
       ),
     ),
   );
@@ -134,6 +162,7 @@ export async function generatePlaylists(
     await appendRuntimeSummary(
       result.runId,
       state,
+      music06State,
       discoveryState,
       targetDiscoveryState,
     );
@@ -159,6 +188,7 @@ export async function generatePlaylists(
 async function appendRuntimeSummary(
   runId: string,
   state: MusicRepeatRunState,
+  music06State: Music06PlannerRuntimeState,
   discoveryState: DiscoveryRuntimeState,
   targetDiscoveryState: TargetDiscoveryRuntimeState,
 ): Promise<void> {
@@ -185,6 +215,7 @@ async function appendRuntimeSummary(
           loadedCount: state.firstPartyPlaybackPreferences.length,
           application: state.firstPartyPreferenceEvidence,
         },
+        music06PlannerInfluence: music06PlannerRuntimeSummary(music06State),
         discoveryRuntime: discoveryRuntimeSummary(discoveryState),
         targetDiscoveryRuntime: targetDiscoveryRuntimeSummary(targetDiscoveryState),
         likedTrackSourceShadow: state.likedTrackSourceShadow ?? null,
