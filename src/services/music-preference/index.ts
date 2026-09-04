@@ -122,3 +122,27 @@ export {
   type Music06PlannerInfluenceShadowResult,
   type Music06PlannerShadowCandidate,
 } from "./lastfm-planner-influence-shadow";
+export {
+  DEFAULT_MUSIC_06_PLANNER_PRODUCTIVE_CONFIG,
+  MUSIC_06_PLANNER_PRODUCTIVE_POLICY_VERSION,
+  applyMusic06PlannerInfluence,
+  type Music06PlannerProductiveResult,
+} from "./lastfm-planner-influence";
+export {
+  DEFAULT_MUSIC_06_PLANNER_RUNTIME_CONFIG,
+  MUSIC_06_PLANNER_RUNTIME_POLICY_VERSION,
+  applyMusic06PlannerInfluenceForCurrentRun,
+  createMusic06PlannerRuntimeState,
+  currentMusic06PlannerRuntimeState,
+  music06PlannerRuntimeSummary,
+  prepareMusic06PlannerRuntime,
+  resolveMusic06PlannerRuntimePolicy,
+  runWithMusic06PlannerRuntimeState,
+  selectNonOverlappingMusic06SourceRuns,
+  type Music06PlannerRuntimeOrderableItem,
+  type Music06PlannerRuntimePolicy,
+  type Music06PlannerRuntimePolicyReason,
+  type Music06PlannerRuntimePreparation,
+  type Music06PlannerRuntimePreparationStatus,
+  type Music06PlannerRuntimeState,
+} from "./lastfm-planner-runtime";
