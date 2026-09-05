@@ -1,4 +1,4 @@
-export const SPOTIFY_DISCONNECT_CONTRACT_VERSION = 5 as const;
+export const SPOTIFY_DISCONNECT_CONTRACT_VERSION = 6 as const;
 
 export const SPOTIFY_RETENTION_DATASETS = [
   "OAUTH_ACCOUNT",
@@ -19,7 +19,8 @@ export const SPOTIFY_RETENTION_DATASETS = [
   "TARGET_SCHEDULE_AUDIT",
   "NOTIFICATION_DELIVERY_AUDIT",
   "TRACK_LISTENING_STATE",
-  "TRACK_LISTENING_EVENT",
+  "SPOTIFY_LISTENING_EVENT",
+  "MIXED_LISTENING_EVENT",
   "LASTFM_LISTENING_EVENT",
   "LASTFM_BACKFILL_RUN",
   "SPOTIFY_EXTENDED_HISTORY_IMPORT_RUN",
@@ -166,9 +167,14 @@ export const SPOTIFY_DISCONNECT_RETENTION_CONTRACT: readonly SpotifyRetentionRul
     "Current TrackListeningState is keyed to Spotify identity and was populated by Spotify playback observations.",
   ),
   rule(
-    "TRACK_LISTENING_EVENT",
+    "SPOTIFY_LISTENING_EVENT",
+    "DELETE",
+    "Spotify-origin listening events have no independent non-Spotify evidence to preserve after Spotify disconnect.",
+  ),
+  rule(
+    "MIXED_LISTENING_EVENT",
     "SANITIZE_SPOTIFY_LINEAGE",
-    "Spotify-origin events are deleted; independently sourced mixed rows retain only their non-Spotify evidence.",
+    "Independently sourced listening rows enriched with Spotify retain their non-Spotify evidence while Spotify identity/enrichment is removed.",
   ),
   rule(
     "LASTFM_LISTENING_EVENT",
