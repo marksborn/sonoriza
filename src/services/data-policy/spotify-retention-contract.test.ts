@@ -46,6 +46,7 @@ test("Last.fm and Google state survive a Spotify-only disconnect", () => {
 test("legacy Spotify behavioral/profile state does not survive disconnect", () => {
   for (const dataset of [
     "TRACK_LISTENING_STATE",
+    "SPOTIFY_LISTENING_EVENT",
     "SPOTIFY_EXTENDED_HISTORY_IMPORT_RUN",
     "EPISODE_LISTENING_STATE",
     "LIKED_TRACK_PREFERENCE",
@@ -62,7 +63,7 @@ test("legacy Spotify behavioral/profile state does not survive disconnect", () =
 
 test("mixed Last.fm plus Spotify listening history is sanitized instead of deleting independent evidence", () => {
   assert.equal(
-    spotifyDisconnectRuleFor("TRACK_LISTENING_EVENT").action,
+    spotifyDisconnectRuleFor("MIXED_LISTENING_EVENT").action,
     "SANITIZE_SPOTIFY_LINEAGE",
   );
 });
@@ -126,7 +127,7 @@ test("operational audit survives only after selective Spotify field redaction", 
   );
 });
 
-test("disconnect preview separates destructive work from retained independent provider state", () => {
+test("disconnect preview reports pure Spotify delete and mixed-row sanitize separately", () => {
   const inventory: SpotifyDisconnectInventory = {
     oauthAccount: 1,
     unrelatedOauthAccount: 1,
@@ -169,14 +170,20 @@ test("disconnect preview separates destructive work from retained independent pr
   };
 
   const preview = buildSpotifyDisconnectPreview(inventory);
-  const history = preview.items.find(
-    (item) => item.dataset === "TRACK_LISTENING_EVENT",
+  const spotifyHistory = preview.items.find(
+    (item) => item.dataset === "SPOTIFY_LISTENING_EVENT",
+  );
+  const mixedHistory = preview.items.find(
+    (item) => item.dataset === "MIXED_LISTENING_EVENT",
   );
 
   assert.equal(preview.destructive, true);
-  assert.equal(history?.affectedRows, 2);
-  assert.equal(preview.deleteRows, 11);
-  assert.equal(preview.sanitizeRows, 2);
+  assert.equal(spotifyHistory?.action, "DELETE");
+  assert.equal(spotifyHistory?.affectedRows, 1);
+  assert.equal(mixedHistory?.action, "SANITIZE_SPOTIFY_LINEAGE");
+  assert.equal(mixedHistory?.affectedRows, 1);
+  assert.equal(preview.deleteRows, 12);
+  assert.equal(preview.sanitizeRows, 1);
   assert.equal(preview.clearPayloadRows, 5);
   assert.equal(preview.redactRows, 8);
   assert.equal(preview.retainedFirstPartyRows, 8);
