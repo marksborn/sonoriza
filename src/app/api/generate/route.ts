@@ -8,6 +8,7 @@ import {
   assessConfiguration,
   getFirstRunGate,
 } from "@/services/configuration-readiness";
+import { parseMusic06RunExplainability } from "@/services/music-preference/lastfm-planner-explainability";
 import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
 import { dispatchGenerationRunNotificationSafely } from "@/services/notifications";
 import {
@@ -24,9 +25,20 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [assessment, spotifyBackoff] = await Promise.all([
+  const [assessment, spotifyBackoff, recentRealRuns] = await Promise.all([
     assessConfiguration(session.user.id),
     getActiveSpotifyBackoff(),
+    prisma.generationRun.findMany({
+      where: { userId: session.user.id, simulation: false },
+      orderBy: { startedAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        startedAt: true,
+        status: true,
+        summary: true,
+      },
+    }),
   ]);
   const gate = await getFirstRunGate(session.user.id, assessment);
 
@@ -37,6 +49,7 @@ export async function GET() {
     spotifyBackoff: spotifyBackoff
       ? spotifyBackoffApiPayload(spotifyBackoff)
       : null,
+    music06Explainability: latestMusic06Explainability(recentRealRuns),
   });
 }
 
@@ -186,7 +199,12 @@ export async function POST(request: Request) {
       userId: session.user.id,
       simulation: simulate,
     },
-    select: { summary: true },
+    select: {
+      id: true,
+      startedAt: true,
+      status: true,
+      summary: true,
+    },
   });
 
   const existingSummary =
@@ -212,5 +230,35 @@ export async function POST(request: Request) {
     await dispatchGenerationRunNotificationSafely(result.runId);
   }
 
-  return NextResponse.json(result);
+  return NextResponse.json({
+    ...result,
+    music06Explainability:
+      !simulate && run ? music06ExplainabilityPayload(run) : null,
+  });
+}
+
+type ExplainableRun = Readonly<{
+  id: string;
+  startedAt: Date;
+  status: string;
+  summary: unknown;
+}>;
+
+function latestMusic06Explainability(runs: readonly ExplainableRun[]) {
+  for (const run of runs) {
+    const payload = music06ExplainabilityPayload(run);
+    if (payload) return payload;
+  }
+  return null;
+}
+
+function music06ExplainabilityPayload(run: ExplainableRun) {
+  const explainability = parseMusic06RunExplainability(run.summary);
+  if (!explainability) return null;
+  return {
+    runId: run.id,
+    startedAt: run.startedAt.toISOString(),
+    runStatus: run.status,
+    ...explainability,
+  };
 }
