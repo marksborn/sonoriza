@@ -5,3 +5,6 @@ export * from "./discovery-profile-policy";
 export * from "./discovery-profile-policy-client";
 export * from "./legacy-consumer-policy";
 export * from "./music06-lastfm-planner-capability";
+export * from "./spotify-retention-contract";
+export * from "./spotify-disconnect-preview";
+export * from "./spotify-disconnect-prisma-inventory";
