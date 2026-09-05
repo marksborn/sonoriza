@@ -1,0 +1,72 @@
+name: MUSIC-06 Gate 6 validation
+
+on:
+  push:
+    branches:
+      - issue-277-gate6-ui-explainability
+    paths:
+      - "src/services/music-preference/lastfm-planner-explainability*.ts"
+      - "src/components/RunControls.tsx"
+      - "src/app/api/generate/route.ts"
+      - "docs/issue-277-gate6-ui-explainability.md"
+      - ".github/workflows/music-06-gate6-validation.yml"
+  pull_request:
+    paths:
+      - "src/services/music-preference/lastfm-planner-explainability*.ts"
+      - "src/components/RunControls.tsx"
+      - "src/app/api/generate/route.ts"
+      - "docs/issue-277-gate6-ui-explainability.md"
+      - ".github/workflows/music-06-gate6-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_music06_gate6
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_music06_gate6"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_music06_gate6?schema=public
+      NEXTAUTH_SECRET: music06-gate6-ci-secret
+      AUTH_SECRET: music06-gate6-ci-secret
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+      LASTFM_API_KEY: test
+      LASTFM_USERNAME: test
+      MUSIC_06_LASTFM_PLANNER_ENABLED: "false"
+      MUSIC_06_LASTFM_PLANNER_USER_EMAILS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - name: MUSIC-06 Gate 6 regressions
+        run: >-
+          npx tsx --test
+          src/services/music-preference/lastfm-planner-explainability.test.ts
+          src/services/music-preference/lastfm-planner-runtime.test.ts
+          src/services/playlist-ordering-music06.test.ts
+      - run: npm run typecheck
+      - run: npm run build
