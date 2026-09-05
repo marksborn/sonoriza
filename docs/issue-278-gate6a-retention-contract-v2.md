@@ -36,7 +36,7 @@ DISCONNECT SPOTIFY
 
 Spotify disconnect é provider-scoped. Não é account deletion nem provider-global reset.
 
-## Ações do contrato v5
+## Ações do contrato v6
 
 ### `DELETE`
 
@@ -82,7 +82,28 @@ Spotify enrichment     -> sanitize
 
 A linha não é apagada por inteiro.
 
-### 2. MusicPreferenceSignal continua sendo legado Spotify
+### 2. Eventos Spotify puros e mixed são datasets distintos no contrato
+
+O primeiro preview real mostrou uma ambiguidade importante no contrato v5: `TRACK_LISTENING_EVENT` tinha uma única ação `SANITIZE_SPOTIFY_LINEAGE`, mas agregava duas operações diferentes:
+
+```text
+Spotify-origin row        -> DELETE
+Last.fm + Spotify mixed   -> SANITIZE_SPOTIFY_LINEAGE
+```
+
+Isso fazia o total do preview classificar eventos Spotify puros como `SANITIZE`, embora o executor futuro devesse deletá-los.
+
+O contrato v6 corrige isso com datasets explícitos:
+
+```text
+SPOTIFY_LISTENING_EVENT -> DELETE
+MIXED_LISTENING_EVENT   -> SANITIZE_SPOTIFY_LINEAGE
+LASTFM_LISTENING_EVENT  -> RETAIN_INDEPENDENT_ORIGIN
+```
+
+Assim os totais do preview passam a representar exatamente o tipo de mutação que o Gate 6B poderá executar.
+
+### 3. MusicPreferenceSignal continua sendo legado Spotify
 
 O `main` atual mantém MUSIC-05 em quarantine. `compliant-inferred-skips.ts` impede criação/uso produtivo de inferências Spotify enquanto a capability não é `ALLOW`.
 
@@ -90,7 +111,7 @@ Os `MusicPreferenceSignal` persistidos existentes continuam classificados conser
 
 MUSIC-06 Last.fm atual não depende produtivamente dessa tabela.
 
-### 3. GenerationRun possui explainability Last.fm que deve sobreviver
+### 4. GenerationRun possui explainability Last.fm que deve sobreviver
 
 `GenerationRun.summary.music06PlannerInfluence` contém explicabilidade Last.fm/first-party aprovada da #277.
 
@@ -138,7 +159,47 @@ retainedFirstPartyRows
 retainedIndependentRows
 ```
 
-A contagem de mixed listening rows é adicionada ao dataset `TRACK_LISTENING_EVENT`, pois o futuro executor precisará sanitizar essas linhas em vez de deletá-las.
+Eventos Spotify puros e mixed possuem itens separados, para que `deleteRows` e `sanitizeRows` coincidam com as operações reais esperadas do executor.
+
+## Primeiro preview real de produção
+
+Usuário: `nascimento@itscontrol.com.br`.
+
+O preview read-only comprovou:
+
+- Spotify OAuth: 1;
+- outro OAuth: 1;
+- Google Calendar selections: 22;
+- Spotify listening events: 43.376;
+- mixed Last.fm + Spotify: 40.287;
+- pure Last.fm events: 19.952;
+- Last.fm backfill runs: 2;
+- `Inventory before == after`;
+- nenhuma mutation;
+- nenhuma chamada Spotify;
+- nenhum disconnect.
+
+O preview v5 inicialmente reportou:
+
+```text
+DELETE   27.117
+SANITIZE 83.663
+```
+
+Esse resumo revelou a ambiguidade descrita acima, pois `83.663 = 43.376 Spotify puros + 40.287 mixed`.
+
+Com o contrato v6, usando o mesmo snapshot observado, o total semanticamente correto é:
+
+```text
+DELETE   70.493   # 27.117 + 43.376 Spotify-origin listening rows
+SANITIZE 40.287   # somente mixed Last.fm + Spotify
+REDACT   19.297
+CLEAR         8
+RETAIN FIRST-PARTY 13
+RETAIN INDEPENDENT 19.977
+```
+
+Esses números precisam ser reconfirmados por um segundo preview real no SHA final v6 antes de fechar o 6A.
 
 ## Regressões obrigatórias do Gate 6A v2
 
@@ -146,14 +207,16 @@ A contagem de mixed listening rows é adicionada ao dataset `TRACK_LISTENING_EVE
 2. OAuth Spotify = DELETE;
 3. OAuth de outro provider = RETAIN_INDEPENDENT_ORIGIN;
 4. pure Last.fm = RETAIN_INDEPENDENT_ORIGIN;
-5. mixed Last.fm + Spotify = SANITIZE_SPOTIFY_LINEAGE;
-6. LastFmBackfillRun = RETAIN_INDEPENDENT_ORIGIN;
-7. Google Calendar selection sobrevive;
-8. legacy MusicPreferenceSignal = DELETE;
-9. FirstPartyPlaybackPreference = RETAIN_FIRST_PARTY;
-10. Generation audit exige selective redaction e preservação da explainability MUSIC-06 independente;
-11. preview nunca executa mutation;
-12. inventário SQL funciona contra o schema Prisma atual.
+5. Spotify-origin listening event = DELETE;
+6. mixed Last.fm + Spotify = SANITIZE_SPOTIFY_LINEAGE;
+7. LastFmBackfillRun = RETAIN_INDEPENDENT_ORIGIN;
+8. Google Calendar selection sobrevive;
+9. legacy MusicPreferenceSignal = DELETE;
+10. FirstPartyPlaybackPreference = RETAIN_FIRST_PARTY;
+11. Generation audit exige selective redaction e preservação da explainability MUSIC-06 independente;
+12. preview nunca executa mutation;
+13. inventário SQL funciona contra o schema Prisma atual;
+14. totais DELETE/SANITIZE não podem agrupar operações semanticamente diferentes.
 
 ## Fora de escopo deste subgate
 
@@ -168,7 +231,7 @@ A contagem de mixed listening rows é adicionada ao dataset `TRACK_LISTENING_EVE
 
 ## Gate 6B v2 — próximo
 
-Depois de validar o 6A com CI e preview real read-only, reconstruir o executor transacional sobre o contrato v5:
+Depois de validar o 6A com CI e segundo preview real read-only, reconstruir o executor transacional sobre o contrato v6:
 
 1. prepare/preview fingerprint;
 2. confirmation phrase exata;
