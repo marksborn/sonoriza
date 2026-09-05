@@ -88,7 +88,8 @@ const countByDataset: Readonly<
   TARGET_SCHEDULE_AUDIT: "targetScheduleAudit",
   NOTIFICATION_DELIVERY_AUDIT: "notificationDeliveryAudit",
   TRACK_LISTENING_STATE: "trackListeningState",
-  TRACK_LISTENING_EVENT: "spotifyListeningEvent",
+  SPOTIFY_LISTENING_EVENT: "spotifyListeningEvent",
+  MIXED_LISTENING_EVENT: "mixedListeningEvent",
   LASTFM_LISTENING_EVENT: "pureLastFmListeningEvent",
   LASTFM_BACKFILL_RUN: "lastFmBackfillRun",
   SPOTIFY_EXTENDED_HISTORY_IMPORT_RUN: "spotifyExtendedHistoryImportRun",
@@ -118,26 +119,19 @@ export async function previewSpotifyDisconnect(
 }
 
 /**
- * Pure preview. `mixedListeningEvent` is reported in addition to Spotify-origin
- * rows because the future executor must sanitize Spotify enrichment without
- * deleting independently sourced Last.fm evidence.
+ * Pure preview. Spotify-origin and mixed listening rows are separate contract
+ * datasets so destructive totals match the future executor exactly:
+ * pure Spotify rows are deleted, independently sourced mixed rows are sanitized.
  */
 export function buildSpotifyDisconnectPreview(
   inventory: SpotifyDisconnectInventory,
 ): SpotifyDisconnectPreview {
-  const items = SPOTIFY_DISCONNECT_RETENTION_CONTRACT.map((entry) => {
-    let affectedRows = inventory[countByDataset[entry.dataset]];
-    if (entry.dataset === "TRACK_LISTENING_EVENT") {
-      affectedRows += inventory.mixedListeningEvent;
-    }
-
-    return {
-      dataset: entry.dataset,
-      action: entry.action,
-      affectedRows,
-      reason: entry.reason,
-    } satisfies SpotifyDisconnectPreviewItem;
-  });
+  const items = SPOTIFY_DISCONNECT_RETENTION_CONTRACT.map((entry) => ({
+    dataset: entry.dataset,
+    action: entry.action,
+    affectedRows: inventory[countByDataset[entry.dataset]],
+    reason: entry.reason,
+  })) satisfies readonly SpotifyDisconnectPreviewItem[];
 
   return {
     destructive: items.some(
