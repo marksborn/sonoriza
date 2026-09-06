@@ -7,6 +7,8 @@ import type { SpotifyDisconnectUiState } from "@/services/data-policy";
 
 type Props = {
   initialState: SpotifyDisconnectUiState;
+  reconnectSpotifyAction: () => Promise<void>;
+  connectGoogleRecoveryAction: () => Promise<void>;
 };
 
 type ErrorPayload = {
@@ -16,7 +18,11 @@ type ErrorPayload = {
 
 const numberFormatter = new Intl.NumberFormat("pt-BR");
 
-export function SpotifyDisconnectSettings({ initialState }: Props) {
+export function SpotifyDisconnectSettings({
+  initialState,
+  reconnectSpotifyAction,
+  connectGoogleRecoveryAction,
+}: Props) {
   const [state, setState] = useState(initialState);
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,6 +32,7 @@ export function SpotifyDisconnectSettings({ initialState }: Props) {
     state.destructive &&
       state.confirmationPhrase &&
       confirmation === state.confirmationPhrase &&
+      state.recovery.durableRecoveryReady &&
       !busy,
   );
 
@@ -81,7 +88,7 @@ export function SpotifyDisconnectSettings({ initialState }: Props) {
       setState(payload);
       setConfirmation("");
       setMessage(
-        "Desconexão local concluída. Falta somente remover o acesso do Sonoriza na conta Spotify.",
+        "Desconexão local concluída. Remova o acesso do Sonoriza no Spotify e, quando quiser, use Reconectar Spotify nesta mesma tela.",
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Falha ao desconectar o Spotify.");
@@ -92,6 +99,113 @@ export function SpotifyDisconnectSettings({ initialState }: Props) {
 
   return (
     <div className="space-y-5">
+      <section className="product-panel p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl">
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
+              GATE 6F · RECOVERY
+            </p>
+            <h2 className="mt-1 text-xl font-black text-ink-inverse">
+              Conexão e recuperação
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-muted-inverse">
+              A desconexão remove credenciais e dados Spotify locais, mas preserva as configurações do Sonoriza. Os bindings estáveis abaixo continuam disponíveis para uma futura reconexão.
+            </p>
+          </div>
+
+          <span
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-black ${
+              state.recovery.spotifyConnected ? "status-success" : "status-warning"
+            }`}
+          >
+            <UiIcon
+              name={state.recovery.spotifyConnected ? "check" : "warning"}
+              size={14}
+            />
+            {state.recovery.spotifyConnected ? "Spotify conectado" : "Spotify desconectado"}
+          </span>
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <CountCard
+            label="Fontes preservadas"
+            value={state.recovery.sourcePlaylistBindings}
+          />
+          <CountCard
+            label="Destinos preservados"
+            value={state.recovery.targetPlaylistBindings}
+          />
+          <CountCard
+            label="Logins alternativos"
+            value={state.recovery.alternateOauthAccounts}
+          />
+        </div>
+
+        {state.recovery.spotifyConnected ? (
+          state.recovery.durableRecoveryReady ? (
+            <div className="mt-5 rounded-2xl border border-line-dark/70 bg-surface-elevated/45 p-5">
+              <div className="flex items-start gap-3">
+                <UiIcon name="check" size={20} className="mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-black text-ink-inverse">
+                    Caminho de recuperação disponível
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-muted-inverse">
+                    Existe pelo menos outro OAuth vinculado à mesma conta Sonoriza. Mesmo depois de remover o grant Spotify, você mantém um caminho durável para entrar e reconectar o Spotify ao mesmo usuário.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-5 rounded-2xl border border-red-400/40 bg-red-500/10 p-5">
+              <div className="flex items-start gap-3">
+                <UiIcon name="warning" size={20} className="mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-black text-ink-inverse">
+                    Desconexão bloqueada para evitar lockout
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-muted-inverse">
+                    O Spotify é seu único login durável. Conecte o Google primeiro; depois a confirmação destrutiva será liberada.
+                  </p>
+                  <form action={connectGoogleRecoveryAction} className="mt-4">
+                    <button
+                      type="submit"
+                      className="inline-flex items-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-5 py-3 text-sm font-black text-ink-inverse transition hover:bg-surface-elevated"
+                    >
+                      Conectar Google para recuperação
+                      <UiIcon name="arrow-right" size={17} />
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="mt-5 rounded-2xl border border-brand-400/30 bg-brand/10 p-5">
+            <div className="flex items-start gap-3">
+              <UiIcon name="repeat" size={20} className="mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-black text-ink-inverse">
+                  Pronto para reconectar ao mesmo usuário
+                </p>
+                <p className="mt-1 text-sm leading-6 text-muted-inverse">
+                  Seus bindings de fonte/destino e regras first-party permaneceram. Depois de remover o acesso antigo em Spotify Connected Apps, reconecte aqui; caches, nomes e snapshots operacionais serão reidratados pelas próximas leituras normais do Sonoriza.
+                </p>
+                <form action={reconnectSpotifyAction} className="mt-4">
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-black text-brand-900 transition hover:bg-accent-400"
+                  >
+                    Reconectar Spotify
+                    <UiIcon name="arrow-right" size={17} />
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
       <section className="product-panel p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl">
@@ -149,6 +263,12 @@ export function SpotifyDisconnectSettings({ initialState }: Props) {
                 </p>
               </div>
             </div>
+
+            {!state.recovery.durableRecoveryReady ? (
+              <p className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-ink-inverse">
+                Execução bloqueada até existir um login OAuth alternativo para recuperar esta mesma conta Sonoriza.
+              </p>
+            ) : null}
 
             <p className="mt-5 text-xs font-black uppercase tracking-[0.14em] text-muted-inverse">
               Digite exatamente

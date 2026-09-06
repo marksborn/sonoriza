@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 
 import { SpotifyDisconnectSettings } from "@/components/SpotifyDisconnectSettings";
 import { UiIcon } from "@/components/UiIcon";
-import { auth } from "@/lib/auth";
+import { auth, signIn } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import {
   buildSpotifyDisconnectPreparationUiState,
   prepareSpotifyDisconnect,
@@ -15,6 +16,50 @@ export default async function AccountPrivacyConfigurationPage() {
 
   const preparation = await prepareSpotifyDisconnect(session.user.id);
   const initialState = buildSpotifyDisconnectPreparationUiState(preparation);
+
+  async function reconnectSpotifyAction() {
+    "use server";
+
+    const currentSession = await auth();
+    if (!currentSession?.user?.id) redirect("/");
+
+    const alreadyConnected = await prisma.account.count({
+      where: {
+        userId: currentSession.user.id,
+        provider: "spotify",
+      },
+    });
+
+    if (alreadyConnected > 0) {
+      redirect("/dashboard/configuracao/conta?spotify=already-connected");
+    }
+
+    await signIn("spotify", {
+      redirectTo: "/dashboard/configuracao/conta?spotify=reconnected",
+    });
+  }
+
+  async function connectGoogleRecoveryAction() {
+    "use server";
+
+    const currentSession = await auth();
+    if (!currentSession?.user?.id) redirect("/");
+
+    const alreadyConnected = await prisma.account.count({
+      where: {
+        userId: currentSession.user.id,
+        provider: "google",
+      },
+    });
+
+    if (alreadyConnected > 0) {
+      redirect("/dashboard/configuracao/conta?google=already-connected");
+    }
+
+    await signIn("google", {
+      redirectTo: "/dashboard/configuracao/conta?google=recovery-connected",
+    });
+  }
 
   return (
     <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
@@ -31,18 +76,22 @@ export default async function AccountPrivacyConfigurationPage() {
 
         <div className="mt-7 max-w-3xl">
           <p className="text-xs font-black uppercase tracking-[0.17em] text-accent-400">
-            PRIVACY-01
+            PRIVACY-01 · RECOVERY
           </p>
           <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse sm:text-4xl">
             Conta e privacidade
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-inverse sm:text-base">
-            Revise o impacto antes de desconectar o Spotify. A limpeza local exige fingerprint fresco e confirmação exata; a revogação do acesso no Spotify permanece uma ação manual do usuário.
+            Revise o impacto antes de desconectar o Spotify. A limpeza local exige fingerprint fresco e confirmação exata; os bindings e regras do Sonoriza permanecem disponíveis para reconexão ao mesmo usuário.
           </p>
         </div>
 
         <div className="mt-7">
-          <SpotifyDisconnectSettings initialState={initialState} />
+          <SpotifyDisconnectSettings
+            initialState={initialState}
+            reconnectSpotifyAction={reconnectSpotifyAction}
+            connectGoogleRecoveryAction={connectGoogleRecoveryAction}
+          />
         </div>
       </div>
     </main>
