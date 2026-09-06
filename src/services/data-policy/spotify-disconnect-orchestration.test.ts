@@ -14,7 +14,17 @@ import {
   buildSpotifyDisconnectPreparationUiState,
 } from "./spotify-disconnect-orchestration";
 
-const inventory = {} as SpotifyDisconnectInventory;
+function inventory(
+  input: Partial<SpotifyDisconnectInventory> = {},
+): SpotifyDisconnectInventory {
+  return {
+    oauthAccount: 1,
+    unrelatedOauthAccount: 1,
+    sourcePlaylistBinding: 4,
+    targetPlaylistBinding: 4,
+    ...input,
+  } as SpotifyDisconnectInventory;
+}
 
 function preview(input: Partial<SpotifyDisconnectPreview>): SpotifyDisconnectPreview {
   return {
@@ -34,7 +44,7 @@ test("preparation exposes exact confirmation only while local destructive work r
   const preparation = {
     userId: "user-1",
     contractVersion: 6,
-    inventory,
+    inventory: inventory(),
     preview: preview({
       destructive: true,
       deleteRows: 7,
@@ -55,13 +65,37 @@ test("preparation exposes exact confirmation only while local destructive work r
   assert.equal(state.counts.retainedIndependentRows, 11);
   assert.equal(state.providerRevocation.nextAction, "EXECUTE_LOCAL_DISCONNECT");
   assert.equal(state.providerRevocation.canAutomateProviderRevocation, false);
+  assert.equal(state.recovery.spotifyConnected, true);
+  assert.equal(state.recovery.alternateOauthAccounts, 1);
+  assert.equal(state.recovery.durableRecoveryReady, true);
+  assert.equal(state.recovery.reconnectAvailable, false);
+  assert.equal(state.recovery.sourcePlaylistBindings, 4);
+  assert.equal(state.recovery.targetPlaylistBindings, 4);
 });
 
-test("clean preparation suppresses destructive confirmation and advances to Spotify Connected Apps", () => {
+test("recovery is fail-closed when Spotify is the only durable sign-in provider", () => {
   const preparation = {
     userId: "user-1",
     contractVersion: 6,
-    inventory,
+    inventory: inventory({ unrelatedOauthAccount: 0 }),
+    preview: preview({ destructive: true, deleteRows: 1 }),
+    fingerprint: "d".repeat(64),
+    confirmationPhrase: "DISCONNECT SPOTIFY DDDDDDDDDDDD",
+  } as SpotifyDisconnectPreparation;
+
+  const state = buildSpotifyDisconnectPreparationUiState(preparation);
+
+  assert.equal(state.recovery.spotifyConnected, true);
+  assert.equal(state.recovery.alternateOauthAccounts, 0);
+  assert.equal(state.recovery.durableRecoveryReady, false);
+  assert.equal(state.recovery.reconnectAvailable, false);
+});
+
+test("clean preparation suppresses destructive confirmation and exposes reconnect path", () => {
+  const preparation = {
+    userId: "user-1",
+    contractVersion: 6,
+    inventory: inventory({ oauthAccount: 0 }),
     preview: preview({
       destructive: false,
       retainedFirstPartyRows: 4,
@@ -77,16 +111,19 @@ test("clean preparation suppresses destructive confirmation and advances to Spot
   assert.equal(state.confirmationPhrase, null);
   assert.equal(state.providerRevocation.nextAction, "OPEN_SPOTIFY_CONNECTED_APPS");
   assert.equal(state.providerRevocation.providerRevocationVerifiedBySonoriza, false);
+  assert.equal(state.recovery.spotifyConnected, false);
+  assert.equal(state.recovery.reconnectAvailable, true);
+  assert.equal(state.recovery.durableRecoveryReady, true);
 });
 
-test("successful execution returns only postcheck state and manual provider revocation step", () => {
+test("successful execution returns postcheck state plus reconnect recovery metadata", () => {
   const result = {
     userId: "user-1",
     contractVersion: 6,
     fingerprint: "c".repeat(64),
-    beforeInventory: inventory,
+    beforeInventory: inventory(),
     beforePreview: preview({ destructive: true, deleteRows: 4 }),
-    afterInventory: inventory,
+    afterInventory: inventory({ oauthAccount: 0 }),
     afterPreview: preview({
       destructive: false,
       retainedFirstPartyRows: 2,
@@ -104,4 +141,8 @@ test("successful execution returns only postcheck state and manual provider revo
   assert.equal(state.confirmationPhrase, null);
   assert.equal(state.counts.deleteRows, 0);
   assert.equal(state.providerRevocation.nextAction, "OPEN_SPOTIFY_CONNECTED_APPS");
+  assert.equal(state.recovery.spotifyConnected, false);
+  assert.equal(state.recovery.reconnectAvailable, true);
+  assert.equal(state.recovery.sourcePlaylistBindings, 4);
+  assert.equal(state.recovery.targetPlaylistBindings, 4);
 });

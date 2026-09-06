@@ -1,0 +1,94 @@
+name: Spotify compliance Gate 6F
+
+on:
+  push:
+    branches:
+      - issue-278-gate6f-reconnect-recovery
+    paths:
+      - "src/app/dashboard/configuracao/conta/**"
+      - "src/components/SpotifyDisconnectSettings.tsx"
+      - "src/services/data-policy/spotify-disconnect-*.ts"
+      - "src/services/data-policy/spotify-reconnect-*.ts"
+      - "docs/issue-278-gate6f-reconnect-recovery.md"
+      - ".github/workflows/spotify-compliance-gate6f.yml"
+  pull_request:
+    paths:
+      - "src/app/dashboard/configuracao/conta/**"
+      - "src/components/SpotifyDisconnectSettings.tsx"
+      - "src/services/data-policy/spotify-disconnect-*.ts"
+      - "src/services/data-policy/spotify-reconnect-*.ts"
+      - "docs/issue-278-gate6f-reconnect-recovery.md"
+      - ".github/workflows/spotify-compliance-gate6f.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_gate6f
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_gate6f"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_gate6f?schema=public
+      NEXTAUTH_SECRET: gate6f-ci-secret
+      AUTH_SECRET: gate6f-ci-secret
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      AUTH_GOOGLE_ID: test
+      AUTH_GOOGLE_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+      AUTH_SPOTIFY_ID: test
+      AUTH_SPOTIFY_SECRET: test
+      LASTFM_API_KEY: test
+      LASTFM_USERNAME: test
+      MUSIC_06_LASTFM_PLANNER_ENABLED: "false"
+      MUSIC_06_LASTFM_PLANNER_USER_EMAILS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - name: Gate 6A v2 contract regression
+        run: >-
+          npx tsx --test
+          src/services/data-policy/spotify-retention-contract.test.ts
+          src/services/data-policy/spotify-disconnect-prisma-inventory.integration.test.ts
+      - name: Gate 6B v2 transaction regression
+        run: >-
+          npx tsx --test
+          src/services/data-policy/spotify-disconnect-executor.test.ts
+          src/services/data-policy/spotify-disconnect-executor.integration.test.ts
+      - name: Gate 6C provider revocation contract
+        run: >-
+          npx tsx --test
+          src/services/data-policy/spotify-provider-revocation.test.ts
+      - name: Gate 6D plus 6F UI orchestration contract
+        run: >-
+          npx tsx --test
+          src/services/data-policy/spotify-disconnect-orchestration.test.ts
+      - name: Gate 6F disconnect-reconnect preservation integration
+        run: >-
+          npx tsx --test
+          src/services/data-policy/spotify-reconnect-recovery.integration.test.ts
+      - run: npm run typecheck
+      - run: npm run build
