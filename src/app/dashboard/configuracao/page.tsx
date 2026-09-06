@@ -60,6 +60,7 @@ export default async function ConfigurationHubPage() {
     cleanupInboxCount,
     ingestionRuleCount,
     notificationDeviceCount,
+    spotifyAccountCount,
   ] = await Promise.all([
     prisma.calendarSelection.count({
       where: { userId: session.user.id, selected: true },
@@ -84,6 +85,9 @@ export default async function ConfigurationHubPage() {
       where: { userId: session.user.id, enabled: true },
     }),
     countActivePushSubscriptions(session.user.id),
+    prisma.account.count({
+      where: { userId: session.user.id, provider: "spotify" },
+    }),
   ]);
 
   const musicPolicyLabel = musicPolicy?.enabled
@@ -190,6 +194,16 @@ export default async function ConfigurationHubPage() {
             title="Notificações"
             description="Receba no PWA o resultado das gerações, manutenções, limpezas e bloqueios."
             action="Configurar notificações"
+          />
+
+          <ConfigCard
+            href="/dashboard/configuracao/conta"
+            icon="trash"
+            badge={spotifyAccountCount > 0 ? "Spotify conectado" : "Sem credencial local"}
+            code="PRIVACY-01"
+            title="Conta e privacidade"
+            description="Revise a retenção de dados e desconecte o Spotify com preview, confirmação exata e postcheck."
+            action="Gerenciar conexão"
           />
 
           {isPrelaunchAdmin(session.user.email) ? (
