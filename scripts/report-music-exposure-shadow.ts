@@ -18,55 +18,80 @@ type Args = {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const user = await prisma.user.findUnique({
-    where: { email: args.email },
-    select: { id: true, email: true },
-  });
-  if (!user) throw new Error(`Sonoriza user not found: ${args.email}`);
 
-  const runs = await prisma.generationRun.findMany({
-    where: {
-      userId: user.id,
-      simulation: false,
-      status: { in: ["SUCCESS", "PARTIAL"] },
-      startedAt: {
-        ...(args.from ? { gte: args.from } : {}),
-        lte: args.to,
-      },
-    },
-    orderBy: { startedAt: "asc" },
-    select: {
-      id: true,
-      status: true,
-      simulation: true,
-      startedAt: true,
-      finishedAt: true,
-      summary: true,
-      items: {
+  // Gate 2 production probe safety: every database read happens through one
+  // explicit PostgreSQL READ ONLY transaction. Last.fm is queried only after
+  // the database snapshot has been released.
+  const snapshot = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
+
+      const readOnly = await tx.$queryRaw<Array<{ read_only: string }>>`
+        SELECT current_setting('transaction_read_only') AS read_only
+      `;
+      if (readOnly[0]?.read_only !== "on") {
+        throw new Error("MUSIC-07 Gate 2 refused to run without READ ONLY transaction");
+      }
+
+      const user = await tx.user.findUnique({
+        where: { email: args.email },
+        select: { id: true, email: true },
+      });
+      if (!user) throw new Error(`Sonoriza user not found: ${args.email}`);
+
+      const runs = await tx.generationRun.findMany({
         where: {
-          contentType: "MUSIC",
-          spotifyTrackId: { not: null },
-          title: { not: null },
-          subtitle: { not: null },
+          userId: user.id,
+          simulation: false,
+          status: { in: ["SUCCESS", "PARTIAL"] },
+          startedAt: {
+            ...(args.from ? { gte: args.from } : {}),
+            lte: args.to,
+          },
         },
-        orderBy: [{ targetPlaylistId: "asc" }, { position: "asc" }],
+        orderBy: { startedAt: "asc" },
         select: {
-          targetPlaylistId: true,
-          position: true,
-          spotifyTrackId: true,
-          title: true,
-          subtitle: true,
-          target: {
+          id: true,
+          status: true,
+          simulation: true,
+          startedAt: true,
+          finishedAt: true,
+          summary: true,
+          items: {
+            where: {
+              contentType: "MUSIC",
+              spotifyTrackId: { not: null },
+              title: { not: null },
+              subtitle: { not: null },
+            },
+            orderBy: [{ targetPlaylistId: "asc" }, { position: "asc" }],
             select: {
-              name: true,
-              updatePolicy: true,
+              targetPlaylistId: true,
+              position: true,
+              spotifyTrackId: true,
+              title: true,
+              subtitle: true,
+              target: {
+                select: {
+                  name: true,
+                  updatePolicy: true,
+                },
+              },
             },
           },
         },
-      },
-    },
-  });
+      });
 
+      return { user, runs, transactionReadOnly: readOnly[0]?.read_only ?? "unknown" };
+    },
+    {
+      isolationLevel: "RepeatableRead",
+      maxWait: 10_000,
+      timeout: 30_000,
+    },
+  );
+
+  const { user, runs } = snapshot;
   const publications: MusicExposureShadowPublication[] = [];
   let missingApplyProofCount = 0;
   let identityReadyItemCount = 0;
@@ -178,6 +203,7 @@ async function main() {
   console.log("========== MUSIC-07 GATE 2 — EXPOSURE SHADOW ==========");
   console.log(`User:                         ${user.email ?? user.id}`);
   console.log("Mode:                         READ-ONLY REPORT");
+  console.log(`Database transaction:         READ ONLY (${snapshot.transactionReadOnly})`);
   console.log("Planner influence:            NONE");
   console.log("Spotify API calls:            NONE");
   console.log("Database writes:              NONE");
