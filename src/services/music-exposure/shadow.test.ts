@@ -55,7 +55,7 @@ function scrobble(
   return { playedAt, trackName, artistName };
 }
 
-test("Gate 2 excludes simulations, failed runs and unapplied publications", () => {
+test("Gate 2 excludes simulations, failed runs and unapplied rebuild publications", () => {
   const report = buildMusicExposureShadow({
     publications: [
       publication({
@@ -126,6 +126,35 @@ test("KEEP_FILLED uses the first measurable snapshot only as baseline and counts
   assert.equal(report.validExposureCount, 1);
   assert.equal(report.events[0]?.trackKey, "spotify:C");
   assert.equal(report.events[0]?.usageEvidence, "SESSION_USED_NO_TRACK_MATCH");
+});
+
+test("KEEP_FILLED no-op can establish baseline without creating exposure", () => {
+  const report = buildMusicExposureShadow({
+    publications: [
+      publication({
+        runId: "keep-baseline-noop",
+        publishedAt: at(0),
+        updatePolicy: "KEEP_FILLED",
+        targetName: "Trabalho",
+        applied: false,
+        tracks: [trackA, trackB],
+      }),
+      publication({
+        runId: "keep-applied",
+        publishedAt: at(2),
+        updatePolicy: "KEEP_FILLED",
+        targetName: "Trabalho",
+        tracks: [trackA, trackB, trackC],
+      }),
+    ],
+    scrobbles: [scrobble(at(2.5), "Track A", "Artist A")],
+    observedUntil: at(8),
+  });
+
+  assert.equal(report.publicationCount, 2);
+  assert.equal(report.keepFilledBaselineSkippedCount, 2);
+  assert.equal(report.exposureCount, 1);
+  assert.equal(report.events[0]?.trackKey, "spotify:C");
 });
 
 test("absence of Last.fm session evidence never becomes a valid operational exposure", () => {
@@ -251,6 +280,7 @@ test("a real matching scrobble resets the consecutive exposure projection", () =
   });
   const projection = report.projections.find((row) => row.trackKey === "spotify:A");
 
+  assert.equal(projection?.validExposureCount, 4);
   assert.equal(projection?.consecutiveUnconfirmedExposureCount, 0);
   assert.equal(projection?.wouldEnterCooldown, false);
   assert.equal(projection?.lastConfirmedConsumptionAt?.toISOString(), at(6.5).toISOString());
@@ -269,6 +299,7 @@ test("same run/target/track is idempotent inside the shadow report", () => {
     observedUntil: at(4),
   });
 
+  assert.equal(report.publicationCount, 1);
   assert.equal(
     report.events.filter((event) => event.trackKey === "spotify:A").length,
     1,
