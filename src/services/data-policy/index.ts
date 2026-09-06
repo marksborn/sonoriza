@@ -13,3 +13,4 @@ export * from "./spotify-disconnect-preservation";
 export * from "./spotify-disconnect-mutations";
 export * from "./spotify-disconnect-executor";
 export * from "./spotify-provider-revocation";
+export * from "./spotify-disconnect-orchestration";
