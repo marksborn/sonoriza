@@ -14,5 +14,9 @@ ALTER TABLE "PodcastShowPolicy"
   CHECK (
     ("cadenceMaxEpisodes" IS NULL AND "cadenceUnit" IS NULL)
     OR
-    ("cadenceMaxEpisodes" >= 1 AND "cadenceUnit" IS NOT NULL)
+    (
+      "cadenceMaxEpisodes" IS NOT NULL
+      AND "cadenceMaxEpisodes" >= 1
+      AND "cadenceUnit" IS NOT NULL
+    )
   );
