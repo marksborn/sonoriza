@@ -90,11 +90,7 @@ export async function prepareMusic07EligibilityRuntime(input: {
 
     return {
       configuredMode,
-      effectiveMode: productiveInfluenceAllowed
-        ? "ACTIVE"
-        : configuredMode === "OFF"
-          ? "OFF"
-          : "SHADOW",
+      effectiveMode: productiveInfluenceAllowed ? "ACTIVE" : "SHADOW",
       productiveInfluenceAllowed,
       status,
       projection,
@@ -120,7 +116,7 @@ export async function prepareMusic07EligibilityRuntime(input: {
   } catch (error) {
     return {
       configuredMode,
-      effectiveMode: configuredMode === "OFF" ? "OFF" : "SHADOW",
+      effectiveMode: "SHADOW",
       productiveInfluenceAllowed: false,
       status: "ABSTAIN_PREPARATION_FAILED",
       projection: null,
