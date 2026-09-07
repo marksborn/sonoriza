@@ -8,26 +8,65 @@ import { readMusicExposureModel } from "@/services/music-exposure/read-model";
 
 export type Music07EligibilityMode = "OFF" | "SHADOW" | "ACTIVE";
 
+export type Music07EligibilityRuntimeStatus =
+  | "OFF"
+  | "READY_SHADOW"
+  | "READY_ACTIVE"
+  | "ABSTAIN_USER_NOT_ALLOWLISTED"
+  | "ABSTAIN_SINGLE_TARGET_SCOPE_REQUIRED"
+  | "ABSTAIN_TARGET_NOT_ALLOWLISTED"
+  | "ABSTAIN_POLICY_DISABLED"
+  | "ABSTAIN_POLICY_INCOMPLETE"
+  | "ABSTAIN_LASTFM_INCOMPLETE"
+  | "ABSTAIN_PREPARATION_FAILED";
+
 export type Music07EligibilityRuntimeState = {
   configuredMode: Music07EligibilityMode;
   effectiveMode: Music07EligibilityMode;
   productiveInfluenceAllowed: boolean;
-  status:
-    | "OFF"
-    | "READY_SHADOW"
-    | "READY_ACTIVE"
-    | "ABSTAIN_USER_NOT_ALLOWLISTED"
-    | "ABSTAIN_TARGET_SCOPE_REQUIRED"
-    | "ABSTAIN_TARGET_NOT_ALLOWLISTED"
-    | "ABSTAIN_POLICY_DISABLED"
-    | "ABSTAIN_POLICY_INCOMPLETE"
-    | "ABSTAIN_LASTFM_INCOMPLETE"
-    | "ABSTAIN_PREPARATION_FAILED";
+  status: Music07EligibilityRuntimeStatus;
   projection: MusicExposureEligibilityProjection | null;
   blockedTrackIds: ReadonlySet<string>;
   exposureCooldownSkippedCount: number;
   diagnostics: Record<string, unknown>;
 };
+
+export type Music07ActiveScopeDecision = Readonly<{
+  allowed: boolean;
+  status:
+    | "READY_ACTIVE"
+    | "ABSTAIN_USER_NOT_ALLOWLISTED"
+    | "ABSTAIN_SINGLE_TARGET_SCOPE_REQUIRED"
+    | "ABSTAIN_TARGET_NOT_ALLOWLISTED";
+}>;
+
+/**
+ * Gate 4 safety boundary. Exposure anchors are target-specific, so productive
+ * eligibility is deliberately limited to exactly one target per run. This
+ * prevents a cooldown derived in one target from leaking into another target's
+ * candidate pool during a mixed scoped generation.
+ */
+export function evaluateMusic07ActiveScope(input: {
+  userEmail: string | null;
+  targetPlaylistIds: readonly string[] | null;
+  allowedEmails: ReadonlySet<string>;
+  allowedTargetIds: ReadonlySet<string>;
+}): Music07ActiveScopeDecision {
+  if (!input.userEmail || !input.allowedEmails.has(input.userEmail.toLowerCase())) {
+    return { allowed: false, status: "ABSTAIN_USER_NOT_ALLOWLISTED" };
+  }
+
+  const targetPlaylistIds = input.targetPlaylistIds
+    ? [...new Set(input.targetPlaylistIds.filter(Boolean))]
+    : [];
+  if (targetPlaylistIds.length !== 1) {
+    return { allowed: false, status: "ABSTAIN_SINGLE_TARGET_SCOPE_REQUIRED" };
+  }
+  if (!input.allowedTargetIds.has(targetPlaylistIds[0]!)) {
+    return { allowed: false, status: "ABSTAIN_TARGET_NOT_ALLOWLISTED" };
+  }
+  return { allowed: true, status: "READY_ACTIVE" };
+}
 
 export async function prepareMusic07EligibilityRuntime(input: {
   userId: string;
@@ -39,26 +78,18 @@ export async function prepareMusic07EligibilityRuntime(input: {
   const configuredMode = input.modeOverride ?? configuredModeFromEnv();
   if (configuredMode === "OFF") return offState(configuredMode);
 
-  const userAllowlist = csvSet(process.env.MUSIC_07_ELIGIBILITY_EMAIL_ALLOWLIST);
-  const targetAllowlist = csvSet(process.env.MUSIC_07_ELIGIBILITY_TARGET_IDS);
-  let productiveInfluenceAllowed = configuredMode === "ACTIVE";
-  let status: Music07EligibilityRuntimeState["status"] =
-    configuredMode === "ACTIVE" ? "READY_ACTIVE" : "READY_SHADOW";
+  let productiveInfluenceAllowed = false;
+  let status: Music07EligibilityRuntimeStatus = "READY_SHADOW";
 
   if (configuredMode === "ACTIVE") {
-    if (!input.userEmail || !userAllowlist.has(input.userEmail.toLowerCase())) {
-      productiveInfluenceAllowed = false;
-      status = "ABSTAIN_USER_NOT_ALLOWLISTED";
-    } else if (!input.targetPlaylistIds || input.targetPlaylistIds.length === 0) {
-      productiveInfluenceAllowed = false;
-      status = "ABSTAIN_TARGET_SCOPE_REQUIRED";
-    } else if (
-      targetAllowlist.size === 0 ||
-      input.targetPlaylistIds.some((targetId) => !targetAllowlist.has(targetId))
-    ) {
-      productiveInfluenceAllowed = false;
-      status = "ABSTAIN_TARGET_NOT_ALLOWLISTED";
-    }
+    const scopeDecision = evaluateMusic07ActiveScope({
+      userEmail: input.userEmail,
+      targetPlaylistIds: input.targetPlaylistIds,
+      allowedEmails: csvSet(process.env.MUSIC_07_ELIGIBILITY_EMAIL_ALLOWLIST),
+      allowedTargetIds: csvSet(process.env.MUSIC_07_ELIGIBILITY_TARGET_IDS),
+    });
+    productiveInfluenceAllowed = scopeDecision.allowed;
+    status = scopeDecision.status;
   }
 
   try {
