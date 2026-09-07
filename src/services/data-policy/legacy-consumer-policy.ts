@@ -110,6 +110,39 @@ export function evaluateLineageForUses(
   });
 }
 
+/**
+ * Applies a completed, feature-specific review to uses that the central matrix
+ * intentionally left as REVIEW_REQUIRED. A DENY can never be upgraded here.
+ *
+ * This keeps the generic Spotify policy conservative while allowing a reviewed
+ * direct-provider operation without accidentally authorizing analytics/profile
+ * consumers that happen to share the same SPOTIFY lineage.
+ */
+function applyCompletedFeatureReview(
+  capability: RequiredPolicyUsesEvaluation,
+): RequiredPolicyUsesEvaluation {
+  const decisions: Partial<Record<PolicyUse, PolicyDecision>> = {
+    ...capability.decisions,
+  };
+
+  for (const use of capability.uses) {
+    if (decisions[use] === "REVIEW_REQUIRED") {
+      decisions[use] = "ALLOW";
+    }
+  }
+
+  const allowed =
+    capability.uses.length > 0 &&
+    capability.uses.every((use) => decisions[use] === "ALLOW");
+
+  return Object.freeze({
+    lineage: capability.lineage,
+    uses: capability.uses,
+    decisions: Object.freeze(decisions),
+    allowed,
+  });
+}
+
 export function spotifyRecentlyPlayedPlannerCapability(): RequiredPolicyUsesEvaluation {
   return evaluateRootSourceForUses(
     "SPOTIFY_RECENTLY_PLAYED",
@@ -124,10 +157,24 @@ export function spotifySavedTracksShadowCapability(): RequiredPolicyUsesEvaluati
   );
 }
 
+/**
+ * #278 final PERSONAL-mode decision + #186 SOURCE-LIKED review.
+ *
+ * Saved Tracks is approved only as a direct operational candidate pool for the
+ * playlist planner. The central SPOTIFY baseline intentionally leaves these two
+ * uses at REVIEW_REQUIRED; this function records that the feature review was
+ * completed and upgrades only those reviewed uses. It never changes the global
+ * Spotify policy and never upgrades DENY.
+ *
+ * Behavioral analytics, user profiling, derived recommendation and AI continue
+ * to use their separate capability checks and remain blocked.
+ */
 export function spotifySavedTracksPlannerCapability(): RequiredPolicyUsesEvaluation {
-  return evaluateRootSourceForUses(
-    "SPOTIFY_SAVED_TRACKS",
-    SAVED_TRACKS_PLANNER_USES,
+  return applyCompletedFeatureReview(
+    evaluateRootSourceForUses(
+      "SPOTIFY_SAVED_TRACKS",
+      SAVED_TRACKS_PLANNER_USES,
+    ),
   );
 }
 
