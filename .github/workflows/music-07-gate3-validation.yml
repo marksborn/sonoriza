@@ -10,6 +10,7 @@ on:
       - "src/jobs/generate-playlists.ts"
       - "scripts/report-music-exposure-eligibility-gate3.ts"
       - "docs/issue-279-gate3-eligibility-anchor.md"
+      - ".env.example"
       - ".github/workflows/music-07-gate3-validation.yml"
   push:
     branches:
@@ -22,6 +23,7 @@ on:
       - "src/jobs/generate-playlists.ts"
       - "scripts/report-music-exposure-eligibility-gate3.ts"
       - "docs/issue-279-gate3-eligibility-anchor.md"
+      - ".env.example"
       - ".github/workflows/music-07-gate3-validation.yml"
 
 jobs:
