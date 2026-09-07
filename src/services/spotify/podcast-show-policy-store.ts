@@ -24,6 +24,10 @@ export type PodcastExpiryPolicyValue =
   | "STRICT_EXPIRY"
   | "ALLOW_IN_PROGRESS_TO_FINISH";
 
+/**
+ * Planner-facing PODCAST-05 policy. PODCAST-06 Gate 1 deliberately does not
+ * widen this contract, so cadence/priority cannot influence selection yet.
+ */
 export type PodcastShowPolicySnapshot = {
   sourcePlaylistId: string;
   episodeEligibility: PodcastEpisodeEligibilityValue;
@@ -34,9 +38,6 @@ export type PodcastShowPolicySnapshot = {
   maxReleaseAgeDays: number | null;
   expiryPolicy: PodcastExpiryPolicyValue;
   maxEpisodesPerCycle: number | null;
-  cadenceMaxEpisodes: number | null;
-  cadenceUnit: PodcastCadenceUnitValue | null;
-  priority: PodcastShowPriorityValue;
   /** Reset generation used only to rotate the deterministic random seed. */
   randomRound: number;
   /** Deprecated compatibility fields: published GenerationItems are authoritative. */
@@ -44,6 +45,16 @@ export type PodcastShowPolicySnapshot = {
   sequenceCompleted?: boolean;
   randomConsumedEpisodeIds?: string[];
 };
+
+export type PodcastShowCadencePolicySnapshot = {
+  cadenceMaxEpisodes: number | null;
+  cadenceUnit: PodcastCadenceUnitValue | null;
+  priority: PodcastShowPriorityValue;
+};
+
+/** Persistence/read-model contract for PODCAST-06 Gate 1. */
+export type PodcastShowPolicyStoredSnapshot = PodcastShowPolicySnapshot &
+  PodcastShowCadencePolicySnapshot;
 
 export type PodcastShowPolicyUpdate = Pick<
   PodcastShowPolicySnapshot,
@@ -56,12 +67,7 @@ export type PodcastShowPolicyUpdate = Pick<
   | "expiryPolicy"
   | "maxEpisodesPerCycle"
 > &
-  Partial<
-    Pick<
-      PodcastShowPolicySnapshot,
-      "cadenceMaxEpisodes" | "cadenceUnit" | "priority"
-    >
-  >;
+  Partial<PodcastShowCadencePolicySnapshot>;
 
 /**
  * Persistent product policy only. Traversal/shuffle consumption is deliberately
@@ -74,7 +80,7 @@ export type PodcastShowPolicyUpdate = Pick<
  */
 export async function loadPodcastShowPolicies(
   userId: string,
-): Promise<Map<string, PodcastShowPolicySnapshot>> {
+): Promise<Map<string, PodcastShowPolicyStoredSnapshot>> {
   const sources = await prisma.sourcePlaylist.findMany({
     where: {
       userId,
@@ -107,7 +113,7 @@ export async function loadPodcastShowPolicies(
   return new Map(
     sources.map((source) => {
       const policy = source.podcastShowPolicy;
-      const snapshot: PodcastShowPolicySnapshot = policy
+      const snapshot: PodcastShowPolicyStoredSnapshot = policy
         ? {
             sourcePlaylistId: source.id,
             episodeEligibility: policy.episodeEligibility,
@@ -301,7 +307,7 @@ function legacyPolicy(input: {
   sourcePlaylistId: string;
   includePlayed: boolean;
   episodeOrder: string;
-}): PodcastShowPolicySnapshot {
+}): PodcastShowPolicyStoredSnapshot {
   return {
     sourcePlaylistId: input.sourcePlaylistId,
     episodeEligibility: input.includePlayed ? "ALL" : "UNPLAYED_ONLY",
