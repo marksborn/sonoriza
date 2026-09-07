@@ -21,6 +21,7 @@ import {
 } from "./discovery-runtime";
 import {
   music07EligibilityRuntimeSummary,
+  offMusic07EligibilityRuntimeState,
   prepareMusic07EligibilityRuntime,
 } from "./music-exposure-runtime";
 import {
@@ -231,7 +232,7 @@ async function appendRuntimeSummary(
         musicMissingTrackIdentitySkippedCount:
           state.missingTrackIdentitySkippedCount,
         music07ExposureEligibility: music07EligibilityRuntimeSummary(
-          state.music07Eligibility,
+          state.music07Eligibility ?? offMusic07EligibilityRuntimeState(),
         ),
         firstPartyPlaybackPreferences: {
           loadedCount: state.firstPartyPlaybackPreferences.length,
