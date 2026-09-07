@@ -1,0 +1,23 @@
+// ---------------------------------------------------------------------------
+// PODCAST-06 Gate 3 — source-independent cadence + priority by Spotify show.
+//
+// This is the canonical product policy for cadence/priority regardless of how
+// an episode is discovered (explicit SHOW, SAVED_EPISODES, playlist, etc.).
+// PODCAST-05 traversal state remains source-local in PodcastShowPolicy.
+// Gate 3 does not connect this model to planner candidate filtering yet.
+// ---------------------------------------------------------------------------
+
+model PodcastShowCadencePolicy {
+  id                 String              @id @default(cuid())
+  userId             String
+  spotifyShowId      String
+  showName           String?
+  cadenceMaxEpisodes Int?
+  cadenceUnit        PodcastCadenceUnit?
+  priority           PodcastShowPriority @default(NORMAL)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@unique([userId, spotifyShowId])
+  @@index([userId, priority])
+}
