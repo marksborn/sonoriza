@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Candidate } from "./types";
-import { projectPodcast06PlannerShadow } from "./podcast-cadence-shadow-runtime";
+import {
+  createPodcast06PlannerShadowRuntimeState,
+  podcast06PlannerShadowRuntimeSummary,
+  projectPodcast06PlannerShadow,
+} from "./podcast-cadence-shadow-runtime";
 
 const SCICAST = "0qfFcilKpNKkXy8TbZ4moP";
 
@@ -165,6 +169,35 @@ test("priority projection is stable and diagnostic only", () => {
   assert.deepEqual(result.plannedPodcastEpisodeIds, ["normal"]);
   assert.equal(result.plannerInfluence, false);
   assert.deepEqual(result.shows[0]?.diagnosticCodes, ["SHOW_PRIORITY_APPLIED"]);
+});
+
+test("pre-plan summary is NOT_OBSERVED and only factual rows count as unresolved factual", () => {
+  const state = createPodcast06PlannerShadowRuntimeState({
+    policies: new Map([
+      [SCICAST, policy({ showId: SCICAST, max: 1, unit: "WEEK" })],
+    ]),
+    listeningStates: [
+      {
+        spotifyEpisodeId: "factual",
+        status: "IN_PROGRESS",
+        firstProgressObservedAt: new Date("2026-09-07T08:20:02.363Z"),
+      },
+      {
+        spotifyEpisodeId: "not-started",
+        status: "NOT_STARTED",
+        firstProgressObservedAt: null,
+      },
+    ],
+    timeZone: "America/Sao_Paulo",
+    asOf: new Date("2026-09-07T22:00:00Z"),
+  });
+
+  const summary = podcast06PlannerShadowRuntimeSummary(state);
+  assert.equal(summary.status, "NOT_OBSERVED");
+  assert.equal(summary.listeningStateCount, 2);
+  assert.equal(summary.unresolvedStateCount, 2);
+  assert.equal(summary.unresolvedFactualCount, 1);
+  assert.equal(summary.plannerInfluence, false);
 });
 
 test("no policies is a no-op shadow state", () => {
