@@ -1,5 +1,9 @@
 import { LikedTrackAvailability } from "@prisma/client";
 
+import {
+  lineageFromRootSource,
+  type DataLineage,
+} from "@/services/data-policy/provenance";
 import { prisma } from "@/lib/prisma";
 
 export const LIKED_TRACKS_NATIVE_SOURCE_TYPE = "LIKED_TRACKS" as const;
@@ -32,6 +36,8 @@ export type LikedTrackSourceSnapshot = {
     kind: "MUSIC";
     persistence: "LIKED_TRACK_PREFERENCE";
     semantics: "PERSISTENT_LIBRARY";
+    rootDataSource: "SPOTIFY_SAVED_TRACKS";
+    lineage: DataLineage;
     providerReads: false;
     spotifyWrites: false;
     plannerInfluence: false;
@@ -91,8 +97,9 @@ export type LikedTrackSourceSnapshot = {
  *
  * Materializes the native LIKED_TRACKS source exclusively from Sonoriza-owned
  * LikedTrackPreference rows already reconciled by LIKED-01. This path is local
- * only: it performs no provider read, no Spotify write and remains disconnected
- * from the production planner.
+ * only: it performs no provider read or Spotify write. The snapshot still
+ * preserves the original SPOTIFY_SAVED_TRACKS lineage so local persistence
+ * cannot silently reclassify provider data as first-party.
  */
 export async function getLikedTrackSourceSnapshot(
   userId: string,
@@ -169,6 +176,8 @@ export function buildLikedTrackSourceSnapshot(
       kind: "MUSIC",
       persistence: "LIKED_TRACK_PREFERENCE",
       semantics: "PERSISTENT_LIBRARY",
+      rootDataSource: "SPOTIFY_SAVED_TRACKS",
+      lineage: lineageFromRootSource("SPOTIFY_SAVED_TRACKS"),
       providerReads: false,
       spotifyWrites: false,
       plannerInfluence: false,
