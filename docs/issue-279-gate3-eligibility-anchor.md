@@ -64,11 +64,12 @@ ACTIVE  -> candidate removal allowed only when all rollout guards pass
 `ACTIVE` additionally requires:
 
 - user in `MUSIC_07_ELIGIBILITY_EMAIL_ALLOWLIST`;
-- an explicit scoped generation (`targetPlaylistIds` must be present);
-- every scoped target in `MUSIC_07_ELIGIBILITY_TARGET_IDS`.
+- an explicit generation scoped to **exactly one** target;
+- that target in `MUSIC_07_ELIGIBILITY_TARGET_IDS`.
 
-Therefore an unscoped/manual all-target run cannot accidentally activate the Gate
-4 pilot.
+Exposure anchors are target-specific. Requiring exactly one target prevents a
+cooldown derived for one target from leaking into another target's candidate pool.
+An unscoped run and a multi-target scoped run both fail closed to SHADOW.
 
 Default is `OFF`.
 
@@ -111,8 +112,9 @@ Required checks:
 5. Expired cooldown stops blocking.
 6. OFF and SHADOW modes never remove candidates.
 7. ACTIVE can remove only the exact blocked track IDs.
-8. Typecheck passes.
-9. Production validation uses an isolated worktree and read-only report; no deploy.
+8. ACTIVE requires one allowlisted user + exactly one allowlisted target.
+9. Typecheck passes.
+10. Production validation uses an isolated worktree and read-only report; no deploy.
 
 ## Gate 4 boundary
 
