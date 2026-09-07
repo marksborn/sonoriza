@@ -45,6 +45,14 @@ type ZonedDateTimeParts = CivilDate & {
   second: number;
 };
 
+type RequiredDateTimePart =
+  | "year"
+  | "month"
+  | "day"
+  | "hour"
+  | "minute"
+  | "second";
+
 export function resolvePodcastCadenceWindow(input: {
   asOf: Date;
   timeZone: string;
@@ -174,15 +182,15 @@ function zonedParts(value: Date, timeZone: string): ZonedDateTimeParts {
     second: "2-digit",
     hourCycle: "h23",
   });
-  const values = new Map(
+  const values = Object.fromEntries(
     formatter
       .formatToParts(value)
       .filter((part) => part.type !== "literal")
       .map((part) => [part.type, part.value]),
-  );
+  ) as Record<string, string>;
 
-  const numeric = (key: string): number => {
-    const parsed = Number(values.get(key));
+  const numeric = (key: RequiredDateTimePart): number => {
+    const parsed = Number(values[key]);
     if (!Number.isInteger(parsed)) {
       throw new Error(`Unable to resolve ${key} for time zone ${timeZone}`);
     }
