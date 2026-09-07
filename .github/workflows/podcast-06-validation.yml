@@ -11,6 +11,7 @@ on:
       - "src/services/spotify/podcast-show-policy.test.ts"
       - "src/services/spotify/podcast-show-policy-v2.test.ts"
       - "src/services/spotify/podcast-show-policy-store.ts"
+      - "src/services/spotify/podcast-show-policy-store.integration.test.ts"
       - ".github/workflows/podcast-06-validation.yml"
   push:
     branches:
@@ -24,6 +25,7 @@ on:
       - "src/services/spotify/podcast-show-policy.test.ts"
       - "src/services/spotify/podcast-show-policy-v2.test.ts"
       - "src/services/spotify/podcast-show-policy-store.ts"
+      - "src/services/spotify/podcast-show-policy-store.integration.test.ts"
       - ".github/workflows/podcast-06-validation.yml"
   workflow_dispatch:
 
@@ -57,6 +59,7 @@ jobs:
       GOOGLE_CLIENT_SECRET: test
       SPOTIFY_CLIENT_ID: test
       SPOTIFY_CLIENT_SECRET: test
+      PODCAST_06_DB_TEST: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -67,10 +70,11 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PODCAST-06 contract + PODCAST-05 regression
+      - name: PODCAST-06 contract + store + PODCAST-05 regression
         run: >-
           npx tsx --test
           src/services/spotify/podcast-show-cadence-contract.test.ts
+          src/services/spotify/podcast-show-policy-store.integration.test.ts
           src/services/spotify/podcast-show-policy.test.ts
           src/services/spotify/podcast-show-policy-v2.test.ts
       - run: npm run typecheck
