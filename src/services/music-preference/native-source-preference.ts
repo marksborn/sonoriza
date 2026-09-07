@@ -1,9 +1,6 @@
 import { LikedTrackAvailability, NativeSourceType } from "@prisma/client";
 
-import {
-  lineageFromRootSource,
-  policyDecisionForLineage,
-} from "@/services/data-policy";
+import { spotifySavedTracksPlannerCapability } from "@/services/data-policy";
 import { prisma } from "@/lib/prisma";
 import { LIKED_TRACKS_NATIVE_SOURCE_KEY } from "./liked-track-source";
 
@@ -32,7 +29,7 @@ export type NativeLikedTrackSourcePreferenceState = {
   enabled: boolean;
   explicitlyConfigured: boolean;
   readError: string | null;
-  /** Gate 5B: persisted consent exists independently from provider capability. */
+  /** Persisted consent exists independently from provider capability. */
   complianceBlocked?: boolean;
 };
 
@@ -46,8 +43,8 @@ export const LIKED_TRACK_SOURCE_COMPLIANCE_REASON =
  * from Sonoriza-owned tables. It intentionally performs no provider read.
  *
  * This configuration surface is retained for transparency/audit. Its `enabled`
- * field is the user's persisted product choice, not proof that Spotify-derived
- * data is currently authorized to influence the commercial planner.
+ * field is the user's persisted product choice, not proof that provider-derived
+ * data is authorized for every possible downstream use.
  */
 export async function getNativeLikedTrackSourceConfiguration(
   userId: string,
@@ -115,29 +112,24 @@ export async function getNativeLikedTrackSourceConfiguration(
 }
 
 /**
- * Gate 5B capability check for the productive Saved Tracks source.
+ * SOURCE-LIKED-01 final direct-planner capability check.
  *
- * Saved Tracks are Spotify-origin data even when materialized in a local table.
- * Local persistence and explicit user consent do not launder that origin. The
- * productive planner requires both RECOMMENDATION and PLANNER_ELIGIBILITY to be
- * explicitly ALLOW; REVIEW_REQUIRED is fail-closed.
+ * Saved Tracks keeps SPOTIFY lineage even when materialized locally. The final
+ * #278 PERSONAL-mode decision explicitly reviewed this source for direct
+ * operational planning + planner eligibility only. Analytics, profiling,
+ * derived recommendation and AI remain separate blocked capabilities.
  */
 export function isLikedTrackSourcePlannerUseAllowed(): boolean {
-  const lineage = lineageFromRootSource("SPOTIFY_SAVED_TRACKS");
-  return (
-    policyDecisionForLineage(lineage, "RECOMMENDATION") === "ALLOW" &&
-    policyDecisionForLineage(lineage, "PLANNER_ELIGIBILITY") === "ALLOW"
-  );
+  return spotifySavedTracksPlannerCapability().allowed;
 }
 
 /**
- * SOURCE-LIKED-01 Gate 5B2 + SPOTIFY-COMPLIANCE-01 Gate 5B.
+ * SOURCE-LIKED-01 Gate 5B2 + final #278 policy.
  *
  * Reads only persisted product consent. Missing/unreadable state remains
- * fail-closed. Even when the user explicitly enabled this source, the returned
- * planner state is forced disabled while Spotify Saved Tracks lacks productive
- * capability. This keeps the user's stored preference intact for audit and a
- * future policy change without allowing provider-derived data into planning.
+ * fail-closed. Productive planner use also requires the narrow reviewed Saved
+ * Tracks planner capability; no broader Spotify analytics/profile permission is
+ * implied by this check.
  */
 export async function getNativeLikedTrackSourcePreferenceState(
   userId: string,
