@@ -1,0 +1,54 @@
+name: MUSIC-07 Gate 3 Validation
+
+on:
+  pull_request:
+    paths:
+      - "src/services/music-exposure/**"
+      - "src/jobs/music-exposure-runtime.ts"
+      - "src/jobs/music-exposure-runtime.test.ts"
+      - "src/jobs/music-repeat-runtime.ts"
+      - "src/jobs/generate-playlists.ts"
+      - "scripts/report-music-exposure-eligibility-gate3.ts"
+      - "docs/issue-279-gate3-eligibility-anchor.md"
+      - ".env.example"
+      - ".github/workflows/music-07-gate3-validation.yml"
+  push:
+    branches:
+      - "issue-279-gate3-eligibility-anchor"
+    paths:
+      - "src/services/music-exposure/**"
+      - "src/jobs/music-exposure-runtime.ts"
+      - "src/jobs/music-exposure-runtime.test.ts"
+      - "src/jobs/music-repeat-runtime.ts"
+      - "src/jobs/generate-playlists.ts"
+      - "scripts/report-music-exposure-eligibility-gate3.ts"
+      - "docs/issue-279-gate3-eligibility-anchor.md"
+      - ".env.example"
+      - ".github/workflows/music-07-gate3-validation.yml"
+
+jobs:
+  gate3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: MUSIC-07 Gate 2 + Gate 3 unit tests
+        run: npx tsx --test src/services/music-exposure/*.test.ts src/jobs/music-exposure-runtime.test.ts
+
+      - name: Typecheck
+        run: npm run typecheck
