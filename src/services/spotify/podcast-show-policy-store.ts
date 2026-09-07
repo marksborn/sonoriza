@@ -6,6 +6,12 @@ import {
   type PodcastCadenceUnitValue,
   type PodcastShowPriorityValue,
 } from "./podcast-show-cadence-contract";
+import {
+  loadPodcastShowCadencePolicies,
+  podcastShowCadencePolicyUpdateRequested,
+  resolvePodcastShowCadencePolicyUpdate,
+  type PodcastShowCadencePolicySnapshot as GlobalPodcastShowCadencePolicySnapshot,
+} from "./podcast-show-cadence-policy-store";
 
 export type { PodcastCadenceUnitValue, PodcastShowPriorityValue };
 
@@ -25,8 +31,8 @@ export type PodcastExpiryPolicyValue =
   | "ALLOW_IN_PROGRESS_TO_FINISH";
 
 /**
- * Planner-facing PODCAST-05 policy. PODCAST-06 Gate 1 deliberately does not
- * widen this contract, so cadence/priority cannot influence selection yet.
+ * Planner-facing PODCAST-05 policy. PODCAST-06 Gate 3 deliberately does not
+ * widen this contract, so cadence/priority still cannot influence selection.
  */
 export type PodcastShowPolicySnapshot = {
   sourcePlaylistId: string;
@@ -46,13 +52,15 @@ export type PodcastShowPolicySnapshot = {
   randomConsumedEpisodeIds?: string[];
 };
 
-export type PodcastShowCadencePolicySnapshot = {
-  cadenceMaxEpisodes: number | null;
-  cadenceUnit: PodcastCadenceUnitValue | null;
-  priority: PodcastShowPriorityValue;
-};
+export type PodcastShowCadencePolicySnapshot = Pick<
+  GlobalPodcastShowCadencePolicySnapshot,
+  "cadenceMaxEpisodes" | "cadenceUnit" | "priority"
+>;
 
-/** Persistence/read-model contract for PODCAST-06 Gate 1. */
+/**
+ * Read-model used by the existing explicit-SHOW UI. PODCAST-05 remains
+ * source-local, while PODCAST-06 cadence/priority are joined by spotifyShowId.
+ */
 export type PodcastShowPolicyStoredSnapshot = PodcastShowPolicySnapshot &
   PodcastShowCadencePolicySnapshot;
 
@@ -70,50 +78,48 @@ export type PodcastShowPolicyUpdate = Pick<
   Partial<PodcastShowCadencePolicySnapshot>;
 
 /**
- * Persistent product policy only. Traversal/shuffle consumption is deliberately
- * reconstructed from successful, non-simulation GenerationItem audit history so
- * merely simulating or collecting candidates can never advance a show.
- *
- * PODCAST-06 cadence configuration is persisted here as product policy, but
- * Gate 1 deliberately does not apply it to planner candidates. Future cadence
- * consumption is derived from EpisodeListeningState.firstProgressObservedAt.
+ * PODCAST-05 traversal policy is loaded only for explicit SHOW sources.
+ * PODCAST-06 cadence/priority are source-independent and joined by Spotify show
+ * identity from PodcastShowCadencePolicy. The planner-facing snapshot remains
+ * narrower, so Gate 3 is persistence/read-model only.
  */
 export async function loadPodcastShowPolicies(
   userId: string,
 ): Promise<Map<string, PodcastShowPolicyStoredSnapshot>> {
-  const sources = await prisma.sourcePlaylist.findMany({
-    where: {
-      userId,
-      kind: "PODCAST",
-      spotifyType: "SHOW",
-    },
-    select: {
-      id: true,
-      includePlayed: true,
-      episodeOrder: true,
-      podcastShowPolicy: {
-        select: {
-          episodeEligibility: true,
-          episodeOrder: true,
-          randomPolicy: true,
-          startEpisodeId: true,
-          strictSequence: true,
-          maxReleaseAgeDays: true,
-          expiryPolicy: true,
-          maxEpisodesPerCycle: true,
-          cadenceMaxEpisodes: true,
-          cadenceUnit: true,
-          priority: true,
-          randomRound: true,
+  const [sources, cadencePolicies] = await Promise.all([
+    prisma.sourcePlaylist.findMany({
+      where: {
+        userId,
+        kind: "PODCAST",
+        spotifyType: "SHOW",
+      },
+      select: {
+        id: true,
+        spotifyId: true,
+        includePlayed: true,
+        episodeOrder: true,
+        podcastShowPolicy: {
+          select: {
+            episodeEligibility: true,
+            episodeOrder: true,
+            randomPolicy: true,
+            startEpisodeId: true,
+            strictSequence: true,
+            maxReleaseAgeDays: true,
+            expiryPolicy: true,
+            maxEpisodesPerCycle: true,
+            randomRound: true,
+          },
         },
       },
-    },
-  });
+    }),
+    loadPodcastShowCadencePolicies(userId),
+  ]);
 
   return new Map(
     sources.map((source) => {
       const policy = source.podcastShowPolicy;
-      const snapshot: PodcastShowPolicyStoredSnapshot = policy
+      const base: PodcastShowPolicySnapshot = policy
         ? {
             sourcePlaylistId: source.id,
             episodeEligibility: policy.episodeEligibility,
@@ -128,11 +134,6 @@ export async function loadPodcastShowPolicies(
             maxEpisodesPerCycle: normalizeNullablePositiveInt(
               policy.maxEpisodesPerCycle,
             ),
-            ...normalizePodcastShowCadence({
-              cadenceMaxEpisodes: policy.cadenceMaxEpisodes,
-              cadenceUnit: policy.cadenceUnit,
-            }),
-            priority: policy.priority,
             randomRound: Math.max(0, Math.trunc(policy.randomRound)),
           }
         : legacyPolicy({
@@ -140,6 +141,13 @@ export async function loadPodcastShowPolicies(
             includePlayed: source.includePlayed,
             episodeOrder: source.episodeOrder,
           });
+      const cadence = cadencePolicies.get(source.spotifyId);
+      const snapshot: PodcastShowPolicyStoredSnapshot = {
+        ...base,
+        cadenceMaxEpisodes: cadence?.cadenceMaxEpisodes ?? null,
+        cadenceUnit: cadence?.cadenceUnit ?? null,
+        priority: cadence?.priority ?? DEFAULT_PODCAST_SHOW_PRIORITY,
+      };
       return [source.id, snapshot] as const;
     }),
   );
@@ -150,42 +158,32 @@ export async function savePodcastShowPolicy(
   sourcePlaylistId: string,
   input: PodcastShowPolicyUpdate,
 ): Promise<boolean> {
-  const source = await prisma.sourcePlaylist.findFirst({
-    where: {
-      id: sourcePlaylistId,
-      userId,
-      kind: "PODCAST",
-      spotifyType: "SHOW",
-    },
-    select: {
-      id: true,
-      podcastShowPolicy: {
-        select: {
-          cadenceMaxEpisodes: true,
-          cadenceUnit: true,
-          priority: true,
-        },
+  return prisma.$transaction(async (tx) => {
+    const source = await tx.sourcePlaylist.findFirst({
+      where: {
+        id: sourcePlaylistId,
+        userId,
+        kind: "PODCAST",
+        spotifyType: "SHOW",
       },
-    },
-  });
-  if (!source) return false;
+      select: {
+        id: true,
+        spotifyId: true,
+        name: true,
+      },
+    });
+    if (!source) return false;
 
-  const maxReleaseAgeDays = normalizeNullableNonNegativeInt(
-    input.maxReleaseAgeDays,
-  );
-  const maxEpisodesPerCycle = normalizeNullablePositiveInt(
-    input.maxEpisodesPerCycle,
-  );
-  const startEpisodeId = normalizedId(input.startEpisodeId);
-  const cadence = resolveCadenceUpdate(input, source.podcastShowPolicy);
-  const priority =
-    input.priority ??
-    source.podcastShowPolicy?.priority ??
-    DEFAULT_PODCAST_SHOW_PRIORITY;
-  const updatedAt = new Date();
+    const maxReleaseAgeDays = normalizeNullableNonNegativeInt(
+      input.maxReleaseAgeDays,
+    );
+    const maxEpisodesPerCycle = normalizeNullablePositiveInt(
+      input.maxEpisodesPerCycle,
+    );
+    const startEpisodeId = normalizedId(input.startEpisodeId);
+    const updatedAt = new Date();
 
-  await prisma.$transaction([
-    prisma.podcastShowPolicy.upsert({
+    await tx.podcastShowPolicy.upsert({
       where: { sourcePlaylistId },
       create: {
         sourcePlaylistId,
@@ -197,9 +195,6 @@ export async function savePodcastShowPolicy(
         maxReleaseAgeDays,
         expiryPolicy: input.expiryPolicy,
         maxEpisodesPerCycle,
-        cadenceMaxEpisodes: cadence.cadenceMaxEpisodes,
-        cadenceUnit: cadence.cadenceUnit,
-        priority,
         randomRound: 0,
         randomConsumedEpisodeIds: [],
         updatedAt,
@@ -213,18 +208,17 @@ export async function savePodcastShowPolicy(
         maxReleaseAgeDays,
         expiryPolicy: input.expiryPolicy,
         maxEpisodesPerCycle,
-        cadenceMaxEpisodes: cadence.cadenceMaxEpisodes,
-        cadenceUnit: cadence.cadenceUnit,
-        priority,
         sequenceCursorEpisodeId: null,
         sequenceCompleted: false,
         randomRound: { increment: 1 },
         randomConsumedEpisodeIds: [],
         updatedAt,
       },
-    }),
-    // Keep legacy flags coherent for readers/UI that still consume PODCAST-03.
-    prisma.sourcePlaylist.update({
+    });
+
+    // Keep legacy PODCAST-03 flags coherent for readers/UI that still consume
+    // SourcePlaylist. These are unrelated to PODCAST-06 cadence authority.
+    await tx.sourcePlaylist.update({
       where: { id: sourcePlaylistId },
       data: {
         includePlayed: input.episodeEligibility !== "UNPLAYED_ONLY",
@@ -235,17 +229,77 @@ export async function savePodcastShowPolicy(
               ? "OLDEST_FIRST"
               : "SOURCE_DEFAULT",
       },
-    }),
-  ]);
+    });
 
-  return true;
+    if (podcastShowCadencePolicyUpdateRequested(input)) {
+      const existingRow = await tx.podcastShowCadencePolicy.findUnique({
+        where: {
+          userId_spotifyShowId: {
+            userId,
+            spotifyShowId: source.spotifyId,
+          },
+        },
+        select: {
+          spotifyShowId: true,
+          showName: true,
+          cadenceMaxEpisodes: true,
+          cadenceUnit: true,
+          priority: true,
+        },
+      });
+      const existing: GlobalPodcastShowCadencePolicySnapshot | null = existingRow
+        ? {
+            spotifyShowId: existingRow.spotifyShowId,
+            showName: existingRow.showName,
+            ...normalizePodcastShowCadence({
+              cadenceMaxEpisodes: existingRow.cadenceMaxEpisodes,
+              cadenceUnit: existingRow.cadenceUnit,
+            }),
+            priority: existingRow.priority,
+          }
+        : null;
+      const resolved = resolvePodcastShowCadencePolicyUpdate(
+        source.spotifyId,
+        existing,
+        {
+          showName: source.name,
+          cadenceMaxEpisodes: input.cadenceMaxEpisodes,
+          cadenceUnit: input.cadenceUnit,
+          priority: input.priority,
+        },
+      );
+
+      await tx.podcastShowCadencePolicy.upsert({
+        where: {
+          userId_spotifyShowId: {
+            userId,
+            spotifyShowId: source.spotifyId,
+          },
+        },
+        create: {
+          userId,
+          spotifyShowId: source.spotifyId,
+          showName: resolved.showName,
+          cadenceMaxEpisodes: resolved.cadenceMaxEpisodes,
+          cadenceUnit: resolved.cadenceUnit,
+          priority: resolved.priority,
+        },
+        update: {
+          showName: resolved.showName,
+          cadenceMaxEpisodes: resolved.cadenceMaxEpisodes,
+          cadenceUnit: resolved.cadenceUnit,
+          priority: resolved.priority,
+        },
+      });
+    }
+
+    return true;
+  });
 }
 
 /**
- * Reset is a policy-local operation: changing updatedAt makes all older real
- * GenerationItems fall outside the traversal-history window. Spotify playback
- * state and the user's library are untouched. PODCAST-06 cadence/priority are
- * product configuration and therefore remain unchanged by a progress reset.
+ * Reset remains PODCAST-05-local. It changes traversal history only and never
+ * touches the source-independent PODCAST-06 cadence/priority row.
  */
 export async function resetPodcastShowPolicyProgress(
   userId: string,
@@ -284,9 +338,6 @@ export async function resetPodcastShowPolicyProgress(
       maxReleaseAgeDays: fallback.maxReleaseAgeDays,
       expiryPolicy: fallback.expiryPolicy,
       maxEpisodesPerCycle: fallback.maxEpisodesPerCycle,
-      cadenceMaxEpisodes: fallback.cadenceMaxEpisodes,
-      cadenceUnit: fallback.cadenceUnit,
-      priority: fallback.priority,
       randomRound: 1,
       randomConsumedEpisodeIds: [],
       updatedAt,
@@ -307,7 +358,7 @@ function legacyPolicy(input: {
   sourcePlaylistId: string;
   includePlayed: boolean;
   episodeOrder: string;
-}): PodcastShowPolicyStoredSnapshot {
+}): PodcastShowPolicySnapshot {
   return {
     sourcePlaylistId: input.sourcePlaylistId,
     episodeEligibility: input.includePlayed ? "ALL" : "UNPLAYED_ONLY",
@@ -319,36 +370,8 @@ function legacyPolicy(input: {
     maxReleaseAgeDays: null,
     expiryPolicy: "STRICT_EXPIRY",
     maxEpisodesPerCycle: null,
-    cadenceMaxEpisodes: null,
-    cadenceUnit: null,
-    priority: DEFAULT_PODCAST_SHOW_PRIORITY,
     randomRound: 0,
   };
-}
-
-function resolveCadenceUpdate(
-  input: Pick<
-    PodcastShowPolicyUpdate,
-    "cadenceMaxEpisodes" | "cadenceUnit"
-  >,
-  existing: {
-    cadenceMaxEpisodes: number | null;
-    cadenceUnit: PodcastCadenceUnitValue | null;
-  } | null,
-) {
-  const cadenceMaxEpisodes =
-    input.cadenceMaxEpisodes === undefined
-      ? existing?.cadenceMaxEpisodes ?? null
-      : input.cadenceMaxEpisodes;
-  const cadenceUnit =
-    input.cadenceUnit === undefined
-      ? existing?.cadenceUnit ?? null
-      : input.cadenceUnit;
-
-  return normalizePodcastShowCadence({
-    cadenceMaxEpisodes,
-    cadenceUnit,
-  });
 }
 
 function normalizedId(value: string | null | undefined): string | null {
