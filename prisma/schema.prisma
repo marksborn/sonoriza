@@ -156,6 +156,17 @@ enum PodcastExpiryPolicy {
   ALLOW_IN_PROGRESS_TO_FINISH
 }
 
+enum PodcastCadenceUnit {
+  DAY
+  WEEK
+  MONTH
+}
+
+enum PodcastShowPriority {
+  NORMAL
+  PRIORITY
+}
+
 enum MusicSourceRetentionMode {
   KEEP_ALL
   REMOVE_AFTER_PLAYED
@@ -212,6 +223,9 @@ model PodcastShowPolicy {
   maxReleaseAgeDays        Int?
   expiryPolicy             PodcastExpiryPolicy       @default(STRICT_EXPIRY)
   maxEpisodesPerCycle      Int?
+  cadenceMaxEpisodes       Int?
+  cadenceUnit              PodcastCadenceUnit?
+  priority                 PodcastShowPriority        @default(NORMAL)
   sequenceCursorEpisodeId  String?
   sequenceCompleted        Boolean                   @default(false)
   randomRound              Int                       @default(0)
