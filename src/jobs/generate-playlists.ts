@@ -20,6 +20,10 @@ import {
   type DiscoveryRuntimeState,
 } from "./discovery-runtime";
 import {
+  music07EligibilityRuntimeSummary,
+  prepareMusic07EligibilityRuntime,
+} from "./music-exposure-runtime";
+import {
   runWithMusicRepeatState,
   type MusicRepeatRunState,
 } from "./music-repeat-runtime";
@@ -50,6 +54,11 @@ export type { GeneratePlaylistsOptions, GeneratePlaylistsResult };
  * Spotify Recently Played cooldown behind the central capability matrix. Under
  * the current policy, generation does not sync/read Recently Played for planner
  * eligibility and that provider history cannot veto a plan.
+ *
+ * MUSIC-07 Gate 3 introduces a separate SONORIZA_EXPOSURE eligibility anchor.
+ * It defaults to OFF. SHADOW can compute read-only diagnostics; ACTIVE requires
+ * both a user allowlist and an explicit target-scoped generation, leaving Gate 4
+ * as the only activation boundary.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -57,6 +66,9 @@ export async function generatePlaylists(
   const simulate = opts.simulate ?? opts.trigger === "SIMULATION";
   const asOf = opts.date ?? new Date();
   const repeatCompliance = spotifyRecentlyPlayedPlannerCapability();
+  const targetScope = opts.targetPlaylistIds
+    ? [...new Set(opts.targetPlaylistIds.filter(Boolean))]
+    : null;
   let prepared: Awaited<ReturnType<typeof refreshMusicRepeatContext>>;
 
   if (repeatCompliance.allowed) {
@@ -77,6 +89,15 @@ export async function generatePlaylists(
     prismaFirstPartyPlaybackPreferenceStore.list(opts.userId),
   ]);
 
+  const music07Eligibility = await prepareMusic07EligibilityRuntime({
+    userId: opts.userId,
+    userEmail: user?.email ?? null,
+    // Exposure/consumption evidence is observed at execution time, not the
+    // calendar date used to size a target playlist.
+    asOf: new Date(),
+    targetPlaylistIds: targetScope,
+  });
+
   // MUSIC-06 evidence is behavioral observation at execution time, not the
   // calendar planning date supplied through opts.date.
   const music06Preparation = await prepareMusic06PlannerRuntime({
@@ -95,9 +116,6 @@ export async function generatePlaylists(
     asOf,
   });
 
-  const targetScope = opts.targetPlaylistIds
-    ? [...new Set(opts.targetPlaylistIds.filter(Boolean))]
-    : null;
   const discoveryTargets = await prisma.targetPlaylist.findMany({
     where: {
       userId: opts.userId,
@@ -140,6 +158,7 @@ export async function generatePlaylists(
     preWriteRevalidated: false,
     preWriteBlockedCount: 0,
     preWriteMissingIdentityCount: 0,
+    music07Eligibility,
     firstPartyPlaybackPreferences,
     firstPartyPreferenceEvidence: null,
     likedTrackSourceShadow: null,
@@ -211,6 +230,9 @@ async function appendRuntimeSummary(
         musicRecentlyPlayedSkippedCount: state.recentlyPlayedSkippedCount,
         musicMissingTrackIdentitySkippedCount:
           state.missingTrackIdentitySkippedCount,
+        music07ExposureEligibility: music07EligibilityRuntimeSummary(
+          state.music07Eligibility,
+        ),
         firstPartyPlaybackPreferences: {
           loadedCount: state.firstPartyPlaybackPreferences.length,
           application: state.firstPartyPreferenceEvidence,
