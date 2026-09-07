@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "prisma/schema.prisma"
+      - "prisma/podcast-show-cadence-policy.prisma"
       - "prisma/migrations/**"
       - "scripts/report-podcast-show-cadence-gate2.ts"
       - "src/services/spotify/podcast-show-cadence-contract.ts"
       - "src/services/spotify/podcast-show-cadence-contract.test.ts"
       - "src/services/spotify/podcast-show-cadence-shadow.ts"
       - "src/services/spotify/podcast-show-cadence-shadow.test.ts"
+      - "src/services/spotify/podcast-show-cadence-policy-store.ts"
       - "src/services/spotify/podcast-show-policy.ts"
       - "src/services/spotify/podcast-show-policy.test.ts"
       - "src/services/spotify/podcast-show-policy-v2.test.ts"
@@ -21,12 +23,14 @@ on:
       - main
     paths:
       - "prisma/schema.prisma"
+      - "prisma/podcast-show-cadence-policy.prisma"
       - "prisma/migrations/**"
       - "scripts/report-podcast-show-cadence-gate2.ts"
       - "src/services/spotify/podcast-show-cadence-contract.ts"
       - "src/services/spotify/podcast-show-cadence-contract.test.ts"
       - "src/services/spotify/podcast-show-cadence-shadow.ts"
       - "src/services/spotify/podcast-show-cadence-shadow.test.ts"
+      - "src/services/spotify/podcast-show-cadence-policy-store.ts"
       - "src/services/spotify/podcast-show-policy.ts"
       - "src/services/spotify/podcast-show-policy.test.ts"
       - "src/services/spotify/podcast-show-policy-v2.test.ts"
@@ -76,7 +80,7 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PODCAST-06 contract + cadence shadow + store + PODCAST-05 regression
+      - name: PODCAST-06 contract + cadence shadow + cross-source store + PODCAST-05 regression
         run: >-
           npx tsx --test
           src/services/spotify/podcast-show-cadence-contract.test.ts
