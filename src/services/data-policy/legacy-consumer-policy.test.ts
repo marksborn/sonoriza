@@ -23,15 +23,18 @@ test("MUSIC-01 Spotify Recently Played is not productively authorized", () => {
   assert.equal(capability.decisions.PLANNER_ELIGIBILITY, "REVIEW_REQUIRED");
 });
 
-test("Saved Tracks is blocked for shadow analytics, planner eligibility and recommendation", () => {
+test("Saved Tracks direct planner use is approved while analytics and recommendation stay blocked", () => {
   const shadow = spotifySavedTracksShadowCapability();
   const planner = spotifySavedTracksPlannerCapability();
   const recommendation = spotifySavedTracksRecommendationCapability();
+
+  assert.deepEqual(planner.lineage.origins, ["SPOTIFY"]);
+  assert.equal(planner.allowed, true);
+  assert.equal(planner.decisions.OPERATIONAL_PLANNING, "ALLOW");
+  assert.equal(planner.decisions.PLANNER_ELIGIBILITY, "ALLOW");
+
   assert.equal(shadow.allowed, false);
   assert.equal(shadow.decisions.BEHAVIORAL_ANALYTICS, "DENY");
-  assert.equal(planner.allowed, false);
-  assert.equal(planner.decisions.OPERATIONAL_PLANNING, "REVIEW_REQUIRED");
-  assert.equal(planner.decisions.PLANNER_ELIGIBILITY, "REVIEW_REQUIRED");
   assert.equal(recommendation.allowed, false);
   assert.equal(recommendation.decisions.BEHAVIORAL_ANALYTICS, "DENY");
   assert.equal(recommendation.decisions.USER_PROFILING, "DENY");
