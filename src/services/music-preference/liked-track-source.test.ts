@@ -53,7 +53,7 @@ function row(overrides: RowOverrides): LikedTrackSourceRow {
   };
 }
 
-test("buildLikedTrackSourceSnapshot exposes a local persistent native source", () => {
+test("buildLikedTrackSourceSnapshot exposes a local persistent native source without laundering Spotify lineage", () => {
   const snapshot = buildLikedTrackSourceSnapshot(
     [
       row({ spotifyTrackId: "a", durationMs: null }),
@@ -80,6 +80,8 @@ test("buildLikedTrackSourceSnapshot exposes a local persistent native source", (
   assert.equal(snapshot.source.type, LIKED_TRACKS_NATIVE_SOURCE_TYPE);
   assert.equal(snapshot.source.kind, "MUSIC");
   assert.equal(snapshot.source.semantics, "PERSISTENT_LIBRARY");
+  assert.equal(snapshot.source.rootDataSource, "SPOTIFY_SAVED_TRACKS");
+  assert.deepEqual(snapshot.source.lineage.origins, ["SPOTIFY"]);
   assert.equal(snapshot.source.providerReads, false);
   assert.equal(snapshot.source.spotifyWrites, false);
   assert.equal(snapshot.source.plannerInfluence, false);
