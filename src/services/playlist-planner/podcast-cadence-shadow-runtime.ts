@@ -17,6 +17,7 @@ export type Podcast06ListeningStateEvidence = Readonly<{
 
 export type Podcast06PlannerShadowStatus =
   | "NO_POLICY"
+  | "NOT_OBSERVED"
   | "ABSTAIN_TIMEZONE_UNAVAILABLE"
   | "ABSTAIN_INCOMPLETE_SHOW_PROVENANCE"
   | "READY_SHADOW";
@@ -83,6 +84,9 @@ export function createPodcast06PlannerShadowRuntimeState(input: {
     evidence: emptyEvidence({
       policyCount: input.policies.size,
       listeningStateCount: input.listeningStates.length,
+      factualListeningStateCount: input.listeningStates.filter(
+        (entry) => entry.firstProgressObservedAt !== null,
+      ).length,
       timeZone,
       asOf: input.asOf,
     }),
@@ -321,16 +325,18 @@ function stablePriorityProjection(
 function emptyEvidence(input: {
   policyCount: number;
   listeningStateCount: number;
+  factualListeningStateCount: number;
   timeZone: string | null;
   asOf: Date;
 }): Podcast06PlannerShadowEvidence {
   return {
     policyVersion: "podcast06-gate4-shadow-v1",
-    status: input.policyCount === 0
-      ? "NO_POLICY"
-      : input.timeZone
-        ? "ABSTAIN_INCOMPLETE_SHOW_PROVENANCE"
-        : "ABSTAIN_TIMEZONE_UNAVAILABLE",
+    status:
+      input.policyCount === 0
+        ? "NO_POLICY"
+        : !input.timeZone
+          ? "ABSTAIN_TIMEZONE_UNAVAILABLE"
+          : "NOT_OBSERVED",
     plannerInfluence: false,
     databaseWrites: false,
     spotifyWrites: false,
@@ -342,7 +348,7 @@ function emptyEvidence(input: {
     listeningStateCount: input.listeningStateCount,
     resolvedListeningStateCount: 0,
     unresolvedStateCount: input.listeningStateCount,
-    unresolvedFactualCount: input.listeningStateCount,
+    unresolvedFactualCount: input.factualListeningStateCount,
     projectedPriorityMovedCount: 0,
     projectedPriorityOrderEpisodeIds: [],
     actualPoolOrderEpisodeIds: [],
