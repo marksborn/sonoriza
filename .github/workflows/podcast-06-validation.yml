@@ -7,6 +7,10 @@ on:
       - "prisma/podcast-show-cadence-policy.prisma"
       - "prisma/migrations/**"
       - "scripts/report-podcast-show-cadence-gate2.ts"
+      - "src/jobs/generate-playlists.ts"
+      - "src/services/playlist-planner/plan-run.ts"
+      - "src/services/playlist-planner/podcast-cadence-shadow-runtime.ts"
+      - "src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts"
       - "src/services/spotify/podcast-show-cadence-contract.ts"
       - "src/services/spotify/podcast-show-cadence-contract.test.ts"
       - "src/services/spotify/podcast-show-cadence-shadow.ts"
@@ -26,6 +30,10 @@ on:
       - "prisma/podcast-show-cadence-policy.prisma"
       - "prisma/migrations/**"
       - "scripts/report-podcast-show-cadence-gate2.ts"
+      - "src/jobs/generate-playlists.ts"
+      - "src/services/playlist-planner/plan-run.ts"
+      - "src/services/playlist-planner/podcast-cadence-shadow-runtime.ts"
+      - "src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts"
       - "src/services/spotify/podcast-show-cadence-contract.ts"
       - "src/services/spotify/podcast-show-cadence-contract.test.ts"
       - "src/services/spotify/podcast-show-cadence-shadow.ts"
@@ -80,11 +88,12 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PODCAST-06 contract + cadence shadow + cross-source store + PODCAST-05 regression
+      - name: PODCAST-06 contract + cadence shadow + cross-source store + planner shadow + PODCAST-05 regression
         run: >-
           npx tsx --test
           src/services/spotify/podcast-show-cadence-contract.test.ts
           src/services/spotify/podcast-show-cadence-shadow.test.ts
+          src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts
           src/services/spotify/podcast-show-policy-store.integration.test.ts
           src/services/spotify/podcast-show-policy.test.ts
           src/services/spotify/podcast-show-policy-v2.test.ts
