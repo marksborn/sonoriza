@@ -46,7 +46,7 @@ test("SOURCE-LIKED-01 native card and preference read stay local-only", () => {
   assert.match(layout, /Desativar preferência/);
 });
 
-test("SOURCE-LIKED-01 productive use requires rollout, consent AND provenance capability", () => {
+test("SOURCE-LIKED-01 productive use requires rollout, consent and the reviewed direct-planner capability", () => {
   assert.match(plannerRuntime, /getNativeLikedTrackSourcePreferenceState/);
   assert.match(plannerRuntime, /resolveLikedTrackSourcePlannerConsentPolicy/);
   assert.match(plannerRuntime, /USER_SOURCE_DISABLED/);
@@ -59,9 +59,12 @@ test("SOURCE-LIKED-01 productive use requires rollout, consent AND provenance ca
   assert.match(plannerRuntime, /likedTrackPreference\.findMany/);
   assert.doesNotMatch(plannerRuntime, /SpotifyClient|forUser\(/);
 
-  assert.match(service, /SPOTIFY_SAVED_TRACKS/);
-  assert.match(service, /policyDecisionForLineage\(lineage, "RECOMMENDATION"\)/);
-  assert.match(service, /policyDecisionForLineage\(lineage, "PLANNER_ELIGIBILITY"\)/);
+  assert.match(service, /spotifySavedTracksPlannerCapability/);
+  assert.match(service, /spotifySavedTracksPlannerCapability\(\)\.allowed/);
+  assert.doesNotMatch(
+    service,
+    /policyDecisionForLineage\(lineage, "RECOMMENDATION"\)/,
+  );
   assert.match(service, /complianceBlocked: true/);
 
   assert.match(layout, /rollout operacional/);

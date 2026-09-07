@@ -122,15 +122,18 @@ export async function collectIncrementally<
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
 
-  // Gate 5C prevents SOURCE-LIKED shadow/reporting from even reading the local
-  // Spotify Saved Tracks materialization unless the central matrix explicitly
-  // permits its use. This is intentionally before prepareLikedTrack... so a
-  // denied shadow does not compute/persist behavioral comparison metrics.
+  // #278/#186 keep two independent authorities for Saved Tracks:
+  // - direct operational planner use may be approved;
+  // - behavioral shadow/analytics remains blocked.
+  //
+  // Preparation may serve either path, but the returned flags are masked by the
+  // corresponding capability before any shadow comparison or productive planner
+  // influence can run. Planner approval therefore cannot launder into analytics.
   const likedShadowCapability = spotifySavedTracksShadowCapability();
   const likedPlannerCapability = spotifySavedTracksPlannerCapability();
   const likedRuntimeAllowed =
     likedShadowCapability.allowed || likedPlannerCapability.allowed;
-  const likedTrackSourceShadow = likedRuntimeAllowed
+  const preparedLikedTrackSource = likedRuntimeAllowed
     ? await prepareLikedTrackSourceShadowForCurrentRun()
     : {
         enabled: false,
@@ -139,6 +142,14 @@ export async function collectIncrementally<
         plannerPilotEnabled: false,
         plannerPilotTargetIds: new Set<string>(),
       };
+  const likedTrackSourceShadow = {
+    ...preparedLikedTrackSource,
+    enabled:
+      likedShadowCapability.allowed && preparedLikedTrackSource.enabled,
+    plannerPilotEnabled:
+      likedPlannerCapability.allowed &&
+      preparedLikedTrackSource.plannerPilotEnabled === true,
+  };
 
   if (!likedRuntimeAllowed) {
     const repeatState = currentMusicRepeatState();
