@@ -16,6 +16,7 @@ import {
 
 import {
   applyMusic07EligibilityToCandidates,
+  offMusic07EligibilityRuntimeState,
   type Music07EligibilityRuntimeState,
 } from "./music-exposure-runtime";
 import { revalidateTargetDiscoveryPoliciesBeforeRealWrite } from "./target-discovery-runtime";
@@ -47,8 +48,8 @@ export type MusicRepeatRunState = {
   preWriteRevalidated: boolean;
   preWriteBlockedCount: number;
   preWriteMissingIdentityCount: number;
-  /** MUSIC-07 Gate 3: first-party eligibility anchor runtime. */
-  music07Eligibility: Music07EligibilityRuntimeState;
+  /** MUSIC-07 Gate 3: absent state is fail-safe OFF for legacy callers/tests. */
+  music07Eligibility?: Music07EligibilityRuntimeState;
   /** Gate 5B: authoritative explicit Sonoriza preferences for this run. */
   firstPartyPlaybackPreferences: readonly FirstPartyPlaybackPreference[];
   /** Latest deterministic application evidence; raw subject keys are not logged. */
@@ -102,9 +103,12 @@ export function filterMusicBatchForCurrentRun(candidates: Candidate[]): {
   // MUSIC-07 Gate 3: exposure is an independent first-party eligibility anchor.
   // OFF/SHADOW are hard no-ops; ACTIVE can remove candidates only after the
   // rollout guards in music-exposure-runtime have explicitly authorized it.
+  // Legacy callers that do not provide Gate 3 state default to OFF.
+  const music07State =
+    state.music07Eligibility ?? offMusic07EligibilityRuntimeState();
   const exposureEligible = applyMusic07EligibilityToCandidates(
     repeatFiltered.candidates,
-    state.music07Eligibility,
+    music07State,
   );
 
   const firstParty = applyFirstPartyPlaybackPreferencesToMusicCandidates(
