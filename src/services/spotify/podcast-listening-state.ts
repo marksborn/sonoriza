@@ -12,6 +12,7 @@ import {
 
 export type PodcastListeningObservation = {
   spotifyEpisodeId: string;
+  spotifyShowId: string | null;
   spotifyUri: string;
   durationMs: number;
   resumePositionMs: number | null;
@@ -21,6 +22,7 @@ export type PodcastListeningObservation = {
 
 export type CanonicalPodcastListeningState = {
   spotifyEpisodeId: string;
+  spotifyShowId: string | null;
   spotifyUri: string;
   durationMs: number;
   resumePositionMs: number;
@@ -40,6 +42,7 @@ export interface PodcastListeningStateStore {
 type ExistingPodcastListeningState = Pick<
   EpisodeListeningState,
   | "spotifyEpisodeId"
+  | "spotifyShowId"
   | "spotifyUri"
   | "durationMs"
   | "resumePositionMs"
@@ -50,7 +53,7 @@ type ExistingPodcastListeningState = Pick<
 >;
 
 /**
- * Canonical merge policy for PODCAST-04/PODCAST-05.
+ * Canonical merge policy for PODCAST-04/PODCAST-05/PODCAST-06.
  *
  * Completion is intentionally sticky: once Spotify has explicitly confirmed an
  * episode as completed, a later response with a missing/reset resume point must
@@ -61,11 +64,27 @@ type ExistingPodcastListeningState = Pick<
  * the first observed transition from a known zero-progress canonical state to
  * positive progress. An episode first discovered with existing progress keeps
  * firstProgressObservedAt=null because its real start time is not known.
+ *
+ * PODCAST-06 keeps the Spotify show identity as immutable episode provenance.
+ * A later observation may omit show metadata, but it may never silently move an
+ * episode to a different show.
  */
 export function mergePodcastListeningState(
   existing: ExistingPodcastListeningState | null,
   observation: PodcastListeningObservation,
 ): CanonicalPodcastListeningState {
+  const existingShowId = normalizedOptionalText(existing?.spotifyShowId);
+  const observedShowId = normalizedOptionalText(observation.spotifyShowId);
+  if (
+    existingShowId !== null &&
+    observedShowId !== null &&
+    existingShowId !== observedShowId
+  ) {
+    throw new Error(
+      `Podcast show provenance conflict for episode ${observation.spotifyEpisodeId}: canonical=${existingShowId} observed=${observedShowId}`,
+    );
+  }
+  const spotifyShowId = existingShowId ?? observedShowId;
   const durationMs = Math.max(
     0,
     Math.trunc(observation.durationMs || existing?.durationMs || 0),
@@ -92,6 +111,7 @@ export function mergePodcastListeningState(
   if (existing?.status === "COMPLETED" || observation.fullyPlayed === true) {
     return {
       spotifyEpisodeId: observation.spotifyEpisodeId,
+      spotifyShowId,
       spotifyUri: observation.spotifyUri || existing?.spotifyUri || "",
       durationMs,
       resumePositionMs: mergedResume,
@@ -107,6 +127,7 @@ export function mergePodcastListeningState(
 
   return {
     spotifyEpisodeId: observation.spotifyEpisodeId,
+    spotifyShowId,
     spotifyUri: observation.spotifyUri || existing?.spotifyUri || "",
     durationMs,
     resumePositionMs: mergedResume,
@@ -163,6 +184,7 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
             create: {
               userId,
               spotifyEpisodeId: state.spotifyEpisodeId,
+              spotifyShowId: state.spotifyShowId,
               spotifyUri: state.spotifyUri,
               durationMs: state.durationMs,
               resumePositionMs: state.resumePositionMs,
@@ -172,6 +194,7 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
               lastObservedAt: state.lastObservedAt,
             },
             update: {
+              spotifyShowId: state.spotifyShowId,
               spotifyUri: state.spotifyUri,
               durationMs: state.durationMs,
               resumePositionMs: state.resumePositionMs,
@@ -240,6 +263,11 @@ function dedupeObservations(
 
     merged.set(observation.spotifyEpisodeId, {
       spotifyEpisodeId: observation.spotifyEpisodeId,
+      spotifyShowId: mergeSpotifyShowId(
+        previous.spotifyShowId,
+        observation.spotifyShowId,
+        observation.spotifyEpisodeId,
+      ),
       spotifyUri: observation.spotifyUri || previous.spotifyUri,
       durationMs: Math.max(previous.durationMs, observation.durationMs),
       resumePositionMs:
@@ -261,6 +289,26 @@ function dedupeObservations(
   }
 
   return [...merged.values()];
+}
+
+function mergeSpotifyShowId(
+  previousValue: string | null | undefined,
+  observedValue: string | null | undefined,
+  spotifyEpisodeId: string,
+): string | null {
+  const previous = normalizedOptionalText(previousValue);
+  const observed = normalizedOptionalText(observedValue);
+  if (previous && observed && previous !== observed) {
+    throw new Error(
+      `Podcast show provenance conflict for episode ${spotifyEpisodeId}: previous=${previous} observed=${observed}`,
+    );
+  }
+  return previous ?? observed;
+}
+
+function normalizedOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }
 
 function clamp(value: number, min: number, max: number): number {
