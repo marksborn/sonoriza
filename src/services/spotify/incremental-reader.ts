@@ -741,7 +741,7 @@ function createPodcastCollector(
             type: "PODCAST",
             title: episode.name,
             subtitle: episode.show?.name,
-            programId,
+            programId: programId ?? undefined,
             durationMs,
             originalDurationMs,
             resumePositionMs,
