@@ -62,6 +62,102 @@ databaseTest(
       assert.ok(pending);
       const resolved = await pending;
       assert.equal(resolved.get("episode-concurrent")?.status, "COMPLETED");
+      assert.equal(
+        resolved.get("episode-concurrent")?.firstProgressObservedAt,
+        null,
+        "baseline completion must not invent a first-listening timestamp",
+      );
+    } finally {
+      await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
+    }
+  },
+);
+
+databaseTest(
+  "Prisma podcast store persists an observed zero-to-progress transition without timezone drift",
+  async () => {
+    const userId = `podcast-progress-${randomUUID()}`;
+    const episodeId = `episode-progress-${randomUUID()}`;
+    const baselineAt = new Date("2026-09-08T12:00:00.000Z");
+    const transitionAt = new Date("2026-09-08T13:15:27.123Z");
+    const laterAt = new Date("2026-09-08T14:45:00.000Z");
+
+    await prisma.user.create({ data: { id: userId } });
+
+    try {
+      await prismaPodcastListeningStateStore.observe(userId, [
+        {
+          spotifyEpisodeId: episodeId,
+          spotifyUri: `spotify:episode:${episodeId}`,
+          durationMs: 100_000,
+          resumePositionMs: 0,
+          fullyPlayed: false,
+          observedAt: baselineAt,
+        },
+      ]);
+
+      const baseline = await prisma.episodeListeningState.findUniqueOrThrow({
+        where: {
+          userId_spotifyEpisodeId: {
+            userId,
+            spotifyEpisodeId: episodeId,
+          },
+        },
+      });
+
+      assert.equal(baseline.firstProgressObservedAt, null);
+
+      await prismaPodcastListeningStateStore.observe(userId, [
+        {
+          spotifyEpisodeId: episodeId,
+          spotifyUri: `spotify:episode:${episodeId}`,
+          durationMs: 100_000,
+          resumePositionMs: 25_000,
+          fullyPlayed: false,
+          observedAt: transitionAt,
+        },
+      ]);
+
+      const progressed = await prisma.episodeListeningState.findUniqueOrThrow({
+        where: {
+          userId_spotifyEpisodeId: {
+            userId,
+            spotifyEpisodeId: episodeId,
+          },
+        },
+      });
+
+      assert.equal(
+        progressed.firstProgressObservedAt?.toISOString(),
+        transitionAt.toISOString(),
+        "persisted progress transition must preserve the exact UTC instant",
+      );
+
+      await prismaPodcastListeningStateStore.observe(userId, [
+        {
+          spotifyEpisodeId: episodeId,
+          spotifyUri: `spotify:episode:${episodeId}`,
+          durationMs: 100_000,
+          resumePositionMs: 50_000,
+          fullyPlayed: false,
+          observedAt: laterAt,
+        },
+      ]);
+
+      const later = await prisma.episodeListeningState.findUniqueOrThrow({
+        where: {
+          userId_spotifyEpisodeId: {
+            userId,
+            spotifyEpisodeId: episodeId,
+          },
+        },
+      });
+
+      assert.equal(
+        later.firstProgressObservedAt?.toISOString(),
+        transitionAt.toISOString(),
+        "first progress timestamp must remain sticky after later observations",
+      );
     } finally {
       await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
     }
