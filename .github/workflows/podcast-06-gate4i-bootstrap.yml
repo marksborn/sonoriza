@@ -1,0 +1,39 @@
+name: PODCAST-06 Gate 4I bootstrap
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'issue-275-gate4i-canonical-show-provenance'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Apply Gate 4I patch once
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if git log -1 --pretty=%B | grep -Fq 'wire canonical show provenance'; then
+            echo 'Gate 4I patch already applied.'
+            exit 0
+          fi
+          node scripts/apply-podcast06-gate4i.mjs
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && {
+            echo 'No Gate 4I changes to commit.'
+            exit 0
+          }
+          git commit -m 'feat(PODCAST-06): wire canonical show provenance'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
