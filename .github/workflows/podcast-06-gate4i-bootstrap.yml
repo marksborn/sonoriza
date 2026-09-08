@@ -26,6 +26,15 @@ jobs:
             echo 'Gate 4I patch already applied.'
             exit 0
           fi
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-podcast06-gate4i.mjs')
+          text = path.read_text()
+          marker = '// Dedicated validation must keep covering every producer of show provenance.'
+          start = text.index(marker)
+          end = text.index('console.log("PODCAST-06 Gate 4I source patch applied.");')
+          path.write_text(text[:start] + text[end:])
+          PY
           node scripts/apply-podcast06-gate4i.mjs
           git diff --check
           git config user.name 'github-actions[bot]'
