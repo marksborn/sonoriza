@@ -110,6 +110,7 @@ export async function generatePlaylists(
       where: { userId: opts.userId },
       select: {
         spotifyEpisodeId: true,
+        spotifyShowId: true,
         status: true,
         firstProgressObservedAt: true,
       },
@@ -120,6 +121,7 @@ export async function generatePlaylists(
     policies: podcast06Policies,
     listeningStates: podcastListeningStates.map((state) => ({
       spotifyEpisodeId: state.spotifyEpisodeId,
+      spotifyShowId: state.spotifyShowId,
       status: state.status,
       firstProgressObservedAt: state.firstProgressObservedAt,
     })),

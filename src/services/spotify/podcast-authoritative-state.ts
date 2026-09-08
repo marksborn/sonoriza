@@ -21,6 +21,10 @@ export type EpisodePlaybackResponse = {
   uri?: string;
   duration_ms?: number;
   type?: string;
+  show?: {
+    id?: string;
+    name?: string;
+  } | null;
   resume_point?: {
     fully_played?: boolean;
     resume_position_ms?: number;
@@ -253,6 +257,7 @@ function toObservation(
 
   return {
     spotifyEpisodeId,
+    spotifyShowId: normalizedOptionalText(episode.show?.id),
     spotifyUri,
     durationMs,
     resumePositionMs,
@@ -262,6 +267,11 @@ function toObservation(
         : resumePoint.fully_played === true,
     observedAt,
   };
+}
+
+function normalizedOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }
 
 function clamp(value: number, min: number, max: number): number {

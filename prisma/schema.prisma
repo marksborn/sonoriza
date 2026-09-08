@@ -545,6 +545,7 @@ model EpisodeListeningState {
   id                      String                 @id @default(cuid())
   userId                  String
   spotifyEpisodeId        String
+  spotifyShowId           String?
   spotifyUri              String
   durationMs              Int
   resumePositionMs        Int                    @default(0)
@@ -559,6 +560,7 @@ model EpisodeListeningState {
 
   @@unique([userId, spotifyEpisodeId])
   @@index([userId, status])
+  @@index([userId, spotifyShowId])
   @@index([userId, lastObservedAt])
 }
 

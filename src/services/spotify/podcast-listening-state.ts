@@ -12,7 +12,7 @@ import {
 
 export type PodcastListeningObservation = {
   spotifyEpisodeId: string;
-  spotifyShowId: string | null;
+  spotifyShowId?: string | null;
   spotifyUri: string;
   durationMs: number;
   resumePositionMs: number | null;

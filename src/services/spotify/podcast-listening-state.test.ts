@@ -12,6 +12,7 @@ const observedAt = new Date("2026-08-09T12:00:00.000Z");
 function observation(overrides: Record<string, unknown> = {}) {
   return {
     spotifyEpisodeId: "episode-1",
+    spotifyShowId: "show-a",
     spotifyUri: "spotify:episode:episode-1",
     durationMs: 100_000,
     resumePositionMs: 0,
@@ -64,6 +65,29 @@ test("progress already present on the first observation does not invent a start 
   );
 
   assert.equal(later.firstProgressObservedAt, null);
+});
+
+test("show provenance is sticky when later provider metadata omits show identity", () => {
+  const first = mergePodcastListeningState(null, observation());
+  assert.equal(first.spotifyShowId, "show-a");
+
+  const later = mergePodcastListeningState(
+    first,
+    observation({ spotifyShowId: null }),
+  );
+  assert.equal(later.spotifyShowId, "show-a");
+});
+
+test("conflicting show provenance fails closed instead of moving an episode", () => {
+  const first = mergePodcastListeningState(null, observation());
+  assert.throws(
+    () =>
+      mergePodcastListeningState(
+        first,
+        observation({ spotifyShowId: "show-b" }),
+      ),
+    /Podcast show provenance conflict/,
+  );
 });
 
 test("explicit completion becomes canonical COMPLETED without inventing baseline start time", () => {

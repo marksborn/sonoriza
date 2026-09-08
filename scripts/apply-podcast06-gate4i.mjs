@@ -174,21 +174,4 @@ replaceAllExact(
   1,
 );
 
-// Dedicated validation must keep covering every producer of show provenance.
-replaceOnce(
-  ".github/workflows/podcast-06-validation.yml",
-  `      - "src/services/spotify/podcast-listening-state.integration.test.ts"\n      - "src/services/spotify/podcast-show-cadence-contract.ts"`,
-  `      - "src/services/spotify/podcast-listening-state.integration.test.ts"\n      - "src/services/spotify/incremental-reader.ts"\n      - "src/services/spotify/podcast-authoritative-state.ts"\n      - "src/services/spotify/podcast-page-ingestion.test.ts"\n      - "src/services/spotify/podcast-authoritative-state.test.ts"\n      - "src/services/spotify/podcast-show-cadence-contract.ts"`,
-);
-replaceOnce(
-  ".github/workflows/podcast-06-validation.yml",
-  `      - "src/services/spotify/podcast-listening-state.integration.test.ts"\n      - "src/services/spotify/podcast-show-cadence-contract.ts"`,
-  `      - "src/services/spotify/podcast-listening-state.integration.test.ts"\n      - "src/services/spotify/incremental-reader.ts"\n      - "src/services/spotify/podcast-authoritative-state.ts"\n      - "src/services/spotify/podcast-page-ingestion.test.ts"\n      - "src/services/spotify/podcast-authoritative-state.test.ts"\n      - "src/services/spotify/podcast-show-cadence-contract.ts"`,
-);
-replaceOnce(
-  ".github/workflows/podcast-06-validation.yml",
-  `          src/services/spotify/podcast-listening-state.integration.test.ts\n          src/services/spotify/podcast-show-cadence-contract.test.ts`,
-  `          src/services/spotify/podcast-listening-state.integration.test.ts\n          src/services/spotify/podcast-page-ingestion.test.ts\n          src/services/spotify/podcast-authoritative-state.test.ts\n          src/services/spotify/podcast-show-cadence-contract.test.ts`,
-);
-
 console.log("PODCAST-06 Gate 4I source patch applied.");

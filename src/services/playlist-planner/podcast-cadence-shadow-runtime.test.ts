@@ -64,11 +64,13 @@ test("Scicast 1/WEEK projects limit reached but preserves IN_PROGRESS continuati
     listeningStates: [
       {
         spotifyEpisodeId: inProgress.spotifyEpisodeId!,
+        spotifyShowId: null,
         status: "IN_PROGRESS",
         firstProgressObservedAt: new Date("2026-09-07T08:20:02.363Z"),
       },
       {
         spotifyEpisodeId: next.spotifyEpisodeId!,
+        spotifyShowId: null,
         status: "NOT_STARTED",
         firstProgressObservedAt: null,
       },
@@ -103,6 +105,37 @@ test("Scicast 1/WEEK projects limit reached but preserves IN_PROGRESS continuati
   assert.deepEqual(result.plannedPodcastEpisodeIds, ["3oudiFs2CLZNfohYOuegV1"]);
 });
 
+test("canonical show provenance resolves factual consumption outside the current pool", () => {
+  const next = podcast({
+    id: "next-scicast",
+    showId: SCICAST,
+    status: "NOT_STARTED",
+  });
+  const result = projectPodcast06PlannerShadow({
+    policies: new Map([
+      [SCICAST, policy({ showId: SCICAST, max: 1, unit: "WEEK" })],
+    ]),
+    listeningStates: [
+      {
+        spotifyEpisodeId: "historical-not-in-pool",
+        spotifyShowId: SCICAST,
+        status: "COMPLETED",
+        firstProgressObservedAt: new Date("2026-09-07T12:00:00Z"),
+      },
+    ],
+    timeZone: "America/Sao_Paulo",
+    asOf: new Date("2026-09-07T22:00:00Z"),
+    candidates: [next],
+  });
+
+  assert.equal(result.status, "READY_SHADOW");
+  assert.equal(result.unresolvedFactualCount, 0);
+  assert.equal(result.shows[0]?.consumedCount, 1);
+  assert.equal(result.shows[0]?.limitReached, true);
+  assert.equal(result.shows[0]?.newEpisodeAllowedByCadence, false);
+  assert.deepEqual(result.shows[0]?.projectedBlockedEpisodeIds, ["next-scicast"]);
+});
+
 test("unresolved factual consumption fails closed instead of undercounting cadence", () => {
   const candidate = podcast({
     id: "current",
@@ -116,6 +149,7 @@ test("unresolved factual consumption fails closed instead of undercounting caden
     listeningStates: [
       {
         spotifyEpisodeId: "historical-not-in-pool",
+        spotifyShowId: null,
         status: "COMPLETED",
         firstProgressObservedAt: new Date("2026-09-07T12:00:00Z"),
       },
@@ -179,11 +213,13 @@ test("pre-plan summary is NOT_OBSERVED and only factual rows count as unresolved
     listeningStates: [
       {
         spotifyEpisodeId: "factual",
+        spotifyShowId: null,
         status: "IN_PROGRESS",
         firstProgressObservedAt: new Date("2026-09-07T08:20:02.363Z"),
       },
       {
         spotifyEpisodeId: "not-started",
+        spotifyShowId: null,
         status: "NOT_STARTED",
         firstProgressObservedAt: null,
       },
