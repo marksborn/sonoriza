@@ -10,7 +10,14 @@ import {
   runWithMusic06PlannerRuntimeState,
   type Music06PlannerRuntimeState,
 } from "@/services/music-preference";
+import {
+  createPodcast06PlannerShadowRuntimeState,
+  podcast06PlannerShadowRuntimeSummary,
+  runWithPodcast06PlannerShadowRuntimeState,
+  type Podcast06PlannerShadowRuntimeState,
+} from "@/services/playlist-planner/podcast-cadence-shadow-runtime";
 import { isSpotifyApiError } from "@/services/spotify";
+import { loadPodcastShowCadencePolicies } from "@/services/spotify/podcast-show-cadence-policy-store";
 import { refreshMusicRepeatContext } from "@/services/spotify/recently-played";
 
 import {
@@ -60,6 +67,11 @@ export type { GeneratePlaylistsOptions, GeneratePlaylistsResult };
  * It defaults to OFF. SHADOW can compute read-only diagnostics; ACTIVE requires
  * both a user allowlist and an explicit target-scoped generation, leaving Gate 4
  * as the only activation boundary.
+ *
+ * PODCAST-06 Gate 4 loads source-independent show cadence/priority policy plus
+ * canonical listening state into a shadow-only planner context. planRun may
+ * observe that context for diagnostics, but it cannot use the projection to
+ * filter or reorder candidates in this gate.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -82,13 +94,40 @@ export async function generatePlaylists(
     prepared = quarantinedMusicRepeatPreparation();
   }
 
-  const [user, firstPartyPlaybackPreferences] = await Promise.all([
+  const [
+    user,
+    firstPartyPlaybackPreferences,
+    podcast06Policies,
+    podcastListeningStates,
+  ] = await Promise.all([
     prisma.user.findUnique({
       where: { id: opts.userId },
       select: { email: true },
     }),
     prismaFirstPartyPlaybackPreferenceStore.list(opts.userId),
+    loadPodcastShowCadencePolicies(opts.userId),
+    prisma.episodeListeningState.findMany({
+      where: { userId: opts.userId },
+      select: {
+        spotifyEpisodeId: true,
+        status: true,
+        firstProgressObservedAt: true,
+      },
+    }),
   ]);
+
+  const podcast06State = createPodcast06PlannerShadowRuntimeState({
+    policies: podcast06Policies,
+    listeningStates: podcastListeningStates.map((state) => ({
+      spotifyEpisodeId: state.spotifyEpisodeId,
+      status: state.status,
+      firstProgressObservedAt: state.firstProgressObservedAt,
+    })),
+    timeZone: process.env.PODCAST_06_SHADOW_TIMEZONE ?? null,
+    // Cadence consumption is execution-time behavioral evidence, not the date
+    // used to resolve a calendar duration for the destination.
+    asOf: new Date(),
+  });
 
   const music07Eligibility = await prepareMusic07EligibilityRuntime({
     userId: opts.userId,
@@ -165,14 +204,18 @@ export async function generatePlaylists(
     likedTrackSourceShadow: null,
   };
 
-  const result = await runWithMusicRepeatState(state, () =>
-    runWithMusic06PlannerRuntimeState(music06State, () =>
-      runWithDiscoveryRuntimeState(discoveryState, () =>
-        runWithTargetDiscoveryRuntimeState(targetDiscoveryState, () =>
-          generatePlaylistsIncremental(opts),
+  const result = await runWithPodcast06PlannerShadowRuntimeState(
+    podcast06State,
+    () =>
+      runWithMusicRepeatState(state, () =>
+        runWithMusic06PlannerRuntimeState(music06State, () =>
+          runWithDiscoveryRuntimeState(discoveryState, () =>
+            runWithTargetDiscoveryRuntimeState(targetDiscoveryState, () =>
+              generatePlaylistsIncremental(opts),
+            ),
+          ),
         ),
       ),
-    ),
   );
 
   // The underlying generator is authoritative for the execution result. If the
@@ -185,6 +228,7 @@ export async function generatePlaylists(
       music06State,
       discoveryState,
       targetDiscoveryState,
+      podcast06State,
     );
   } catch (error) {
     try {
@@ -211,6 +255,7 @@ async function appendRuntimeSummary(
   music06State: Music06PlannerRuntimeState,
   discoveryState: DiscoveryRuntimeState,
   targetDiscoveryState: TargetDiscoveryRuntimeState,
+  podcast06State: Podcast06PlannerShadowRuntimeState,
 ): Promise<void> {
   const run = await prisma.generationRun.findUnique({
     where: { id: runId },
@@ -242,6 +287,8 @@ async function appendRuntimeSummary(
         discoveryRuntime: discoveryRuntimeSummary(discoveryState),
         targetDiscoveryRuntime: targetDiscoveryRuntimeSummary(targetDiscoveryState),
         likedTrackSourceShadow: state.likedTrackSourceShadow ?? null,
+        podcast06PlannerShadow:
+          podcast06PlannerShadowRuntimeSummary(podcast06State),
       } as Prisma.InputJsonValue,
     },
   });
