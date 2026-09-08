@@ -11,6 +11,7 @@ import type { Candidate } from "./types";
 
 export type Podcast06ListeningStateEvidence = Readonly<{
   spotifyEpisodeId: string;
+  spotifyShowId: string | null;
   status: PodcastCadenceListeningStatus;
   firstProgressObservedAt: Date | null;
 }>;
@@ -84,8 +85,10 @@ export function createPodcast06PlannerShadowRuntimeState(input: {
     evidence: emptyEvidence({
       policyCount: input.policies.size,
       listeningStateCount: input.listeningStates.length,
-      factualListeningStateCount: input.listeningStates.filter(
-        (entry) => entry.firstProgressObservedAt !== null,
+      unresolvedFactualListeningStateCount: input.listeningStates.filter(
+        (entry) =>
+          entry.firstProgressObservedAt !== null &&
+          normalizedOptionalText(entry.spotifyShowId) === null,
       ).length,
       timeZone,
       asOf: input.asOf,
@@ -156,7 +159,10 @@ export function projectPodcast06PlannerShadow(input: {
   let resolvedListeningStateCount = 0;
   let unresolvedFactualCount = 0;
   for (const listeningState of input.listeningStates) {
-    const spotifyShowId = episodeToShow.get(listeningState.spotifyEpisodeId) ?? null;
+    const spotifyShowId =
+      normalizedOptionalText(listeningState.spotifyShowId) ??
+      episodeToShow.get(listeningState.spotifyEpisodeId) ??
+      null;
     if (spotifyShowId) resolvedListeningStateCount += 1;
     else if (listeningState.firstProgressObservedAt) unresolvedFactualCount += 1;
     evidence.push({
@@ -325,7 +331,7 @@ function stablePriorityProjection(
 function emptyEvidence(input: {
   policyCount: number;
   listeningStateCount: number;
-  factualListeningStateCount: number;
+  unresolvedFactualListeningStateCount: number;
   timeZone: string | null;
   asOf: Date;
 }): Podcast06PlannerShadowEvidence {
@@ -348,7 +354,7 @@ function emptyEvidence(input: {
     listeningStateCount: input.listeningStateCount,
     resolvedListeningStateCount: 0,
     unresolvedStateCount: input.listeningStateCount,
-    unresolvedFactualCount: input.factualListeningStateCount,
+    unresolvedFactualCount: input.unresolvedFactualListeningStateCount,
     projectedPriorityMovedCount: 0,
     projectedPriorityOrderEpisodeIds: [],
     actualPoolOrderEpisodeIds: [],

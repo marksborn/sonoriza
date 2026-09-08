@@ -651,6 +651,9 @@ function createPodcastCollector(
           const resumePoint = episode.resume_point ?? null;
           observations.push({
             spotifyEpisodeId,
+            spotifyShowId:
+              normalizedOptionalText(episode.show?.id) ??
+              normalizedOptionalText(fallbackProgramId),
             spotifyUri: episode.uri,
             durationMs: originalDurationMs,
             resumePositionMs: resumePoint
@@ -690,7 +693,9 @@ function createPodcastCollector(
           const state = canonicalStates.get(spotifyEpisodeId);
           if (!state) continue;
 
-          const programId = episode.show?.id ?? fallbackProgramId;
+          const programId =
+            normalizedOptionalText(episode.show?.id) ??
+            normalizedOptionalText(fallbackProgramId);
           if (
             programId &&
             options.sourceSpotifyType !== "SHOW" &&
@@ -736,7 +741,7 @@ function createPodcastCollector(
             type: "PODCAST",
             title: episode.name,
             subtitle: episode.show?.name,
-            programId,
+            programId: programId ?? undefined,
             durationMs,
             originalDurationMs,
             resumePositionMs,
@@ -835,6 +840,11 @@ function isEpisodeResponse(value: unknown): value is EpisodeResponse {
 
 function stripBase(url: string): string {
   return url.startsWith(API) ? url.slice(API.length) : url;
+}
+
+function normalizedOptionalText(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }
 
 function clamp(value: number, min: number, max: number): number {
