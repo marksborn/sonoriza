@@ -11,6 +11,9 @@ on:
       - "src/services/playlist-planner/plan-run.ts"
       - "src/services/playlist-planner/podcast-cadence-shadow-runtime.ts"
       - "src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts"
+      - "src/services/spotify/podcast-listening-state.ts"
+      - "src/services/spotify/podcast-listening-state.test.ts"
+      - "src/services/spotify/podcast-listening-state.integration.test.ts"
       - "src/services/spotify/podcast-show-cadence-contract.ts"
       - "src/services/spotify/podcast-show-cadence-contract.test.ts"
       - "src/services/spotify/podcast-show-cadence-shadow.ts"
@@ -34,6 +37,9 @@ on:
       - "src/services/playlist-planner/plan-run.ts"
       - "src/services/playlist-planner/podcast-cadence-shadow-runtime.ts"
       - "src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts"
+      - "src/services/spotify/podcast-listening-state.ts"
+      - "src/services/spotify/podcast-listening-state.test.ts"
+      - "src/services/spotify/podcast-listening-state.integration.test.ts"
       - "src/services/spotify/podcast-show-cadence-contract.ts"
       - "src/services/spotify/podcast-show-cadence-contract.test.ts"
       - "src/services/spotify/podcast-show-cadence-shadow.ts"
@@ -78,6 +84,7 @@ jobs:
       SPOTIFY_CLIENT_ID: test
       SPOTIFY_CLIENT_SECRET: test
       PODCAST_06_DB_TEST: "1"
+      PODCAST_LISTENING_STATE_DB_TEST: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -88,9 +95,11 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PODCAST-06 contract + cadence shadow + cross-source store + planner shadow + PODCAST-05 regression
+      - name: PODCAST-06 contract + cadence shadow + progress provenance + cross-source store + planner shadow + PODCAST-05 regression
         run: >-
           npx tsx --test
+          src/services/spotify/podcast-listening-state.test.ts
+          src/services/spotify/podcast-listening-state.integration.test.ts
           src/services/spotify/podcast-show-cadence-contract.test.ts
           src/services/spotify/podcast-show-cadence-shadow.test.ts
           src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts
