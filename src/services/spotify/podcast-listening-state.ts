@@ -1,5 +1,4 @@
 import {
-  Prisma,
   type EpisodeListeningState,
   type PodcastListeningStatus,
 } from "@prisma/client";
@@ -46,10 +45,9 @@ type ExistingPodcastListeningState = Pick<
   | "resumePositionMs"
   | "fullyPlayed"
   | "status"
+  | "firstProgressObservedAt"
   | "lastObservedAt"
-> & {
-  firstProgressObservedAt?: Date | null;
-};
+>;
 
 /**
  * Canonical merge policy for PODCAST-04/PODCAST-05.
@@ -60,8 +58,9 @@ type ExistingPodcastListeningState = Pick<
  * source policy.
  *
  * Before completion, progress is monotonic. PODCAST-05 additionally remembers
- * the first time positive progress was observed, allowing a freshness policy to
- * distinguish "started while fresh" from "started after expiry".
+ * the first observed transition from a known zero-progress canonical state to
+ * positive progress. An episode first discovered with existing progress keeps
+ * firstProgressObservedAt=null because its real start time is not known.
  */
 export function mergePodcastListeningState(
   existing: ExistingPodcastListeningState | null,
@@ -83,7 +82,12 @@ export function mergePodcastListeningState(
   );
   const firstProgressObservedAt =
     existing?.firstProgressObservedAt ??
-    (observedResume !== null && observedResume > 0 ? observedAt : null);
+    (existing !== null &&
+    existing.resumePositionMs === 0 &&
+    observedResume !== null &&
+    observedResume > 0
+      ? observedAt
+      : null);
 
   if (existing?.status === "COMPLETED" || observation.fullyPlayed === true) {
     return {
@@ -138,30 +142,8 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
             spotifyEpisodeId: { in: ids },
           },
         });
-        const progressRows = await tx.$queryRaw<Array<{
-          spotifyEpisodeId: string;
-          firstProgressObservedAt: Date | null;
-        }>>`
-          SELECT "spotifyEpisodeId", "firstProgressObservedAt"
-          FROM "EpisodeListeningState"
-          WHERE "userId" = ${userId}
-            AND "spotifyEpisodeId" IN (${Prisma.join(ids)})
-        `;
-        const firstProgressById = new Map(
-          progressRows.map((entry) => [
-            entry.spotifyEpisodeId,
-            entry.firstProgressObservedAt,
-          ]),
-        );
         const existingById = new Map(
-          existing.map((entry) => [
-            entry.spotifyEpisodeId,
-            {
-              ...entry,
-              firstProgressObservedAt:
-                firstProgressById.get(entry.spotifyEpisodeId) ?? null,
-            },
-          ]),
+          existing.map((entry) => [entry.spotifyEpisodeId, entry]),
         );
         const resolved = normalized.map((observation) =>
           mergePodcastListeningState(
@@ -186,6 +168,7 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
               resumePositionMs: state.resumePositionMs,
               fullyPlayed: state.fullyPlayed,
               status: state.status,
+              firstProgressObservedAt: state.firstProgressObservedAt,
               lastObservedAt: state.lastObservedAt,
             },
             update: {
@@ -194,21 +177,10 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
               resumePositionMs: state.resumePositionMs,
               fullyPlayed: state.fullyPlayed,
               status: state.status,
+              firstProgressObservedAt: state.firstProgressObservedAt,
               lastObservedAt: state.lastObservedAt,
             },
           });
-
-          if (state.firstProgressObservedAt) {
-            await tx.$executeRaw`
-              UPDATE "EpisodeListeningState"
-              SET "firstProgressObservedAt" = COALESCE(
-                "firstProgressObservedAt",
-                ${state.firstProgressObservedAt}
-              )
-              WHERE "userId" = ${userId}
-                AND "spotifyEpisodeId" = ${state.spotifyEpisodeId}
-            `;
-          }
         }
 
         return resolved;

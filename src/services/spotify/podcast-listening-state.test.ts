@@ -29,26 +29,51 @@ test("episode identity is derived from canonical Spotify episode URI", () => {
   assert.equal(spotifyEpisodeIdFromUri("spotify:track:abc123"), null);
 });
 
-test("zero progress is NOT_STARTED and positive progress is IN_PROGRESS", () => {
+test("zero progress is NOT_STARTED and a later observed transition becomes IN_PROGRESS", () => {
   const fresh = mergePodcastListeningState(null, observation());
   assert.equal(fresh.status, "NOT_STARTED");
   assert.equal(fresh.resumePositionMs, 0);
+  assert.equal(fresh.firstProgressObservedAt, null);
 
+  const transitionAt = new Date("2026-08-09T13:00:00.000Z");
   const progress = mergePodcastListeningState(
     fresh,
-    observation({ resumePositionMs: 35_000 }),
+    observation({ resumePositionMs: 35_000, observedAt: transitionAt }),
   );
   assert.equal(progress.status, "IN_PROGRESS");
   assert.equal(progress.resumePositionMs, 35_000);
+  assert.equal(progress.firstProgressObservedAt?.toISOString(), transitionAt.toISOString());
 });
 
-test("explicit completion becomes canonical COMPLETED", () => {
+test("progress already present on the first observation does not invent a start timestamp", () => {
+  const baseline = mergePodcastListeningState(
+    null,
+    observation({ resumePositionMs: 35_000 }),
+  );
+
+  assert.equal(baseline.status, "IN_PROGRESS");
+  assert.equal(baseline.resumePositionMs, 35_000);
+  assert.equal(baseline.firstProgressObservedAt, null);
+
+  const later = mergePodcastListeningState(
+    baseline,
+    observation({
+      resumePositionMs: 40_000,
+      observedAt: new Date("2026-08-10T12:00:00.000Z"),
+    }),
+  );
+
+  assert.equal(later.firstProgressObservedAt, null);
+});
+
+test("explicit completion becomes canonical COMPLETED without inventing baseline start time", () => {
   const state = mergePodcastListeningState(
     null,
     observation({ resumePositionMs: 98_000, fullyPlayed: true }),
   );
   assert.equal(state.status, "COMPLETED");
   assert.equal(state.fullyPlayed, true);
+  assert.equal(state.firstProgressObservedAt, null);
 });
 
 test("COMPLETED is sticky when Spotify later resets or omits resume representation", () => {
@@ -95,4 +120,5 @@ test("volatile store preserves canonical state across observations without mixin
 
   assert.equal(resolved.get("episode-1")?.status, "IN_PROGRESS");
   assert.equal(resolved.get("episode-1")?.resumePositionMs, 45_000);
+  assert.equal(resolved.get("episode-1")?.firstProgressObservedAt, null);
 });
