@@ -68,10 +68,11 @@ export type { GeneratePlaylistsOptions, GeneratePlaylistsResult };
  * both a user allowlist and an explicit target-scoped generation, leaving Gate 4
  * as the only activation boundary.
  *
- * PODCAST-06 Gate 4 loads source-independent show cadence/priority policy plus
- * canonical listening state into a shadow-only planner context. planRun may
- * observe that context for diagnostics, but it cannot use the projection to
- * filter or reorder candidates in this gate.
+ * PODCAST-06 Gate 5A upgrades the validated Gate 4 shadow to an explicit
+ * OFF/SHADOW/ACTIVE runtime. The default remains SHADOW. ACTIVE requires an
+ * exact user-email allowlist match and still fails closed to the original pool
+ * unless timezone, candidate show identity and factual show provenance are all
+ * complete enough for READY_SHADOW.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -126,6 +127,10 @@ export async function generatePlaylists(
       firstProgressObservedAt: state.firstProgressObservedAt,
     })),
     timeZone: process.env.PODCAST_06_SHADOW_TIMEZONE ?? null,
+    requestedMode: process.env.PODCAST_06_PLANNER_MODE ?? "SHADOW",
+    userEmail: user?.email ?? null,
+    activeEmailAllowlist:
+      process.env.PODCAST_06_PLANNER_EMAIL_ALLOWLIST ?? null,
     // Cadence consumption is execution-time behavioral evidence, not the date
     // used to resolve a calendar duration for the destination.
     asOf: new Date(),
