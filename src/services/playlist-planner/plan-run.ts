@@ -1,4 +1,7 @@
-import { capturePodcast06PlannerShadow } from "./podcast-cadence-shadow-runtime";
+import {
+  applyPodcast06PlannerRuntimeToCandidates,
+  capturePodcast06PlannerShadow,
+} from "./podcast-cadence-shadow-runtime";
 import { planPlaylist, type PlannerPools } from "./planner";
 import type {
   Candidate,
@@ -59,9 +62,11 @@ export interface PlanRunResult {
  * selected items/constraints from earlier blocks threaded forward, and the
  * resulting items are concatenated into one final destination.
  *
- * No Spotify/database access occurs here. PODCAST-06 Gate 4 may observe the
- * exact input/output through an AsyncLocal shadow context, but that observer
- * cannot replace pools, items, rules or the returned plan.
+ * No Spotify/database access occurs here. PODCAST-06 Gate 5A may replace only
+ * the fresh podcast candidate pool before the existing planner when its runtime
+ * is ACTIVE and fully READY. OFF/SHADOW/abstention return the original pool.
+ * Existing preserved remote items stay stable because placement alone is not a
+ * cadence-consumption event; IN_PROGRESS continuation is also never blocked.
  */
 export function planRun({
   pools,
@@ -75,12 +80,15 @@ export function planRun({
   const reserved = new Set<string>(initialReserved ?? []);
   const globalPodcastProgramCounts = new Map<string, number>();
   const results: PlanRunTargetResult[] = [];
+  const podcastRuntimePool = applyPodcast06PlannerRuntimeToCandidates(
+    pools.podcasts,
+  );
 
   for (const target of ordered) {
     const targetMusicPool =
       musicPoolByTargetId?.get(target.targetPlaylistId) ?? pools.music;
     const podcastPool = applyGlobalPodcastPolicyToPool({
-      candidates: pools.podcasts,
+      candidates: podcastRuntimePool,
       reserved,
       globalProgramCounts: globalPodcastProgramCounts,
       rules: target.rules,
