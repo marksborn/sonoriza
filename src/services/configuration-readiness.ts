@@ -125,78 +125,94 @@ function normalizeCalendarIds(values: readonly string[]): string[] {
 export async function assessConfiguration(
   userId: string,
 ): Promise<ConfigurationAssessment> {
-  const [accounts, calendarsRaw, sourcesRaw, targetsRaw, musicPolicyRaw] =
-    await Promise.all([
-      prisma.account.findMany({
-        where: { userId, provider: { in: ["google", "spotify"] } },
-        select: { provider: true, scope: true },
-      }),
-      prisma.calendarSelection.findMany({
-        where: { userId, selected: true },
-        orderBy: [{ usedForDuration: "desc" }, { summary: "asc" }],
-        select: {
-          id: true,
-          googleCalendarId: true,
-          summary: true,
-          usedForDuration: true,
+  const [
+    accounts,
+    calendarsRaw,
+    sourcesRaw,
+    targetsRaw,
+    musicPolicyRaw,
+    podcastCadencePoliciesRaw,
+  ] = await Promise.all([
+    prisma.account.findMany({
+      where: { userId, provider: { in: ["google", "spotify"] } },
+      select: { provider: true, scope: true },
+    }),
+    prisma.calendarSelection.findMany({
+      where: { userId, selected: true },
+      orderBy: [{ usedForDuration: "desc" }, { summary: "asc" }],
+      select: {
+        id: true,
+        googleCalendarId: true,
+        summary: true,
+        usedForDuration: true,
+      },
+    }),
+    prisma.sourcePlaylist.findMany({
+      where: { userId, enabled: true },
+      orderBy: [{ kind: "asc" }, { name: "asc" }, { spotifyId: "asc" }],
+      select: {
+        id: true,
+        kind: true,
+        spotifyType: true,
+        spotifyId: true,
+        name: true,
+        includePlayed: true,
+        episodeOrder: true,
+      },
+    }),
+    prisma.targetPlaylist.findMany({
+      where: { userId, enabled: true },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        spotifyPlaylistId: true,
+        priority: true,
+        durationMode: true,
+        fixedDurationSeconds: true,
+        calendarMode: true,
+        calendarSelections: {
+          select: { calendarSelectionId: true },
         },
-      }),
-      prisma.sourcePlaylist.findMany({
-        where: { userId, enabled: true },
-        orderBy: [{ kind: "asc" }, { name: "asc" }, { spotifyId: "asc" }],
-        select: {
-          id: true,
-          kind: true,
-          spotifyType: true,
-          spotifyId: true,
-          name: true,
-          includePlayed: true,
-          episodeOrder: true,
-        },
-      }),
-      prisma.targetPlaylist.findMany({
-        where: { userId, enabled: true },
-        orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-        select: {
-          id: true,
-          name: true,
-          spotifyPlaylistId: true,
-          priority: true,
-          durationMode: true,
-          fixedDurationSeconds: true,
-          calendarMode: true,
-          calendarSelections: {
-            select: { calendarSelectionId: true },
-          },
-          emptyCalendarBehavior: true,
-          calendarEventFilterMode: true,
-          calendarEventMarker: true,
-          calendarDurationStrategy: true,
-          compositionMode: true,
-          musicOrderMode: true,
-          podcastPercent: true,
-          podcastEpisodeMaxDurationMode: true,
-          podcastEpisodeMaxDurationSeconds: true,
-          sequencePattern: true,
-          maxEpisodesPerProgram: true,
-          maxTracksPerArtist: true,
-          maxTracksPerAlbum: true,
-          updatePolicy: true,
-          dailyScheduleMinutes: true,
-          scheduleTimezone: true,
-        },
-      }),
-      prisma.musicPlaybackPolicy.findUnique({
-        where: { userId },
-        select: {
-          enabled: true,
-          windowValue: true,
-          windowUnit: true,
-          historyKnownSince: true,
-          lastSyncAt: true,
-        },
-      }),
-    ]);
+        emptyCalendarBehavior: true,
+        calendarEventFilterMode: true,
+        calendarEventMarker: true,
+        calendarDurationStrategy: true,
+        compositionMode: true,
+        musicOrderMode: true,
+        podcastPercent: true,
+        podcastEpisodeMaxDurationMode: true,
+        podcastEpisodeMaxDurationSeconds: true,
+        sequencePattern: true,
+        maxEpisodesPerProgram: true,
+        maxTracksPerArtist: true,
+        maxTracksPerAlbum: true,
+        updatePolicy: true,
+        dailyScheduleMinutes: true,
+        scheduleTimezone: true,
+      },
+    }),
+    prisma.musicPlaybackPolicy.findUnique({
+      where: { userId },
+      select: {
+        enabled: true,
+        windowValue: true,
+        windowUnit: true,
+        historyKnownSince: true,
+        lastSyncAt: true,
+      },
+    }),
+    prisma.podcastShowCadencePolicy.findMany({
+      where: { userId },
+      orderBy: { spotifyShowId: "asc" },
+      select: {
+        spotifyShowId: true,
+        cadenceMaxEpisodes: true,
+        cadenceUnit: true,
+        priority: true,
+      },
+    }),
+  ]);
 
   const providers = new Set(accounts.map((account) => account.provider));
   const hasGoogle = providers.has("google");
@@ -229,6 +245,23 @@ export async function assessConfiguration(
   }));
 
   const sources = sourcesRaw.map((source) => ({ ...source }));
+  const cadencePolicyByShow = new Map(
+    podcastCadencePoliciesRaw.map((policy) => [policy.spotifyShowId, policy] as const),
+  );
+  const podcastShowCadencePolicies = sources
+    .filter(
+      (source) => source.kind === "PODCAST" && source.spotifyType === "SHOW",
+    )
+    .map((source) => {
+      const policy = cadencePolicyByShow.get(source.spotifyId);
+      return {
+        spotifyShowId: source.spotifyId,
+        cadenceMaxEpisodes: policy?.cadenceMaxEpisodes ?? null,
+        cadenceUnit: policy?.cadenceUnit ?? null,
+        priority: policy?.priority ?? "NORMAL",
+      };
+    })
+    .sort((left, right) => left.spotifyShowId.localeCompare(right.spotifyShowId));
   const targets = targetsRaw.map((target) => ({
     id: target.id,
     name: target.name,
@@ -600,6 +633,7 @@ export async function assessConfiguration(
       windowValue: musicRepeatPolicy.enabled ? musicRepeatPolicy.windowValue : null,
       windowUnit: musicRepeatPolicy.enabled ? musicRepeatPolicy.windowUnit : null,
     },
+    podcastShowCadencePolicies,
     sources: sources
       .map((source) => ({
         kind: source.kind,
