@@ -5,12 +5,20 @@ import { generatePlaylists } from "@/jobs/generate-playlists";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  assessCalendar03GenerationConfiguration,
+} from "@/services/calendar-event-composition-generation";
+import {
   assessConfiguration,
   getFirstRunGate,
 } from "@/services/configuration-readiness";
 import { parseMusic06RunExplainability } from "@/services/music-preference/lastfm-planner-explainability";
 import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
 import { dispatchGenerationRunNotificationSafely } from "@/services/notifications";
+import {
+  calendar03PlannerRuntimeSummary,
+  createCalendar03PlannerRuntimeState,
+  runWithCalendar03PlannerRuntimeState,
+} from "@/services/playlist-planner/calendar-event-composition-runtime";
 import {
   getActiveSpotifyBackoff,
   spotifyBackoffApiPayload,
@@ -25,7 +33,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [assessment, spotifyBackoff, recentRealRuns] = await Promise.all([
+  const [baseAssessment, spotifyBackoff, recentRealRuns] = await Promise.all([
     assessConfiguration(session.user.id),
     getActiveSpotifyBackoff(),
     prisma.generationRun.findMany({
@@ -40,6 +48,10 @@ export async function GET() {
       },
     }),
   ]);
+  const { assessment } = await assessCalendar03GenerationConfiguration(
+    session.user.id,
+    baseAssessment,
+  );
   const gate = await getFirstRunGate(session.user.id, assessment);
 
   return NextResponse.json({
@@ -151,7 +163,12 @@ export async function POST(request: Request) {
     }
   }
 
-  const assessment = await assessConfiguration(session.user.id);
+  const baseAssessment = await assessConfiguration(session.user.id);
+  const calendar03Configuration = await assessCalendar03GenerationConfiguration(
+    session.user.id,
+    baseAssessment,
+  );
+  const assessment = calendar03Configuration.assessment;
   if (assessment.issues.length > 0) {
     return NextResponse.json(
       {
@@ -185,13 +202,26 @@ export async function POST(request: Request) {
         assessment.fingerprint,
       );
 
-  const result = await generatePlaylists({
-    userId: session.user.id,
-    trigger: simulate ? "SIMULATION" : "MANUAL",
-    simulate,
-    musicOrderSimulationEvidence,
-    targetPlaylistIds,
+  const calendar03State = createCalendar03PlannerRuntimeState({
+    policies: calendar03Configuration.policies,
+    requestedMode: process.env.CALENDAR_03_PLANNER_MODE ?? "SHADOW",
+    userEmail: session.user.email ?? null,
+    activeEmailAllowlist:
+      process.env.CALENDAR_03_PLANNER_EMAIL_ALLOWLIST ?? null,
+    activeTargetIds: process.env.CALENDAR_03_PLANNER_TARGET_IDS ?? null,
   });
+
+  const result = await runWithCalendar03PlannerRuntimeState(
+    calendar03State,
+    () =>
+      generatePlaylists({
+        userId: session.user.id,
+        trigger: simulate ? "SIMULATION" : "MANUAL",
+        simulate,
+        musicOrderSimulationEvidence,
+        targetPlaylistIds,
+      }),
+  );
 
   const run = await prisma.generationRun.findFirst({
     where: {
@@ -222,6 +252,7 @@ export async function POST(request: Request) {
       summary: {
         ...existingSummary,
         configurationFingerprint: assessment.fingerprint,
+        calendar03PlannerRuntime: calendar03PlannerRuntimeSummary(calendar03State),
       } as Prisma.InputJsonValue,
     },
   });
