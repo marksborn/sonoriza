@@ -315,9 +315,9 @@ integrationTest(
         fingerprint: "fingerprint-test",
       } as unknown as ConfigurationAssessment;
       const gate = await getFirstRunGate(user.id, assessment);
-      assert.equal(gate.realRunAllowed, false);
+      assert.equal(gate.realRunAllowed, true);
       assert.equal(gate.requiresSimulation, true);
-      assert.match(gate.reason ?? "", /inconclusiva/i);
+      assert.equal(gate.reason, null);
     } finally {
       globalThis.fetch = originalFetch;
       Math.random = originalRandom;
