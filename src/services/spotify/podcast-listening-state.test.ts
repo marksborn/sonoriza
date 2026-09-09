@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createVolatilePodcastListeningStateStore,
   mergePodcastListeningState,
+  PODCAST_LISTENING_STATE_TRANSACTION_TIMEOUT_MS,
   spotifyEpisodeIdFromUri,
 } from "./podcast-listening-state";
 
@@ -21,6 +22,11 @@ function observation(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as const;
 }
+
+test("canonical listening-state transaction budget is above Prisma's 5s default", () => {
+  assert.equal(PODCAST_LISTENING_STATE_TRANSACTION_TIMEOUT_MS, 20_000);
+  assert.ok(PODCAST_LISTENING_STATE_TRANSACTION_TIMEOUT_MS > 5_000);
+});
 
 test("episode identity is derived from canonical Spotify episode URI", () => {
   assert.equal(
