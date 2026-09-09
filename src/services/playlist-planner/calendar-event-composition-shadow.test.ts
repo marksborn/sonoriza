@@ -282,6 +282,63 @@ test("maxPodcastsPerEvent supports multiple whole podcasts inside the same windo
   assert.equal(projection.blocks[0]?.filledDurationMs, 30 * MINUTE);
 });
 
+test("per-show cap is threaded across event blocks instead of resetting per window", () => {
+  const sameShow = "show:shared";
+  const projection = projectCalendar03EventComposition({
+    policy: policy(),
+    blocks: [
+      { key: "E1", targetDurationMs: 10 * MINUTE },
+      { key: "E2", targetDurationMs: 10 * MINUTE },
+    ],
+    rules: rules({ maxEpisodesPerProgram: 1 }),
+    pools: {
+      podcasts: [
+        podcast("shared-1", 5, { programId: sameShow }),
+        podcast("shared-2", 5, { programId: sameShow }),
+      ],
+      music: fiveMinuteMusic(4),
+    },
+  });
+
+  assert.deepEqual(projection.blocks[0]?.selectedPodcastUris, [
+    "spotify:episode:shared-1",
+  ]);
+  assert.deepEqual(projection.blocks[1]?.selectedPodcastUris, []);
+  assert.deepEqual(projection.blocks[1]?.diagnosticCodes, [
+    "EVENT_PODCAST_NO_FITTING_CANDIDATE",
+  ]);
+});
+
+test("strict sequence does not jump to a later episode of the same show when the head does not fit", () => {
+  const strictShow = "show:strict";
+  const projection = projectCalendar03EventComposition({
+    policy: policy(),
+    blocks: [{ key: "15-min", targetDurationMs: 15 * MINUTE }],
+    rules: rules(),
+    pools: {
+      podcasts: [
+        podcast("strict-head", 20, {
+          programId: strictShow,
+          podcastStrictSequence: true,
+        }),
+        podcast("strict-next", 10, {
+          programId: strictShow,
+          podcastStrictSequence: true,
+        }),
+        podcast("other-show", 8),
+      ],
+      music: [music("fill-7", 7)],
+    },
+  });
+
+  assert.deepEqual(projection.blocks[0]?.selectedPodcastUris, [
+    "spotify:episode:other-show",
+  ]);
+  assert.ok(
+    !projection.items.some((item) => item.uri === "spotify:episode:strict-next"),
+  );
+});
+
 test("Gate 2 abstains instead of applying PODCAST_THEN_MUSIC to SUMMED/inherit paths", () => {
   const noBlocks = projectCalendar03EventComposition({
     policy: policy(),
