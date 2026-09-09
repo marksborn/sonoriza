@@ -7,7 +7,10 @@ on:
       - "prisma/podcast-show-cadence-policy.prisma"
       - "prisma/migrations/**"
       - "scripts/report-podcast-show-cadence-gate2.ts"
+      - "src/app/dashboard/configuracao/fontes/podcasts/**"
       - "src/jobs/generate-playlists.ts"
+      - "src/services/configuration-readiness.ts"
+      - "src/services/configuration-readiness-podcast06.test.ts"
       - "src/services/playlist-planner/plan-run.ts"
       - "src/services/playlist-planner/podcast-cadence-shadow-runtime.ts"
       - "src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts"
@@ -24,6 +27,7 @@ on:
       - "src/services/spotify/podcast-show-policy-v2.test.ts"
       - "src/services/spotify/podcast-show-policy-store.ts"
       - "src/services/spotify/podcast-show-policy-store.integration.test.ts"
+      - "src/services/spotify/podcast-show-policy-ui-podcast06.test.ts"
       - ".github/workflows/podcast-06-validation.yml"
   push:
     branches:
@@ -33,7 +37,10 @@ on:
       - "prisma/podcast-show-cadence-policy.prisma"
       - "prisma/migrations/**"
       - "scripts/report-podcast-show-cadence-gate2.ts"
+      - "src/app/dashboard/configuracao/fontes/podcasts/**"
       - "src/jobs/generate-playlists.ts"
+      - "src/services/configuration-readiness.ts"
+      - "src/services/configuration-readiness-podcast06.test.ts"
       - "src/services/playlist-planner/plan-run.ts"
       - "src/services/playlist-planner/podcast-cadence-shadow-runtime.ts"
       - "src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts"
@@ -50,6 +57,7 @@ on:
       - "src/services/spotify/podcast-show-policy-v2.test.ts"
       - "src/services/spotify/podcast-show-policy-store.ts"
       - "src/services/spotify/podcast-show-policy-store.integration.test.ts"
+      - "src/services/spotify/podcast-show-policy-ui-podcast06.test.ts"
       - ".github/workflows/podcast-06-validation.yml"
   workflow_dispatch:
 
@@ -95,15 +103,17 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PODCAST-06 contract + cadence shadow + progress provenance + cross-source store + planner shadow + PODCAST-05 regression
+      - name: PODCAST-06 contract + cadence shadow + progress provenance + cross-source store + planner shadow + UI/fingerprint + PODCAST-05 regression
         run: >-
           npx tsx --test
+          src/services/configuration-readiness-podcast06.test.ts
           src/services/spotify/podcast-listening-state.test.ts
           src/services/spotify/podcast-listening-state.integration.test.ts
           src/services/spotify/podcast-show-cadence-contract.test.ts
           src/services/spotify/podcast-show-cadence-shadow.test.ts
           src/services/playlist-planner/podcast-cadence-shadow-runtime.test.ts
           src/services/spotify/podcast-show-policy-store.integration.test.ts
+          src/services/spotify/podcast-show-policy-ui-podcast06.test.ts
           src/services/spotify/podcast-show-policy.test.ts
           src/services/spotify/podcast-show-policy-v2.test.ts
       - run: npm run typecheck
