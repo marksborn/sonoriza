@@ -1,0 +1,34 @@
+// ---------------------------------------------------------------------------
+// CALENDAR-03 Gate 1 — canonical per-target event composition policy.
+//
+// This model is deliberately separate from TargetPlaylist so Gate 1 can land
+// persistence and validation without changing the planner contract. Absence of
+// a row is equivalent to the backward-compatible defaults exposed by the
+// service contract.
+// ---------------------------------------------------------------------------
+
+enum EventCompositionPolicy {
+  INHERIT_DESTINATION
+  PODCAST_THEN_MUSIC
+}
+
+enum PodcastEventDistribution {
+  EVERY_EVENT
+  EVERY_N_EVENTS
+}
+
+model CalendarEventCompositionPolicy {
+  userId                          String
+  targetPlaylistId                String
+  eventCompositionPolicy          EventCompositionPolicy  @default(INHERIT_DESTINATION)
+  maxPodcastsPerEvent             Int                     @default(1)
+  podcastEventSafetyMarginSeconds Int                     @default(0)
+  podcastEventDistribution        PodcastEventDistribution @default(EVERY_EVENT)
+  podcastEveryNEvents             Int                     @default(1)
+  podcastEventOffset              Int                     @default(0)
+  createdAt                       DateTime                @default(now())
+  updatedAt                       DateTime                @updatedAt
+
+  @@id([userId, targetPlaylistId])
+  @@index([userId, eventCompositionPolicy])
+}
