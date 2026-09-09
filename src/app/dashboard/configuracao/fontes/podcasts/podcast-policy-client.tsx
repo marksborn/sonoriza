@@ -15,6 +15,9 @@ export type PodcastPolicyClientValue = {
   maxReleaseAgeDays: number | null;
   expiryPolicy: "STRICT_EXPIRY" | "ALLOW_IN_PROGRESS_TO_FINISH";
   maxEpisodesPerCycle: number | null;
+  cadenceMaxEpisodes: number | null;
+  cadenceUnit: "DAY" | "WEEK" | "MONTH" | null;
+  priority: "NORMAL" | "PRIORITY";
   publishedCount: number;
 };
 
@@ -26,6 +29,8 @@ export type PodcastPolicyClientShow = {
 };
 
 type ServerFormAction = (formData: FormData) => Promise<void>;
+
+type CadenceMode = "UNLIMITED" | "LIMITED";
 
 const selectClass =
   "w-full rounded-xl border border-line-dark bg-surface-dark px-3 py-2.5 text-sm font-bold text-ink-inverse outline-none transition focus:border-accent/70";
@@ -166,8 +171,12 @@ function PodcastPolicyCard({
   const [releaseDays, setReleaseDays] = useState(
     policy.maxReleaseAgeDays == null ? "" : String(policy.maxReleaseAgeDays),
   );
+  const [cadenceMode, setCadenceMode] = useState<CadenceMode>(
+    policy.cadenceMaxEpisodes == null ? "UNLIMITED" : "LIMITED",
+  );
   const random = order === "RANDOM";
   const hasExpiry = releaseDays.trim() !== "";
+  const limitedCadence = cadenceMode === "LIMITED";
 
   return (
     <section className="product-panel overflow-hidden">
@@ -357,6 +366,56 @@ function PodcastPolicyCard({
               />
             </Field>
 
+            <Field
+              label="Frequência de escuta"
+              help="Limita novos episódios deste programa por período civil. Só escuta real consome a frequência; um episódio em andamento pode terminar."
+            >
+              <div className="space-y-3">
+                <select
+                  name="cadenceMode"
+                  value={cadenceMode}
+                  onChange={(event) => setCadenceMode(event.target.value as CadenceMode)}
+                  className={selectClass}
+                >
+                  <option value="UNLIMITED">Sem limite</option>
+                  <option value="LIMITED">Limitar por período</option>
+                </select>
+
+                {limitedCadence && (
+                  <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] gap-2">
+                    <input
+                      type="number"
+                      name="cadenceMaxEpisodes"
+                      min={1}
+                      defaultValue={policy.cadenceMaxEpisodes ?? 1}
+                      aria-label="Máximo de episódios por período"
+                      className={inputClass}
+                    />
+                    <select
+                      name="cadenceUnit"
+                      defaultValue={policy.cadenceUnit ?? "WEEK"}
+                      aria-label="Período da frequência"
+                      className={selectClass}
+                    >
+                      <option value="DAY">por dia</option>
+                      <option value="WEEK">por semana</option>
+                      <option value="MONTH">por mês</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            </Field>
+
+            <Field
+              label="Prioridade"
+              help="Prioridade só ordena episódios que já passaram por estado, frequência, validade, duração e demais regras."
+            >
+              <select name="priority" defaultValue={policy.priority} className={selectClass}>
+                <option value="NORMAL">Normal</option>
+                <option value="PRIORITY">Prioritário — considerar antes dos normais</option>
+              </select>
+            </Field>
+
             {!random && (
               <div className="rounded-xl border border-line-dark/55 bg-surface-dark/45 p-4">
                 <label className="flex min-h-11 cursor-pointer items-start gap-3">
@@ -380,7 +439,7 @@ function PodcastPolicyCard({
 
             <div className="flex flex-col gap-3 border-t border-line-dark/50 pt-4 lg:col-span-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="max-w-2xl text-xs leading-5 text-muted-inverse">
-                Salvar reinicia a memória de sequência/rodada deste programa, sem alterar o histórico de escuta ou a biblioteca no Spotify.
+                Salvar aplica todas as regras deste programa. A memória de sequência/rodada é reiniciada, mas histórico de escuta, consumo de frequência e biblioteca do Spotify não são alterados.
               </p>
               <button type="submit" className={buttonClass}>
                 <UiIcon name="check" size={16} />
@@ -432,6 +491,8 @@ function summaryChips(policy: PodcastPolicyClientValue): string[] {
       ? "Máx. do destino"
       : `Máx. ${policy.maxEpisodesPerCycle} / ciclo`,
   );
+  chips.push(cadenceLabel(policy));
+  if (policy.priority === "PRIORITY") chips.push("Prioritário");
   if (policy.episodeOrder !== "RANDOM" && policy.strictSequence) {
     chips.push("Sequência estrita");
   }
@@ -450,6 +511,19 @@ function orderLabel(policy: PodcastPolicyClientValue): string {
   return policy.randomPolicy === "WITH_REPLACEMENT"
     ? "Aleatório · repete"
     : "Aleatório · sem repetir";
+}
+
+function cadenceLabel(policy: PodcastPolicyClientValue): string {
+  if (policy.cadenceMaxEpisodes == null || policy.cadenceUnit == null) {
+    return "Frequência livre";
+  }
+  const unit =
+    policy.cadenceUnit === "DAY"
+      ? "dia"
+      : policy.cadenceUnit === "WEEK"
+        ? "semana"
+        : "mês";
+  return `${policy.cadenceMaxEpisodes}/${unit}`;
 }
 
 function memoryDescription(policy: PodcastPolicyClientValue): string {

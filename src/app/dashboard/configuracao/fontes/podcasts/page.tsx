@@ -13,7 +13,7 @@ import {
   type PodcastExpiryPolicyValue,
   type PodcastRandomPolicyValue,
   type PodcastShowOrderValue,
-  type PodcastShowPolicySnapshot,
+  type PodcastShowPolicyStoredSnapshot,
 } from "@/services/spotify/podcast-show-policy-store";
 
 import {
@@ -61,6 +61,25 @@ async function updateShowPolicy(formData: FormData) {
         ) as PodcastExpiryPolicyValue)
       : "STRICT_EXPIRY";
 
+  const cadenceMode = enumValue(
+    formData,
+    "cadenceMode",
+    ["UNLIMITED", "LIMITED"] as const,
+  );
+  const cadenceMaxEpisodes =
+    cadenceMode === "LIMITED"
+      ? requiredPositiveInt(formData, "cadenceMaxEpisodes")
+      : null;
+  const cadenceUnit =
+    cadenceMode === "LIMITED"
+      ? enumValue(formData, "cadenceUnit", ["DAY", "WEEK", "MONTH"] as const)
+      : null;
+  const priority = enumValue(
+    formData,
+    "priority",
+    ["NORMAL", "PRIORITY"] as const,
+  );
+
   const saved = await savePodcastShowPolicy(session.user.id, sourcePlaylistId, {
     episodeEligibility,
     episodeOrder,
@@ -74,6 +93,9 @@ async function updateShowPolicy(formData: FormData) {
     maxReleaseAgeDays,
     expiryPolicy,
     maxEpisodesPerCycle: optionalInt(formData, "maxEpisodesPerCycle", 1, 100),
+    cadenceMaxEpisodes,
+    cadenceUnit,
+    priority,
   });
 
   if (!saved) redirect("/dashboard/configuracao/fontes/podcasts?erro=fonte");
@@ -131,6 +153,7 @@ export default async function PodcastPoliciesPage({
   );
 
   const clientShows: PodcastPolicyClientShow[] = shows.map((show) => {
+    const storedPolicy = basePolicies.get(show.id);
     const policy =
       policies.get(show.id) ??
       defaultPolicy(show.id, show.includePlayed, show.episodeOrder);
@@ -149,6 +172,9 @@ export default async function PodcastPoliciesPage({
         expiryPolicy: policy.expiryPolicy,
         maxEpisodesPerCycle: policy.maxEpisodesPerCycle,
         publishedCount: policy.publishedEpisodeIds.length,
+        cadenceMaxEpisodes: storedPolicy?.cadenceMaxEpisodes ?? null,
+        cadenceUnit: storedPolicy?.cadenceUnit ?? null,
+        priority: storedPolicy?.priority ?? "NORMAL",
       },
     };
   });
@@ -165,13 +191,13 @@ export default async function PodcastPoliciesPage({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
-                PODCAST-05
+                PODCAST-05 · PODCAST-06
               </p>
               <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse">
                 Políticas de podcasts
               </h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
-                Um único lugar para configurar cada programa. A lista fica compacta e somente o show que você estiver editando abre o formulário completo.
+                Um único lugar para configurar sequência, replay, validade, frequência de escuta e prioridade de cada programa.
               </p>
             </div>
             <Link href="/dashboard/configuracao/fontes" className={secondaryButtonClass}>
@@ -200,7 +226,7 @@ export default async function PodcastPoliciesPage({
           <section className="product-panel mt-6 p-6 text-center">
             <p className="font-black text-ink-inverse">Nenhum programa individual configurado</p>
             <p className="mt-2 text-sm text-muted-inverse">
-              Adicione um programa em Fontes para criar uma política própria de sequência, replay ou validade.
+              Adicione um programa em Fontes para criar uma política própria de sequência, replay, frequência ou prioridade.
             </p>
           </section>
         ) : (
@@ -221,7 +247,7 @@ function defaultPolicy(
   includePlayed: boolean,
   episodeOrder: string,
 ) {
-  const policy: PodcastShowPolicySnapshot & { publishedEpisodeIds: string[] } = {
+  const policy: PodcastShowPolicyStoredSnapshot & { publishedEpisodeIds: string[] } = {
     sourcePlaylistId,
     episodeEligibility: includePlayed ? "ALL" : "UNPLAYED_ONLY",
     episodeOrder: episodeOrder === "NEWEST_FIRST" ? "NEWEST_FIRST" : "OLDEST_FIRST",
@@ -231,10 +257,13 @@ function defaultPolicy(
     maxReleaseAgeDays: null,
     expiryPolicy: "STRICT_EXPIRY",
     maxEpisodesPerCycle: null,
+    randomRound: 0,
     sequenceCursorEpisodeId: null,
     sequenceCompleted: false,
-    randomRound: 0,
     randomConsumedEpisodeIds: [],
+    cadenceMaxEpisodes: null,
+    cadenceUnit: null,
+    priority: "NORMAL",
     publishedEpisodeIds: [],
   };
   return policy;
@@ -277,6 +306,14 @@ function optionalInt(
   if (raw === null) return null;
   const value = Number(raw);
   if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`Valor inválido para ${key}`);
+  }
+  return value;
+}
+
+function requiredPositiveInt(formData: FormData, key: string): number {
+  const value = Number(requiredText(formData, key));
+  if (!Number.isSafeInteger(value) || value < 1 || value > 2147483647) {
     throw new Error(`Valor inválido para ${key}`);
   }
   return value;
