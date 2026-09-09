@@ -87,6 +87,15 @@ test("returns only evidence for the requested target", () => {
   ]);
 });
 
+test("reads planner influence from the requested target, not the runtime aggregate", () => {
+  const input = summary();
+  input.calendar03PlannerRuntime.targets[1]!.plannerInfluence = false;
+  const preview = calendar03TargetPreviewFromSummary(input, TARGET_ID);
+  assert.ok(preview);
+  assert.equal(input.calendar03PlannerRuntime.plannerInfluence, true);
+  assert.equal(preview.plannerInfluence, false);
+});
+
 test("keeps block diagnostics in chronological index order", () => {
   const preview = calendar03TargetPreviewFromSummary(summary(), TARGET_ID);
   assert.ok(preview);
