@@ -29,6 +29,8 @@ export type Calendar03ProjectedBlock = Readonly<{
   musicDurationMs: number;
   filledDurationMs: number;
   deficitMs: number;
+  musicCompositionQualityPassed: boolean;
+  musicPoolExhausted: boolean;
   diagnosticCodes: Calendar03EventDiagnosticCode[];
 }>;
 
@@ -54,14 +56,15 @@ export type ProjectCalendar03EventCompositionInput = Readonly<{
 /**
  * CALENDAR-03 Gate 2 — read-only planner projection.
  *
- * This function deliberately is NOT wired into planRun yet. It receives the
- * already-resolved CALENDAR-02 PER_EVENT blocks and projects PODCAST_THEN_MUSIC
- * without Spotify/database access. The incoming podcast order is authoritative:
- * duration is only a fit filter and never a best-fit ranking signal.
+ * Gate 3 reuses this same pure projection behind a guarded runtime seam. It
+ * receives already-resolved CALENDAR-02 PER_EVENT blocks and projects
+ * PODCAST_THEN_MUSIC without Spotify/database access. The incoming podcast
+ * order is authoritative: duration is only a fit filter and never a best-fit
+ * ranking signal.
  *
  * Candidate.durationMs is the effective listening duration used by the current
  * planner. For IN_PROGRESS episodes ingestion already supplies the remaining
- * duration, so Gate 2 compares that remaining duration against the current
+ * duration, so CALENDAR-03 compares that remaining duration against the current
  * event window. No item may cross the block boundary.
  */
 export function projectCalendar03EventComposition(
@@ -202,11 +205,11 @@ export function projectCalendar03EventComposition(
       musicDurationMs,
       filledDurationMs,
       deficitMs: Math.max(0, targetDurationMs - filledDurationMs),
+      musicCompositionQualityPassed: musicResult.stats.compositionQualityPassed,
+      musicPoolExhausted: musicResult.stats.poolExhausted,
       diagnosticCodes,
     });
 
-    // Defensive assertion inside the pure projection: the selected slice for
-    // this block can never exceed its own duration budget.
     const blockDurationMs = selected
       .slice(blockStartPosition)
       .reduce((sum, item) => sum + Math.max(0, item.durationMs), 0);
