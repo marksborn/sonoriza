@@ -72,7 +72,7 @@ export function calendar03TargetPreviewFromSummary(
     requestedMode: text(runtime.requestedMode) ?? "UNKNOWN",
     effectiveMode: text(runtime.effectiveMode) ?? "UNKNOWN",
     activationReason: text(runtime.activationReason) ?? "UNKNOWN",
-    plannerInfluence: runtime.plannerInfluence === true,
+    plannerInfluence: target.plannerInfluence === true,
     targetPlaylistId: normalizedTargetId,
     targetName: text(target.targetName) ?? normalizedTargetId,
     status: text(target.status) ?? "UNKNOWN",
