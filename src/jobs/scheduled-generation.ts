@@ -7,6 +7,7 @@ import type {
 
 import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
+import { assessCalendar03GenerationConfiguration } from "@/services/calendar-event-composition-generation";
 import { dispatchTargetScheduleRunNotificationSafely } from "@/services/notifications";
 import {
   assessConfiguration,
@@ -18,6 +19,11 @@ import {
 } from "@/services/keep-filled-maintenance";
 import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
 import type { Candidate } from "@/services/playlist-planner";
+import {
+  calendar03PlannerRuntimeSummary,
+  createCalendar03PlannerRuntimeState,
+  runWithCalendar03PlannerRuntimeState,
+} from "@/services/playlist-planner/calendar-event-composition-runtime";
 import { SpotifyClient } from "@/services/spotify";
 import {
   dailyScheduleSlot,
@@ -93,7 +99,12 @@ export async function runScheduledGeneration(
     if (claimed.length === 0) continue;
 
     try {
-      const assessment = await assessConfiguration(user.id);
+      const baseAssessment = await assessConfiguration(user.id);
+      const calendar03Configuration = await assessCalendar03GenerationConfiguration(
+        user.id,
+        baseAssessment,
+      );
+      const assessment = calendar03Configuration.assessment;
       const gate = await getFirstRunGate(user.id, assessment);
       if (!gate.realRunAllowed) {
         await finishMany(
@@ -215,26 +226,38 @@ export async function runScheduledGeneration(
             entry.target.updatePolicy === "REBUILD_DAILY" && reusable?.[targetId]
               ? { [targetId]: reusable[targetId] }
               : {};
-          const generated = await generatePlaylists({
-            userId: user.id,
-            trigger: "SCHEDULED",
-            targetPlaylistIds: [targetId],
-            preservedByTargetId: preservedByTargetId[targetId]
-              ? { [targetId]: preservedByTargetId[targetId] }
-              : {},
-            keepFilledByTargetId: keepFilledByTargetId[targetId]
-              ? { [targetId]: keepFilledByTargetId[targetId] }
-              : {},
-            scheduledPolicyByTargetId: {
-              [targetId]: scheduledPolicyByTargetId[targetId]!,
-            },
-            musicOrderSimulationEvidence,
-            reservedUris: [...reservedUris],
-            reservedTargetSnapshots,
-            rebuildByTargetId: rebuildByTargetId[targetId]
-              ? { [targetId]: rebuildByTargetId[targetId] }
-              : {},
+          const calendar03State = createCalendar03PlannerRuntimeState({
+            policies: calendar03Configuration.policies,
+            requestedMode: process.env.CALENDAR_03_PLANNER_MODE ?? "SHADOW",
+            userEmail: user.email ?? null,
+            activeEmailAllowlist:
+              process.env.CALENDAR_03_PLANNER_EMAIL_ALLOWLIST ?? null,
+            activeTargetIds: process.env.CALENDAR_03_PLANNER_TARGET_IDS ?? null,
           });
+          const generated = await runWithCalendar03PlannerRuntimeState(
+            calendar03State,
+            () =>
+              generatePlaylists({
+                userId: user.id,
+                trigger: "SCHEDULED",
+                targetPlaylistIds: [targetId],
+                preservedByTargetId: preservedByTargetId[targetId]
+                  ? { [targetId]: preservedByTargetId[targetId] }
+                  : {},
+                keepFilledByTargetId: keepFilledByTargetId[targetId]
+                  ? { [targetId]: keepFilledByTargetId[targetId] }
+                  : {},
+                scheduledPolicyByTargetId: {
+                  [targetId]: scheduledPolicyByTargetId[targetId]!,
+                },
+                musicOrderSimulationEvidence,
+                reservedUris: [...reservedUris],
+                reservedTargetSnapshots,
+                rebuildByTargetId: rebuildByTargetId[targetId]
+                  ? { [targetId]: rebuildByTargetId[targetId] }
+                  : {},
+              }),
+          );
 
           // Persist the GenerationRun link as soon as it exists. The attempt row
           // may already have been marked stale by a newer retry; in that case we
@@ -246,6 +269,28 @@ export async function runScheduledGeneration(
             where: { id: generated.runId },
             select: { status: true, error: true, summary: true },
           });
+          const existingSummary =
+            generation?.summary &&
+            typeof generation.summary === "object" &&
+            !Array.isArray(generation.summary)
+              ? (generation.summary as Record<string, unknown>)
+              : {};
+          await prisma.generationRun.updateMany({
+            where: {
+              id: generated.runId,
+              userId: user.id,
+              simulation: false,
+            },
+            data: {
+              summary: {
+                ...existingSummary,
+                configurationFingerprint: assessment.fingerprint,
+                calendar03PlannerRuntime:
+                  calendar03PlannerRuntimeSummary(calendar03State),
+              } as Prisma.InputJsonValue,
+            },
+          });
+
           const targetSummary =
             readTargetSummaries(generation?.summary).get(targetId) ?? null;
           const status = scheduleStatus(generated.status, targetSummary);
