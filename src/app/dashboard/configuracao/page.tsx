@@ -187,6 +187,16 @@ export default async function ConfigurationHubPage() {
           />
 
           <ConfigCard
+            href="/dashboard/configuracao/destinos/composicao-eventos"
+            icon="calendar"
+            badge="Por evento"
+            code="CALENDAR-03"
+            title="Composição por evento"
+            description="Configure podcast inteiro + música por janela e visualize o preview da última simulação bloco a bloco."
+            action="Configurar composição"
+          />
+
+          <ConfigCard
             href="/dashboard/configuracao/notificacoes"
             icon="bell"
             badge={`${notificationDeviceCount} dispositivos`}
