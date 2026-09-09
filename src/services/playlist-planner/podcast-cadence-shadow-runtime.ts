@@ -16,11 +16,21 @@ export type Podcast06ListeningStateEvidence = Readonly<{
   firstProgressObservedAt: Date | null;
 }>;
 
+export type Podcast06PlannerMode = "OFF" | "SHADOW" | "ACTIVE";
+
+export type Podcast06PlannerActivationReason =
+  | "MODE_OFF"
+  | "MODE_SHADOW"
+  | "ACTIVE_ALLOWED"
+  | "ACTIVE_EMAIL_NOT_ALLOWED"
+  | "INVALID_MODE";
+
 export type Podcast06PlannerShadowStatus =
   | "NO_POLICY"
   | "NOT_OBSERVED"
   | "ABSTAIN_TIMEZONE_UNAVAILABLE"
   | "ABSTAIN_INCOMPLETE_SHOW_PROVENANCE"
+  | "ABSTAIN_INCOMPLETE_CANDIDATE_SHOW_PROVENANCE"
   | "READY_SHADOW";
 
 export type Podcast06ShowShadowEvidence = Readonly<{
@@ -40,8 +50,12 @@ export type Podcast06ShowShadowEvidence = Readonly<{
 
 export type Podcast06PlannerShadowEvidence = Readonly<{
   policyVersion: "podcast06-gate4-shadow-v1";
+  runtimeVersion: "podcast06-gate5a-runtime-v1";
   status: Podcast06PlannerShadowStatus;
-  plannerInfluence: false;
+  requestedMode: Podcast06PlannerMode;
+  effectiveMode: Podcast06PlannerMode;
+  activationReason: Podcast06PlannerActivationReason;
+  plannerInfluence: boolean;
   databaseWrites: false;
   spotifyWrites: false;
   timeZone: string | null;
@@ -65,23 +79,91 @@ export type Podcast06PlannerShadowRuntimeState = {
   listeningStates: readonly Podcast06ListeningStateEvidence[];
   timeZone: string | null;
   asOf: Date;
+  requestedMode: Podcast06PlannerMode;
+  effectiveMode: Podcast06PlannerMode;
+  activationReason: Podcast06PlannerActivationReason;
   evidence: Podcast06PlannerShadowEvidence;
 };
 
+type Podcast06Projection = {
+  evidence: Podcast06PlannerShadowEvidence;
+  projectedCandidates: Candidate[];
+};
+
 const storage = new AsyncLocalStorage<Podcast06PlannerShadowRuntimeState>();
+
+export function resolvePodcast06PlannerMode(input: {
+  requestedMode?: string | null;
+  userEmail?: string | null;
+  activeEmailAllowlist?: string | null;
+}): {
+  requestedMode: Podcast06PlannerMode;
+  effectiveMode: Podcast06PlannerMode;
+  activationReason: Podcast06PlannerActivationReason;
+} {
+  const rawMode = normalizedOptionalText(input.requestedMode)?.toUpperCase() ?? null;
+  if (rawMode !== null && !["OFF", "SHADOW", "ACTIVE"].includes(rawMode)) {
+    return {
+      requestedMode: "OFF",
+      effectiveMode: "OFF",
+      activationReason: "INVALID_MODE",
+    };
+  }
+
+  const requestedMode = (rawMode ?? "SHADOW") as Podcast06PlannerMode;
+  if (requestedMode === "OFF") {
+    return { requestedMode, effectiveMode: "OFF", activationReason: "MODE_OFF" };
+  }
+  if (requestedMode === "SHADOW") {
+    return {
+      requestedMode,
+      effectiveMode: "SHADOW",
+      activationReason: "MODE_SHADOW",
+    };
+  }
+
+  const userEmail = normalizedOptionalText(input.userEmail)?.toLowerCase() ?? null;
+  const allowlist = new Set(
+    (input.activeEmailAllowlist ?? "")
+      .split(/[,;\s]+/)
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (userEmail && allowlist.has(userEmail)) {
+    return {
+      requestedMode,
+      effectiveMode: "ACTIVE",
+      activationReason: "ACTIVE_ALLOWED",
+    };
+  }
+  return {
+    requestedMode,
+    effectiveMode: "SHADOW",
+    activationReason: "ACTIVE_EMAIL_NOT_ALLOWED",
+  };
+}
 
 export function createPodcast06PlannerShadowRuntimeState(input: {
   policies: ReadonlyMap<string, PodcastShowCadencePolicySnapshot>;
   listeningStates: readonly Podcast06ListeningStateEvidence[];
   timeZone: string | null;
   asOf: Date;
+  requestedMode?: string | null;
+  userEmail?: string | null;
+  activeEmailAllowlist?: string | null;
 }): Podcast06PlannerShadowRuntimeState {
   const timeZone = normalizedOptionalText(input.timeZone);
+  const mode = resolvePodcast06PlannerMode({
+    requestedMode: input.requestedMode,
+    userEmail: input.userEmail,
+    activeEmailAllowlist: input.activeEmailAllowlist,
+  });
   return {
     policies: input.policies,
     listeningStates: input.listeningStates,
     timeZone,
     asOf: input.asOf,
+    ...mode,
     evidence: emptyEvidence({
       policyCount: input.policies.size,
       listeningStateCount: input.listeningStates.length,
@@ -92,6 +174,7 @@ export function createPodcast06PlannerShadowRuntimeState(input: {
       ).length,
       timeZone,
       asOf: input.asOf,
+      ...mode,
     }),
   };
 }
@@ -110,18 +193,42 @@ export function currentPodcast06PlannerShadowRuntimeState():
 }
 
 /**
- * Gate 4 observation seam. planRun calls this with the exact podcast pool it
- * received and the resulting planned items. The projection is diagnostic only:
- * it never returns a replacement pool/order and therefore cannot influence the
- * productive plan.
+ * Gate 5A productive seam. OFF is a strict no-op. SHADOW calculates the same
+ * projection but returns the original pool. ACTIVE can replace the podcast pool
+ * only when the projection is READY_SHADOW; every abstention returns the exact
+ * original candidates, so incomplete provenance cannot under-enforce cadence.
+ */
+export function applyPodcast06PlannerRuntimeToCandidates(
+  candidates: readonly Candidate[],
+): Candidate[] {
+  const state = currentPodcast06PlannerShadowRuntimeState();
+  if (!state || state.effectiveMode === "OFF") return [...candidates];
+
+  const projection = buildPodcast06Projection({
+    policies: state.policies,
+    listeningStates: state.listeningStates,
+    timeZone: state.timeZone,
+    asOf: state.asOf,
+    candidates,
+  });
+  const plannerInfluence =
+    state.effectiveMode === "ACTIVE" &&
+    projection.evidence.status === "READY_SHADOW";
+  state.evidence = runtimeEvidence(state, projection.evidence, plannerInfluence);
+  return plannerInfluence ? projection.projectedCandidates : [...candidates];
+}
+
+/**
+ * planRun calls this after planning so the final GenerationRun summary contains
+ * the exact original pool projection plus the podcast episodes actually chosen.
  */
 export function capturePodcast06PlannerShadow(input: {
   candidates: readonly Candidate[];
   plannedItems: readonly Candidate[];
 }): void {
   const state = currentPodcast06PlannerShadowRuntimeState();
-  if (!state) return;
-  state.evidence = projectPodcast06PlannerShadow({
+  if (!state || state.effectiveMode === "OFF") return;
+  const projection = buildPodcast06Projection({
     policies: state.policies,
     listeningStates: state.listeningStates,
     timeZone: state.timeZone,
@@ -129,6 +236,10 @@ export function capturePodcast06PlannerShadow(input: {
     candidates: input.candidates,
     plannedItems: input.plannedItems,
   });
+  const plannerInfluence =
+    state.effectiveMode === "ACTIVE" &&
+    projection.evidence.status === "READY_SHADOW";
+  state.evidence = runtimeEvidence(state, projection.evidence, plannerInfluence);
 }
 
 export function podcast06PlannerShadowRuntimeSummary(
@@ -145,17 +256,32 @@ export function projectPodcast06PlannerShadow(input: {
   candidates: readonly Candidate[];
   plannedItems?: readonly Candidate[];
 }): Podcast06PlannerShadowEvidence {
+  return buildPodcast06Projection(input).evidence;
+}
+
+function buildPodcast06Projection(input: {
+  policies: ReadonlyMap<string, PodcastShowCadencePolicySnapshot>;
+  listeningStates: readonly Podcast06ListeningStateEvidence[];
+  timeZone: string | null;
+  asOf: Date;
+  candidates: readonly Candidate[];
+  plannedItems?: readonly Candidate[];
+}): Podcast06Projection {
   const podcastCandidates = input.candidates.filter(
     (candidate) => candidate.type === "PODCAST",
   );
+  const candidateWithShowIdentityCount = podcastCandidates.filter(
+    (candidate) => Boolean(normalizedOptionalText(candidate.programId)),
+  ).length;
   const episodeToShow = new Map<string, string>();
   for (const candidate of podcastCandidates) {
-    if (candidate.spotifyEpisodeId && candidate.programId) {
-      episodeToShow.set(candidate.spotifyEpisodeId, candidate.programId);
+    const programId = normalizedOptionalText(candidate.programId);
+    if (candidate.spotifyEpisodeId && programId) {
+      episodeToShow.set(candidate.spotifyEpisodeId, programId);
     }
   }
 
-  const evidence: PodcastCadenceEvidence[] = [];
+  const cadenceEvidence: PodcastCadenceEvidence[] = [];
   let resolvedListeningStateCount = 0;
   let unresolvedFactualCount = 0;
   for (const listeningState of input.listeningStates) {
@@ -165,7 +291,7 @@ export function projectPodcast06PlannerShadow(input: {
       null;
     if (spotifyShowId) resolvedListeningStateCount += 1;
     else if (listeningState.firstProgressObservedAt) unresolvedFactualCount += 1;
-    evidence.push({
+    cadenceEvidence.push({
       spotifyEpisodeId: listeningState.spotifyEpisodeId,
       spotifyShowId,
       status: listeningState.status,
@@ -183,10 +309,12 @@ export function projectPodcast06PlannerShadow(input: {
         ? "ABSTAIN_TIMEZONE_UNAVAILABLE"
         : unresolvedFactualCount > 0
           ? "ABSTAIN_INCOMPLETE_SHOW_PROVENANCE"
-          : "READY_SHADOW";
+          : candidateWithShowIdentityCount !== podcastCandidates.length
+            ? "ABSTAIN_INCOMPLETE_CANDIDATE_SHOW_PROVENANCE"
+            : "READY_SHADOW";
 
   const showEvidence: Podcast06ShowShadowEvidence[] = [];
-  const blockedEpisodeIds = new Set<string>();
+  const blockedNewPodcastShowIds = new Set<string>();
 
   for (const policy of [...input.policies.values()].sort((a, b) =>
     a.spotifyShowId.localeCompare(b.spotifyShowId),
@@ -211,13 +339,9 @@ export function projectPodcast06PlannerShadow(input: {
 
     const cadenceConfigured =
       policy.cadenceMaxEpisodes !== null && policy.cadenceUnit !== null;
-    if (
-      cadenceConfigured &&
-      status === "READY_SHADOW" &&
-      timeZone !== null
-    ) {
+    if (cadenceConfigured && status === "READY_SHADOW" && timeZone !== null) {
       const evaluation = evaluatePodcastShowCadenceShadow({
-        evidence,
+        evidence: cadenceEvidence,
         showId: policy.spotifyShowId,
         maxEpisodes: policy.cadenceMaxEpisodes!,
         unit: policy.cadenceUnit!,
@@ -230,13 +354,13 @@ export function projectPodcast06PlannerShadow(input: {
 
       if (evaluation.limitReached) {
         diagnosticCodes.push("SHOW_CADENCE_LIMIT_REACHED");
+        blockedNewPodcastShowIds.add(policy.spotifyShowId);
         for (const candidate of showCandidates) {
           if (
             candidate.podcastListeningStatus !== "IN_PROGRESS" &&
             candidate.spotifyEpisodeId
           ) {
             projectedBlocked.push(candidate.spotifyEpisodeId);
-            blockedEpisodeIds.add(candidate.spotifyEpisodeId);
           }
         }
       }
@@ -265,10 +389,11 @@ export function projectPodcast06PlannerShadow(input: {
     });
   }
 
-  const eligibleCandidates = podcastCandidates.filter(
-    (candidate) =>
-      !candidate.spotifyEpisodeId || !blockedEpisodeIds.has(candidate.spotifyEpisodeId),
-  );
+  const eligibleCandidates = podcastCandidates.filter((candidate) => {
+    const programId = normalizedOptionalText(candidate.programId);
+    if (!programId || !blockedNewPodcastShowIds.has(programId)) return true;
+    return candidate.podcastListeningStatus === "IN_PROGRESS";
+  });
   const projected = stablePriorityProjection(eligibleCandidates, input.policies);
   const actualPoolOrderEpisodeIds = eligibleCandidates.flatMap((candidate) =>
     candidate.spotifyEpisodeId ? [candidate.spotifyEpisodeId] : [],
@@ -283,31 +408,50 @@ export function projectPodcast06PlannerShadow(input: {
   );
 
   return {
-    policyVersion: "podcast06-gate4-shadow-v1",
-    status,
-    plannerInfluence: false,
-    databaseWrites: false,
-    spotifyWrites: false,
-    timeZone,
-    asOf: input.asOf.toISOString(),
-    configuredPolicyCount: input.policies.size,
-    candidateCount: podcastCandidates.length,
-    candidateWithShowIdentityCount: podcastCandidates.filter(
-      (candidate) => Boolean(candidate.programId),
-    ).length,
-    listeningStateCount: input.listeningStates.length,
-    resolvedListeningStateCount,
-    unresolvedStateCount,
-    unresolvedFactualCount,
-    projectedPriorityMovedCount,
-    projectedPriorityOrderEpisodeIds,
-    actualPoolOrderEpisodeIds,
-    plannedPodcastEpisodeIds: (input.plannedItems ?? []).flatMap((candidate) =>
-      candidate.type === "PODCAST" && candidate.spotifyEpisodeId
-        ? [candidate.spotifyEpisodeId]
-        : [],
-    ),
-    shows: showEvidence,
+    projectedCandidates: projected,
+    evidence: {
+      policyVersion: "podcast06-gate4-shadow-v1",
+      runtimeVersion: "podcast06-gate5a-runtime-v1",
+      status,
+      requestedMode: "SHADOW",
+      effectiveMode: "SHADOW",
+      activationReason: "MODE_SHADOW",
+      plannerInfluence: false,
+      databaseWrites: false,
+      spotifyWrites: false,
+      timeZone,
+      asOf: input.asOf.toISOString(),
+      configuredPolicyCount: input.policies.size,
+      candidateCount: podcastCandidates.length,
+      candidateWithShowIdentityCount,
+      listeningStateCount: input.listeningStates.length,
+      resolvedListeningStateCount,
+      unresolvedStateCount,
+      unresolvedFactualCount,
+      projectedPriorityMovedCount,
+      projectedPriorityOrderEpisodeIds,
+      actualPoolOrderEpisodeIds,
+      plannedPodcastEpisodeIds: (input.plannedItems ?? []).flatMap((candidate) =>
+        candidate.type === "PODCAST" && candidate.spotifyEpisodeId
+          ? [candidate.spotifyEpisodeId]
+          : [],
+      ),
+      shows: showEvidence,
+    },
+  };
+}
+
+function runtimeEvidence(
+  state: Podcast06PlannerShadowRuntimeState,
+  evidence: Podcast06PlannerShadowEvidence,
+  plannerInfluence: boolean,
+): Podcast06PlannerShadowEvidence {
+  return {
+    ...evidence,
+    requestedMode: state.requestedMode,
+    effectiveMode: state.effectiveMode,
+    activationReason: state.activationReason,
+    plannerInfluence,
   };
 }
 
@@ -334,15 +478,22 @@ function emptyEvidence(input: {
   unresolvedFactualListeningStateCount: number;
   timeZone: string | null;
   asOf: Date;
+  requestedMode: Podcast06PlannerMode;
+  effectiveMode: Podcast06PlannerMode;
+  activationReason: Podcast06PlannerActivationReason;
 }): Podcast06PlannerShadowEvidence {
   return {
     policyVersion: "podcast06-gate4-shadow-v1",
+    runtimeVersion: "podcast06-gate5a-runtime-v1",
     status:
       input.policyCount === 0
         ? "NO_POLICY"
         : !input.timeZone
           ? "ABSTAIN_TIMEZONE_UNAVAILABLE"
           : "NOT_OBSERVED",
+    requestedMode: input.requestedMode,
+    effectiveMode: input.effectiveMode,
+    activationReason: input.activationReason,
     plannerInfluence: false,
     databaseWrites: false,
     spotifyWrites: false,
