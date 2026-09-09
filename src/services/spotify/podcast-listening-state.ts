@@ -39,6 +39,15 @@ export interface PodcastListeningStateStore {
   ): Promise<Map<string, CanonicalPodcastListeningState>>;
 }
 
+/**
+ * Prisma interactive transactions default to a 5s execution timeout. Real
+ * podcast batches can legitimately need longer because PODCAST-04 serializes
+ * observations per user and persists canonical episode state one row at a time.
+ * Keep this scoped to the listening-state writer rather than changing the
+ * Prisma client default for unrelated transactions.
+ */
+export const PODCAST_LISTENING_STATE_TRANSACTION_TIMEOUT_MS = 20_000;
+
 type ExistingPodcastListeningState = Pick<
   EpisodeListeningState,
   | "spotifyEpisodeId"
@@ -146,68 +155,71 @@ export const prismaPodcastListeningStateStore: PodcastListeningStateStore = {
     const ids = normalized.map((entry) => entry.spotifyEpisodeId);
 
     try {
-      const merged = await prisma.$transaction(async (tx) => {
-        // Serialize podcast-state observations per user before reading the current
-        // canonical rows. Locking User also protects the first observation of an
-        // episode, where there is no EpisodeListeningState row yet to lock.
-        await tx.$queryRaw<Array<{ id: string }>>`
-          SELECT "id"
-          FROM "User"
-          WHERE "id" = ${userId}
-          FOR UPDATE
-        `;
+      const merged = await prisma.$transaction(
+        async (tx) => {
+          // Serialize podcast-state observations per user before reading the current
+          // canonical rows. Locking User also protects the first observation of an
+          // episode, where there is no EpisodeListeningState row yet to lock.
+          await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT "id"
+            FROM "User"
+            WHERE "id" = ${userId}
+            FOR UPDATE
+          `;
 
-        const existing = await tx.episodeListeningState.findMany({
-          where: {
-            userId,
-            spotifyEpisodeId: { in: ids },
-          },
-        });
-        const existingById = new Map(
-          existing.map((entry) => [entry.spotifyEpisodeId, entry]),
-        );
-        const resolved = normalized.map((observation) =>
-          mergePodcastListeningState(
-            existingById.get(observation.spotifyEpisodeId) ?? null,
-            observation,
-          ),
-        );
-
-        for (const state of resolved) {
-          await tx.episodeListeningState.upsert({
+          const existing = await tx.episodeListeningState.findMany({
             where: {
-              userId_spotifyEpisodeId: {
-                userId,
-                spotifyEpisodeId: state.spotifyEpisodeId,
-              },
-            },
-            create: {
               userId,
-              spotifyEpisodeId: state.spotifyEpisodeId,
-              spotifyShowId: state.spotifyShowId,
-              spotifyUri: state.spotifyUri,
-              durationMs: state.durationMs,
-              resumePositionMs: state.resumePositionMs,
-              fullyPlayed: state.fullyPlayed,
-              status: state.status,
-              firstProgressObservedAt: state.firstProgressObservedAt,
-              lastObservedAt: state.lastObservedAt,
-            },
-            update: {
-              spotifyShowId: state.spotifyShowId,
-              spotifyUri: state.spotifyUri,
-              durationMs: state.durationMs,
-              resumePositionMs: state.resumePositionMs,
-              fullyPlayed: state.fullyPlayed,
-              status: state.status,
-              firstProgressObservedAt: state.firstProgressObservedAt,
-              lastObservedAt: state.lastObservedAt,
+              spotifyEpisodeId: { in: ids },
             },
           });
-        }
+          const existingById = new Map(
+            existing.map((entry) => [entry.spotifyEpisodeId, entry]),
+          );
+          const resolved = normalized.map((observation) =>
+            mergePodcastListeningState(
+              existingById.get(observation.spotifyEpisodeId) ?? null,
+              observation,
+            ),
+          );
 
-        return resolved;
-      });
+          for (const state of resolved) {
+            await tx.episodeListeningState.upsert({
+              where: {
+                userId_spotifyEpisodeId: {
+                  userId,
+                  spotifyEpisodeId: state.spotifyEpisodeId,
+                },
+              },
+              create: {
+                userId,
+                spotifyEpisodeId: state.spotifyEpisodeId,
+                spotifyShowId: state.spotifyShowId,
+                spotifyUri: state.spotifyUri,
+                durationMs: state.durationMs,
+                resumePositionMs: state.resumePositionMs,
+                fullyPlayed: state.fullyPlayed,
+                status: state.status,
+                firstProgressObservedAt: state.firstProgressObservedAt,
+                lastObservedAt: state.lastObservedAt,
+              },
+              update: {
+                spotifyShowId: state.spotifyShowId,
+                spotifyUri: state.spotifyUri,
+                durationMs: state.durationMs,
+                resumePositionMs: state.resumePositionMs,
+                fullyPlayed: state.fullyPlayed,
+                status: state.status,
+                firstProgressObservedAt: state.firstProgressObservedAt,
+                lastObservedAt: state.lastObservedAt,
+              },
+            });
+          }
+
+          return resolved;
+        },
+        { timeout: PODCAST_LISTENING_STATE_TRANSACTION_TIMEOUT_MS },
+      );
 
       return new Map(merged.map((state) => [state.spotifyEpisodeId, state]));
     } catch (error) {
