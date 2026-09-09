@@ -8,6 +8,8 @@ on:
       - "src/app/api/generate/route.ts"
       - "src/app/dashboard/configuracao/destinos/composicao-eventos/**"
       - "src/app/dashboard/configuracao/page.tsx"
+      - "src/jobs/scheduled-generation.ts"
+      - "src/jobs/calendar03-scheduled-generation.test.ts"
       - "src/services/calendar-event-composition-policy.ts"
       - "src/services/calendar-event-composition-policy.test.ts"
       - "src/services/calendar-event-composition-policy.integration.test.ts"
@@ -31,6 +33,8 @@ on:
       - "src/app/api/generate/route.ts"
       - "src/app/dashboard/configuracao/destinos/composicao-eventos/**"
       - "src/app/dashboard/configuracao/page.tsx"
+      - "src/jobs/scheduled-generation.ts"
+      - "src/jobs/calendar03-scheduled-generation.test.ts"
       - "src/services/calendar-event-composition-policy.ts"
       - "src/services/calendar-event-composition-policy.test.ts"
       - "src/services/calendar-event-composition-policy.integration.test.ts"
@@ -88,14 +92,17 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: CALENDAR-03 Gates 1-3 + Gate 7 UX validation
+      - name: CALENDAR-03 Gates 1-3 + Gate 6B scheduler + Gate 7 UX validation
         run: >-
           npx tsx --test
+          src/jobs/calendar03-scheduled-generation.test.ts
+          src/jobs/scheduled-generation.test.ts
           src/services/calendar-event-composition-policy.test.ts
           src/services/calendar-event-composition-policy.integration.test.ts
           src/services/calendar-event-composition-generation.integration.test.ts
           src/services/calendar-event-composition-ux.test.ts
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/calendar-event-composition-runtime.test.ts
+      - run: npm run test:incremental
       - run: npm run typecheck
       - run: npm run build
