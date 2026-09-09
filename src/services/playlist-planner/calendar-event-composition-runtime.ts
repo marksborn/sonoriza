@@ -180,6 +180,29 @@ export function calendar03TargetIsActive(
   );
 }
 
+/**
+ * Returns true only when CALENDAR-03 ACTIVE actually replaced the legacy
+ * composition for this exact target. Pre-write guards may use this as narrow
+ * ownership evidence; SHADOW, abstentions and uninfluenced ACTIVE runs must
+ * continue to use the legacy target contract.
+ */
+export function calendar03TargetOwnsComposition(
+  state: Calendar03PlannerRuntimeState,
+  targetPlaylistId: string,
+): boolean {
+  if (state.effectiveMode !== "ACTIVE") return false;
+  if (!state.activeTargetAllowlist.has(targetPlaylistId)) return false;
+
+  const evidence = state.evidence.targets.find(
+    (target) => target.targetPlaylistId === targetPlaylistId,
+  );
+
+  return (
+    evidence?.status === "READY_SHADOW" &&
+    evidence.plannerInfluence === true
+  );
+}
+
 export function recordCalendar03RuntimeTargets(
   state: Calendar03PlannerRuntimeState,
   targets: Calendar03RuntimeTargetEvidence[],
