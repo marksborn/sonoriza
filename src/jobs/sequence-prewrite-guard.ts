@@ -42,42 +42,42 @@ export function sequencePrewriteViolations(
   targetByPlanId: ReadonlyMap<string, SequenceTarget>,
 ): SequencePrewriteViolation[] {
   const calendar03State = currentCalendar03PlannerRuntimeState();
+  const violations: SequencePrewriteViolation[] = [];
 
-  return plannedTargets.flatMap((planned) => {
+  for (const planned of plannedTargets) {
     const target = targetByPlanId.get(planned.targetPlaylistId);
-    if (!target || target.compositionMode !== "SEQUENCE") return [];
+    if (!target || target.compositionMode !== "SEQUENCE") continue;
 
     if (
       calendar03State &&
       calendar03TargetOwnsComposition(calendar03State, planned.targetPlaylistId)
     ) {
-      return [];
+      continue;
     }
 
     const pattern = parseSequencePattern(target.sequencePattern);
     if (pattern.length === 0) {
-      return [
-        {
-          targetPlaylistId: target.id,
-          targetName: target.name,
-          reason: "INVALID_PATTERN" as const,
-        },
-      ];
+      violations.push({
+        targetPlaylistId: target.id,
+        targetName: target.name,
+        reason: "INVALID_PATTERN",
+      });
+      continue;
     }
 
     const mismatch = planned.result.items.find(
       (item, index) => item.type !== pattern[index % pattern.length],
     );
 
-    return mismatch
-      ? [
-          {
-            targetPlaylistId: target.id,
-            targetName: target.name,
-            reason: "TYPE_MISMATCH" as const,
-            position: mismatch.position,
-          },
-        ]
-      : [];
-  });
+    if (mismatch) {
+      violations.push({
+        targetPlaylistId: target.id,
+        targetName: target.name,
+        reason: "TYPE_MISMATCH",
+        position: mismatch.position,
+      });
+    }
+  }
+
+  return violations;
 }
