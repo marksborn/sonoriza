@@ -58,6 +58,7 @@ import {
   type IncrementalPlanningRound,
 } from "./incremental-planning";
 import { revalidateMusicRepeatBeforeRealWrite } from "./music-repeat-runtime";
+import { sequencePrewriteViolations } from "./sequence-prewrite-guard";
 import { isDegradableSpotifySourceFailure } from "./source-failure-policy";
 
 export interface GeneratePlaylistsOptions {
@@ -588,33 +589,10 @@ export async function generatePlaylists(
       return { runId: run.id, status: "FAILED" };
     }
 
-    const sequenceViolations = plan.targets.flatMap((planned) => {
-      const target = targetByPlanId.get(planned.targetPlaylistId);
-      if (!target || target.compositionMode !== "SEQUENCE") return [];
-      const pattern = parseSequencePattern(target.sequencePattern);
-      if (pattern.length === 0) {
-        return [
-          {
-            targetPlaylistId: target.id,
-            targetName: target.name,
-            reason: "INVALID_PATTERN",
-          },
-        ];
-      }
-      const mismatch = planned.result.items.find(
-        (item, index) => item.type !== pattern[index % pattern.length],
-      );
-      return mismatch
-        ? [
-            {
-              targetPlaylistId: target.id,
-              targetName: target.name,
-              reason: "TYPE_MISMATCH",
-              position: mismatch.position,
-            },
-          ]
-        : [];
-    });
+    const sequenceViolations = sequencePrewriteViolations(
+      plan.targets,
+      targetByPlanId,
+    );
 
     if (!simulate && sequenceViolations.length > 0) {
       summary.sequenceViolations = sequenceViolations;
