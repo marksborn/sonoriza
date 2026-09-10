@@ -205,11 +205,13 @@ model SourcePlaylist {
 
   user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   podcastShowPolicy    PodcastShowPolicy?
+  targetSelections     TargetPlaylistSource[]
   cleanupRuns          MusicSourceCleanupRun[]
   ingestionRulesTarget MusicIngestionRule[]    @relation("MusicIngestionTarget")
   ingestionRunsTarget  MusicIngestionRun[]     @relation("MusicIngestionRunTarget")
 
   @@unique([userId, spotifyType, spotifyId])
+  @@unique([userId, id])
   @@index([userId, kind])
 }
 
@@ -632,6 +634,17 @@ enum TargetScheduleRunStatus {
   FAILED
 }
 
+enum TargetSourceScopeMode {
+  INHERIT_GLOBAL
+  SELECTED_ONLY
+}
+
+enum TargetSharingPolicy {
+  INHERIT_GLOBAL
+  EXCLUSIVE
+  SHAREABLE
+}
+
 model TargetPlaylist {
   id                               String                        @id @default(cuid())
   userId                           String
@@ -639,6 +652,8 @@ model TargetPlaylist {
   spotifyPlaylistId                String?
   enabled                          Boolean                       @default(true)
   priority                         Int                           @default(0)
+  sourceScopeMode                  TargetSourceScopeMode         @default(INHERIT_GLOBAL)
+  sharingPolicy                    TargetSharingPolicy           @default(INHERIT_GLOBAL)
   compositionMode                  CompositionMode               @default(PROPORTION)
   musicOrderMode                   MusicOrderMode                @default(STANDARD)
   discoveryEnabled                 Boolean                       @default(false)
@@ -669,10 +684,25 @@ model TargetPlaylist {
 
   user               User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   calendarSelections TargetPlaylistCalendar[]
+  sourceSelections   TargetPlaylistSource[]
   generationItems    GenerationItem[]
   targetScheduleRuns TargetScheduleRun[]
 
+  @@unique([userId, id])
   @@index([userId, priority])
+}
+
+model TargetPlaylistSource {
+  userId           String
+  targetPlaylistId String
+  sourcePlaylistId String
+  createdAt        DateTime @default(now())
+
+  target TargetPlaylist @relation(fields: [userId, targetPlaylistId], references: [userId, id], onDelete: Cascade)
+  source SourcePlaylist @relation(fields: [userId, sourcePlaylistId], references: [userId, id], onDelete: Cascade)
+
+  @@id([targetPlaylistId, sourcePlaylistId])
+  @@index([userId, sourcePlaylistId])
 }
 
 model TargetPlaylistCalendar {
