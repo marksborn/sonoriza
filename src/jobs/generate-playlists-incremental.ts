@@ -35,6 +35,11 @@ import {
   type TargetSourceScopeResolution,
 } from "@/services/target-source-scope";
 import {
+  LEGACY_GLOBAL_SHARING_POLICY,
+  resolveEffectiveSharingPolicy,
+  type EffectiveSharingPolicy,
+} from "@/services/playlist-planner/target-sharing-shadow";
+import {
   isSpotifyApiError,
   SpotifyClient,
   type SpotifyRequestMetrics,
@@ -349,6 +354,51 @@ export async function generatePlaylists(
       sourceIdsByTargetId.set(targetId, new Set(resolution.effectiveSourceIds));
     }
 
+    const sharingPolicyByTargetId = new Map<string, EffectiveSharingPolicy>();
+    const sharingPolicyTargets: Array<Record<string, unknown>> = [];
+
+    for (const target of targets) {
+      if (!activeTargetIds.has(target.id)) continue;
+
+      const effectiveSharingPolicy = resolveEffectiveSharingPolicy(
+        target.sharingPolicy,
+        LEGACY_GLOBAL_SHARING_POLICY,
+      );
+
+      sharingPolicyByTargetId.set(target.id, effectiveSharingPolicy);
+
+      sharingPolicyTargets.push({
+        targetPlaylistId: target.id,
+        targetName: target.name,
+        persistedPolicy: target.sharingPolicy,
+        effectiveSharingPolicy,
+      });
+
+      log({
+        level: "INFO",
+        message:
+          `TARGET-SCOPE-01 sharing shadow for "${target.name}": ` +
+          `${target.sharingPolicy} → ${effectiveSharingPolicy}; ` +
+          "planner influence=false",
+        data: {
+          gate: 4,
+          mode: "SHADOW",
+          persistedPolicy: target.sharingPolicy,
+          effectiveSharingPolicy,
+        },
+      });
+    }
+
+    summary.targetSharingShadow = {
+      gate: 4,
+      mode: "SHADOW",
+      plannerInfluence: false,
+      simulation: simulate,
+      globalPolicy: LEGACY_GLOBAL_SHARING_POLICY,
+      targets: sharingPolicyTargets,
+      planner: null,
+    };
+
     const requiredSourceIds = new Set(
       [...sourceIdsByTargetId.values()].flatMap((ids) => [...ids]),
     );
@@ -471,6 +521,7 @@ export async function generatePlaylists(
       sources: sourceCursors,
       targets: runTargets,
       sourceIdsByTargetId,
+      sharingPolicyByTargetId,
       preservedByTargetId: new Map(Object.entries(opts.preservedByTargetId ?? {})),
       blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
@@ -485,6 +536,16 @@ export async function generatePlaylists(
         logIncrementalRound(round, log);
       },
     });
+
+    summary.targetSharingShadow = {
+      gate: 4,
+      mode: "SHADOW",
+      plannerInfluence: false,
+      simulation: simulate,
+      globalPolicy: LEGACY_GLOBAL_SHARING_POLICY,
+      targets: sharingPolicyTargets,
+      planner: incremental.plan.targetSharingShadow ?? null,
+    };
 
     const readFailure = incremental.failure
       ? sourceFailureFromCursor(

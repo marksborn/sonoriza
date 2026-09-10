@@ -3,6 +3,13 @@ import {
   capturePodcast06PlannerShadow,
 } from "./podcast-cadence-shadow-runtime";
 import { planPlaylist, type PlannerPools } from "./planner";
+import {
+  analyzeLegacyReservationForTarget,
+  buildTargetSharingShadowEvidence,
+  LEGACY_GLOBAL_SHARING_POLICY,
+  type EffectiveSharingPolicy,
+  type TargetSharingShadowEvidence,
+} from "./target-sharing-shadow";
 import type {
   Candidate,
   DurationPlanningBlock,
@@ -37,6 +44,11 @@ export interface PlanRunInput {
    * their own feature contract remains authoritative.
    */
   sourceIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * TARGET-SCOPE-01 Gate 4: effective per-target sharing policy used strictly
+   * for shadow evidence. The authoritative reserved Set remains unchanged.
+   */
+  sharingPolicyByTargetId?: ReadonlyMap<string, EffectiveSharingPolicy>;
   /** SCHEDULE-01 valid remote items keyed by target id. */
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
   /**
@@ -56,6 +68,8 @@ export interface PlanRunTargetResult {
 
 export interface PlanRunResult {
   targets: PlanRunTargetResult[];
+  /** TARGET-SCOPE-01 Gate 4 diagnostic only; never changes planner selection. */
+  targetSharingShadow?: TargetSharingShadowEvidence;
 }
 
 /**
@@ -79,12 +93,15 @@ export function planRun({
   targets,
   musicPoolByTargetId,
   sourceIdsByTargetId,
+  sharingPolicyByTargetId,
   preservedByTargetId,
   blockedMusicTrackIdsByTargetId,
   initialReserved,
 }: PlanRunInput): PlanRunResult {
   const ordered = [...targets].sort((a, b) => a.priority - b.priority);
   const reserved = new Set<string>(initialReserved ?? []);
+  const reservedOwnersByUri = new Map<string, Set<string>>();
+  const sharingShadowTargets = [];
   const globalPodcastProgramCounts = new Map<string, number>();
   const results: PlanRunTargetResult[] = [];
   const podcastRuntimePool = applyPodcast06PlannerRuntimeToCandidates(
@@ -130,6 +147,30 @@ export function planRun({
             ),
           }
         : baseTargetPools;
+    if (sharingPolicyByTargetId) {
+      const effectiveSharingPolicy =
+        sharingPolicyByTargetId.get(target.targetPlaylistId) ??
+        LEGACY_GLOBAL_SHARING_POLICY;
+
+      sharingShadowTargets.push(
+        analyzeLegacyReservationForTarget({
+          targetPlaylistId: target.targetPlaylistId,
+          targetName: target.name,
+          effectiveSharingPolicy,
+          candidates: [
+            ...targetPools.music,
+            // Podcast reservation currently happens inside
+            // applyGlobalPodcastPolicyToPool before cadence/cap evaluation.
+            // Use the source-scoped pre-reservation podcast pool so Gate 4
+            // observes exactly that legacy exclusivity boundary.
+            ...targetPodcastPool,
+          ],
+          reservedOwnersByUri,
+          sharingPolicyByTargetId,
+        }),
+      );
+    }
+
     const preserved = applyGlobalPodcastPolicyToPreserved({
       candidates: preservedByTargetId?.get(target.targetPlaylistId) ?? [],
       globalProgramCounts: globalPodcastProgramCounts,
@@ -148,7 +189,16 @@ export function planRun({
           reserved,
           preserved,
         });
-    for (const uri of result.usedUris) reserved.add(uri);
+    for (const uri of result.usedUris) {
+      // Authoritative Gate 3/legacy behavior remains unchanged.
+      reserved.add(uri);
+
+      if (sharingPolicyByTargetId) {
+        const owners = reservedOwnersByUri.get(uri) ?? new Set<string>();
+        owners.add(target.targetPlaylistId);
+        reservedOwnersByUri.set(uri, owners);
+      }
+    }
     countPlannedPodcasts(result.items, globalPodcastProgramCounts);
     results.push({
       targetPlaylistId: target.targetPlaylistId,
@@ -157,7 +207,17 @@ export function planRun({
     });
   }
 
-  const runResult = { targets: results };
+  const runResult: PlanRunResult = {
+    targets: results,
+    ...(sharingPolicyByTargetId
+      ? {
+          targetSharingShadow: buildTargetSharingShadowEvidence({
+            targets: sharingShadowTargets,
+            globalPolicy: LEGACY_GLOBAL_SHARING_POLICY,
+          }),
+        }
+      : {}),
+  };
   capturePodcast06PlannerShadow({
     candidates: pools.podcasts,
     plannedItems: results.flatMap((entry) => entry.result.items),

@@ -13,6 +13,7 @@ import {
   type PlannerPools,
   type RunTarget,
 } from "@/services/playlist-planner";
+import type { EffectiveSharingPolicy } from "@/services/playlist-planner/target-sharing-shadow";
 import { filterMusicCandidatesForRepeat } from "@/services/spotify/recently-played";
 
 import {
@@ -71,6 +72,8 @@ export type LikedTrackSourceShadowContext = {
   musicPoolByTargetId?: ReadonlyMap<string, Candidate[]>;
   /** TARGET-SCOPE-01 Gate 3: keep shadow/pilot planning aligned with runtime scope. */
   sourceIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
+  /** TARGET-SCOPE-01 Gate 4: keep nested shadow/pilot replans aligned with sharing diagnostics. */
+  sharingPolicyByTargetId?: ReadonlyMap<string, EffectiveSharingPolicy>;
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
@@ -458,6 +461,7 @@ function captureShadowEvidence(
       targets: context.targets,
       musicPoolByTargetId: shadowMusicPoolByTargetId,
       sourceIdsByTargetId: context.sourceIdsByTargetId,
+      sharingPolicyByTargetId: context.sharingPolicyByTargetId,
       preservedByTargetId: context.preservedByTargetId,
       blockedMusicTrackIdsByTargetId: context.blockedMusicTrackIdsByTargetId,
       initialReserved: context.initialReserved,
