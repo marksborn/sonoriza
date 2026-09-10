@@ -69,6 +69,8 @@ export type LikedTrackSourceShadowContext = {
   plan: PlanRunResult;
   targets: RunTarget[];
   musicPoolByTargetId?: ReadonlyMap<string, Candidate[]>;
+  /** TARGET-SCOPE-01 Gate 3: keep shadow/pilot planning aligned with runtime scope. */
+  sourceIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
@@ -455,6 +457,7 @@ function captureShadowEvidence(
       pools: shadowPools,
       targets: context.targets,
       musicPoolByTargetId: shadowMusicPoolByTargetId,
+      sourceIdsByTargetId: context.sourceIdsByTargetId,
       preservedByTargetId: context.preservedByTargetId,
       blockedMusicTrackIdsByTargetId: context.blockedMusicTrackIdsByTargetId,
       initialReserved: context.initialReserved,

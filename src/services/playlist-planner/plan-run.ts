@@ -31,6 +31,12 @@ export interface PlanRunInput {
    * back to the shared MUSIC pool, preserving every existing caller.
    */
   musicPoolByTargetId?: ReadonlyMap<string, Candidate[]>;
+  /**
+   * TARGET-SCOPE-01 Gate 3: configured SourcePlaylist ids allowed to feed each
+   * target. Candidates without configured-source provenance are left untouched;
+   * their own feature contract remains authoritative.
+   */
+  sourceIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   /** SCHEDULE-01 valid remote items keyed by target id. */
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
   /**
@@ -72,6 +78,7 @@ export function planRun({
   pools,
   targets,
   musicPoolByTargetId,
+  sourceIdsByTargetId,
   preservedByTargetId,
   blockedMusicTrackIdsByTargetId,
   initialReserved,
@@ -85,10 +92,20 @@ export function planRun({
   );
 
   for (const target of ordered) {
-    const targetMusicPool =
-      musicPoolByTargetId?.get(target.targetPlaylistId) ?? pools.music;
+    const allowedSourceIds = sourceIdsByTargetId?.get(target.targetPlaylistId);
+
+    const targetMusicPool = filterConfiguredSourceCandidates(
+      musicPoolByTargetId?.get(target.targetPlaylistId) ?? pools.music,
+      allowedSourceIds,
+    );
+
+    const targetPodcastPool = filterConfiguredSourceCandidates(
+      podcastRuntimePool,
+      allowedSourceIds,
+    );
+
     const podcastPool = applyGlobalPodcastPolicyToPool({
-      candidates: podcastRuntimePool,
+      candidates: targetPodcastPool,
       reserved,
       globalProgramCounts: globalPodcastProgramCounts,
       rules: target.rules,
@@ -146,6 +163,18 @@ export function planRun({
     plannedItems: results.flatMap((entry) => entry.result.items),
   });
   return runResult;
+}
+
+function filterConfiguredSourceCandidates(
+  candidates: Candidate[],
+  allowedSourceIds: ReadonlySet<string> | undefined,
+): Candidate[] {
+  if (!allowedSourceIds) return candidates;
+
+  return candidates.filter((candidate) => {
+    if (!candidate.sourcePlaylistId) return true;
+    return allowedSourceIds.has(candidate.sourcePlaylistId);
+  });
 }
 
 function applyGlobalPodcastPolicyToPool(input: {

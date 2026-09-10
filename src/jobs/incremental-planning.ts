@@ -90,6 +90,8 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   sources: TSource[];
   targets: RunTarget[];
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
+  /** TARGET-SCOPE-01 Gate 3 configured source ids effective for each target. */
+  sourceIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   /** MUSIC-05 legacy seam; Gate 5B productive caller passes no provider-derived signals. */
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
@@ -110,6 +112,7 @@ export async function collectIncrementally<
   sources,
   targets,
   preservedByTargetId,
+  sourceIdsByTargetId,
   blockedMusicTrackIdsByTargetId,
   initialReserved,
   onBatch,
@@ -319,6 +322,7 @@ export async function collectIncrementally<
     pools,
     targets,
     musicPoolByTargetId,
+    sourceIdsByTargetId,
     preservedByTargetId: activePreservedByTargetId,
     blockedMusicTrackIdsByTargetId,
     initialReserved,
@@ -335,6 +339,7 @@ export async function collectIncrementally<
       pools,
       targets,
       musicPoolByTargetId,
+      sourceIdsByTargetId,
       preservedByTargetId: activePreservedByTargetId,
       blockedMusicTrackIdsByTargetId,
       initialReserved,
@@ -430,6 +435,7 @@ export async function collectIncrementally<
       plan,
       targets,
       musicPoolByTargetId,
+      sourceIdsByTargetId,
       preservedByTargetId: activePreservedByTargetId,
       blockedMusicTrackIdsByTargetId,
       initialReserved,

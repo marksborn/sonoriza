@@ -36,6 +36,12 @@ export interface Candidate {
   releaseDatePrecision?: string;
   sourceSpotifyType?: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";
   sourceSpotifyId?: string;
+  /**
+   * TARGET-SCOPE-01: internal configured-source provenance.
+   * Undefined is reserved for candidates that do not originate from a
+   * configured SourcePlaylist (for example an explicit discovery source).
+   */
+  sourcePlaylistId?: string;
   /** SCHEDULE-01: explicit replay policy of the source that selected a podcast. */
   sourceIncludePlayed?: boolean;
 
