@@ -304,7 +304,7 @@ export async function generatePlaylists(
       where: { userId },
     });
 
-    const sources = configuredSources.filter(
+    const globallyEnabledSources = configuredSources.filter(
       (source) => source.enabled,
     ) as IncrementalSpotifySourceConfig[];
 
@@ -332,20 +332,42 @@ export async function generatePlaylists(
       log({
         level: resolution.ignoredDisabledSourceIds.length > 0 ? "WARN" : "INFO",
         message:
-          `TARGET-SCOPE-01 shadow for "${target.name}": ` +
+          `TARGET-SCOPE-01 runtime for "${target.name}": ` +
           `${resolution.sourceScopeMode} → ` +
-          `${resolution.effectiveSourceIds.length} effective source(s); ` +
-          "planner influence=false",
+          `${resolution.effectiveSourceIds.length} effective source(s)`,
         data: resolution,
       });
     }
 
-    summary.targetSourceScopeShadow = {
-      gate: 2,
-      mode: "SHADOW",
-      plannerInfluence: false,
+    const activeTargetIds = new Set(
+      runTargets.map((target) => target.targetPlaylistId),
+    );
+
+    const sourceIdsByTargetId = new Map<string, ReadonlySet<string>>();
+    for (const [targetId, resolution] of targetSourceScopeResolutions) {
+      if (!activeTargetIds.has(targetId)) continue;
+      sourceIdsByTargetId.set(targetId, new Set(resolution.effectiveSourceIds));
+    }
+
+    const requiredSourceIds = new Set(
+      [...sourceIdsByTargetId.values()].flatMap((ids) => [...ids]),
+    );
+
+    const sources = globallyEnabledSources.filter((source) =>
+      requiredSourceIds.has(source.id),
+    );
+
+    summary.targetSourceScopeRuntime = {
+      gate: 3,
+      mode: "ACTIVE",
+      plannerInfluence: true,
       simulation: simulate,
-      targets: [...targetSourceScopeResolutions.values()],
+      globallyEnabledSourceCount: globallyEnabledSources.length,
+      runtimeSourceCount: sources.length,
+      targets: [...targetSourceScopeResolutions.values()].map((resolution) => ({
+        ...resolution,
+        plannerInfluence: activeTargetIds.has(resolution.targetPlaylistId),
+      })),
     };
 
     const authoritativePodcastProgramIds = new Set(
@@ -372,10 +394,10 @@ export async function generatePlaylists(
       const unavailableSourceIds = new Set(
         setupFailures.map((failure) => failure.sourceId),
       );
-      summary.targetSourceScopeShadow = {
-        gate: 2,
-        mode: "SHADOW",
-        plannerInfluence: false,
+      summary.targetSourceScopeRuntime = {
+        gate: 3,
+        mode: "ACTIVE",
+        plannerInfluence: true,
         simulation: simulate,
         targets: [...targetSourceScopeResolutions.values()].map((resolution) =>
           attachUnavailableTargetSources(resolution, unavailableSourceIds),
@@ -448,6 +470,7 @@ export async function generatePlaylists(
     const incremental = await collectIncrementally({
       sources: sourceCursors,
       targets: runTargets,
+      sourceIdsByTargetId,
       preservedByTargetId: new Map(Object.entries(opts.preservedByTargetId ?? {})),
       blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
@@ -483,10 +506,10 @@ export async function generatePlaylists(
     const unavailableSourceIds = new Set(
       failures.map((failure) => failure.sourceId),
     );
-    summary.targetSourceScopeShadow = {
-      gate: 2,
-      mode: "SHADOW",
-      plannerInfluence: false,
+    summary.targetSourceScopeRuntime = {
+      gate: 3,
+      mode: "ACTIVE",
+      plannerInfluence: true,
       simulation: simulate,
       targets: [...targetSourceScopeResolutions.values()].map((resolution) =>
         attachUnavailableTargetSources(resolution, unavailableSourceIds),

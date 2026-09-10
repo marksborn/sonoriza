@@ -134,28 +134,49 @@ export class SpotifyIncrementalReader {
   async createSource(
     source: IncrementalSpotifySourceConfig,
   ): Promise<SpotifyIncrementalCandidateSource> {
+    let cursor: SpotifyIncrementalCandidateSource;
+
     if (source.kind === "MUSIC") {
       if (source.spotifyType !== "PLAYLIST") {
         throw new Error(`Unsupported music source type: ${source.spotifyType}`);
       }
-      return this.createMusicPlaylistSource(source);
+      cursor = this.createMusicPlaylistSource(source);
+    } else {
+      if (source.kind !== "PODCAST") {
+        throw new Error(`Unsupported source kind: ${source.kind}`);
+      }
+
+      if (source.spotifyType === "PLAYLIST") {
+        cursor = this.createPodcastPlaylistSource(source);
+      } else if (source.spotifyType === "SHOW") {
+        cursor = this.createShowSource(source);
+      } else if (source.spotifyType === "SAVED_EPISODES") {
+        cursor = this.createSavedEpisodesSource(source);
+      } else {
+        throw new Error(`Unsupported podcast source type: ${source.spotifyType}`);
+      }
     }
 
-    if (source.kind !== "PODCAST") {
-      throw new Error(`Unsupported source kind: ${source.kind}`);
-    }
-
-    if (source.spotifyType === "PLAYLIST") {
-      return this.createPodcastPlaylistSource(source);
-    }
-    if (source.spotifyType === "SHOW") {
-      return this.createShowSource(source);
-    }
-    if (source.spotifyType === "SAVED_EPISODES") {
-      return this.createSavedEpisodesSource(source);
-    }
-
-    throw new Error(`Unsupported podcast source type: ${source.spotifyType}`);
+    return {
+      id: cursor.id,
+      label: cursor.label,
+      kind: cursor.kind,
+      spotifyType: cursor.spotifyType,
+      spotifyId: cursor.spotifyId,
+      get done() {
+        return cursor.done;
+      },
+      readNext: async () => {
+        const batch = await cursor.readNext();
+        return {
+          ...batch,
+          candidates: batch.candidates.map((candidate) => ({
+            ...candidate,
+            sourcePlaylistId: source.id,
+          })),
+        };
+      },
+    };
   }
 
   private sourceMetrics(sourceKey: string): SpotifySourceReadMetrics {
