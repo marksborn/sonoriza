@@ -30,6 +30,11 @@ import {
   type SourceCollectionFailureRecord,
 } from "@/services/source-collection-diagnostics";
 import {
+  attachUnavailableTargetSources,
+  resolveTargetSourceScope,
+  type TargetSourceScopeResolution,
+} from "@/services/target-source-scope";
+import {
   isSpotifyApiError,
   SpotifyClient,
   type SpotifyRequestMetrics,
@@ -153,6 +158,11 @@ export async function generatePlaylists(
       },
       orderBy: { priority: "asc" },
       include: {
+        sourceSelections: {
+          select: {
+            sourcePlaylistId: true,
+          },
+        },
         calendarSelections: {
           select: {
             calendarSelectionId: true,
@@ -290,9 +300,53 @@ export async function generatePlaylists(
       ]),
     );
 
-    const sources = (await prisma.sourcePlaylist.findMany({
-      where: { userId, enabled: true },
-    })) as IncrementalSpotifySourceConfig[];
+    const configuredSources = await prisma.sourcePlaylist.findMany({
+      where: { userId },
+    });
+
+    const sources = configuredSources.filter(
+      (source) => source.enabled,
+    ) as IncrementalSpotifySourceConfig[];
+
+    const targetSourceScopeResolutions = new Map<
+      string,
+      TargetSourceScopeResolution
+    >();
+
+    for (const target of targets) {
+      const resolution = resolveTargetSourceScope({
+        targetPlaylistId: target.id,
+        targetName: target.name,
+        sourceScopeMode: target.sourceScopeMode,
+        selectedSourceIds: target.sourceSelections.map(
+          (selection) => selection.sourcePlaylistId,
+        ),
+        sources: configuredSources.map((source) => ({
+          id: source.id,
+          enabled: source.enabled,
+        })),
+      });
+
+      targetSourceScopeResolutions.set(target.id, resolution);
+
+      log({
+        level: resolution.ignoredDisabledSourceIds.length > 0 ? "WARN" : "INFO",
+        message:
+          `TARGET-SCOPE-01 shadow for "${target.name}": ` +
+          `${resolution.sourceScopeMode} → ` +
+          `${resolution.effectiveSourceIds.length} effective source(s); ` +
+          "planner influence=false",
+        data: resolution,
+      });
+    }
+
+    summary.targetSourceScopeShadow = {
+      gate: 2,
+      mode: "SHADOW",
+      plannerInfluence: false,
+      simulation: simulate,
+      targets: [...targetSourceScopeResolutions.values()],
+    };
 
     const authoritativePodcastProgramIds = new Set(
       sources
@@ -315,6 +369,19 @@ export async function generatePlaylists(
     }
 
     if (setupFailures.length > 0) {
+      const unavailableSourceIds = new Set(
+        setupFailures.map((failure) => failure.sourceId),
+      );
+      summary.targetSourceScopeShadow = {
+        gate: 2,
+        mode: "SHADOW",
+        plannerInfluence: false,
+        simulation: simulate,
+        targets: [...targetSourceScopeResolutions.values()].map((resolution) =>
+          attachUnavailableTargetSources(resolution, unavailableSourceIds),
+        ),
+      };
+
       const spotifyMetrics = reader.getRequestMetrics();
       const sourceCollection = buildSourceCollectionDiagnosticSummary({
         sources,
@@ -412,6 +479,20 @@ export async function generatePlaylists(
       ...degradedFailures,
       ...(readFailure ? [readFailure] : []),
     ];
+
+    const unavailableSourceIds = new Set(
+      failures.map((failure) => failure.sourceId),
+    );
+    summary.targetSourceScopeShadow = {
+      gate: 2,
+      mode: "SHADOW",
+      plannerInfluence: false,
+      simulation: simulate,
+      targets: [...targetSourceScopeResolutions.values()].map((resolution) =>
+        attachUnavailableTargetSources(resolution, unavailableSourceIds),
+      ),
+    };
+
     const exhaustedSourceCount = sourceCursors.filter((source) => source.done).length;
     const spotifyMetrics = reader.getRequestMetrics();
     const sourceCollection = buildSourceCollectionDiagnosticSummary({
