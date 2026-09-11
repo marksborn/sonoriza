@@ -22,6 +22,10 @@ import {
   normalizeTargetCalendarSelectionIds,
 } from "@/services/target-calendar-selection";
 import {
+  assertTargetDestinationAvailableForUser,
+  TargetDestinationConflictError,
+} from "@/services/target-destination";
+import {
   SpotifyClient,
   type SpotifyPlaylistSummary,
 } from "@/services/spotify";
@@ -67,25 +71,18 @@ async function assertDestinationAvailable(
   spotifyPlaylistId: string,
   targetId?: string,
 ) {
-  const [sourceConflict, targetConflict] = await Promise.all([
-    prisma.sourcePlaylist.count({
-      where: {
-        userId,
-        spotifyType: SpotifySourceType.PLAYLIST,
-        spotifyId: spotifyPlaylistId,
-      },
-    }),
-    prisma.targetPlaylist.count({
-      where: {
-        userId,
-        spotifyPlaylistId,
-        ...(targetId ? { id: { not: targetId } } : {}),
-      },
-    }),
-  ]);
-
-  if (sourceConflict > 0) fail("source-conflict");
-  if (targetConflict > 0) fail("target-conflict");
+  try {
+    await assertTargetDestinationAvailableForUser({
+      userId,
+      spotifyPlaylistId,
+      targetId,
+    });
+  } catch (error) {
+    if (error instanceof TargetDestinationConflictError) {
+      fail(error.code);
+    }
+    throw error;
+  }
 }
 
 async function loadOwnedSpotifyPlaylists(userId: string) {

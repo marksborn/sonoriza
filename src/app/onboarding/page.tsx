@@ -1,4 +1,5 @@
 import {
+  MusicRepeatWindowUnit,
   SourceKind,
   SpotifySourceType,
 } from "@prisma/client";
@@ -21,6 +22,19 @@ import {
   SpotifySourceConfigurationError,
 } from "@/services/source-configuration";
 import {
+  createBasicOnboardingTarget,
+  ONBOARDING_CREATE_NEW_DESTINATION,
+  OnboardingTargetError,
+  type OnboardingCompositionPreset,
+} from "@/services/onboarding/basic-target";
+import {
+  onboardingDiscoveryPresetData,
+  type OnboardingDiscoveryPreset,
+} from "@/services/onboarding/basic-behavior";
+import {
+  saveMusicPlaybackPolicyForUser,
+} from "@/services/music-playback-policy";
+import {
   SPOTIFY_HISTORY_INSTRUCTIONS,
 } from "@/services/onboarding/history-instructions";
 import {
@@ -37,6 +51,7 @@ import {
 
 const ONBOARDING_PATH = "/onboarding";
 const SOURCE_PAGE_SIZE = 12;
+const DESTINATION_PAGE_SIZE = 12;
 
 const STEP_LABELS: Record<OnboardingStepValue, string> = {
   WELCOME: "Bem-vindo",
@@ -313,6 +328,217 @@ async function saveFirstPlaylistSource(formData: FormData) {
   redirect(ONBOARDING_PATH);
 }
 
+async function useExistingDestination() {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress = await ensureProgress(userId);
+
+  if (progress.currentStep !== "DESTINATION") {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const target = await prisma.targetPlaylist.findFirst({
+    where: { userId },
+    orderBy: [
+      { priority: "asc" },
+      { createdAt: "asc" },
+    ],
+    select: { id: true },
+  });
+
+  if (!target) {
+    redirect("/onboarding?error=no-target");
+  }
+
+  await moveToStep({
+    userId,
+    from: "DESTINATION",
+    to: "MUSIC_BEHAVIOR",
+    markCompleted: true,
+  });
+
+  revalidatePath(ONBOARDING_PATH);
+  redirect(ONBOARDING_PATH);
+}
+
+async function saveFirstDestination(
+  formData: FormData,
+) {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress = await ensureProgress(userId);
+
+  if (progress.currentStep !== "DESTINATION") {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const existingTargetCount =
+    await prisma.targetPlaylist.count({
+      where: { userId },
+    });
+
+  if (existingTargetCount > 0) {
+    redirect("/onboarding?error=target-exists");
+  }
+
+  const name = String(
+    formData.get("name") ?? "",
+  ).trim();
+
+  const destination = String(
+    formData.get("destination") ?? "",
+  ).trim();
+
+  const durationMinutes = Number(
+    String(formData.get("durationMinutes") ?? ""),
+  );
+
+  const composition = String(
+    formData.get("composition") ?? "",
+  ) as OnboardingCompositionPreset;
+
+  const destinationOffsetRaw = Number(
+    String(formData.get("destinationOffset") ?? "0"),
+  );
+
+  const destinationOffset =
+    Number.isInteger(destinationOffsetRaw) &&
+    destinationOffsetRaw >= 0
+      ? destinationOffsetRaw
+      : 0;
+
+  try {
+    await createBasicOnboardingTarget({
+      userId,
+      name,
+      destination,
+      destinationOffset,
+      durationMinutes,
+      composition,
+    });
+  } catch (error) {
+    const code =
+      error instanceof OnboardingTargetError
+        ? error.code
+        : "spotify";
+
+    redirect(`/onboarding?error=${code}`);
+  }
+
+  await moveToStep({
+    userId,
+    from: "DESTINATION",
+    to: "MUSIC_BEHAVIOR",
+    markCompleted: true,
+  });
+
+  revalidatePath(ONBOARDING_PATH);
+  revalidatePath(
+    "/dashboard/configuracao/destinos",
+  );
+
+  redirect(ONBOARDING_PATH);
+}
+
+async function saveBasicBehavior(
+  formData: FormData,
+) {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress = await ensureProgress(userId);
+
+  if (progress.currentStep !== "MUSIC_BEHAVIOR") {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const target = await prisma.targetPlaylist.findFirst({
+    where: { userId },
+    orderBy: [
+      { priority: "asc" },
+      { createdAt: "asc" },
+    ],
+    select: { id: true },
+  });
+
+  if (!target) {
+    redirect("/onboarding?error=no-target");
+  }
+
+  const repeatMode = String(
+    formData.get("repeatMode") ?? "",
+  );
+
+  if (
+    repeatMode !== "AVOID_RECENT" &&
+    repeatMode !== "ALLOW_RECENT"
+  ) {
+    redirect("/onboarding?error=behavior");
+  }
+
+  const discoveryPreset = String(
+    formData.get("discoveryPreset") ?? "",
+  ) as OnboardingDiscoveryPreset;
+
+  if (
+    discoveryPreset !== "FAMILIAR" &&
+    discoveryPreset !== "BALANCED" &&
+    discoveryPreset !== "EXPLORATORY"
+  ) {
+    redirect("/onboarding?error=behavior");
+  }
+
+  try {
+    await saveMusicPlaybackPolicyForUser(
+      userId,
+      {
+        enabled: repeatMode === "AVOID_RECENT",
+        windowValue: 30,
+        windowUnit: MusicRepeatWindowUnit.DAYS,
+      },
+    );
+  } catch {
+    redirect("/onboarding?error=behavior");
+  }
+
+  const discoveryData =
+    onboardingDiscoveryPresetData(
+      discoveryPreset,
+    );
+
+  const updated =
+    await prisma.targetPlaylist.updateMany({
+      where: {
+        id: target.id,
+        userId,
+      },
+      data: discoveryData,
+    });
+
+  if (updated.count !== 1) {
+    redirect("/onboarding?error=behavior");
+  }
+
+  await moveToStep({
+    userId,
+    from: "MUSIC_BEHAVIOR",
+    to: "CALENDAR",
+    markCompleted: true,
+  });
+
+  revalidatePath(ONBOARDING_PATH);
+  revalidatePath(
+    "/dashboard/configuracao/musica",
+  );
+  revalidatePath(
+    "/dashboard/configuracao/destinos",
+  );
+
+  redirect(ONBOARDING_PATH);
+}
+
 async function goBack() {
   "use server";
 
@@ -328,6 +554,8 @@ async function goBack() {
       "SPOTIFY_HISTORY",
       "SOURCES",
       "DESTINATION",
+      "MUSIC_BEHAVIOR",
+      "CALENDAR",
     ].includes(currentStep)
   ) {
     redirect(ONBOARDING_PATH);
@@ -433,6 +661,7 @@ type OnboardingPageProps = {
   searchParams: Promise<{
     error?: string;
     sourceOffset?: string;
+    destinationOffset?: string;
   }>;
 };
 
@@ -464,7 +693,8 @@ export default async function OnboardingPage({
   const spotifyAccount =
     currentStep === "SPOTIFY" ||
     currentStep === "SPOTIFY_HISTORY" ||
-    currentStep === "SOURCES"
+    currentStep === "SOURCES" ||
+    currentStep === "DESTINATION"
       ? await prisma.account.findFirst({
           where: {
             userId,
@@ -495,9 +725,47 @@ export default async function OnboardingPage({
         })
       : [];
 
+  const firstTarget =
+    currentStep === "DESTINATION" ||
+    currentStep === "MUSIC_BEHAVIOR" ||
+    currentStep === "CALENDAR"
+      ? await prisma.targetPlaylist.findFirst({
+          where: { userId },
+          orderBy: [
+            { priority: "asc" },
+            { createdAt: "asc" },
+          ],
+          select: {
+            id: true,
+            name: true,
+            spotifyPlaylistId: true,
+            enabled: true,
+            fixedDurationSeconds: true,
+            podcastPercent: true,
+            discoveryIntensity: true,
+          },
+        })
+      : null;
+
+  const musicPlaybackPolicy =
+    currentStep === "MUSIC_BEHAVIOR"
+      ? await prisma.musicPlaybackPolicy.findUnique({
+          where: { userId },
+          select: {
+            enabled: true,
+            windowValue: true,
+            windowUnit: true,
+          },
+        })
+      : null;
+
   let playlistPage: SpotifyPlaylistPage | null = null;
   let spotifyRateLimitMessage: string | null = null;
   let spotifyLoadError = false;
+
+  let destinationPage: SpotifyPlaylistPage | null = null;
+  let destinationRateLimitMessage: string | null = null;
+  let destinationLoadError = false;
 
   if (
     currentStep === "SOURCES" &&
@@ -553,6 +821,107 @@ export default async function OnboardingPage({
             "O Spotify limitou temporariamente as consultas. Seu progresso foi preservado.";
         } else {
           spotifyLoadError = true;
+        }
+      }
+    }
+  }
+
+  if (
+    currentStep === "DESTINATION" &&
+    spotifyAccount &&
+    !firstTarget
+  ) {
+    const requestedOffset = Number(
+      params.destinationOffset ?? "0",
+    );
+
+    const destinationOffset =
+      Number.isInteger(requestedOffset) &&
+      requestedOffset >= 0
+        ? requestedOffset
+        : 0;
+
+    const backoff =
+      await getActiveSpotifyBackoff();
+
+    if (backoff) {
+      destinationRateLimitMessage =
+        `Spotify temporariamente limitado. Tente novamente em aproximadamente ${
+          retryAfterSecondsRemaining(backoff)
+        } segundos.`;
+    } else {
+      try {
+        const client =
+          await SpotifyClient.forUser(userId);
+
+        const [spotifyUserId, page] =
+          await Promise.all([
+            client.getCurrentUserId(),
+            client.listCurrentUserPlaylistsPage(
+              destinationOffset,
+              DESTINATION_PAGE_SIZE,
+            ),
+          ]);
+
+        const [sourceRows, targetRows] =
+          await Promise.all([
+            prisma.sourcePlaylist.findMany({
+              where: {
+                userId,
+                spotifyType:
+                  SpotifySourceType.PLAYLIST,
+              },
+              select: { spotifyId: true },
+            }),
+            prisma.targetPlaylist.findMany({
+              where: { userId },
+              select: {
+                spotifyPlaylistId: true,
+              },
+            }),
+          ]);
+
+        const blockedIds = new Set([
+          ...sourceRows.map(
+            (row) => row.spotifyId,
+          ),
+          ...targetRows.flatMap((row) =>
+            row.spotifyPlaylistId
+              ? [row.spotifyPlaylistId]
+              : [],
+          ),
+        ]);
+
+        destinationPage = {
+          ...page,
+          items: page.items
+            .filter(
+              (playlist) =>
+                playlist.ownerId ===
+                  spotifyUserId &&
+                !blockedIds.has(playlist.id),
+            )
+            .sort((left, right) =>
+              left.name.localeCompare(
+                right.name,
+                "pt-BR",
+              ),
+            ),
+        };
+      } catch (error) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "kind" in error &&
+          (
+            error.kind === "RATE_LIMITED" ||
+            error.kind === "QUOTA_EXCEEDED"
+          )
+        ) {
+          destinationRateLimitMessage =
+            "O Spotify limitou temporariamente as consultas. Seu progresso foi preservado.";
+        } else {
+          destinationLoadError = true;
         }
       }
     }
@@ -656,7 +1025,19 @@ export default async function OnboardingPage({
                     ? "Essa fonte não pôde ser validada na conta Spotify conectada."
                     : params.error === "scope"
                       ? "A conta precisa ser reconectada para liberar as permissões necessárias."
-                      : "Não foi possível consultar o Spotify agora."}
+                      : params.error === "no-target"
+                        ? "Crie ou confirme um destino antes de continuar."
+                        : params.error === "target-exists"
+                          ? "Já existe um destino configurado. Use o destino existente para continuar."
+                          : params.error === "source-conflict"
+                            ? "Essa playlist já é usada como fonte e não pode ser o destino."
+                            : params.error === "target-conflict"
+                              ? "Essa playlist já está vinculada a outro destino."
+                              : params.error === "unavailable"
+                                ? "Essa playlist não está disponível como destino nesta página."
+                                : params.error === "behavior"
+                                  ? "Revise suas escolhas de repetição e descoberta."
+                                  : "Não foi possível consultar o Spotify agora."}
           </div>
         ) : null}
 
@@ -1025,19 +1406,231 @@ export default async function OnboardingPage({
           ) : currentStep === "DESTINATION" ? (
             <>
               <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-                Primeira fonte pronta
+                Para onde o Sonoriza vai montar?
               </h1>
 
               <p className="mt-5 text-base leading-7 text-white/70">
-                A próxima etapa cria o primeiro destino
-                e define duração e composição. Ela entra
-                no Gate 4.
+                Este é seu primeiro destino. Você pode
+                criar uma playlist nova ou usar uma
+                playlist própria já existente.
               </p>
 
-              <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/60">
-                Nenhuma playlist de destino foi criada
-                ou alterada neste gate.
-              </div>
+              {firstTarget ? (
+                <div className="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-5">
+                  <p className="font-semibold text-emerald-100">
+                    Você já tem um destino configurado
+                  </p>
+                  <p className="mt-2 text-sm text-emerald-100/75">
+                    {firstTarget.name}
+                    {firstTarget.enabled
+                      ? " · atualmente ativo"
+                      : " · ainda desativado"}
+                  </p>
+
+                  <form
+                    action={useExistingDestination}
+                    className="mt-5"
+                  >
+                    <button
+                      type="submit"
+                      className="rounded-xl bg-white px-5 py-3 font-semibold text-black"
+                    >
+                      Usar este destino
+                    </button>
+                  </form>
+                </div>
+              ) : !spotifyAccount ? (
+                <div className="mt-6 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm text-amber-100">
+                  A conexão Spotify não está disponível.
+                  Volte para a etapa Spotify.
+                </div>
+              ) : (
+                <form
+                  action={saveFirstDestination}
+                  className="mt-6 space-y-5"
+                >
+                  <label className="block">
+                    <span className="text-sm font-semibold">
+                      Nome
+                    </span>
+                    <input
+                      name="name"
+                      required
+                      maxLength={100}
+                      defaultValue="Minha playlist"
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 outline-none"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="text-sm font-semibold">
+                      Playlist no Spotify
+                    </span>
+
+                    <select
+                      name="destination"
+                      defaultValue={
+                        ONBOARDING_CREATE_NEW_DESTINATION
+                      }
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 outline-none"
+                    >
+                      <option
+                        value={
+                          ONBOARDING_CREATE_NEW_DESTINATION
+                        }
+                      >
+                        Criar uma nova playlist
+                      </option>
+
+                      {destinationPage?.items.map(
+                        (playlist) => (
+                          <option
+                            key={playlist.id}
+                            value={playlist.id}
+                          >
+                            Usar existente:{" "}
+                            {playlist.name}
+                          </option>
+                        ),
+                      )}
+                    </select>
+
+                    <input
+                      type="hidden"
+                      name="destinationOffset"
+                      value={
+                        destinationPage?.offset ?? 0
+                      }
+                    />
+                  </label>
+
+                  {destinationRateLimitMessage ? (
+                    <div className="rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm text-amber-100">
+                      {destinationRateLimitMessage}
+                    </div>
+                  ) : destinationLoadError ? (
+                    <div className="rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm text-amber-100">
+                      Não foi possível carregar suas
+                      playlists agora. Você ainda pode
+                      escolher criar uma nova.
+                    </div>
+                  ) : null}
+
+                  {destinationPage ? (
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      {destinationPage.previousOffset !==
+                      null ? (
+                        <Link
+                          href={`/onboarding?destinationOffset=${destinationPage.previousOffset}`}
+                          className="rounded-xl border border-white/15 px-4 py-2"
+                        >
+                          Playlists anteriores
+                        </Link>
+                      ) : (
+                        <span />
+                      )}
+
+                      {destinationPage.nextOffset !==
+                      null ? (
+                        <Link
+                          href={`/onboarding?destinationOffset=${destinationPage.nextOffset}`}
+                          className="rounded-xl border border-white/15 px-4 py-2"
+                        >
+                          Ver mais playlists
+                        </Link>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <fieldset>
+                    <legend className="text-sm font-semibold">
+                      Quanto conteúdo preparar?
+                    </legend>
+
+                    <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {[30, 45, 60, 90].map(
+                        (minutes) => (
+                          <label
+                            key={minutes}
+                            className="rounded-xl border border-white/10 bg-black/15 p-3"
+                          >
+                            <input
+                              type="radio"
+                              name="durationMinutes"
+                              value={minutes}
+                              defaultChecked={
+                                minutes === 45
+                              }
+                              className="mr-2"
+                            />
+                            {minutes} min
+                          </label>
+                        ),
+                      )}
+                    </div>
+                  </fieldset>
+
+                  <fieldset>
+                    <legend className="text-sm font-semibold">
+                      O que entra nesta playlist?
+                    </legend>
+
+                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                      <label className="rounded-xl border border-white/10 bg-black/15 p-4">
+                        <input
+                          type="radio"
+                          name="composition"
+                          value="MUSIC"
+                          defaultChecked
+                          className="mr-2"
+                        />
+                        Só música
+                      </label>
+
+                      <label className="rounded-xl border border-white/10 bg-black/15 p-4">
+                        <input
+                          type="radio"
+                          name="composition"
+                          value="MIXED"
+                          className="mr-2"
+                        />
+                        Música + podcasts
+                      </label>
+
+                      <label className="rounded-xl border border-white/10 bg-black/15 p-4">
+                        <input
+                          type="radio"
+                          name="composition"
+                          value="PODCAST"
+                          className="mr-2"
+                        />
+                        Só podcasts
+                      </label>
+                    </div>
+                  </fieldset>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/60">
+                    O destino será criado desativado.
+                    Nada será gerado nem escrito nele
+                    até a ativação explícita depois da
+                    simulação.
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="submit"
+                      disabled={Boolean(
+                        destinationRateLimitMessage,
+                      )}
+                      className="rounded-xl bg-white px-5 py-3 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {destinationRateLimitMessage
+                        ? "Aguardar liberação do Spotify"
+                        : "Criar destino e continuar"}
+                    </button>
+                  </div>
+                </form>
+              )}
 
               <form action={goBack} className="mt-8">
                 <button
@@ -1045,6 +1638,161 @@ export default async function OnboardingPage({
                   className="rounded-xl border border-white/15 px-5 py-3 font-medium text-white"
                 >
                   Voltar para fontes
+                </button>
+              </form>
+            </>
+          ) : currentStep === "MUSIC_BEHAVIOR" ? (
+            <>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+                Como você quer ouvir?
+              </h1>
+
+              <p className="mt-5 text-base leading-7 text-white/70">
+                Duas escolhas simples agora. Os
+                controles detalhados continuam
+                disponíveis nas configurações depois.
+              </p>
+
+              <form
+                action={saveBasicBehavior}
+                className="mt-6 space-y-6"
+              >
+                <fieldset>
+                  <legend className="font-semibold">
+                    Evitar músicas que você ouviu
+                    recentemente?
+                  </legend>
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="rounded-xl border border-white/10 bg-black/15 p-4">
+                      <input
+                        type="radio"
+                        name="repeatMode"
+                        value="AVOID_RECENT"
+                        defaultChecked={
+                          musicPlaybackPolicy?.enabled ??
+                          true
+                        }
+                        className="mr-2"
+                      />
+                      Sim, evitar por 30 dias
+                    </label>
+
+                    <label className="rounded-xl border border-white/10 bg-black/15 p-4">
+                      <input
+                        type="radio"
+                        name="repeatMode"
+                        value="ALLOW_RECENT"
+                        defaultChecked={
+                          musicPlaybackPolicy?.enabled ===
+                          false
+                        }
+                        className="mr-2"
+                      />
+                      Não agora
+                    </label>
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend className="font-semibold">
+                    Quanto explorar músicas diferentes?
+                  </legend>
+
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <label className="rounded-xl border border-white/10 bg-black/15 p-4">
+                      <input
+                        type="radio"
+                        name="discoveryPreset"
+                        value="FAMILIAR"
+                        className="mr-2"
+                      />
+                      <span className="font-semibold">
+                        Mais familiar
+                      </span>
+                      <span className="mt-1 block text-xs text-white/50">
+                        Prioriza familiaridade e
+                        redescoberta.
+                      </span>
+                    </label>
+
+                    <label className="rounded-xl border border-white/10 bg-black/15 p-4">
+                      <input
+                        type="radio"
+                        name="discoveryPreset"
+                        value="BALANCED"
+                        defaultChecked
+                        className="mr-2"
+                      />
+                      <span className="font-semibold">
+                        Equilibrado
+                      </span>
+                      <span className="mt-1 block text-xs text-white/50">
+                        Mistura familiaridade,
+                        redescoberta e descoberta.
+                      </span>
+                    </label>
+
+                    <label className="rounded-xl border border-white/10 bg-black/15 p-4">
+                      <input
+                        type="radio"
+                        name="discoveryPreset"
+                        value="EXPLORATORY"
+                        className="mr-2"
+                      />
+                      <span className="font-semibold">
+                        Quero descobrir mais
+                      </span>
+                      <span className="mt-1 block text-xs text-white/50">
+                        Aumenta a intensidade de
+                        exploração.
+                      </span>
+                    </label>
+                  </div>
+                </fieldset>
+
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-white px-5 py-3 font-semibold text-black"
+                  >
+                    Salvar preferências
+                  </button>
+                </div>
+              </form>
+
+              <form action={goBack} className="mt-5">
+                <button
+                  type="submit"
+                  className="rounded-xl border border-white/15 px-5 py-3 font-medium text-white"
+                >
+                  Voltar para destino
+                </button>
+              </form>
+            </>
+          ) : currentStep === "CALENDAR" ? (
+            <>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+                Preferências básicas prontas
+              </h1>
+
+              <p className="mt-5 text-base leading-7 text-white/70">
+                O próximo passo é decidir se o tamanho
+                da playlist deve acompanhar seu
+                calendário. Isso entra no Gate 5.
+              </p>
+
+              <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/60">
+                Seu destino continua desativado e
+                nenhuma geração foi executada.
+              </div>
+
+              <form action={goBack} className="mt-8">
+                <button
+                  type="submit"
+                  className="rounded-xl border border-white/15 px-5 py-3 font-medium text-white"
+                >
+                  Voltar para preferências
                 </button>
               </form>
             </>

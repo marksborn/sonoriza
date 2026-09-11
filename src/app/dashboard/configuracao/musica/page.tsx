@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { saveMusicPlaybackPolicyForUser } from "@/services/music-playback-policy";
 import { RECENTLY_PLAYED_SCOPE, scopeIncludes } from "@/services/spotify/recently-played";
 
 function revalidateConfiguration() {
@@ -38,20 +39,14 @@ async function savePolicy(formData: FormData) {
     redirect("/dashboard/configuracao/musica?error=invalid");
   }
 
-  await prisma.musicPlaybackPolicy.upsert({
-    where: { userId: session.user.id },
-    create: {
-      userId: session.user.id,
+  await saveMusicPlaybackPolicyForUser(
+    session.user.id,
+    {
       enabled,
       windowValue,
       windowUnit,
     },
-    update: {
-      enabled,
-      windowValue,
-      windowUnit,
-    },
-  });
+  );
 
   revalidateConfiguration();
   redirect("/dashboard/configuracao/musica?saved=1");
