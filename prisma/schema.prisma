@@ -53,6 +53,7 @@ model User {
   artistSimilaritySeeds            ArtistSimilaritySeedState[]
   artistSimilarityEdges            ArtistSimilarityEdge[]
   albumRecommendationMemories      AlbumRecommendationMemory[]
+  onboardingProgress               OnboardingProgress?
 }
 
 model Account {
@@ -91,6 +92,67 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+// ---------------------------------------------------------------------------
+// ONBOARDING-01 — guided first-run configuration state.
+// Gate 1 is persistence/contract only; no redirect or runtime behavior.
+// ---------------------------------------------------------------------------
+
+enum OnboardingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  READY_FOR_SIMULATION
+  COMPLETED
+  SKIPPED
+}
+
+enum OnboardingStep {
+  WELCOME
+  SPOTIFY
+  SPOTIFY_HISTORY
+  SOURCES
+  DESTINATION
+  MUSIC_BEHAVIOR
+  CALENDAR
+  REVIEW
+  SIMULATION
+  ACTIVATION
+}
+
+enum OnboardingHistoryStatus {
+  NOT_REQUESTED
+  REQUESTED
+  FILES_READY
+  IMPORTING
+  IMPORTED
+  FAILED
+}
+
+model OnboardingProgress {
+  userId String @id
+
+  version     Int              @default(1)
+  status      OnboardingStatus @default(NOT_STARTED)
+  currentStep OnboardingStep   @default(WELCOME)
+
+  completedSteps Json @default("[]")
+  skippedSteps   Json @default("[]")
+
+  historyStatus       OnboardingHistoryStatus @default(NOT_REQUESTED)
+  historyRequestedAt  DateTime?
+  historyFilesReadyAt DateTime?
+  historyImportedAt   DateTime?
+
+  startedAt            DateTime?
+  readyForSimulationAt DateTime?
+  completedAt           DateTime?
+  skippedAt             DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // ---------------------------------------------------------------------------
