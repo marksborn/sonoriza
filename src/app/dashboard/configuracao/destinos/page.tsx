@@ -98,7 +98,31 @@ async function loadOwnedSpotifyPlaylists(userId: string) {
   return {
     client,
     playlists: playlists.filter((playlist) => playlist.ownerId === spotifyUserId),
+    sourcePlaylists: playlists,
   };
+}
+
+function sourceDisplayName(
+  source: {
+    name: string | null;
+    spotifyId: string;
+    spotifyType: SpotifySourceType;
+  },
+  spotifyPlaylistNameById: ReadonlyMap<string, string>,
+) {
+  const persistedName = source.name?.trim();
+  if (persistedName) return persistedName;
+
+  if (source.spotifyType === SpotifySourceType.SAVED_EPISODES) {
+    return "Seus episódios";
+  }
+
+  if (source.spotifyType === SpotifySourceType.PLAYLIST) {
+    const spotifyName = spotifyPlaylistNameById.get(source.spotifyId)?.trim();
+    if (spotifyName) return spotifyName;
+  }
+
+  return "Fonte sem nome";
 }
 
 async function normalizePriorities(userId: string) {
@@ -869,11 +893,14 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
   ]);
 
   let ownedPlaylists: SpotifyPlaylistSummary[] = [];
+  let sourcePlaylists: SpotifyPlaylistSummary[] = [];
   let spotifyLoadError = false;
 
   if (spotifyAccount) {
     try {
-      ownedPlaylists = (await loadOwnedSpotifyPlaylists(userId)).playlists;
+      const loadedPlaylists = await loadOwnedSpotifyPlaylists(userId);
+      ownedPlaylists = loadedPlaylists.playlists;
+      sourcePlaylists = loadedPlaylists.sourcePlaylists;
       ownedPlaylists.sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
     } catch {
       spotifyLoadError = true;
@@ -883,9 +910,13 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
   const globalSharingPolicy =
     sharingPreferenceUser?.defaultTargetSharingPolicy ?? "EXCLUSIVE";
 
+  const spotifySourceNameById = new Map(
+    sourcePlaylists.map((playlist) => [playlist.id, playlist.name]),
+  );
+
   const sourceOptions: TargetSourceOption[] = playlistSources.map((source) => ({
     id: source.id,
-    name: source.name?.trim() || "Fonte sem nome",
+    name: sourceDisplayName(source, spotifySourceNameById),
     kind: source.kind,
     spotifyType: source.spotifyType,
     enabled: source.enabled,
