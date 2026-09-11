@@ -51,3 +51,64 @@ test("#226 terminal writes are fenced to the exact claimed attempt", () => {
   assert.match(source, /linkGenerationRun\(entry\.audit, generated\.runId\)/);
   assert.match(source, /Missing TargetScheduleAttempt .* while finishing/);
 });
+
+test("#324 BLOCKED is terminal for the same scheduled slot", () => {
+  const source = readFileSync(
+    "src/jobs/scheduled-generation.ts",
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /TERMINAL_SCHEDULE_STATUSES[\s\S]*?"BLOCKED"/,
+  );
+
+  assert.match(
+    source,
+    /TERMINAL_SCHEDULE_STATUSES\.has\([\s\S]*?existing\.status/,
+  );
+});
+
+test("#324 scheduled retries are capped at three total attempts", () => {
+  const source = readFileSync(
+    "src/jobs/scheduled-generation.ts",
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /MAX_SCHEDULE_ATTEMPTS = 3/,
+  );
+
+  assert.match(
+    source,
+    /existing\.attempt >=[\s\S]*?MAX_SCHEDULE_ATTEMPTS/,
+  );
+});
+
+test("#324 active Spotify backoff stops remaining isolated targets locally", () => {
+  const source = readFileSync(
+    "src/jobs/scheduled-generation.ts",
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /getActiveSpotifyBackoff/,
+  );
+
+  assert.match(
+    source,
+    /const spotifyBackoff =[\s\S]*?await getActiveSpotifyBackoff\(\)/,
+  );
+
+  assert.match(
+    source,
+    /if \(spotifyBackoff\)[\s\S]*?finishOne\([\s\S]*?"BLOCKED"/,
+  );
+
+  assert.match(
+    source,
+    /sem novas chamadas ao provedor/,
+  );
+});
