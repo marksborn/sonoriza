@@ -150,6 +150,7 @@ export function applyDiscoveryGate5H(input: {
     preview.targets.map((target) => [target.targetPlaylistId, target] as const),
   );
   const plan: PlanRunResult = {
+    ...input.baseline,
     targets: input.baseline.targets.map((baselineTarget) => {
       const targetPreview = previewByTargetId.get(baselineTarget.targetPlaylistId);
       const runTarget = targetById.get(baselineTarget.targetPlaylistId);
@@ -279,6 +280,7 @@ function refreshSegmentation(
 
 function clonePlan(plan: PlanRunResult): PlanRunResult {
   return {
+    ...plan,
     targets: plan.targets.map((target) => ({
       ...target,
       result: clonePlanResult(target.result),

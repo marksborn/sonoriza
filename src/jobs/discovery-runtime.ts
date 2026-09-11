@@ -29,6 +29,9 @@ import type {
   PlanRunResult,
   RunTarget,
 } from "@/services/playlist-planner";
+import type {
+  TargetSharingViolation,
+} from "@/services/playlist-planner/target-sharing-runtime";
 
 import {
   currentMusicRepeatState,
@@ -181,6 +184,38 @@ export function runWithDiscoveryRuntimeState<T>(
 
 export function currentDiscoveryRuntimeState(): DiscoveryRuntimeState | null {
   return storage.getStore() ?? null;
+}
+
+export function recordDiscoveryTargetSharingAbstention(
+  violations: readonly TargetSharingViolation[],
+): void {
+  const state = currentDiscoveryRuntimeState();
+  if (!state) return;
+
+  state.gate5h.applied = false;
+  state.gate5h.selectedDiscoveryCount = 0;
+  state.gate5h.failure = "TARGET_SHARING_CONFLICT_ABSTAIN";
+  state.gate5h.evidence = {
+    ...(state.gate5h.evidence ?? {}),
+    abstained: "TARGET_SHARING_CONFLICT",
+    targetSharingViolationCount: violations.length,
+    targetSharingViolations: violations.slice(0, 100),
+  };
+
+  const targetRuntime = currentTargetDiscoveryRuntimeState();
+  if (targetRuntime?.enabled) {
+    targetRuntime.externalApplied = false;
+    targetRuntime.selectedExternalDiscoveryCount = 0;
+    targetRuntime.evidence = mergeEvidence(
+      targetRuntime.evidence,
+      {
+        external: {
+          abstained: "TARGET_SHARING_CONFLICT",
+          violationCount: violations.length,
+        },
+      },
+    );
+  }
 }
 
 export async function prepareDiscoveryMusicForCurrentRun<
@@ -544,6 +579,7 @@ function applyTargetScopedExternalDiscovery(input: {
   replacements: unknown[];
 } {
   let workingPlan: PlanRunResult = {
+    ...input.baseline,
     targets: input.baseline.targets.map((target) => ({
       ...target,
       result: target.result,
@@ -621,6 +657,7 @@ function applyTargetScopedExternalDiscovery(input: {
       const replacementTarget = applied.plan.targets[0];
       if (replacementTarget) {
         workingPlan = {
+          ...workingPlan,
           targets: workingPlan.targets.map((row) =>
             row.targetPlaylistId === replacementTarget.targetPlaylistId
               ? replacementTarget
