@@ -15,6 +15,7 @@ import {
   type RunTarget,
 } from "@/services/playlist-planner";
 import type { EffectiveSharingPolicy } from "@/services/playlist-planner/target-sharing-shadow";
+import type { TargetSharingReservationMap } from "@/services/playlist-planner/target-sharing-runtime";
 
 import {
   DISCOVERY_GATE4A_SEQUENCE_TERMINAL_UNDERFILL_TOLERANCE_MS,
@@ -93,8 +94,10 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
   /** TARGET-SCOPE-01 Gate 3 configured source ids effective for each target. */
   sourceIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
-  /** TARGET-SCOPE-01 Gate 4 diagnostic-only effective sharing policy. */
+  /** TARGET-SCOPE-01 Gate 5 authoritative effective sharing policy. */
   sharingPolicyByTargetId?: ReadonlyMap<string, EffectiveSharingPolicy>;
+  /** Managed destinations outside this batch, keyed by URI. */
+  externalReservationsByUri?: TargetSharingReservationMap;
   /** MUSIC-05 legacy seam; Gate 5B productive caller passes no provider-derived signals. */
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
@@ -117,6 +120,7 @@ export async function collectIncrementally<
   preservedByTargetId,
   sourceIdsByTargetId,
   sharingPolicyByTargetId,
+  externalReservationsByUri,
   blockedMusicTrackIdsByTargetId,
   initialReserved,
   onBatch,
@@ -328,6 +332,7 @@ export async function collectIncrementally<
     musicPoolByTargetId,
     sourceIdsByTargetId,
     sharingPolicyByTargetId,
+    externalReservationsByUri,
     preservedByTargetId: activePreservedByTargetId,
     blockedMusicTrackIdsByTargetId,
     initialReserved,
@@ -346,6 +351,7 @@ export async function collectIncrementally<
       musicPoolByTargetId,
       sourceIdsByTargetId,
       sharingPolicyByTargetId,
+      externalReservationsByUri,
       preservedByTargetId: activePreservedByTargetId,
       blockedMusicTrackIdsByTargetId,
       initialReserved,
@@ -443,6 +449,7 @@ export async function collectIncrementally<
       musicPoolByTargetId,
       sourceIdsByTargetId,
       sharingPolicyByTargetId,
+      externalReservationsByUri,
       preservedByTargetId: activePreservedByTargetId,
       blockedMusicTrackIdsByTargetId,
       initialReserved,

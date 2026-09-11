@@ -10,6 +10,13 @@ import {
   type EffectiveSharingPolicy,
   type TargetSharingShadowEvidence,
 } from "./target-sharing-shadow";
+import {
+  addTargetReservations,
+  cloneReservationMap,
+  reservationsForTarget,
+  type TargetSharingReservationMap,
+  type TargetSharingRuntimeEvidence,
+} from "./target-sharing-runtime";
 import type {
   Candidate,
   DurationPlanningBlock,
@@ -45,10 +52,14 @@ export interface PlanRunInput {
    */
   sourceIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   /**
-   * TARGET-SCOPE-01 Gate 4: effective per-target sharing policy used strictly
-   * for shadow evidence. The authoritative reserved Set remains unchanged.
+   * TARGET-SCOPE-01 Gate 5: effective per-target sharing policy is authoritative
+   * for inter-target URI reservation.
    */
   sharingPolicyByTargetId?: ReadonlyMap<string, EffectiveSharingPolicy>;
+  /**
+   * Live content owned by enabled managed targets outside this planning batch.
+   */
+  externalReservationsByUri?: TargetSharingReservationMap;
   /** SCHEDULE-01 valid remote items keyed by target id. */
   preservedByTargetId?: ReadonlyMap<string, Candidate[]>;
   /**
@@ -68,8 +79,10 @@ export interface PlanRunTargetResult {
 
 export interface PlanRunResult {
   targets: PlanRunTargetResult[];
-  /** TARGET-SCOPE-01 Gate 4 diagnostic only; never changes planner selection. */
+  /** Gate 4 comparison retained for diagnostic continuity. */
   targetSharingShadow?: TargetSharingShadowEvidence;
+  /** TARGET-SCOPE-01 Gate 5 authoritative runtime evidence. */
+  targetSharingRuntime?: TargetSharingRuntimeEvidence;
 }
 
 /**
@@ -94,14 +107,17 @@ export function planRun({
   musicPoolByTargetId,
   sourceIdsByTargetId,
   sharingPolicyByTargetId,
+  externalReservationsByUri,
   preservedByTargetId,
   blockedMusicTrackIdsByTargetId,
   initialReserved,
 }: PlanRunInput): PlanRunResult {
   const ordered = [...targets].sort((a, b) => a.priority - b.priority);
-  const reserved = new Set<string>(initialReserved ?? []);
+  const legacyHardReserved = new Set<string>(initialReserved ?? []);
+  const reservationOwners = cloneReservationMap(externalReservationsByUri);
   const reservedOwnersByUri = new Map<string, Set<string>>();
   const sharingShadowTargets = [];
+  const sharingRuntimeTargets: TargetSharingRuntimeEvidence["targets"] = [];
   const globalPodcastProgramCounts = new Map<string, number>();
   const results: PlanRunTargetResult[] = [];
   const podcastRuntimePool = applyPodcast06PlannerRuntimeToCandidates(
@@ -110,6 +126,28 @@ export function planRun({
 
   for (const target of ordered) {
     const allowedSourceIds = sourceIdsByTargetId?.get(target.targetPlaylistId);
+    const effectiveSharingPolicy =
+      sharingPolicyByTargetId?.get(target.targetPlaylistId) ??
+      LEGACY_GLOBAL_SHARING_POLICY;
+
+    const runtimeReservation = reservationsForTarget({
+      targetPlaylistId: target.targetPlaylistId,
+      effectiveSharingPolicy,
+      legacyHardReserved,
+      reservationsByUri: reservationOwners,
+    });
+    const reserved = runtimeReservation.forbiddenUris;
+
+    if (sharingPolicyByTargetId) {
+      sharingRuntimeTargets.push({
+        targetPlaylistId: target.targetPlaylistId,
+        targetName: target.name,
+        effectiveSharingPolicy,
+        blockedByPolicyCount: runtimeReservation.blockedByPolicyCount,
+        shareableReservationCount: runtimeReservation.shareableReservationCount,
+        conflictingTargetIds: runtimeReservation.conflictingTargetIds,
+      });
+    }
 
     const targetMusicPool = filterConfiguredSourceCandidates(
       musicPoolByTargetId?.get(target.targetPlaylistId) ?? pools.music,
@@ -189,11 +227,15 @@ export function planRun({
           reserved,
           preserved,
         });
-    for (const uri of result.usedUris) {
-      // Authoritative Gate 3/legacy behavior remains unchanged.
-      reserved.add(uri);
+    addTargetReservations({
+      targetPlaylistId: target.targetPlaylistId,
+      sharingPolicy: effectiveSharingPolicy,
+      uris: result.usedUris,
+      reservationsByUri: reservationOwners,
+    });
 
-      if (sharingPolicyByTargetId) {
+    if (sharingPolicyByTargetId) {
+      for (const uri of result.usedUris) {
         const owners = reservedOwnersByUri.get(uri) ?? new Set<string>();
         owners.add(target.targetPlaylistId);
         reservedOwnersByUri.set(uri, owners);
@@ -215,6 +257,14 @@ export function planRun({
             targets: sharingShadowTargets,
             globalPolicy: LEGACY_GLOBAL_SHARING_POLICY,
           }),
+          targetSharingRuntime: {
+            gate: 5,
+            mode: "ACTIVE",
+            plannerInfluence: true,
+            legacyHardReservedCount: legacyHardReserved.size,
+            ownedReservationUriCount: reservationOwners.size,
+            targets: sharingRuntimeTargets,
+          },
         }
       : {}),
   };

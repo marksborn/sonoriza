@@ -20,6 +20,13 @@ import {
 import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
 import type { Candidate } from "@/services/playlist-planner";
 import {
+  LEGACY_GLOBAL_SHARING_POLICY,
+  resolveEffectiveSharingPolicy,
+} from "@/services/playlist-planner/target-sharing-shadow";
+import type {
+  TargetSharingReservationOwner,
+} from "@/services/playlist-planner/target-sharing-runtime";
+import {
   calendar03PlannerRuntimeSummary,
   createCalendar03PlannerRuntimeState,
   runWithCalendar03PlannerRuntimeState,
@@ -204,9 +211,17 @@ export async function runScheduledGeneration(
               spotifyPlaylistId: { not: null },
             },
             orderBy: { priority: "asc" },
-            select: { id: true, spotifyPlaylistId: true },
+            select: {
+              id: true,
+              spotifyPlaylistId: true,
+              sharingPolicy: true,
+            },
           });
-          const reservedUris = new Set<string>();
+
+          const externalReservationsByUri: Record<
+            string,
+            TargetSharingReservationOwner[]
+          > = {};
           const reservedTargetSnapshots: Record<string, string> = {};
           if (outsideTargets.length > 0) {
             maintenanceSpotify ??= await SpotifyClient.forUser(user.id);
@@ -216,8 +231,21 @@ export async function runScheduledGeneration(
                 outside.spotifyPlaylistId,
               );
               reservedTargetSnapshots[outside.spotifyPlaylistId] = state.snapshotId;
+
+              const outsideSharingPolicy = resolveEffectiveSharingPolicy(
+                outside.sharingPolicy,
+                LEGACY_GLOBAL_SHARING_POLICY,
+              );
+
               for (const item of state.items) {
-                if (item.uri) reservedUris.add(item.uri);
+                if (!item.uri) continue;
+
+                const owners = externalReservationsByUri[item.uri] ?? [];
+                owners.push({
+                  targetPlaylistId: outside.id,
+                  sharingPolicy: outsideSharingPolicy,
+                });
+                externalReservationsByUri[item.uri] = owners;
               }
             }
           }
@@ -251,7 +279,7 @@ export async function runScheduledGeneration(
                   [targetId]: scheduledPolicyByTargetId[targetId]!,
                 },
                 musicOrderSimulationEvidence,
-                reservedUris: [...reservedUris],
+                externalReservationsByUri,
                 reservedTargetSnapshots,
                 rebuildByTargetId: rebuildByTargetId[targetId]
                   ? { [targetId]: rebuildByTargetId[targetId] }
