@@ -105,3 +105,25 @@ test("#204 Gate 6 switching to global mode does not erase remembered selected-so
     /if \(normalizedSourceScopeMode === "SELECTED_ONLY"\)[\s\S]*targetPlaylistSource\.deleteMany/,
   );
 });
+
+test("#204 Gate 6 resolves legacy missing source names for the destination checklist", () => {
+  const page = readFileSync(
+    "src/app/dashboard/configuracao/destinos/page.tsx",
+    "utf8",
+  );
+
+  assert.match(page, /sourcePlaylists: playlists/);
+  assert.match(page, /sourceDisplayName/);
+  assert.match(
+    page,
+    /spotifyPlaylistNameById\.get\(source\.spotifyId\)/,
+  );
+  assert.match(
+    page,
+    /SpotifySourceType\.SAVED_EPISODES[\s\S]*return "Seus episódios"/,
+  );
+  assert.match(
+    page,
+    /name: sourceDisplayName\(source, spotifySourceNameById\)/,
+  );
+});
