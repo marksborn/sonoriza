@@ -14,6 +14,8 @@ type CalendarEventFilterMode = "ALL" | "MARKER";
 type CalendarDurationStrategy = "SUMMED" | "PER_EVENT";
 type TargetCalendarMode = "LEGACY_GLOBAL" | "SELECTED" | "ALL_QUERYABLE";
 type PodcastEpisodeMaxDurationMode = "NONE" | "FIXED" | "CALENDAR_MAX_EVENT";
+type TargetSourceScopeMode = "INHERIT_GLOBAL" | "SELECTED_ONLY";
+type TargetSharingPolicy = "INHERIT_GLOBAL" | "EXCLUSIVE" | "SHAREABLE";
 
 export type SpotifyDestinationOption = {
   id: string;
@@ -26,10 +28,21 @@ export type CalendarOption = {
   name: string;
 };
 
+export type TargetSourceOption = {
+  id: string;
+  name: string;
+  kind: "MUSIC" | "PODCAST";
+  spotifyType: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";
+  enabled: boolean;
+};
+
 export type TargetPlaylistFormInitial = {
   id?: string;
   name: string;
   enabled: boolean;
+  sourceScopeMode: TargetSourceScopeMode;
+  sourceSelectionIds: string[];
+  sharingPolicy: TargetSharingPolicy;
   durationMode: DurationMode;
   fixedDurationMinutes: number;
   calendarMode: TargetCalendarMode;
@@ -61,6 +74,8 @@ type TargetPlaylistFormProps = {
   spotifyOptions: SpotifyDestinationOption[];
   durationCalendarNames: string[];
   calendarOptions: CalendarOption[];
+  sourceOptions: TargetSourceOption[];
+  globalSharingPolicy: "EXCLUSIVE" | "SHAREABLE";
   saveAction: (formData: FormData) => void | Promise<void>;
   submitLabel: string;
 };
@@ -97,9 +112,15 @@ export function TargetPlaylistForm({
   spotifyOptions,
   durationCalendarNames,
   calendarOptions,
+  sourceOptions,
+  globalSharingPolicy,
   saveAction,
   submitLabel,
 }: TargetPlaylistFormProps) {
+  const [sourceScopeMode, setSourceScopeMode] =
+    useState<TargetSourceScopeMode>(initial.sourceScopeMode);
+  const [sharingPolicy, setSharingPolicy] =
+    useState<TargetSharingPolicy>(initial.sharingPolicy);
   const [durationMode, setDurationMode] = useState<DurationMode>(initial.durationMode);
   const [calendarMode, setCalendarMode] = useState<TargetCalendarMode>(initial.calendarMode);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<string[]>(
@@ -235,6 +256,168 @@ export function TargetPlaylistForm({
           </span>
         </span>
       </label>
+
+      <fieldset className={sectionClass}>
+        <legend className="px-1 text-sm font-black text-ink-inverse">
+          Fontes desta playlist
+        </legend>
+        <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
+          As fontes continuam sendo cadastradas globalmente. Aqui você pode
+          restringir quais delas alimentam apenas este destino.
+        </p>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <label className={optionClass(sourceScopeMode === "INHERIT_GLOBAL")}>
+            <input
+              type="radio"
+              name="sourceScopeMode"
+              value="INHERIT_GLOBAL"
+              checked={sourceScopeMode === "INHERIT_GLOBAL"}
+              onChange={() => setSourceScopeMode("INHERIT_GLOBAL")}
+              className="sr-only"
+            />
+            <span className="block font-black text-ink-inverse">
+              Usar todas as fontes globais ativas
+            </span>
+            <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+              Mantém o comportamento padrão e acompanha automaticamente as
+              fontes que estiverem habilitadas.
+            </span>
+          </label>
+
+          <label className={optionClass(sourceScopeMode === "SELECTED_ONLY")}>
+            <input
+              type="radio"
+              name="sourceScopeMode"
+              value="SELECTED_ONLY"
+              checked={sourceScopeMode === "SELECTED_ONLY"}
+              onChange={() => setSourceScopeMode("SELECTED_ONLY")}
+              className="sr-only"
+            />
+            <span className="block font-black text-ink-inverse">
+              Escolher fontes para este destino
+            </span>
+            <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+              Somente as fontes marcadas abaixo poderão alimentar esta playlist.
+            </span>
+          </label>
+        </div>
+
+        {sourceScopeMode === "SELECTED_ONLY" && (
+          <div className="mt-4 space-y-2">
+            {sourceOptions.length === 0 ? (
+              <div className="status-warning rounded-xl border px-3 py-2 text-xs leading-5">
+                Nenhuma fonte está cadastrada. Adicione fontes na configuração
+                global antes de selecionar uma fonte específica.
+              </div>
+            ) : (
+              sourceOptions.map((source) => {
+                const selected = initial.sourceSelectionIds.includes(source.id);
+                const typeLabel =
+                  source.spotifyType === "SHOW"
+                    ? "Podcast"
+                    : source.spotifyType === "SAVED_EPISODES"
+                      ? "Seus episódios"
+                      : source.kind === "PODCAST"
+                        ? "Playlist de podcasts"
+                        : "Playlist de música";
+
+                return (
+                  <label
+                    key={source.id}
+                    className={`flex items-start gap-3 rounded-xl border px-3 py-3 ${
+                      source.enabled
+                        ? "border-line-dark/55 bg-surface-dark/55"
+                        : "border-warning/30 bg-warning/5"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      name="sourceSelectionIds"
+                      value={source.id}
+                      defaultChecked={selected}
+                      className="mt-1 h-4 w-4 accent-accent"
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-bold text-ink-inverse">
+                        {source.name}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-muted-inverse/65">
+                        {typeLabel}
+                        {source.enabled
+                          ? " · ativa"
+                          : " · desativada globalmente — vínculo preservado, mas não será usada"}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })
+            )}
+
+            {initial.sourceSelectionIds.length === 0 && (
+              <p className="text-xs leading-5 text-muted-inverse/65">
+                Se nenhuma fonte for escolhida, este destino ficará sem fontes
+                configuradas; o Sonoriza não fará fallback silencioso.
+              </p>
+            )}
+          </div>
+        )}
+      </fieldset>
+
+      <fieldset className={sectionClass}>
+        <legend className="px-1 text-sm font-black text-ink-inverse">
+          Compartilhamento entre destinos
+        </legend>
+        <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
+          Isto controla se a mesma música ou episódio pode existir ao mesmo
+          tempo em mais de uma playlist gerenciada. Não é a regra de repetição
+          baseada no seu histórico de reprodução.
+        </p>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          {(
+            [
+              [
+                "INHERIT_GLOBAL",
+                "Seguir configuração global",
+                `Hoje: ${
+                  globalSharingPolicy === "SHAREABLE"
+                    ? "compartilhável"
+                    : "exclusiva"
+                }.`,
+              ],
+              [
+                "EXCLUSIVE",
+                "Exclusiva",
+                "Não repete conteúdo que esteja em outro destino gerenciado.",
+              ],
+              [
+                "SHAREABLE",
+                "Compartilhável",
+                "Pode repetir somente com outros destinos também compartilháveis.",
+              ],
+            ] as const
+          ).map(([value, title, description]) => (
+            <label
+              key={value}
+              className={optionClass(sharingPolicy === value)}
+            >
+              <input
+                type="radio"
+                name="sharingPolicy"
+                value={value}
+                checked={sharingPolicy === value}
+                onChange={() => setSharingPolicy(value)}
+                className="mr-2 accent-accent"
+              />
+              <span className="font-black text-ink-inverse">{title}</span>
+              <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                {description}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
 
       <fieldset className={sectionClass}>
         <legend className="px-1 text-sm font-black text-ink-inverse">

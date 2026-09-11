@@ -170,6 +170,14 @@ export async function generatePlaylists(
   let reader: SpotifyIncrementalReader | null = null;
 
   try {
+    const sharingPreferenceUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { defaultTargetSharingPolicy: true },
+    });
+    const globalSharingPolicy =
+      sharingPreferenceUser?.defaultTargetSharingPolicy ??
+      LEGACY_GLOBAL_SHARING_POLICY;
+
     const targets = await prisma.targetPlaylist.findMany({
       where: {
         userId,
@@ -377,7 +385,7 @@ export async function generatePlaylists(
 
       const effectiveSharingPolicy = resolveEffectiveSharingPolicy(
         target.sharingPolicy,
-        LEGACY_GLOBAL_SHARING_POLICY,
+        globalSharingPolicy,
       );
 
       sharingPolicyByTargetId.set(target.id, effectiveSharingPolicy);
@@ -410,7 +418,7 @@ export async function generatePlaylists(
       mode: "ACTIVE",
       plannerInfluence: true,
       simulation: simulate,
-      globalPolicy: LEGACY_GLOBAL_SHARING_POLICY,
+      globalPolicy: globalSharingPolicy,
       targets: sharingPolicyTargets,
       planner: null,
     };
@@ -566,7 +574,7 @@ export async function generatePlaylists(
       mode: "ACTIVE",
       plannerInfluence: true,
       simulation: simulate,
-      globalPolicy: LEGACY_GLOBAL_SHARING_POLICY,
+      globalPolicy: globalSharingPolicy,
       targets: sharingPolicyTargets,
       planner: incremental.plan.targetSharingRuntime ?? null,
       gate4Comparison: incremental.plan.targetSharingShadow ?? null,

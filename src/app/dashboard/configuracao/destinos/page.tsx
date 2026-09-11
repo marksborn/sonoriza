@@ -7,6 +7,7 @@ import {
   TargetPlaylistForm,
   type CalendarOption,
   type SpotifyDestinationOption,
+  type TargetSourceOption,
 } from "@/components/TargetPlaylistForm";
 import { TargetDiscoveryForm } from "@/components/TargetDiscoveryForm";
 import { UiIcon } from "@/components/UiIcon";
@@ -180,6 +181,35 @@ async function saveTarget(formData: FormData) {
     : null;
   const sequencePattern = readSequence(formData.get("sequencePattern"));
   const enabled = formData.get("enabled") === "on";
+  const sourceScopeModeRaw = String(
+    formData.get("sourceScopeMode") ?? "INHERIT_GLOBAL",
+  ).trim();
+  const sharingPolicyRaw = String(
+    formData.get("sharingPolicy") ?? "INHERIT_GLOBAL",
+  ).trim();
+  const requestedSourceSelectionIds = [
+    ...new Set(
+      formData
+        .getAll("sourceSelectionIds")
+        .map((value) => String(value).trim())
+        .filter(Boolean),
+    ),
+  ];
+
+  const normalizedSourceScopeMode =
+    sourceScopeModeRaw === "INHERIT_GLOBAL" ||
+    sourceScopeModeRaw === "SELECTED_ONLY"
+      ? sourceScopeModeRaw
+      : null;
+
+  const normalizedSharingPolicy =
+    sharingPolicyRaw === "INHERIT_GLOBAL" ||
+    sharingPolicyRaw === "EXCLUSIVE" ||
+    sharingPolicyRaw === "SHAREABLE"
+      ? sharingPolicyRaw
+      : null;
+
+  if (!normalizedSourceScopeMode || !normalizedSharingPolicy) fail("target-scope");
 
   if (!name || name.length > 100) fail("invalid");
   if (durationMode !== "FIXED" && durationMode !== "CALENDAR") fail("invalid");
@@ -289,11 +319,35 @@ async function saveTarget(formData: FormData) {
     fail("episode-duration");
   }
 
+  let normalizedSourceSelectionIds: string[] = [];
+  if (normalizedSourceScopeMode === "SELECTED_ONLY") {
+    if (requestedSourceSelectionIds.length > 0) {
+      const ownedSources = await prisma.sourcePlaylist.findMany({
+        where: {
+          userId,
+          id: { in: requestedSourceSelectionIds },
+        },
+        select: { id: true },
+      });
+      const ownedIds = new Set(ownedSources.map((source) => source.id));
+      if (
+        ownedIds.size !== requestedSourceSelectionIds.length ||
+        requestedSourceSelectionIds.some((sourceId) => !ownedIds.has(sourceId))
+      ) {
+        fail("target-scope");
+      }
+    }
+    normalizedSourceSelectionIds = requestedSourceSelectionIds;
+  }
+
   const existingTarget = id
     ? await prisma.targetPlaylist.findFirst({
         where: { id, userId },
         include: {
-          calendarSelections: {
+          sourceSelections: {
+          select: { sourcePlaylistId: true },
+        },
+        calendarSelections: {
             select: { calendarSelectionId: true },
           },
         },
@@ -407,6 +461,8 @@ async function saveTarget(formData: FormData) {
     name,
     spotifyPlaylistId,
     enabled,
+    sourceScopeMode: normalizedSourceScopeMode,
+    sharingPolicy: normalizedSharingPolicy,
     compositionMode: normalizedCompositionMode,
     musicOrderMode: normalizedMusicOrderMode,
     durationMode,
@@ -449,6 +505,22 @@ async function saveTarget(formData: FormData) {
         where: { id: existingTarget.id },
         data,
       });
+
+      if (normalizedSourceScopeMode === "SELECTED_ONLY") {
+        await tx.targetPlaylistSource.deleteMany({
+          where: { targetPlaylistId: existingTarget.id },
+        });
+        if (normalizedSourceSelectionIds.length > 0) {
+          await tx.targetPlaylistSource.createMany({
+            data: normalizedSourceSelectionIds.map((sourcePlaylistId) => ({
+              userId,
+              targetPlaylistId: existingTarget.id,
+              sourcePlaylistId,
+            })),
+          });
+        }
+      }
+
       await tx.targetPlaylistCalendar.deleteMany({
         where: { targetPlaylistId: existingTarget.id },
       });
@@ -481,6 +553,19 @@ async function saveTarget(formData: FormData) {
         select: { id: true },
       });
       if (
+        normalizedSourceScopeMode === "SELECTED_ONLY" &&
+        normalizedSourceSelectionIds.length > 0
+      ) {
+        await tx.targetPlaylistSource.createMany({
+          data: normalizedSourceSelectionIds.map((sourcePlaylistId) => ({
+            userId,
+            targetPlaylistId: created.id,
+            sourcePlaylistId,
+          })),
+        });
+      }
+
+      if (
         durationMode === "CALENDAR" &&
         normalizedCalendarMode === "SELECTED" &&
         normalizedCalendarSelectionIds.length > 0
@@ -498,6 +583,26 @@ async function saveTarget(formData: FormData) {
   await normalizePriorities(userId);
   revalidateConfiguration();
   redirect(`${CONFIG_PATH}?saved=${existingTarget ? "updated" : "created"}`);
+}
+
+async function saveGlobalSharingPolicy(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+
+  const policy = String(formData.get("policy") ?? "").trim();
+  if (policy !== "EXCLUSIVE" && policy !== "SHAREABLE") {
+    fail("target-scope");
+  }
+
+  await prisma.user.update({
+    where: { id: session.user.id },
+    data: { defaultTargetSharingPolicy: policy },
+  });
+
+  revalidateConfiguration();
+  redirect(`${CONFIG_PATH}?saved=sharing-default`);
 }
 
 async function toggleTarget(formData: FormData) {
@@ -695,10 +800,20 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
   const params = await searchParams;
   const userId = session.user.id;
 
-  const [spotifyAccount, targets, durationCalendars, playlistSources] = await Promise.all([
+  const [
+    spotifyAccount,
+    sharingPreferenceUser,
+    targets,
+    durationCalendars,
+    playlistSources,
+  ] = await Promise.all([
     prisma.account.findFirst({
       where: { userId, provider: "spotify" },
       select: { id: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { defaultTargetSharingPolicy: true },
     }),
     prisma.targetPlaylist.findMany({
       where: { userId },
@@ -707,6 +822,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
         targetScheduleRuns: {
           orderBy: { startedAt: "desc" },
           take: 1,
+        },
+        sourceSelections: {
+          select: {
+            sourcePlaylistId: true,
+          },
         },
         calendarSelections: {
           orderBy: { createdAt: "asc" },
@@ -735,11 +855,16 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
       },
     }),
     prisma.sourcePlaylist.findMany({
-      where: {
-        userId,
-        spotifyType: SpotifySourceType.PLAYLIST,
+      where: { userId },
+      orderBy: [{ enabled: "desc" }, { kind: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        spotifyId: true,
+        spotifyType: true,
+        kind: true,
+        name: true,
+        enabled: true,
       },
-      select: { spotifyId: true },
     }),
   ]);
 
@@ -755,7 +880,22 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
     }
   }
 
-  const sourceIds = new Set(playlistSources.map((source) => source.spotifyId));
+  const globalSharingPolicy =
+    sharingPreferenceUser?.defaultTargetSharingPolicy ?? "EXCLUSIVE";
+
+  const sourceOptions: TargetSourceOption[] = playlistSources.map((source) => ({
+    id: source.id,
+    name: source.name?.trim() || "Fonte sem nome",
+    kind: source.kind,
+    spotifyType: source.spotifyType,
+    enabled: source.enabled,
+  }));
+
+  const sourceIds = new Set(
+    playlistSources
+      .filter((source) => source.spotifyType === SpotifySourceType.PLAYLIST)
+      .map((source) => source.spotifyId),
+  );
   const targetSpotifyIds = new Set(
     targets.flatMap((target) => (target.spotifyPlaylistId ? [target.spotifyPlaylistId] : [])),
   );
@@ -794,6 +934,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
             ? "Revise a duração máxima por episódio. O limite fixo deve ficar entre 1 minuto e 24 horas, e o maior evento só pode ser usado em destinos baseados no calendário."
             : params.error === "schedule"
               ? "Revise a política automática, o horário diário e o fuso horário do destino."
+              : params.error === "target-scope"
+                ? "Revise as fontes e a política de compartilhamento deste destino."
               : params.error === "source-conflict"
               ? "Essa playlist já é uma fonte de conteúdo. Escolha outro destino para evitar que a geração apague a própria fonte."
               : params.error === "target-conflict"
@@ -843,6 +985,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
             {params.saved === "enabled" && "Destino ativado para as próximas gerações."}
             {params.saved === "disabled" && "Destino desativado. As regras continuam salvas."}
             {params.saved === "reordered" && "Ordem de geração atualizada."}
+            {params.saved === "sharing-default" &&
+              "Configuração global de compartilhamento atualizada."}
           </div>
         )}
 
@@ -890,6 +1034,68 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
               <UiIcon name="settings" size={17} />
               Configurar calendários
             </Link>
+          </div>
+        </section>
+
+        <section className="product-panel mt-5 p-5 sm:p-6">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
+              Compartilhamento global
+            </p>
+            <h2 className="mt-1 text-xl font-black text-ink-inverse">
+              Regra padrão entre destinos
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
+              Destinos em “Seguir configuração global” usam esta regra. Isso
+              controla coexistência entre playlists gerenciadas e é diferente da
+              janela de repetição do histórico.
+            </p>
+
+            <form action={saveGlobalSharingPolicy} className="mt-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className={`cursor-pointer rounded-2xl border p-4 ${
+                  globalSharingPolicy === "EXCLUSIVE"
+                    ? "border-brand-400/65 bg-brand/15"
+                    : "border-line-dark/55 bg-surface-subtle/55"
+                }`}>
+                  <input
+                    type="radio"
+                    name="policy"
+                    value="EXCLUSIVE"
+                    defaultChecked={globalSharingPolicy === "EXCLUSIVE"}
+                    className="mr-2 accent-accent"
+                  />
+                  <span className="font-black text-ink-inverse">Exclusiva</span>
+                  <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                    Uma música ou episódio fica em apenas um destino, salvo
+                    override explícito compatível.
+                  </span>
+                </label>
+
+                <label className={`cursor-pointer rounded-2xl border p-4 ${
+                  globalSharingPolicy === "SHAREABLE"
+                    ? "border-brand-400/65 bg-brand/15"
+                    : "border-line-dark/55 bg-surface-subtle/55"
+                }`}>
+                  <input
+                    type="radio"
+                    name="policy"
+                    value="SHAREABLE"
+                    defaultChecked={globalSharingPolicy === "SHAREABLE"}
+                    className="mr-2 accent-accent"
+                  />
+                  <span className="font-black text-ink-inverse">Compartilhável</span>
+                  <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+                    A mesma URI pode aparecer em dois destinos somente quando
+                    ambos forem efetivamente compartilháveis.
+                  </span>
+                </label>
+              </div>
+
+              <button type="submit" className="primary-button mt-4">
+                Salvar regra global
+              </button>
+            </form>
           </div>
         </section>
 
@@ -966,9 +1172,14 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 spotifyOptions={spotifyOptions()}
                 durationCalendarNames={durationCalendarNames}
                 calendarOptions={calendarOptions}
+                sourceOptions={sourceOptions}
+                globalSharingPolicy={globalSharingPolicy}
                 initial={{
                   name: "",
                   enabled: true,
+                  sourceScopeMode: "INHERIT_GLOBAL",
+                  sourceSelectionIds: [],
+                  sharingPolicy: "INHERIT_GLOBAL",
                   durationMode: "FIXED",
                   fixedDurationMinutes: 45,
                   calendarMode: "SELECTED",
@@ -1102,6 +1313,22 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               : "ordem padrão"
                           }`}
                           {` · ${musicDiversityLabel(target)}`}
+                          {` · fontes: ${
+                            target.sourceScopeMode === "SELECTED_ONLY"
+                              ? `${target.sourceSelections.length} selecionada(s)`
+                              : "todas as globais ativas"
+                          }`}
+                          {` · compartilhamento: ${
+                            target.sharingPolicy === "INHERIT_GLOBAL"
+                              ? `global (${
+                                  globalSharingPolicy === "SHAREABLE"
+                                    ? "compartilhável"
+                                    : "exclusiva"
+                                })`
+                              : target.sharingPolicy === "SHAREABLE"
+                                ? "compartilhável"
+                                : "exclusiva"
+                          }`}
                           {` · ${schedule.policy}`}
                         </p>
                         {schedule.audit && (
@@ -1167,10 +1394,17 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           spotifyOptions={spotifyOptions(target.spotifyPlaylistId)}
                           durationCalendarNames={durationCalendarNames}
                           calendarOptions={calendarOptions}
+                          sourceOptions={sourceOptions}
+                          globalSharingPolicy={globalSharingPolicy}
                           initial={{
                             id: target.id,
                             name: target.name,
                             enabled: target.enabled,
+                            sourceScopeMode: target.sourceScopeMode,
+                            sourceSelectionIds: target.sourceSelections.map(
+                              (entry) => entry.sourcePlaylistId,
+                            ),
+                            sharingPolicy: target.sharingPolicy,
                             durationMode: target.durationMode,
                             fixedDurationMinutes: Math.max(
                               1,

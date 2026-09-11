@@ -17,13 +17,14 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                         String                    @id @default(cuid())
+  name                       String?
+  email                      String?                   @unique
+  emailVerified              DateTime?
+  image                      String?
+  defaultTargetSharingPolicy GlobalTargetSharingPolicy @default(EXCLUSIVE)
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
 
   accounts                         Account[]
   sessions                         Session[]
@@ -637,6 +638,11 @@ enum TargetScheduleRunStatus {
 enum TargetSourceScopeMode {
   INHERIT_GLOBAL
   SELECTED_ONLY
+}
+
+enum GlobalTargetSharingPolicy {
+  EXCLUSIVE
+  SHAREABLE
 }
 
 enum TargetSharingPolicy {
