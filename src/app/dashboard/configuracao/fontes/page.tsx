@@ -1,4 +1,4 @@
-import { PodcastEpisodeOrder, SourceKind, SpotifySourceType } from "@prisma/client";
+import { SourceKind, SpotifySourceType } from "@prisma/client";
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -11,6 +11,10 @@ import {
   type SpotifyPlaylistSummary,
   type SpotifyShowSummary,
 } from "@/services/spotify";
+import {
+  saveSpotifySourceForUser,
+  SpotifySourceConfigurationError,
+} from "@/services/source-configuration";
 import {
   loadPodcastShowPolicies,
   type PodcastShowPolicySnapshot,
@@ -47,107 +51,44 @@ async function addSource(formData: FormData) {
   const session = await auth();
   if (!session?.user?.id) redirect("/");
 
-  const spotifyId = String(formData.get("spotifyId") ?? "").trim();
-  const spotifyTypeRaw = String(formData.get("spotifyType") ?? "").trim();
-  const kindRaw = String(formData.get("kind") ?? "").trim();
+  const spotifyId = String(
+    formData.get("spotifyId") ?? "",
+  ).trim();
 
-  const spotifyType =
-    spotifyTypeRaw === SpotifySourceType.PLAYLIST
-      ? SpotifySourceType.PLAYLIST
-      : spotifyTypeRaw === SpotifySourceType.SHOW
-        ? SpotifySourceType.SHOW
-        : spotifyTypeRaw === SpotifySourceType.SAVED_EPISODES
-          ? SpotifySourceType.SAVED_EPISODES
-          : null;
+  const spotifyType = String(
+    formData.get("spotifyType") ?? "",
+  ).trim();
 
-  const requestedKind =
-    kindRaw === SourceKind.MUSIC
-      ? SourceKind.MUSIC
-      : kindRaw === SourceKind.PODCAST
-        ? SourceKind.PODCAST
-        : null;
+  const kind = String(
+    formData.get("kind") ?? "",
+  ).trim();
 
-  if (!spotifyId || !spotifyType || !requestedKind) {
-    redirect("/dashboard/configuracao/fontes?error=invalid");
-  }
-
-  const spotifyAccount = await prisma.account.findFirst({
-    where: { userId: session.user.id, provider: "spotify" },
-    select: { id: true, scope: true },
-  });
-  if (!spotifyAccount) redirect("/dashboard/configuracao/fontes?error=spotify");
-
-  const hasLibraryScope = scopeIncludes(spotifyAccount.scope, LIBRARY_SCOPE);
-  const hasPlaybackScope = scopeIncludes(spotifyAccount.scope, PLAYBACK_SCOPE);
-
-  let sourceName: string | undefined;
-  let kind = requestedKind;
+  let savedType: SpotifySourceType;
 
   try {
-    const client = await SpotifyClient.forUser(session.user.id);
+    const result = await saveSpotifySourceForUser({
+      userId: session.user.id,
+      spotifyId,
+      spotifyType,
+      kind,
+    });
 
-    if (spotifyType === SpotifySourceType.PLAYLIST) {
-      if (requestedKind === SourceKind.PODCAST && !hasPlaybackScope) {
-        redirect("/dashboard/configuracao/fontes?error=scope");
-      }
-      const playlists = await client.listCurrentUserPlaylists();
-      sourceName = playlists.find((playlist) => playlist.id === spotifyId)?.name;
-    } else if (spotifyType === SpotifySourceType.SHOW) {
-      if (!hasLibraryScope || !hasPlaybackScope) {
-        redirect("/dashboard/configuracao/fontes?error=scope");
-      }
-      const shows = await client.listSavedShows();
-      sourceName = shows.find((show) => show.id === spotifyId)?.name;
-      kind = SourceKind.PODCAST;
-    } else {
-      if (
-        spotifyId !== SAVED_EPISODES_ID ||
-        !hasLibraryScope ||
-        !hasPlaybackScope
-      ) {
-        redirect("/dashboard/configuracao/fontes?error=scope");
-      }
-      sourceName = "Seus episódios";
-      kind = SourceKind.PODCAST;
-    }
+    savedType = result.spotifyType;
   } catch (error) {
-    if (error && typeof error === "object" && "digest" in error) throw error;
-    redirect("/dashboard/configuracao/fontes?error=spotify");
+    const code =
+      error instanceof SpotifySourceConfigurationError
+        ? error.code
+        : "spotify";
+
+    redirect(
+      `/dashboard/configuracao/fontes?error=${code}`,
+    );
   }
 
-  if (!sourceName) redirect("/dashboard/configuracao/fontes?error=invalid");
-
-  await prisma.sourcePlaylist.upsert({
-    where: {
-      userId_spotifyType_spotifyId: {
-        userId: session.user.id,
-        spotifyType,
-        spotifyId,
-      },
-    },
-    create: {
-      userId: session.user.id,
-      spotifyType,
-      spotifyId,
-      name: sourceName,
-      kind,
-      enabled: true,
-      includePlayed: false,
-      episodeOrder:
-        spotifyType === SpotifySourceType.SHOW
-          ? PodcastEpisodeOrder.OLDEST_FIRST
-          : PodcastEpisodeOrder.SOURCE_DEFAULT,
-    },
-    update: {
-      name: sourceName,
-      kind,
-      enabled: true,
-    },
-  });
-
   revalidateConfiguration();
+
   redirect(
-    spotifyType === SpotifySourceType.SHOW
+    savedType === SpotifySourceType.SHOW
       ? "/dashboard/configuracao/fontes?saved=added-show"
       : "/dashboard/configuracao/fontes?saved=added",
   );
