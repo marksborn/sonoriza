@@ -64,7 +64,11 @@ export async function runScheduledGeneration(
           some: { enabled: true, updatePolicy: { not: "MANUAL" } },
         },
       },
-      select: { id: true, email: true },
+      select: {
+        id: true,
+        email: true,
+        defaultTargetSharingPolicy: true,
+      },
     })
   ).filter((user) => isEmailAllowed(user.email));
 
@@ -234,7 +238,8 @@ export async function runScheduledGeneration(
 
               const outsideSharingPolicy = resolveEffectiveSharingPolicy(
                 outside.sharingPolicy,
-                LEGACY_GLOBAL_SHARING_POLICY,
+                user.defaultTargetSharingPolicy ??
+                  LEGACY_GLOBAL_SHARING_POLICY,
               );
 
               for (const item of state.items) {
