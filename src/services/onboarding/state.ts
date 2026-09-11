@@ -94,7 +94,8 @@ export function canTransitionOnboardingHistoryStatus(
 }
 
 export function historyWaitBlocksOnboarding(
-  _historyStatus: OnboardingHistoryStatusValue,
+  historyStatus: OnboardingHistoryStatusValue,
 ) {
+  void historyStatus;
   return false;
 }
