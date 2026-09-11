@@ -32,6 +32,7 @@ import {
   runWithCalendar03PlannerRuntimeState,
 } from "@/services/playlist-planner/calendar-event-composition-runtime";
 import { SpotifyClient } from "@/services/spotify";
+import { getActiveSpotifyBackoff } from "@/services/spotify/backoff";
 import {
   dailyScheduleSlot,
   isValidTimeZone,
@@ -41,6 +42,16 @@ import { generatePlaylists } from "./generate-playlists";
 import { runIsolated } from "./isolated-execution";
 
 const RETRY_AFTER_MS = 30 * 60 * 1000;
+const MAX_SCHEDULE_ATTEMPTS = 3;
+
+const TERMINAL_SCHEDULE_STATUSES =
+  new Set<TargetScheduleRunStatus>([
+    "SUCCESS",
+    "NOOP",
+    "PARTIAL",
+    "BLOCKED",
+  ]);
+
 const STALE_RUNNING_ATTEMPT_REASON =
   "Tentativa expirada após 30 minutos sem conclusão; um novo retry assumiu o slot.";
 
@@ -207,6 +218,33 @@ export async function runScheduledGeneration(
         executable,
         async (entry) => {
           const targetId = entry.target.id;
+
+          const spotifyBackoff =
+            await getActiveSpotifyBackoff();
+
+          if (spotifyBackoff) {
+            const reason =
+              `Spotify ${spotifyBackoff.reason} ativo até ${spotifyBackoff.blockedUntil.toISOString()}; ` +
+              "execução agendada interrompida localmente sem novas chamadas ao provedor.";
+
+            await finishOne(
+              entry.audit,
+              "BLOCKED",
+              reason,
+              new Date(),
+            );
+
+            results.push(
+              result(
+                entry,
+                "",
+                `blocked: ${reason}`,
+              ),
+            );
+
+            return;
+          }
+
           const outsideTargets = await prisma.targetPlaylist.findMany({
             where: {
               userId: user.id,
@@ -383,8 +421,28 @@ async function claimScheduleSlot(
     where: { scheduleKey: slot.scheduleKey },
   });
   if (existing) {
-    if (["SUCCESS", "NOOP", "PARTIAL"].includes(existing.status)) return null;
-    if (now.getTime() - existing.startedAt.getTime() < RETRY_AFTER_MS) return null;
+    if (
+      TERMINAL_SCHEDULE_STATUSES.has(
+        existing.status,
+      )
+    ) {
+      return null;
+    }
+
+    if (
+      existing.attempt >=
+      MAX_SCHEDULE_ATTEMPTS
+    ) {
+      return null;
+    }
+
+    if (
+      now.getTime() -
+        existing.startedAt.getTime() <
+      RETRY_AFTER_MS
+    ) {
+      return null;
+    }
 
     return prisma.$transaction(async (tx) => {
       const claimed = await tx.targetScheduleRun.updateMany({
