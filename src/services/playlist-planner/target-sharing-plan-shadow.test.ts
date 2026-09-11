@@ -44,28 +44,37 @@ function run(
   });
 }
 
-test("#204 Gate 4 shadow does not change legacy planner selection", () => {
+test("#204 Gate 4 comparison remains available after Gate 5 activation", () => {
   const baseline = run();
-  const shadow = run(
+  const active = run(
     new Map([
       ["target-a", "SHAREABLE"],
       ["target-b", "SHAREABLE"],
     ]),
   );
 
+  // Without an explicit sharing-policy map, backward-compatible legacy
+  // exclusivity is still preserved.
   assert.deepEqual(
-    shadow.targets.map((target) =>
-      target.result.items.map((item) => item.uri),
-    ),
-    baseline.targets.map((target) =>
-      target.result.items.map((item) => item.uri),
-    ),
-  );
-
-  assert.deepEqual(
-    shadow.targets.map((target) => target.result.items.length),
+    baseline.targets.map((target) => target.result.items.length),
     [1, 0],
   );
+
+  // Gate 5 makes the persisted effective policy authoritative.
+  assert.deepEqual(
+    active.targets.map((target) =>
+      target.result.items.map((item) => item.uri),
+    ),
+    [
+      ["spotify:track:shared"],
+      ["spotify:track:shared"],
+    ],
+  );
+
+  // Gate 4 evidence remains present only as a comparison/diagnostic.
+  assert.equal(active.targetSharingShadow?.plannerInfluence, false);
+  assert.equal(active.targetSharingRuntime?.plannerInfluence, true);
+  assert.equal(active.targetSharingRuntime?.mode, "ACTIVE");
 });
 
 test("#204 Gate 4 reports legacy block that would be shareable only for two SHAREABLE targets", () => {

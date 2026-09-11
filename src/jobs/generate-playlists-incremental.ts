@@ -40,6 +40,10 @@ import {
   type EffectiveSharingPolicy,
 } from "@/services/playlist-planner/target-sharing-shadow";
 import {
+  findTargetSharingViolations,
+  type TargetSharingReservationOwner,
+} from "@/services/playlist-planner/target-sharing-runtime";
+import {
   isSpotifyApiError,
   SpotifyClient,
   type SpotifyRequestMetrics,
@@ -88,8 +92,19 @@ export interface GeneratePlaylistsOptions {
   keepFilledByTargetId?: Record<string, KeepFilledTargetPatch>;
   /** SCHEDULE-01 audit label per scoped target. */
   scheduledPolicyByTargetId?: Record<string, "KEEP_FILLED" | "REBUILD_DAILY">;
-  /** SCHEDULE-01: live URIs owned by enabled targets outside this scoped batch. */
+  /**
+   * Legacy fail-closed reservation input. Unknown owners are treated as
+   * exclusive and remain blocked for backward compatibility.
+   */
   reservedUris?: string[];
+  /**
+   * TARGET-SCOPE-01 Gate 5: live URI owners outside this scoped batch.
+   * This allows SHAREABLE + SHAREABLE while preserving symmetric exclusivity.
+   */
+  externalReservationsByUri?: Record<
+    string,
+    TargetSharingReservationOwner[]
+  >;
   /** Snapshots proving the external reservation set is still current pre-write. */
   reservedTargetSnapshots?: Record<string, string>;
   /** Stable current state captured before a scheduled full rebuild. */
@@ -377,27 +392,35 @@ export async function generatePlaylists(
       log({
         level: "INFO",
         message:
-          `TARGET-SCOPE-01 sharing shadow for "${target.name}": ` +
+          `TARGET-SCOPE-01 sharing runtime for "${target.name}": ` +
           `${target.sharingPolicy} → ${effectiveSharingPolicy}; ` +
-          "planner influence=false",
+          "planner influence=true",
         data: {
-          gate: 4,
-          mode: "SHADOW",
+          gate: 5,
+          mode: "ACTIVE",
+          plannerInfluence: true,
           persistedPolicy: target.sharingPolicy,
           effectiveSharingPolicy,
         },
       });
     }
 
-    summary.targetSharingShadow = {
-      gate: 4,
-      mode: "SHADOW",
-      plannerInfluence: false,
+    summary.targetSharingRuntime = {
+      gate: 5,
+      mode: "ACTIVE",
+      plannerInfluence: true,
       simulation: simulate,
       globalPolicy: LEGACY_GLOBAL_SHARING_POLICY,
       targets: sharingPolicyTargets,
       planner: null,
     };
+
+    const externalReservationsByUri = new Map<
+      string,
+      TargetSharingReservationOwner[]
+    >(
+      Object.entries(opts.externalReservationsByUri ?? {}),
+    );
 
     const requiredSourceIds = new Set(
       [...sourceIdsByTargetId.values()].flatMap((ids) => [...ids]),
@@ -522,6 +545,7 @@ export async function generatePlaylists(
       targets: runTargets,
       sourceIdsByTargetId,
       sharingPolicyByTargetId,
+      externalReservationsByUri,
       preservedByTargetId: new Map(Object.entries(opts.preservedByTargetId ?? {})),
       blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
@@ -537,14 +561,15 @@ export async function generatePlaylists(
       },
     });
 
-    summary.targetSharingShadow = {
-      gate: 4,
-      mode: "SHADOW",
-      plannerInfluence: false,
+    summary.targetSharingRuntime = {
+      gate: 5,
+      mode: "ACTIVE",
+      plannerInfluence: true,
       simulation: simulate,
       globalPolicy: LEGACY_GLOBAL_SHARING_POLICY,
       targets: sharingPolicyTargets,
-      planner: incremental.plan.targetSharingShadow ?? null,
+      planner: incremental.plan.targetSharingRuntime ?? null,
+      gate4Comparison: incremental.plan.targetSharingShadow ?? null,
     };
 
     const readFailure = incremental.failure
@@ -750,6 +775,36 @@ export async function generatePlaylists(
       const error =
         "A geração foi bloqueada antes de alterar o Spotify porque a ordem final mudou desde a simulação aprovada. Simule novamente antes de publicar.";
       log({ level: "ERROR", message: error, data: musicOrderPreviewViolations });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
+
+    const targetSharingViolations = findTargetSharingViolations({
+      targets: plan.targets.map((planned) => ({
+        targetPlaylistId: planned.targetPlaylistId,
+        name: planned.name,
+        uris: planned.result.items.map((item) => item.uri),
+      })),
+      sharingPolicyByTargetId,
+      externalReservationsByUri,
+    });
+
+    summary.targetSharingFinalValidation = {
+      gate: 5,
+      mode: "ACTIVE",
+      plannerInfluence: true,
+      violationCount: targetSharingViolations.length,
+      violations: targetSharingViolations.slice(0, 100),
+    };
+
+    if (targetSharingViolations.length > 0) {
+      const error =
+        "A geração foi bloqueada antes de alterar o Spotify porque o plano final viola a política de compartilhamento entre destinos.";
+      log({
+        level: "ERROR",
+        message: error,
+        data: targetSharingViolations,
+      });
       await finalizeRun(run.id, "FAILED", logs, summary, error);
       return { runId: run.id, status: "FAILED" };
     }

@@ -2,36 +2,43 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("#204 Gate 4 is wired as SHADOW with zero planner influence", () => {
-  const generator = readFileSync(
-    "src/jobs/generate-playlists-incremental.ts",
+test("#204 Gate 4 shadow evidence remains available after Gate 5 activation", () => {
+  const planner = readFileSync(
+    "src/services/playlist-planner/plan-run.ts",
+    "utf8",
+  );
+  const shadow = readFileSync(
+    "src/services/playlist-planner/target-sharing-shadow.ts",
     "utf8",
   );
 
-  assert.match(generator, /targetSharingShadow/);
-  assert.match(generator, /gate:\s*4/);
-  assert.match(generator, /mode:\s*"SHADOW"/);
-  assert.match(generator, /plannerInfluence:\s*false/);
-  assert.match(generator, /sharingPolicyByTargetId/);
+  // Gate 4 diagnostic projection is still produced by the planner.
+  assert.match(planner, /targetSharingShadow/);
+  assert.match(planner, /buildTargetSharingShadowEvidence/);
+
+  // Its own contract remains explicitly non-authoritative.
+  assert.match(shadow, /plannerInfluence:\s*false/);
+
+  // Gate 5 is now authoritative.
+  assert.match(planner, /targetSharingRuntime/);
+  assert.match(planner, /gate:\s*5/);
+  assert.match(planner, /mode:\s*"ACTIVE"/);
+  assert.match(planner, /plannerInfluence:\s*true/);
 });
 
-test("#204 Gate 4 keeps the authoritative legacy reserved Set", () => {
+test("#204 Gate 5 supersedes the legacy global reserved Set with owner-aware reservation", () => {
   const planner = readFileSync(
     "src/services/playlist-planner/plan-run.ts",
     "utf8",
   );
 
-  assert.match(
-    planner,
-    /const reserved = new Set<string>\(initialReserved \?\? \[\]\)/,
-  );
-  assert.match(planner, /reserved\.add\(uri\)/);
+  assert.match(planner, /legacyHardReserved/);
+  assert.match(planner, /cloneReservationMap/);
+  assert.match(planner, /reservationsForTarget/);
+  assert.match(planner, /addTargetReservations/);
 
-  // Gate 4 must not condition reservation on sharing policy.
-  assert.doesNotMatch(
-    planner,
-    /if\s*\([^)]*SHAREABLE[^)]*\)[\s\S]{0,160}reserved\.add/,
-  );
+  // The old run-global reservation mutation must no longer be authoritative.
+  assert.doesNotMatch(planner, /reserved\.add\(uri\)/);
 });
 
 test("#204 Gate 4 uses persisted target override only for effective shadow policy", () => {
