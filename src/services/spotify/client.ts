@@ -36,6 +36,14 @@ export interface SpotifyShowSummary {
   publisher?: string;
 }
 
+export interface SpotifyPlaylistPage {
+  items: SpotifyPlaylistSummary[];
+  offset: number;
+  limit: number;
+  nextOffset: number | null;
+  previousOffset: number | null;
+}
+
 export interface PodcastCandidateBatch {
   candidates: Candidate[];
   playbackPositionMissingCount: number;
@@ -204,6 +212,51 @@ export class SpotifyClient {
 
       throw error;
     }
+  }
+
+  /**
+   * One page of playlists visible to the current user.
+   * Used by quota-aware interactive UIs that must not eagerly traverse
+   * the user's complete library.
+   */
+  async listCurrentUserPlaylistsPage(
+    requestedOffset = 0,
+    requestedLimit = 12,
+  ): Promise<SpotifyPlaylistPage> {
+    const offset = Math.max(0, Math.floor(requestedOffset));
+    const limit = Math.min(
+      50,
+      Math.max(1, Math.floor(requestedLimit)),
+    );
+
+    const page: SpotifyPage<PlaylistSummaryResponse> =
+      await this.request(
+        `/me/playlists?limit=${limit}&offset=${offset}`,
+      );
+
+    const items: SpotifyPlaylistSummary[] = [];
+
+    for (const playlist of page.items) {
+      if (!playlist?.id || !playlist.name) continue;
+
+      items.push({
+        id: playlist.id,
+        name: playlist.name,
+        ownerId: playlist.owner?.id,
+        ownerName: playlist.owner?.display_name,
+        collaborative: Boolean(playlist.collaborative),
+        public: playlist.public ?? null,
+      });
+    }
+
+    return {
+      items,
+      offset,
+      limit,
+      nextOffset: page.next ? offset + limit : null,
+      previousOffset:
+        offset > 0 ? Math.max(0, offset - limit) : null,
+    };
   }
 
   /** Playlists owned or followed by the current user. */

@@ -1,6 +1,7 @@
 export {
   SpotifyClient,
   type PodcastCandidateBatch,
+  type SpotifyPlaylistPage,
   type SpotifyPlaylistSummary,
   type SpotifyShowSummary,
   type SpotifyTargetPlaylistContentItem,
