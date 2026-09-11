@@ -44,6 +44,9 @@ import {
   type TargetSharingReservationOwner,
 } from "@/services/playlist-planner/target-sharing-runtime";
 import {
+  guardTargetSharingPostprocess,
+} from "@/services/playlist-planner/target-sharing-postprocess-guard";
+import {
   isSpotifyApiError,
   SpotifyClient,
   type SpotifyRequestMetrics,
@@ -65,6 +68,7 @@ import {
 import {
   applyDiscoveryGate5HForCurrentRun,
   currentDiscoveryRuntimeState,
+  recordDiscoveryTargetSharingAbstention,
 } from "./discovery-runtime";
 import {
   collectIncrementally,
@@ -741,12 +745,53 @@ export async function generatePlaylists(
       musicOrderEvidenceByTargetId.set(target.id, ordered.evidence);
     }
 
-    plan = await applyDiscoveryGate5HForCurrentRun({
-      plan,
-      targets: runTargets,
-      blockedMusicTrackIdsByTargetId,
-      keepFilledTargetIds: new Set(Object.keys(opts.keepFilledByTargetId ?? {})),
-    });
+    const discoveryBaselinePlan = plan;
+
+    const discoveryCandidatePlan =
+      await applyDiscoveryGate5HForCurrentRun({
+        plan,
+        targets: runTargets,
+        blockedMusicTrackIdsByTargetId,
+        keepFilledTargetIds: new Set(
+          Object.keys(opts.keepFilledByTargetId ?? {}),
+        ),
+      });
+
+    const targetSharingPostprocessGuard =
+      guardTargetSharingPostprocess({
+        baseline: discoveryBaselinePlan,
+        candidate: discoveryCandidatePlan,
+        sharingPolicyByTargetId,
+        externalReservationsByUri,
+      });
+
+    plan = targetSharingPostprocessGuard.plan;
+
+    summary.targetSharingPostprocessGuard = {
+      mode: "FAIL_CLOSED",
+      action: targetSharingPostprocessGuard.abstained
+        ? "ABSTAIN_DISCOVERY_KEEP_BASELINE"
+        : "KEEP_POSTPROCESSED_PLAN",
+      baselineViolationCount:
+        targetSharingPostprocessGuard.baselineViolations.length,
+      candidateViolationCount:
+        targetSharingPostprocessGuard.candidateViolations.length,
+      violations:
+        targetSharingPostprocessGuard.candidateViolations.slice(0, 100),
+    };
+
+    if (targetSharingPostprocessGuard.abstained) {
+      recordDiscoveryTargetSharingAbstention(
+        targetSharingPostprocessGuard.candidateViolations,
+      );
+
+      log({
+        level: "WARN",
+        message:
+          "TARGET-SCOPE-01 preservou o baseline porque o pós-processamento de discovery introduziu conflito de compartilhamento entre destinos.",
+        data: targetSharingPostprocessGuard.candidateViolations,
+      });
+    }
 
     for (const planned of plan.targets) {
       const target = targetByPlanId.get(planned.targetPlaylistId);
