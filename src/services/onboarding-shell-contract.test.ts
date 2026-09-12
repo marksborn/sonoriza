@@ -39,12 +39,12 @@ test("#205 Gate 2 keeps persisted resumable progress", () => {
 
   assert.match(
     source,
-    /completedSteps: input\.markCompleted/,
+    /completedSteps:\s+input\.markCompleted/,
   );
 
   assert.match(
     source,
-    /skippedSteps: input\.markSkipped/,
+    /skippedSteps:\s+input\.markSkipped/,
   );
 });
 

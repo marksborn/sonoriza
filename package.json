@@ -28,6 +28,7 @@
     "test:data-policy": "tsx --test src/services/data-policy/*.test.ts",
     "history:lastfm": "tsx scripts/import-lastfm-history.ts",
     "history:spotify": "tsx scripts/import-spotify-extended-history.ts",
+    "onboarding:pilot-report": "tsx scripts/report-onboarding-pilot.ts",
     "liked:inventory": "tsx scripts/report-liked-track-inventory.ts",
     "liked:affinity": "tsx scripts/report-liked-track-affinity.ts",
     "liked:reconcile": "tsx scripts/report-liked-track-reconciliation.ts",

@@ -54,6 +54,7 @@ model User {
   artistSimilarityEdges            ArtistSimilarityEdge[]
   albumRecommendationMemories      AlbumRecommendationMemory[]
   onboardingProgress               OnboardingProgress?
+  onboardingTelemetryEvents        OnboardingTelemetryEvent[]
 }
 
 model Account {
@@ -153,6 +154,26 @@ model OnboardingProgress {
   updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// ONBOARDING-01 Gate 8 — privacy-minimal pilot telemetry.
+// ---------------------------------------------------------------------------
+
+model OnboardingTelemetryEvent {
+  id        String         @id @default(cuid())
+  userId    String
+  version   Int            @default(1)
+  event     String
+  step      OnboardingStep?
+  metadata  Json?
+  createdAt DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([event, createdAt])
+  @@index([step, createdAt])
 }
 
 // ---------------------------------------------------------------------------
