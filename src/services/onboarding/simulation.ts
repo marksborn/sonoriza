@@ -18,6 +18,9 @@ import {
 import {
   getActiveSpotifyBackoff,
 } from "@/services/spotify/backoff";
+import {
+  recordOnboardingTelemetry,
+} from "@/services/onboarding/telemetry";
 
 export type OnboardingSimulationErrorCode =
   | "no-target"
@@ -96,12 +99,50 @@ function targetSummaryFor(
   return null;
 }
 
+async function throwOnboardingSimulationFailure(
+  input: {
+    userId: string;
+    error: OnboardingSimulationError;
+  },
+): Promise<never> {
+  const metadata = {
+    code: input.error.code,
+    ...(input.error.code === "rate-limit"
+      ? {
+          provider: "spotify",
+        }
+      : {}),
+  };
+
+  await recordOnboardingTelemetry({
+    userId: input.userId,
+    event: "firstSimulationFailed",
+    step: "SIMULATION",
+    metadata,
+  });
+
+  await recordOnboardingTelemetry({
+    userId: input.userId,
+    event: "stepFailed",
+    step: "SIMULATION",
+    metadata,
+  });
+
+  throw input.error;
+}
+
 export async function runOnboardingTargetSimulation(
   input: {
     userId: string;
     targetId: string;
   },
 ) {
+  await recordOnboardingTelemetry({
+    userId: input.userId,
+    event: "firstSimulationStarted",
+    step: "SIMULATION",
+  });
+
   const target =
     await prisma.targetPlaylist.findFirst({
       where: {
@@ -114,22 +155,28 @@ export async function runOnboardingTargetSimulation(
     });
 
   if (!target) {
-    throw new OnboardingSimulationError(
-      "no-target",
-    );
+    return throwOnboardingSimulationFailure({
+      userId: input.userId,
+      error: new OnboardingSimulationError(
+        "no-target",
+      ),
+    });
   }
 
   const backoff =
     await getActiveSpotifyBackoff();
 
   if (backoff) {
-    throw new OnboardingSimulationError(
-      "rate-limit",
-      {
-        blockedUntil:
-          backoff.blockedUntil,
-      },
-    );
+    return throwOnboardingSimulationFailure({
+      userId: input.userId,
+      error: new OnboardingSimulationError(
+        "rate-limit",
+        {
+          blockedUntil:
+            backoff.blockedUntil,
+        },
+      ),
+    });
   }
 
   const baseAssessment =
@@ -155,10 +202,13 @@ export async function runOnboardingTargetSimulation(
     calendar03.assessment.issues.length >
     0
   ) {
-    throw new OnboardingSimulationError(
-      "configuration",
-      calendar03.assessment.issues,
-    );
+    return throwOnboardingSimulationFailure({
+      userId: input.userId,
+      error: new OnboardingSimulationError(
+        "configuration",
+        calendar03.assessment.issues,
+      ),
+    });
   }
 
   const user =
@@ -210,10 +260,14 @@ export async function runOnboardingTargetSimulation(
           }),
       );
   } catch (error) {
-    throw new OnboardingSimulationError(
-      "simulation",
-      error,
-    );
+    return throwOnboardingSimulationFailure({
+      userId: input.userId,
+      error:
+        new OnboardingSimulationError(
+          "simulation",
+          error,
+        ),
+    });
   }
 
   const run =
@@ -258,6 +312,46 @@ export async function runOnboardingTargetSimulation(
       } as Prisma.InputJsonValue,
     },
   });
+
+  if (result.status === "SUCCESS") {
+    await recordOnboardingTelemetry({
+      userId: input.userId,
+      event: "firstSimulationSucceeded",
+      step: "SIMULATION",
+      metadata: {
+        runStatus: result.status,
+      },
+    });
+
+    await recordOnboardingTelemetry({
+      userId: input.userId,
+      event: "stepCompleted",
+      step: "SIMULATION",
+      metadata: {
+        outcome: "completed",
+        runStatus: result.status,
+      },
+    });
+  } else {
+    const metadata = {
+      code: "run-not-success",
+      runStatus: result.status,
+    };
+
+    await recordOnboardingTelemetry({
+      userId: input.userId,
+      event: "firstSimulationFailed",
+      step: "SIMULATION",
+      metadata,
+    });
+
+    await recordOnboardingTelemetry({
+      userId: input.userId,
+      event: "stepFailed",
+      step: "SIMULATION",
+      metadata,
+    });
+  }
 
   return result;
 }

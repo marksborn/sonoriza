@@ -62,6 +62,9 @@ import {
   onboardingProgressPosition,
   readPersistedStepList,
 } from "@/services/onboarding/shell";
+import {
+  recordOnboardingTelemetry,
+} from "@/services/onboarding/telemetry";
 
 const ONBOARDING_PATH = "/onboarding";
 const SOURCE_PAGE_SIZE = 12;
@@ -99,6 +102,25 @@ async function ensureProgress(userId: string) {
   });
 }
 
+async function recordStepFailure(
+  userId: string,
+  step: OnboardingStepValue,
+  code: string,
+  provider?: "spotify" | "google",
+) {
+  await recordOnboardingTelemetry({
+    userId,
+    event: "stepFailed",
+    step,
+    metadata: {
+      code,
+      ...(provider
+        ? { provider }
+        : {}),
+    },
+  });
+}
+
 async function moveToStep(input: {
   userId: string;
   from: OnboardingStepValue;
@@ -106,7 +128,8 @@ async function moveToStep(input: {
   markCompleted?: boolean;
   markSkipped?: boolean;
 }) {
-  const progress = await ensureProgress(input.userId);
+  const progress =
+    await ensureProgress(input.userId);
 
   await prisma.onboardingProgress.update({
     where: { userId: input.userId },
@@ -114,25 +137,53 @@ async function moveToStep(input: {
       version: ONBOARDING_VERSION,
       status: "IN_PROGRESS",
       currentStep: input.to,
-      startedAt: progress.startedAt ?? new Date(),
-      completedSteps: input.markCompleted
-        ? appendPersistedStep(
-            progress.completedSteps,
-            input.from,
-          )
-        : readPersistedStepList(
-            progress.completedSteps,
-          ),
-      skippedSteps: input.markSkipped
-        ? appendPersistedStep(
-            progress.skippedSteps,
-            input.from,
-          )
-        : readPersistedStepList(
-            progress.skippedSteps,
-          ),
+      startedAt:
+        progress.startedAt ??
+        new Date(),
+      completedSteps:
+        input.markCompleted
+          ? appendPersistedStep(
+              progress.completedSteps,
+              input.from,
+            )
+          : readPersistedStepList(
+              progress.completedSteps,
+            ),
+      skippedSteps:
+        input.markSkipped
+          ? appendPersistedStep(
+              progress.skippedSteps,
+              input.from,
+            )
+          : readPersistedStepList(
+              progress.skippedSteps,
+            ),
     },
   });
+
+  if (!progress.startedAt) {
+    await recordOnboardingTelemetry({
+      userId: input.userId,
+      event: "onboardingStarted",
+      step: input.from,
+    });
+  }
+
+  if (
+    input.markCompleted ||
+    input.markSkipped
+  ) {
+    await recordOnboardingTelemetry({
+      userId: input.userId,
+      event: "stepCompleted",
+      step: input.from,
+      metadata: {
+        outcome: input.markSkipped
+          ? "skipped"
+          : "completed",
+      },
+    });
+  }
 }
 
 async function continueWelcome() {
@@ -154,6 +205,15 @@ async function continueWelcome() {
         currentStep: "WELCOME",
         startedAt: new Date(),
         skippedAt: null,
+      },
+    });
+
+    await recordOnboardingTelemetry({
+      userId,
+      event: "onboardingStarted",
+      step: "WELCOME",
+      metadata: {
+        restart: true,
       },
     });
 
@@ -204,6 +264,13 @@ async function confirmSpotify() {
   });
 
   if (!spotifyAccount) {
+    await recordStepFailure(
+      userId,
+      "SPOTIFY",
+      "spotify-not-connected",
+      "spotify",
+    );
+
     redirect("/onboarding?error=spotify-not-connected");
   }
 
@@ -327,6 +394,13 @@ async function saveFirstPlaylistSource(formData: FormData) {
         ? error.code
         : "spotify";
 
+    await recordStepFailure(
+      userId,
+      "SOURCES",
+      code,
+      "spotify",
+    );
+
     redirect(`/onboarding?error=${code}`);
   }
 
@@ -438,6 +512,13 @@ async function saveFirstDestination(
         ? error.code
         : "spotify";
 
+    await recordStepFailure(
+      userId,
+      "DESTINATION",
+      code,
+      "spotify",
+    );
+
     redirect(`/onboarding?error=${code}`);
   }
 
@@ -514,6 +595,12 @@ async function saveBasicBehavior(
       },
     );
   } catch {
+    await recordStepFailure(
+      userId,
+      "MUSIC_BEHAVIOR",
+      "behavior",
+    );
+
     redirect("/onboarding?error=behavior");
   }
 
@@ -532,6 +619,12 @@ async function saveBasicBehavior(
     });
 
   if (updated.count !== 1) {
+    await recordStepFailure(
+      userId,
+      "MUSIC_BEHAVIOR",
+      "behavior",
+    );
+
     redirect("/onboarding?error=behavior");
   }
 
@@ -649,6 +742,13 @@ async function saveCalendarStep(
         ? error.code
         : "google";
 
+    await recordStepFailure(
+      userId,
+      "CALENDAR",
+      code,
+      "google",
+    );
+
     redirect(`/onboarding?error=${code}`);
   }
 
@@ -747,6 +847,16 @@ async function editReviewStep(
     },
   });
 
+  await recordOnboardingTelemetry({
+    userId,
+    event: "configurationAdjusted",
+    step: requestedStep,
+    metadata: {
+      fromStep: currentStep,
+      toStep: requestedStep,
+    },
+  });
+
   revalidatePath(ONBOARDING_PATH);
   redirect(ONBOARDING_PATH);
 }
@@ -842,6 +952,17 @@ async function runFirstSimulation() {
     },
   });
 
+  if (currentStep === "REVIEW") {
+    await recordOnboardingTelemetry({
+      userId,
+      event: "stepCompleted",
+      step: "REVIEW",
+      metadata: {
+        outcome: "completed",
+      },
+    });
+  }
+
   revalidatePath(ONBOARDING_PATH);
   redirect(ONBOARDING_PATH);
 }
@@ -886,6 +1007,18 @@ async function activateAndCompleteOnboarding() {
       targetId: target.id,
     });
   } catch (error) {
+    const activationCode =
+      error instanceof
+        OnboardingActivationError
+        ? error.code
+        : "activation";
+
+    await recordStepFailure(
+      userId,
+      "ACTIVATION",
+      activationCode,
+    );
+
     if (
       error instanceof
       OnboardingActivationError
@@ -969,18 +1102,29 @@ async function skipOnboarding() {
   "use server";
 
   const userId = await requireUserId();
-  const progress = await ensureProgress(userId);
+  const progress =
+    await ensureProgress(userId);
 
   await prisma.onboardingProgress.update({
     where: { userId },
     data: {
       status: "SKIPPED",
       skippedAt: new Date(),
-      skippedSteps: appendPersistedStep(
-        progress.skippedSteps,
-        progress.currentStep as OnboardingStepValue,
-      ),
+      skippedSteps:
+        appendPersistedStep(
+          progress.skippedSteps,
+          progress.currentStep as
+            OnboardingStepValue,
+        ),
     },
+  });
+
+  await recordOnboardingTelemetry({
+    userId,
+    event: "onboardingSkipped",
+    step:
+      progress.currentStep as
+        OnboardingStepValue,
   });
 
   revalidatePath(ONBOARDING_PATH);
@@ -1005,6 +1149,15 @@ async function restartOnboarding() {
       readyForSimulationAt: null,
       completedAt: null,
       skippedAt: null,
+    },
+  });
+
+  await recordOnboardingTelemetry({
+    userId,
+    event: "onboardingStarted",
+    step: "WELCOME",
+    metadata: {
+      restart: true,
     },
   });
 

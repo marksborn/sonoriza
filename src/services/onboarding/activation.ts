@@ -15,6 +15,9 @@ import {
 import {
   appendPersistedStep,
 } from "@/services/onboarding/shell";
+import {
+  recordOnboardingTelemetry,
+} from "@/services/onboarding/telemetry";
 
 export type OnboardingActivationErrorCode =
   | "no-target"
@@ -182,6 +185,27 @@ export async function activateOnboardingTarget(
       }
     },
   );
+
+  await recordOnboardingTelemetry({
+    userId: input.userId,
+    event: "firstActivationCompleted",
+    step: "ACTIVATION",
+  });
+
+  await recordOnboardingTelemetry({
+    userId: input.userId,
+    event: "stepCompleted",
+    step: "ACTIVATION",
+    metadata: {
+      outcome: "completed",
+    },
+  });
+
+  await recordOnboardingTelemetry({
+    userId: input.userId,
+    event: "onboardingCompleted",
+    step: "ACTIVATION",
+  });
 
   return {
     targetId: input.targetId,
