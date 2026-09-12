@@ -47,7 +47,7 @@ test("#205 Gate 4 unlocks destination and music behavior then stops at calendar"
 
   assert.match(
     source,
-    /Gate 5/,
+    /currentStep === "CALENDAR"/,
   );
 });
 
