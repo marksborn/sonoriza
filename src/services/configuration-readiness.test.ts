@@ -187,7 +187,7 @@ test("MUSIC-01 policy is fingerprinted but dynamic listening timestamps are not"
 test("POST /api/generate checks the current gate before invoking the generator", () => {
   const source = readFileSync("src/app/api/generate/route.ts", "utf8");
   const gateCheck = source.indexOf("if (!gate.realRunAllowed)");
-  const generatorCall = source.indexOf("await generatePlaylists({");
+  const generatorCall = source.indexOf("generatePlaylists({");
 
   assert.ok(gateCheck >= 0, "real-run gate check must exist");
   assert.ok(generatorCall >= 0, "generator call must exist");
@@ -202,7 +202,7 @@ test("scheduled generation checks the same current gate before invoking the gene
   const assessmentCall = source.indexOf("await assessConfiguration(user.id)");
   const gateCall = source.indexOf("await getFirstRunGate(user.id, assessment)");
   const gateCheck = source.indexOf("if (!gate.realRunAllowed)");
-  const generatorCall = source.indexOf("await generatePlaylists({");
+  const generatorCall = source.indexOf("generatePlaylists({");
 
   assert.ok(assessmentCall >= 0, "scheduled run must assess current configuration");
   assert.ok(gateCall > assessmentCall, "scheduled run must evaluate current readiness");
@@ -237,7 +237,7 @@ test("ORDER-01 real entry points resolve reusable simulation seeds before genera
 
   for (const source of [manual, scheduled]) {
     const seedLookup = source.indexOf("findReusableSimulationMusicOrderEvidence");
-    const generatorCall = source.indexOf("await generatePlaylists({");
+    const generatorCall = source.indexOf("generatePlaylists({");
     assert.ok(seedLookup >= 0);
     assert.ok(generatorCall > seedLookup);
     assert.match(source, /musicOrderSimulationEvidence/);
@@ -309,13 +309,34 @@ test("SCHEDULE-01 reserves live URIs from enabled destinations outside the due b
   const generator = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
   assert.match(scheduler, /outsideTargets/);
   assert.match(scheduler, /getTargetPlaylistState/);
-  assert.match(scheduler, /reservedUris/);
-  assert.match(generator, /initialReserved:\s*opts\.reservedUris/);
+  assert.match(
+    scheduler,
+    /externalReservationsByUri/,
+  );
+  assert.match(
+    scheduler,
+    /reservedTargetSnapshots/,
+  );
+  assert.match(
+    generator,
+    /externalReservationsByUri/,
+  );
 });
 
-test("SCHEDULE-01 daily claim is concurrency-safe and successful slots are idempotent", () => {
+test("SCHEDULE-01 daily claim is concurrency-safe and terminal slots are idempotent", () => {
   const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
-  assert.match(source, /\["SUCCESS", "NOOP", "PARTIAL"\]\.includes/);
+  assert.match(
+    source,
+    /TERMINAL_SCHEDULE_STATUSES/,
+  );
+  assert.match(
+    source,
+    /TERMINAL_SCHEDULE_STATUSES\.has/,
+  );
+  assert.match(
+    source,
+    /"BLOCKED"/,
+  );
   assert.match(source, /createMany\(/);
   assert.match(source, /skipDuplicates:\s*true/);
   assert.match(source, /updateMany\(/);

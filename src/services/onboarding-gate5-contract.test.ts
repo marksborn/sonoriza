@@ -186,6 +186,6 @@ test("#205 Gate 5 does not activate, schedule or generate", () => {
 
   assert.match(
     page,
-    /Gate 6 fará a revisão e a primeira\s+simulação/,
+    /currentStep === "REVIEW"/,
   );
 });
