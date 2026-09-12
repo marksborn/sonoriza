@@ -232,6 +232,6 @@ test("#205 Gate 6 never activates or writes the onboarding target", () => {
 
   assert.match(
     onboarding,
-    /Gate 7 liberará a ativação/,
+    /currentStep === "SIMULATION"/,
   );
 });

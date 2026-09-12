@@ -42,6 +42,10 @@ import {
   runOnboardingTargetSimulation,
 } from "@/services/onboarding/simulation";
 import {
+  activateOnboardingTarget,
+  OnboardingActivationError,
+} from "@/services/onboarding/activation";
+import {
   saveMusicPlaybackPolicyForUser,
 } from "@/services/music-playback-policy";
 import {
@@ -842,6 +846,82 @@ async function runFirstSimulation() {
   redirect(ONBOARDING_PATH);
 }
 
+
+async function activateAndCompleteOnboarding() {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress =
+    await ensureProgress(userId);
+
+  if (
+    progress.status !==
+      "READY_FOR_SIMULATION" ||
+    progress.currentStep !== "SIMULATION"
+  ) {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const target =
+    await prisma.targetPlaylist.findFirst({
+      where: { userId },
+      orderBy: [
+        { priority: "asc" },
+        { createdAt: "asc" },
+      ],
+      select: {
+        id: true,
+      },
+    });
+
+  if (!target) {
+    redirect(
+      "/onboarding?error=no-target",
+    );
+  }
+
+  try {
+    await activateOnboardingTarget({
+      userId,
+      targetId: target.id,
+    });
+  } catch (error) {
+    if (
+      error instanceof
+      OnboardingActivationError
+    ) {
+      if (
+        error.code ===
+        "simulation-not-approved"
+      ) {
+        redirect(
+          "/onboarding?error=activation-simulation",
+        );
+      }
+
+      if (error.code === "no-target") {
+        redirect(
+          "/onboarding?error=no-target",
+        );
+      }
+    }
+
+    redirect(
+      "/onboarding?error=activation",
+    );
+  }
+
+  revalidatePath(ONBOARDING_PATH);
+  revalidatePath("/dashboard");
+  revalidatePath(
+    "/dashboard/configuracao/destinos",
+  );
+
+  redirect(
+    "/dashboard?onboarding=completed",
+  );
+}
+
 async function goBack() {
   "use server";
 
@@ -1174,6 +1254,14 @@ export default async function OnboardingPage({
         )
       : null;
 
+  const onboardingActivationReady =
+    latestOnboardingSimulation?.status ===
+      "SUCCESS" &&
+    latestOnboardingSimulation.qualityPassed &&
+    latestOnboardingSimulation.collectionComplete &&
+    !latestOnboardingSimulation.inconclusive &&
+    !latestOnboardingSimulation.error;
+
   let playlistPage: SpotifyPlaylistPage | null = null;
   let spotifyRateLimitMessage: string | null = null;
   let spotifyLoadError = false;
@@ -1466,7 +1554,13 @@ export default async function OnboardingPage({
                                           : params.error ===
                                               "simulation"
                                             ? "A primeira simulação não pôde ser concluída. Nenhuma playlist foi alterada."
-                                            : "Não foi possível consultar o Spotify agora."}
+                                            : params.error ===
+                                                "activation-simulation"
+                                              ? "A configuração mudou ou a simulação atual não está aprovada. Execute uma nova simulação antes de ativar."
+                                              : params.error ===
+                                                  "activation"
+                                                ? "Não foi possível concluir a ativação. O destino permanece protegido."
+                                                : "Não foi possível consultar o Spotify agora."}
           </div>
         ) : null}
 
@@ -2784,11 +2878,40 @@ export default async function OnboardingPage({
                     </div>
                   ) : null}
 
-                  <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/60">
-                    O Gate 7 liberará a ativação
-                    explícita. Até lá o destino
-                    permanece desativado.
-                  </div>
+                  {onboardingActivationReady ? (
+                    <div className="mt-6 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 p-5">
+                      <p className="font-semibold text-emerald-100">
+                        A simulação está aprovada
+                      </p>
+
+                      <p className="mt-2 text-sm leading-6 text-emerald-100/75">
+                        Ativar conclui o onboarding e
+                        libera este destino no Sonoriza.
+                        Nenhuma escrita real no Spotify
+                        acontece neste botão.
+                      </p>
+
+                      <form
+                        action={
+                          activateAndCompleteOnboarding
+                        }
+                        className="mt-5"
+                      >
+                        <button
+                          type="submit"
+                          className="rounded-xl bg-white px-6 py-3 font-semibold text-black"
+                        >
+                          Está bom — ativar
+                        </button>
+                      </form>
+                    </div>
+                  ) : (
+                    <div className="mt-6 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm leading-6 text-amber-100">
+                      A ativação só fica disponível
+                      depois de uma simulação atual,
+                      completa e aprovada.
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/60">

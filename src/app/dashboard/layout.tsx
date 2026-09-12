@@ -1,4 +1,10 @@
+import { redirect } from "next/navigation";
+
 import { DashboardNav } from "@/components/DashboardNav";
+import { auth } from "@/lib/auth";
+import {
+  shouldEnterOnboarding,
+} from "@/services/onboarding/entry";
 import { SpotifyBackoffBanner } from "@/components/SpotifyBackoffBanner";
 import {
   getActiveSpotifyBackoff,
@@ -10,6 +16,20 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    redirect("/");
+  }
+
+  if (
+    await shouldEnterOnboarding(
+      session.user.id,
+    )
+  ) {
+    redirect("/onboarding");
+  }
+
   const backoff = await getActiveSpotifyBackoff();
 
   return (
