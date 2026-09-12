@@ -37,6 +37,7 @@ import {
 } from "./music-repeat-runtime";
 import {
   generatePlaylists as generatePlaylistsIncremental,
+  resolveSimulationDisabledTargetIds,
   type GeneratePlaylistsOptions,
   type GeneratePlaylistsResult,
 } from "./generate-playlists-incremental";
@@ -83,6 +84,15 @@ export async function generatePlaylists(
   const targetScope = opts.targetPlaylistIds
     ? [...new Set(opts.targetPlaylistIds.filter(Boolean))]
     : null;
+
+  const simulationDisabledTargetIds =
+    resolveSimulationDisabledTargetIds({
+      simulate,
+      targetScope,
+      requested:
+        opts.simulationIncludeDisabledTargetIds,
+    });
+
   let prepared: Awaited<ReturnType<typeof refreshMusicRepeatContext>>;
 
   if (repeatCompliance.allowed) {
@@ -166,8 +176,28 @@ export async function generatePlaylists(
   const discoveryTargets = await prisma.targetPlaylist.findMany({
     where: {
       userId: opts.userId,
-      enabled: true,
-      ...(targetScope ? { id: { in: targetScope } } : {}),
+      ...(targetScope
+        ? {
+            id: {
+              in: targetScope,
+            },
+          }
+        : {}),
+      ...(simulationDisabledTargetIds.length > 0
+        ? {
+            OR: [
+              { enabled: true },
+              {
+                id: {
+                  in:
+                    simulationDisabledTargetIds,
+                },
+              },
+            ],
+          }
+        : {
+            enabled: true,
+          }),
     },
     orderBy: { priority: "asc" },
     select: {

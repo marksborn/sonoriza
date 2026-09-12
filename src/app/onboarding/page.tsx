@@ -37,6 +37,11 @@ import {
   OnboardingCalendarError,
 } from "@/services/onboarding/basic-calendar";
 import {
+  loadLatestOnboardingSimulation,
+  OnboardingSimulationError,
+  runOnboardingTargetSimulation,
+} from "@/services/onboarding/simulation";
+import {
   saveMusicPlaybackPolicyForUser,
 } from "@/services/music-playback-policy";
 import {
@@ -661,6 +666,182 @@ async function saveCalendarStep(
   redirect(ONBOARDING_PATH);
 }
 
+
+async function editReviewStep(
+  formData: FormData,
+) {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress =
+    await ensureProgress(userId);
+
+  const currentStep =
+    progress.currentStep as
+      OnboardingStepValue;
+
+  if (
+    currentStep !== "REVIEW" &&
+    currentStep !== "SIMULATION"
+  ) {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const requestedStep = String(
+    formData.get("step") ?? "",
+  ) as OnboardingStepValue;
+
+  const allowedSteps:
+    OnboardingStepValue[] = [
+      "SOURCES",
+      "DESTINATION",
+      "MUSIC_BEHAVIOR",
+      "CALENDAR",
+    ];
+
+  if (
+    !allowedSteps.includes(
+      requestedStep,
+    )
+  ) {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const requestedIndex =
+    ONBOARDING_STEPS.indexOf(
+      requestedStep,
+    );
+
+  const completedSteps =
+    readPersistedStepList(
+      progress.completedSteps,
+    ).filter(
+      (step) =>
+        ONBOARDING_STEPS.indexOf(
+          step,
+        ) < requestedIndex,
+    );
+
+  const skippedSteps =
+    readPersistedStepList(
+      progress.skippedSteps,
+    ).filter(
+      (step) =>
+        ONBOARDING_STEPS.indexOf(
+          step,
+        ) < requestedIndex,
+    );
+
+  await prisma.onboardingProgress.update({
+    where: { userId },
+    data: {
+      status: "IN_PROGRESS",
+      currentStep: requestedStep,
+      completedSteps,
+      skippedSteps,
+      readyForSimulationAt: null,
+    },
+  });
+
+  revalidatePath(ONBOARDING_PATH);
+  redirect(ONBOARDING_PATH);
+}
+
+async function runFirstSimulation() {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress =
+    await ensureProgress(userId);
+
+  const currentStep =
+    progress.currentStep as
+      OnboardingStepValue;
+
+  if (
+    currentStep !== "REVIEW" &&
+    currentStep !== "SIMULATION"
+  ) {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const target =
+    await prisma.targetPlaylist.findFirst({
+      where: { userId },
+      orderBy: [
+        { priority: "asc" },
+        { createdAt: "asc" },
+      ],
+      select: {
+        id: true,
+      },
+    });
+
+  if (!target) {
+    redirect(
+      "/onboarding?error=no-target",
+    );
+  }
+
+  try {
+    await runOnboardingTargetSimulation({
+      userId,
+      targetId: target.id,
+    });
+  } catch (error) {
+    if (
+      error instanceof
+      OnboardingSimulationError
+    ) {
+      if (
+        error.code === "rate-limit"
+      ) {
+        redirect(
+          "/onboarding?error=rate-limit",
+        );
+      }
+
+      if (
+        error.code ===
+        "configuration"
+      ) {
+        redirect(
+          "/onboarding?error=simulation-config",
+        );
+      }
+    }
+
+    redirect(
+      "/onboarding?error=simulation",
+    );
+  }
+
+  const completedSteps =
+    currentStep === "REVIEW"
+      ? appendPersistedStep(
+          progress.completedSteps,
+          "REVIEW",
+        )
+      : readPersistedStepList(
+          progress.completedSteps,
+        );
+
+  await prisma.onboardingProgress.update({
+    where: { userId },
+    data: {
+      status:
+        "READY_FOR_SIMULATION",
+      currentStep: "SIMULATION",
+      readyForSimulationAt:
+        new Date(),
+      completedSteps,
+    },
+  });
+
+  revalidatePath(ONBOARDING_PATH);
+  redirect(ONBOARDING_PATH);
+}
+
 async function goBack() {
   "use server";
 
@@ -679,6 +860,7 @@ async function goBack() {
       "MUSIC_BEHAVIOR",
       "CALENDAR",
       "REVIEW",
+      "SIMULATION",
     ].includes(currentStep)
   ) {
     redirect(ONBOARDING_PATH);
@@ -831,7 +1013,9 @@ export default async function OnboardingPage({
       : null;
 
   const configuredSources =
-    currentStep === "SOURCES"
+    currentStep === "SOURCES" ||
+    currentStep === "REVIEW" ||
+    currentStep === "SIMULATION"
       ? await prisma.sourcePlaylist.findMany({
           where: { userId },
           orderBy: [
@@ -852,7 +1036,8 @@ export default async function OnboardingPage({
     currentStep === "DESTINATION" ||
     currentStep === "MUSIC_BEHAVIOR" ||
     currentStep === "CALENDAR" ||
-    currentStep === "REVIEW"
+    currentStep === "REVIEW" ||
+    currentStep === "SIMULATION"
       ? await prisma.targetPlaylist.findFirst({
           where: { userId },
           orderBy: [
@@ -864,6 +1049,13 @@ export default async function OnboardingPage({
             name: true,
             spotifyPlaylistId: true,
             enabled: true,
+            sourceScopeMode: true,
+            sourceSelections: {
+              select: {
+                sourcePlaylistId: true,
+              },
+            },
+            compositionMode: true,
             durationMode: true,
             fixedDurationSeconds: true,
             calendarMode: true,
@@ -881,11 +1073,39 @@ export default async function OnboardingPage({
               },
             },
             podcastPercent: true,
+            discoveryEnabled: true,
             discoveryIntensity: true,
           },
         })
       : null;
 
+
+
+  const selectedReviewSourceIds =
+    new Set(
+      firstTarget?.sourceSelections.map(
+        (selection) =>
+          selection.sourcePlaylistId,
+      ) ?? [],
+    );
+
+  const reviewSources =
+    (currentStep === "REVIEW" ||
+      currentStep === "SIMULATION") &&
+    firstTarget
+      ? firstTarget.sourceScopeMode ===
+        "SELECTED_ONLY"
+        ? configuredSources.filter(
+            (source) =>
+              selectedReviewSourceIds.has(
+                source.id,
+              ),
+          )
+        : configuredSources.filter(
+            (source) =>
+              source.enabled,
+          )
+      : [];
 
   const googleAccount =
     currentStep === "CALENDAR"
@@ -931,7 +1151,9 @@ export default async function OnboardingPage({
     configuredCalendarIds.size === 0;
 
   const musicPlaybackPolicy =
-    currentStep === "MUSIC_BEHAVIOR"
+    currentStep === "MUSIC_BEHAVIOR" ||
+    currentStep === "REVIEW" ||
+    currentStep === "SIMULATION"
       ? await prisma.musicPlaybackPolicy.findUnique({
           where: { userId },
           select: {
@@ -940,6 +1162,16 @@ export default async function OnboardingPage({
             windowUnit: true,
           },
         })
+      : null;
+
+
+  const latestOnboardingSimulation =
+    currentStep === "SIMULATION" &&
+    firstTarget
+      ? await loadLatestOnboardingSimulation(
+          userId,
+          firstTarget.id,
+        )
       : null;
 
   let playlistPage: SpotifyPlaylistPage | null = null;
@@ -1228,7 +1460,13 @@ export default async function OnboardingPage({
                                       ? "Escolha pelo menos um calendário disponível."
                                       : params.error === "google"
                                         ? "Não foi possível consultar o Google Agenda agora. Seu progresso foi preservado."
-                                        : "Não foi possível consultar o Spotify agora."}
+                                        : params.error ===
+                                            "simulation-config"
+                                          ? "A configuração ainda possui uma pendência que impede a simulação. Revise os itens abaixo antes de testar novamente."
+                                          : params.error ===
+                                              "simulation"
+                                            ? "A primeira simulação não pôde ser concluída. Nenhuma playlist foi alterada."
+                                            : "Não foi possível consultar o Spotify agora."}
           </div>
         ) : null}
 
@@ -2143,49 +2381,212 @@ export default async function OnboardingPage({
           ) : currentStep === "REVIEW" ? (
             <>
               <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-                Configuração básica pronta
+                Revise sua primeira configuração
               </h1>
 
               <p className="mt-5 text-base leading-7 text-white/70">
-                Fonte, destino, preferências e a opção
-                de calendário já estão definidos.
-                O próximo gate fará a revisão antes
-                da primeira simulação.
+                Confira as escolhas antes do primeiro
+                teste. A simulação lê as fontes
+                necessárias, mas não altera a playlist
+                do Spotify.
               </p>
 
               {firstTarget ? (
-                <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
-                  <p className="text-xs font-medium uppercase tracking-wide text-white/45">
-                    Primeiro destino
-                  </p>
+                <div className="mt-6 space-y-3">
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/45">
+                          Destino e composição
+                        </p>
 
-                  <p className="mt-1 font-semibold">
-                    {firstTarget.name}
-                  </p>
+                        <p className="mt-1 font-semibold">
+                          {firstTarget.name}
+                        </p>
 
-                  <p className="mt-2 text-sm leading-6 text-white/55">
-                    Duração:{" "}
-                    {firstTarget.durationMode ===
-                    "CALENDAR"
-                      ? "baseada no calendário"
-                      : `${Math.max(
-                          1,
-                          Math.round(
-                            (firstTarget.fixedDurationSeconds ??
-                              0) / 60,
-                          ),
-                        )} minutos`}
-                  </p>
+                        <p className="mt-2 text-sm text-white/60">
+                          {firstTarget.compositionMode ===
+                          "SEQUENCE"
+                            ? "Sequência personalizada"
+                            : firstTarget.podcastPercent ===
+                                0
+                              ? "Só música"
+                              : firstTarget.podcastPercent ===
+                                  100
+                                ? "Só podcasts"
+                                : `${100 - firstTarget.podcastPercent}% música · ${firstTarget.podcastPercent}% podcasts`}
+                        </p>
+                      </div>
+
+                      <form action={editReviewStep}>
+                        <input
+                          type="hidden"
+                          name="step"
+                          value="DESTINATION"
+                        />
+                        <button
+                          type="submit"
+                          className="text-sm font-semibold text-white/70 underline underline-offset-4"
+                        >
+                          Editar
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/45">
+                          Fontes
+                        </p>
+
+                        <p className="mt-2 text-sm leading-6 text-white/70">
+                          {reviewSources.length > 0
+                            ? reviewSources
+                                .map(
+                                  (source) =>
+                                    source.name ??
+                                    source.spotifyType,
+                                )
+                                .join(" · ")
+                            : "Nenhuma fonte disponível"}
+                        </p>
+                      </div>
+
+                      <form action={editReviewStep}>
+                        <input
+                          type="hidden"
+                          name="step"
+                          value="SOURCES"
+                        />
+                        <button
+                          type="submit"
+                          className="text-sm font-semibold text-white/70 underline underline-offset-4"
+                        >
+                          Editar
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/45">
+                          Duração
+                        </p>
+
+                        <p className="mt-2 text-sm text-white/70">
+                          {firstTarget.durationMode ===
+                          "CALENDAR"
+                            ? `Calendário: ${
+                                firstTarget.calendarSelections
+                                  .map(
+                                    (entry) =>
+                                      entry.calendarSelection
+                                        .summary ??
+                                      entry.calendarSelection
+                                        .googleCalendarId,
+                                  )
+                                  .join(" · ") ||
+                                "seleção configurada"
+                              }`
+                            : `${Math.max(
+                                1,
+                                Math.round(
+                                  (firstTarget.fixedDurationSeconds ??
+                                    0) / 60,
+                                ),
+                              )} minutos`}
+                        </p>
+                      </div>
+
+                      <form action={editReviewStep}>
+                        <input
+                          type="hidden"
+                          name="step"
+                          value="CALENDAR"
+                        />
+                        <button
+                          type="submit"
+                          className="text-sm font-semibold text-white/70 underline underline-offset-4"
+                        >
+                          Editar
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-white/45">
+                          Preferências musicais
+                        </p>
+
+                        <p className="mt-2 text-sm leading-6 text-white/70">
+                          Descoberta:{" "}
+                          {!firstTarget.discoveryEnabled
+                            ? "desativada"
+                            : firstTarget.discoveryIntensity ===
+                                "CONSERVATIVE"
+                              ? "mais familiar"
+                              : firstTarget.discoveryIntensity ===
+                                  "EXPLORATORY"
+                                ? "exploratória"
+                                : "equilibrada"}
+                          <br />
+                          Repetição:{" "}
+                          {musicPlaybackPolicy?.enabled
+                            ? `evitar recentes por ${musicPlaybackPolicy.windowValue ?? 30} ${musicPlaybackPolicy.windowUnit === "DAYS" ? "dias" : musicPlaybackPolicy.windowUnit?.toLowerCase() ?? ""}`
+                            : "sem bloqueio de recentes"}
+                        </p>
+                      </div>
+
+                      <form action={editReviewStep}>
+                        <input
+                          type="hidden"
+                          name="step"
+                          value="MUSIC_BEHAVIOR"
+                        />
+                        <button
+                          type="submit"
+                          className="text-sm font-semibold text-white/70 underline underline-offset-4"
+                        >
+                          Editar
+                        </button>
+                      </form>
+                    </div>
+                  </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="mt-6 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm text-amber-100">
+                  Não encontramos o primeiro destino.
+                </div>
+              )}
 
-              <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/60">
-                O Gate 6 fará a revisão e a primeira
-                simulação. Nenhuma playlist foi
-                alterada pelo Gate 5.
+              <div className="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm leading-6 text-emerald-100">
+                O destino continua desativado. O teste
+                registra um GenerationRun de simulação,
+                mas não escreve itens no Spotify.
               </div>
 
-              <form action={goBack} className="mt-8">
+              {firstTarget ? (
+                <form
+                  action={runFirstSimulation}
+                  className="mt-7"
+                >
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-white px-6 py-3 font-semibold text-black"
+                  >
+                    Testar configuração
+                  </button>
+                </form>
+              ) : null}
+
+              <form action={goBack} className="mt-4">
                 <button
                   type="submit"
                   className="rounded-xl border border-white/15 px-5 py-3 font-medium text-white"
@@ -2193,6 +2594,230 @@ export default async function OnboardingPage({
                   Voltar para calendário
                 </button>
               </form>
+            </>
+          ) : currentStep === "SIMULATION" ? (
+            <>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+                Resultado da primeira simulação
+              </h1>
+
+              <p className="mt-5 text-base leading-7 text-white/70">
+                Este é o plano que o Sonoriza montaria
+                agora. Nenhuma faixa ou episódio foi
+                escrito na playlist.
+              </p>
+
+              {latestOnboardingSimulation ? (
+                <>
+                  <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-xs text-white/45">
+                        Itens
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {latestOnboardingSimulation.planned}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-xs text-white/45">
+                        Duração
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {latestOnboardingSimulation.totalMinutes}
+                        <span className="ml-1 text-sm font-normal text-white/50">
+                          min
+                        </span>
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-xs text-white/45">
+                        Músicas
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {latestOnboardingSimulation.musicCount}
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-xs text-white/45">
+                        Podcasts
+                      </p>
+                      <p className="mt-1 text-2xl font-semibold">
+                        {latestOnboardingSimulation.podcastCount}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div
+                    className={[
+                      "mt-4 rounded-2xl border p-4 text-sm leading-6",
+                      latestOnboardingSimulation.status ===
+                        "SUCCESS" &&
+                      latestOnboardingSimulation.qualityPassed &&
+                      !latestOnboardingSimulation.inconclusive
+                        ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-100"
+                        : "border-amber-400/25 bg-amber-400/10 text-amber-100",
+                    ].join(" ")}
+                  >
+                    Status:{" "}
+                    <strong>
+                      {latestOnboardingSimulation.status}
+                    </strong>
+                    {" · "}
+                    qualidade{" "}
+                    {latestOnboardingSimulation.qualityPassed
+                      ? "aprovada"
+                      : "precisa de ajuste"}
+                    {" · "}
+                    leitura das fontes{" "}
+                    {latestOnboardingSimulation.collectionComplete
+                      ? "completa"
+                      : "incompleta"}
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-5">
+                    <p className="font-semibold">
+                      Fontes usadas
+                    </p>
+
+                    <div className="mt-3 space-y-2 text-sm text-white/65">
+                      {latestOnboardingSimulation.sources.length >
+                      0 ? (
+                        latestOnboardingSimulation.sources.map(
+                          (source) => (
+                            <div
+                              key={source.label}
+                              className="flex justify-between gap-4"
+                            >
+                              <span>
+                                {source.label}
+                              </span>
+                              <span>
+                                {source.count} item
+                                {source.count === 1
+                                  ? ""
+                                  : "s"}
+                              </span>
+                            </div>
+                          ),
+                        )
+                      ) : (
+                        <p>
+                          Nenhuma fonte produziu itens
+                          neste plano.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-5">
+                    <p className="font-semibold">
+                      Principais exclusões e limitações
+                    </p>
+
+                    {latestOnboardingSimulation.exclusions.length >
+                    0 ? (
+                      <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-white/65">
+                        {latestOnboardingSimulation.exclusions.map(
+                          (reason) => (
+                            <li key={reason}>
+                              {reason}
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    ) : (
+                      <p className="mt-3 text-sm text-white/60">
+                        Nenhuma exclusão relevante foi
+                        registrada no resumo desta
+                        simulação.
+                      </p>
+                    )}
+                  </div>
+
+                  {latestOnboardingSimulation.preview.length >
+                  0 ? (
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-5">
+                      <p className="font-semibold">
+                        Prévia do plano
+                      </p>
+
+                      <div className="mt-3 divide-y divide-white/10">
+                        {latestOnboardingSimulation.preview.map(
+                          (item) => (
+                            <div
+                              key={`${item.position}-${item.title}`}
+                              className="flex items-start justify-between gap-4 py-3 text-sm"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate font-medium">
+                                  {item.position}.{" "}
+                                  {item.title}
+                                </p>
+                                {item.subtitle ? (
+                                  <p className="mt-1 truncate text-white/45">
+                                    {item.subtitle}
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              <span className="shrink-0 text-xs text-white/45">
+                                {item.contentType ===
+                                "MUSIC"
+                                  ? "Música"
+                                  : "Podcast"}
+                                {" · "}
+                                {item.durationMinutes} min
+                              </span>
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {latestOnboardingSimulation.error ? (
+                    <div className="mt-4 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4 text-sm text-amber-100">
+                      {latestOnboardingSimulation.error}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/60">
+                    O Gate 7 liberará a ativação
+                    explícita. Até lá o destino
+                    permanece desativado.
+                  </div>
+                </>
+              ) : (
+                <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/60">
+                  Ainda não existe uma simulação do
+                  onboarding para este destino.
+                </div>
+              )}
+
+              <div className="mt-7 flex flex-wrap gap-3">
+                <form action={runFirstSimulation}>
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-white px-6 py-3 font-semibold text-black"
+                  >
+                    {latestOnboardingSimulation
+                      ? "Executar nova simulação"
+                      : "Executar simulação"}
+                  </button>
+                </form>
+
+                <form action={goBack}>
+                  <button
+                    type="submit"
+                    className="rounded-xl border border-white/15 px-5 py-3 font-medium text-white"
+                  >
+                    Quero ajustar
+                  </button>
+                </form>
+              </div>
             </>
           ) : (
             <>

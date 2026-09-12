@@ -90,6 +90,15 @@ export interface GeneratePlaylistsOptions {
   musicOrderSimulationEvidence?: Record<string, ReusableMusicOrderEvidence>;
   /** SCHEDULE-01: optional subset; omitted keeps manual generation behavior unchanged. */
   targetPlaylistIds?: string[];
+
+  /**
+   * ONBOARDING-01 Gate 6:
+   * explicit disabled targets that may participate
+   * only in an explicitly scoped simulation.
+   *
+   * Never honored for a real run.
+   */
+  simulationIncludeDisabledTargetIds?: string[];
   /** SCHEDULE-01: canonical valid remote prefix by target. */
   preservedByTargetId?: Record<string, Candidate[]>;
   /** SCHEDULE-01: minimal remote patch proof for KEEP_FILLED targets. */
@@ -123,6 +132,54 @@ export interface GeneratePlaylistsResult {
   status: RunStatus;
 }
 
+export function resolveSimulationDisabledTargetIds(
+  input: {
+    simulate: boolean;
+    targetScope: readonly string[] | null;
+    requested:
+      | readonly string[]
+      | undefined;
+  },
+): string[] {
+  const requested = [
+    ...new Set(
+      (input.requested ?? [])
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ];
+
+  if (requested.length === 0) {
+    return [];
+  }
+
+  if (!input.simulate) {
+    throw new Error(
+      "Disabled targets can only be included in simulation.",
+    );
+  }
+
+  if (!input.targetScope) {
+    throw new Error(
+      "Disabled simulation targets require an explicit target scope.",
+    );
+  }
+
+  const scope = new Set(input.targetScope);
+
+  const outsideScope = requested.find(
+    (targetId) => !scope.has(targetId),
+  );
+
+  if (outsideScope) {
+    throw new Error(
+      "Disabled simulation target must belong to the explicit target scope.",
+    );
+  }
+
+  return requested;
+}
+
 type LogLine = {
   level: "INFO" | "WARN" | "ERROR";
   message: string;
@@ -148,18 +205,41 @@ export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
 ): Promise<GeneratePlaylistsResult> {
   const { userId, trigger } = opts;
-  const simulate = opts.simulate ?? trigger === "SIMULATION";
+  const simulate =
+    opts.simulate ??
+    trigger === "SIMULATION";
   const date = opts.date ?? new Date();
 
-  const run = await prisma.generationRun.create({
-    data: { userId, trigger, simulation: simulate, status: "RUNNING" },
-  });
+  const targetScope =
+    opts.targetPlaylistIds
+      ? [
+          ...new Set(
+            opts.targetPlaylistIds.filter(Boolean),
+          ),
+        ]
+      : null;
+
+  const simulationDisabledTargetIds =
+    resolveSimulationDisabledTargetIds({
+      simulate,
+      targetScope,
+      requested:
+        opts.simulationIncludeDisabledTargetIds,
+    });
+
+  const run =
+    await prisma.generationRun.create({
+      data: {
+        userId,
+        trigger,
+        simulation: simulate,
+        status: "RUNNING",
+      },
+    });
 
   const logs: LogLine[] = [];
-  const log = (line: LogLine) => logs.push(line);
-  const targetScope = opts.targetPlaylistIds
-    ? [...new Set(opts.targetPlaylistIds.filter(Boolean))]
-    : null;
+  const log = (line: LogLine) =>
+    logs.push(line);
   const summary: Record<string, unknown> = {
     simulate,
     targetScope,
@@ -185,8 +265,28 @@ export async function generatePlaylists(
     const targets = await prisma.targetPlaylist.findMany({
       where: {
         userId,
-        enabled: true,
-        ...(targetScope ? { id: { in: targetScope } } : {}),
+        ...(targetScope
+          ? {
+              id: {
+                in: targetScope,
+              },
+            }
+          : {}),
+        ...(simulationDisabledTargetIds.length > 0
+          ? {
+              OR: [
+                { enabled: true },
+                {
+                  id: {
+                    in:
+                      simulationDisabledTargetIds,
+                  },
+                },
+              ],
+            }
+          : {
+              enabled: true,
+            }),
       },
       orderBy: { priority: "asc" },
       include: {

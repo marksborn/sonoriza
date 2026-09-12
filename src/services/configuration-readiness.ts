@@ -122,9 +122,69 @@ function normalizeCalendarIds(values: readonly string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort();
 }
 
+export type ConfigurationAssessmentOptions = {
+  /**
+   * Optional explicit target scope.
+   * Omitted preserves the existing global assessment.
+   */
+  targetPlaylistIds?: readonly string[];
+
+  /**
+   * Read-only assessment exception for explicitly
+   * scoped disabled targets. Used by onboarding
+   * simulation before Gate 7 activation.
+   */
+  includeDisabledTargetIds?: readonly string[];
+};
+
 export async function assessConfiguration(
   userId: string,
+  options: ConfigurationAssessmentOptions = {},
 ): Promise<ConfigurationAssessment> {
+  const targetScope =
+    options.targetPlaylistIds === undefined
+      ? null
+      : [
+          ...new Set(
+            options.targetPlaylistIds.filter(Boolean),
+          ),
+        ].sort();
+
+  const includeDisabledTargetIds = [
+    ...new Set(
+      (
+        options.includeDisabledTargetIds ?? []
+      ).filter(Boolean),
+    ),
+  ].sort();
+
+  if (
+    includeDisabledTargetIds.length > 0 &&
+    targetScope === null
+  ) {
+    throw new Error(
+      "Disabled targets require an explicit configuration assessment scope.",
+    );
+  }
+
+  if (includeDisabledTargetIds.length > 0) {
+    const targetScopeSet = new Set(
+      targetScope ?? [],
+    );
+
+    const outsideScope =
+      includeDisabledTargetIds.find(
+        (targetId) =>
+          !targetScopeSet.has(targetId),
+      );
+
+    if (outsideScope) {
+      throw new Error(
+        "Disabled assessment target must belong to the explicit target scope.",
+      );
+    }
+  }
+
   const [
     accounts,
     calendarsRaw,
@@ -161,7 +221,30 @@ export async function assessConfiguration(
       },
     }),
     prisma.targetPlaylist.findMany({
-      where: { userId, enabled: true },
+      where: {
+        userId,
+        ...(targetScope !== null
+          ? {
+              id: {
+                in: targetScope,
+              },
+            }
+          : {}),
+        ...(includeDisabledTargetIds.length > 0
+          ? {
+              OR: [
+                { enabled: true },
+                {
+                  id: {
+                    in: includeDisabledTargetIds,
+                  },
+                },
+              ],
+            }
+          : {
+              enabled: true,
+            }),
+      },
       orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
       select: {
         id: true,

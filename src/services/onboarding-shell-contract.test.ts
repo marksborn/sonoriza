@@ -85,14 +85,13 @@ test("#205 Gate 2 keeps forward, back, skip and restart navigation", () => {
 test("#205 Gate 2 still does not complete onboarding prematurely", () => {
   const source = page();
 
+  // Gates posteriores podem avançar o lifecycle até
+  // READY_FOR_SIMULATION. O contrato original do Gate 2
+  // continua garantindo que o shell não conclui o
+  // onboarding automaticamente.
   assert.doesNotMatch(
     source,
     /status:\s*"COMPLETED"/,
-  );
-
-  assert.doesNotMatch(
-    source,
-    /readyForSimulationAt:\s*new Date/,
   );
 
   assert.doesNotMatch(
