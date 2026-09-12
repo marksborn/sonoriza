@@ -32,6 +32,11 @@ import {
   type OnboardingDiscoveryPreset,
 } from "@/services/onboarding/basic-behavior";
 import {
+  configureOnboardingTargetCalendar,
+  listOnboardingCalendarOptions,
+  OnboardingCalendarError,
+} from "@/services/onboarding/basic-calendar";
+import {
   saveMusicPlaybackPolicyForUser,
 } from "@/services/music-playback-policy";
 import {
@@ -539,6 +544,123 @@ async function saveBasicBehavior(
   redirect(ONBOARDING_PATH);
 }
 
+
+async function connectGoogleCalendar() {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress = await ensureProgress(userId);
+
+  if (progress.currentStep !== "CALENDAR") {
+    redirect(ONBOARDING_PATH);
+  }
+
+  await signIn("google", {
+    redirectTo: ONBOARDING_PATH,
+  });
+}
+
+async function skipCalendarStep() {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress = await ensureProgress(userId);
+
+  if (progress.currentStep !== "CALENDAR") {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const target =
+    await prisma.targetPlaylist.findFirst({
+      where: { userId },
+      orderBy: [
+        { priority: "asc" },
+        { createdAt: "asc" },
+      ],
+      select: { id: true },
+    });
+
+  if (!target) {
+    redirect("/onboarding?error=no-target");
+  }
+
+  await moveToStep({
+    userId,
+    from: "CALENDAR",
+    to: "REVIEW",
+    markSkipped: true,
+  });
+
+  revalidatePath(ONBOARDING_PATH);
+  redirect(ONBOARDING_PATH);
+}
+
+async function saveCalendarStep(
+  formData: FormData,
+) {
+  "use server";
+
+  const userId = await requireUserId();
+  const progress = await ensureProgress(userId);
+
+  if (progress.currentStep !== "CALENDAR") {
+    redirect(ONBOARDING_PATH);
+  }
+
+  const target =
+    await prisma.targetPlaylist.findFirst({
+      where: { userId },
+      orderBy: [
+        { priority: "asc" },
+        { createdAt: "asc" },
+      ],
+      select: { id: true },
+    });
+
+  if (!target) {
+    redirect("/onboarding?error=no-target");
+  }
+
+  const googleCalendarIds = formData
+    .getAll("googleCalendarId")
+    .filter(
+      (value): value is string =>
+        typeof value === "string",
+    );
+
+  try {
+    await configureOnboardingTargetCalendar({
+      userId,
+      targetId: target.id,
+      googleCalendarIds,
+    });
+  } catch (error) {
+    const code =
+      error instanceof OnboardingCalendarError
+        ? error.code
+        : "google";
+
+    redirect(`/onboarding?error=${code}`);
+  }
+
+  await moveToStep({
+    userId,
+    from: "CALENDAR",
+    to: "REVIEW",
+    markCompleted: true,
+  });
+
+  revalidatePath(ONBOARDING_PATH);
+  revalidatePath(
+    "/dashboard/configuracao/calendarios",
+  );
+  revalidatePath(
+    "/dashboard/configuracao/destinos",
+  );
+
+  redirect(ONBOARDING_PATH);
+}
+
 async function goBack() {
   "use server";
 
@@ -556,6 +678,7 @@ async function goBack() {
       "DESTINATION",
       "MUSIC_BEHAVIOR",
       "CALENDAR",
+      "REVIEW",
     ].includes(currentStep)
   ) {
     redirect(ONBOARDING_PATH);
@@ -728,7 +851,8 @@ export default async function OnboardingPage({
   const firstTarget =
     currentStep === "DESTINATION" ||
     currentStep === "MUSIC_BEHAVIOR" ||
-    currentStep === "CALENDAR"
+    currentStep === "CALENDAR" ||
+    currentStep === "REVIEW"
       ? await prisma.targetPlaylist.findFirst({
           where: { userId },
           orderBy: [
@@ -740,12 +864,71 @@ export default async function OnboardingPage({
             name: true,
             spotifyPlaylistId: true,
             enabled: true,
+            durationMode: true,
             fixedDurationSeconds: true,
+            calendarMode: true,
+            calendarSelections: {
+              orderBy: {
+                createdAt: "asc",
+              },
+              select: {
+                calendarSelection: {
+                  select: {
+                    googleCalendarId: true,
+                    summary: true,
+                  },
+                },
+              },
+            },
             podcastPercent: true,
             discoveryIntensity: true,
           },
         })
       : null;
+
+
+  const googleAccount =
+    currentStep === "CALENDAR"
+      ? await prisma.account.findFirst({
+          where: {
+            userId,
+            provider: "google",
+          },
+          select: { id: true },
+        })
+      : null;
+
+  let onboardingCalendars: Awaited<
+    ReturnType<
+      typeof listOnboardingCalendarOptions
+    >
+  > = [];
+
+  let calendarLoadError = false;
+
+  if (
+    currentStep === "CALENDAR" &&
+    googleAccount
+  ) {
+    try {
+      onboardingCalendars =
+        await listOnboardingCalendarOptions(
+          userId,
+        );
+    } catch {
+      calendarLoadError = true;
+    }
+  }
+
+  const configuredCalendarIds = new Set(
+    firstTarget?.calendarSelections.map(
+      (entry) =>
+        entry.calendarSelection.googleCalendarId,
+    ) ?? [],
+  );
+
+  const shouldDefaultPrimaryCalendar =
+    configuredCalendarIds.size === 0;
 
   const musicPlaybackPolicy =
     currentStep === "MUSIC_BEHAVIOR"
@@ -1037,7 +1220,15 @@ export default async function OnboardingPage({
                                 ? "Essa playlist não está disponível como destino nesta página."
                                 : params.error === "behavior"
                                   ? "Revise suas escolhas de repetição e descoberta."
-                                  : "Não foi possível consultar o Spotify agora."}
+                                  : params.error ===
+                                      "google-not-connected"
+                                    ? "Conecte sua conta Google para escolher calendários."
+                                    : params.error ===
+                                        "calendar-selection"
+                                      ? "Escolha pelo menos um calendário disponível."
+                                      : params.error === "google"
+                                        ? "Não foi possível consultar o Google Agenda agora. Seu progresso foi preservado."
+                                        : "Não foi possível consultar o Spotify agora."}
           </div>
         ) : null}
 
@@ -1773,18 +1964,225 @@ export default async function OnboardingPage({
           ) : currentStep === "CALENDAR" ? (
             <>
               <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-                Preferências básicas prontas
+                Quer usar o Google Agenda?
               </h1>
 
               <p className="mt-5 text-base leading-7 text-white/70">
-                O próximo passo é decidir se o tamanho
-                da playlist deve acompanhar seu
-                calendário. Isso entra no Gate 5.
+                Essa etapa é opcional. O calendário
+                pode definir automaticamente o tamanho
+                da playlist conforme seus compromissos.
+                Você poderá mudar isso depois.
               </p>
 
+              {firstTarget ? (
+                <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <p className="text-xs font-medium uppercase tracking-wide text-white/45">
+                    Destino
+                  </p>
+
+                  <p className="mt-1 font-semibold">
+                    {firstTarget.name}
+                  </p>
+
+                  <p className="mt-2 text-sm leading-6 text-white/55">
+                    Nenhuma música será gerada ou
+                    escrita nesta etapa.
+                  </p>
+                </div>
+              ) : null}
+
+              {!googleAccount ? (
+                <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <p className="font-semibold">
+                    Google Agenda ainda não conectado
+                  </p>
+
+                  <p className="mt-2 text-sm leading-6 text-white/60">
+                    O Sonoriza solicitará somente
+                    acesso de leitura ao calendário.
+                  </p>
+
+                  <form
+                    action={connectGoogleCalendar}
+                    className="mt-4"
+                  >
+                    <button
+                      type="submit"
+                      className="rounded-xl bg-white px-5 py-3 font-semibold text-black"
+                    >
+                      Conectar Google Agenda
+                    </button>
+                  </form>
+                </div>
+              ) : null}
+
+              {googleAccount &&
+              calendarLoadError ? (
+                <div className="mt-6 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-5 text-amber-100">
+                  <p className="font-semibold">
+                    Não foi possível consultar seus
+                    calendários agora.
+                  </p>
+
+                  <p className="mt-2 text-sm leading-6 opacity-80">
+                    Seu progresso foi preservado. A
+                    autorização pode ter expirado.
+                  </p>
+
+                  <form
+                    action={connectGoogleCalendar}
+                    className="mt-4"
+                  >
+                    <button
+                      type="submit"
+                      className="rounded-xl border border-amber-200/30 px-5 py-3 font-semibold"
+                    >
+                      Reconectar Google Agenda
+                    </button>
+                  </form>
+                </div>
+              ) : null}
+
+              {googleAccount &&
+              !calendarLoadError &&
+              onboardingCalendars.length > 0 ? (
+                <form
+                  action={saveCalendarStep}
+                  className="mt-6"
+                >
+                  <fieldset>
+                    <legend className="font-semibold">
+                      Quais calendários devem definir
+                      a duração?
+                    </legend>
+
+                    <p className="mt-2 text-sm leading-6 text-white/55">
+                      Em uma configuração nova, o
+                      calendário principal já aparece
+                      selecionado como recomendação.
+                    </p>
+
+                    <div className="mt-4 space-y-3">
+                      {onboardingCalendars.map(
+                        (calendar) => (
+                          <label
+                            key={calendar.id}
+                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-black/15 p-4"
+                          >
+                            <input
+                              type="checkbox"
+                              name="googleCalendarId"
+                              value={calendar.id}
+                              defaultChecked={
+                                configuredCalendarIds.has(
+                                  calendar.id,
+                                ) ||
+                                (shouldDefaultPrimaryCalendar &&
+                                  Boolean(
+                                    calendar.primary,
+                                  ))
+                              }
+                              className="mt-1 h-4 w-4"
+                            />
+
+                            <span className="min-w-0">
+                              <span className="font-semibold">
+                                {calendar.summary}
+                              </span>
+
+                              {calendar.primary ? (
+                                <span className="ml-2 rounded-full border border-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/45">
+                                  Principal
+                                </span>
+                              ) : null}
+                            </span>
+                          </label>
+                        ),
+                      )}
+                    </div>
+                  </fieldset>
+
+                  <button
+                    type="submit"
+                    className="mt-5 rounded-xl bg-white px-5 py-3 font-semibold text-black"
+                  >
+                    Usar calendários selecionados
+                  </button>
+                </form>
+              ) : null}
+
+              {googleAccount &&
+              !calendarLoadError &&
+              onboardingCalendars.length === 0 ? (
+                <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/60">
+                  A conta Google não retornou nenhum
+                  calendário disponível.
+                </div>
+              ) : null}
+
+              <div className="mt-8 flex flex-wrap gap-3">
+                <form action={skipCalendarStep}>
+                  <button
+                    type="submit"
+                    className="rounded-xl border border-white/15 px-5 py-3 font-medium text-white"
+                  >
+                    Não usar calendário agora
+                  </button>
+                </form>
+
+                <form action={goBack}>
+                  <button
+                    type="submit"
+                    className="rounded-xl border border-white/15 px-5 py-3 font-medium text-white"
+                  >
+                    Voltar para preferências
+                  </button>
+                </form>
+              </div>
+            </>
+          ) : currentStep === "REVIEW" ? (
+            <>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+                Configuração básica pronta
+              </h1>
+
+              <p className="mt-5 text-base leading-7 text-white/70">
+                Fonte, destino, preferências e a opção
+                de calendário já estão definidos.
+                O próximo gate fará a revisão antes
+                da primeira simulação.
+              </p>
+
+              {firstTarget ? (
+                <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <p className="text-xs font-medium uppercase tracking-wide text-white/45">
+                    Primeiro destino
+                  </p>
+
+                  <p className="mt-1 font-semibold">
+                    {firstTarget.name}
+                  </p>
+
+                  <p className="mt-2 text-sm leading-6 text-white/55">
+                    Duração:{" "}
+                    {firstTarget.durationMode ===
+                    "CALENDAR"
+                      ? "baseada no calendário"
+                      : `${Math.max(
+                          1,
+                          Math.round(
+                            (firstTarget.fixedDurationSeconds ??
+                              0) / 60,
+                          ),
+                        )} minutos`}
+                  </p>
+                </div>
+              ) : null}
+
               <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/60">
-                Seu destino continua desativado e
-                nenhuma geração foi executada.
+                O Gate 6 fará a revisão e a primeira
+                simulação. Nenhuma playlist foi
+                alterada pelo Gate 5.
               </div>
 
               <form action={goBack} className="mt-8">
@@ -1792,7 +2190,7 @@ export default async function OnboardingPage({
                   type="submit"
                   className="rounded-xl border border-white/15 px-5 py-3 font-medium text-white"
                 >
-                  Voltar para preferências
+                  Voltar para calendário
                 </button>
               </form>
             </>
