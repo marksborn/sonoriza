@@ -16,6 +16,8 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
+      "@/jobs/generate-playlists": ["./src/jobs/generate-playlists-podcast07"],
+      "@/services/spotify/incremental-reader": ["./src/services/spotify/podcast-07-incremental-reader"],
       "@/*": ["./src/*"]
     }
   },
