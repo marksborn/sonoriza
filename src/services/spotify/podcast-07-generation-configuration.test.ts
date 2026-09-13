@@ -10,7 +10,6 @@ function snapshot(): Podcast07FingerprintSnapshot {
   return {
     savedEpisodes: [
       {
-        sourcePlaylistId: "saved-source",
         spotifyId: "saved",
         enabled: true,
         episodeOrder: "RANDOM",
@@ -22,7 +21,6 @@ function snapshot(): Podcast07FingerprintSnapshot {
     ],
     shows: [
       {
-        sourcePlaylistId: "show-source",
         spotifyShowId: "show-a",
         authority: "SHOW_OVERRIDE",
         policy: {
@@ -35,9 +33,6 @@ function snapshot(): Podcast07FingerprintSnapshot {
           maxReleaseAgeDays: null,
           expiryPolicy: "STRICT_EXPIRY",
           maxEpisodesPerCycle: null,
-          cadenceMaxEpisodes: 1,
-          cadenceUnit: "WEEK",
-          priority: "NORMAL",
         },
       },
     ],
@@ -52,12 +47,10 @@ test("Gate 6 fingerprint is deterministic regardless of snapshot input order", (
   const base = snapshot();
   const extraSaved = {
     ...base.savedEpisodes[0]!,
-    sourcePlaylistId: "saved-source-b",
     spotifyId: "saved-b",
   };
   const extraShow = {
     ...base.shows[0]!,
-    sourcePlaylistId: "show-source-b",
     spotifyShowId: "show-b",
   };
   const left = {
@@ -105,7 +98,6 @@ test("Gate 6 fingerprints inheritance separately from an explicit SHOW override"
     ...base,
     shows: [
       {
-        sourcePlaylistId: "show-source",
         spotifyShowId: "show-a",
         authority: "INHERIT_SAVED_EPISODES",
         policy: null,
