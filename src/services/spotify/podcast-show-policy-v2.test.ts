@@ -172,7 +172,6 @@ test("ALLOW_IN_PROGRESS_TO_FINISH only keeps stale progress first observed while
 function podcast07FingerprintSnapshot(): Podcast07FingerprintSnapshot {
   return {
     savedEpisodes: [{
-      sourcePlaylistId: "saved-source",
       spotifyId: "saved",
       enabled: true,
       episodeOrder: "RANDOM",
@@ -182,7 +181,6 @@ function podcast07FingerprintSnapshot(): Podcast07FingerprintSnapshot {
       frequencyScope: "PER_SHOW",
     }],
     shows: [{
-      sourcePlaylistId: "show-source",
       spotifyShowId: "show-a",
       authority: "SHOW_OVERRIDE",
       policy: {
@@ -195,9 +193,6 @@ function podcast07FingerprintSnapshot(): Podcast07FingerprintSnapshot {
         maxReleaseAgeDays: null,
         expiryPolicy: "STRICT_EXPIRY",
         maxEpisodesPerCycle: null,
-        cadenceMaxEpisodes: 1,
-        cadenceUnit: "WEEK",
-        priority: "NORMAL",
       },
     }],
   };
@@ -221,7 +216,6 @@ test("PODCAST-07 Gate 6 fingerprint distinguishes inherited SHOW from explicit o
   const inherited: Podcast07FingerprintSnapshot = {
     ...base,
     shows: [{
-      sourcePlaylistId: "show-source",
       spotifyShowId: "show-a",
       authority: "INHERIT_SAVED_EPISODES",
       policy: null,
