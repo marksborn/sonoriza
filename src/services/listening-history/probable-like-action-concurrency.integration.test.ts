@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { prisma } from "@/lib/prisma";
-import { confirmProbableLike } from "./probable-like-action";
+import {
+  confirmProbableLike,
+  ProbableLikeCandidateNotFoundError,
+} from "./probable-like-action";
 
 const integrationTest = process.env.DATABASE_URL ? test : test.skip;
 
 integrationTest(
-  "concurrent Gate 5 likes for the same artist keep the affinity count exact",
+  "concurrent Gate 5C confirmations cannot race provider-derived history past quarantine",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const user = await prisma.user.create({
@@ -15,7 +18,6 @@ integrationTest(
     });
     const spotifyArtistId = `same-artist-${suffix}`;
     const trackIds = [`same-artist-a-${suffix}`, `same-artist-b-${suffix}`];
-    const providerWrites: string[] = [];
 
     t.after(async () => {
       await prisma.historyLikeAction.deleteMany({ where: { userId: user.id } });
@@ -41,8 +43,6 @@ integrationTest(
           trackName: `Concurrent Candidate ${trackIndex + 1}`,
           artistName: "Concurrent Artist",
           primaryArtistId: spotifyArtistId,
-          albumId: `concurrent-album-${trackIndex}-${suffix}`,
-          albumName: `Concurrent Album ${trackIndex + 1}`,
           playedAt: new Date(playedAt),
           source: "SPOTIFY_EXTENDED_HISTORY" as const,
           sourceEventKey: `concurrent-${trackIndex}-${playIndex}-${suffix}`,
@@ -57,63 +57,56 @@ integrationTest(
       ),
     });
 
-    const results = await Promise.all(
-      trackIds.map((spotifyTrackId, trackIndex) =>
+    let identityResolutionAttempts = 0;
+    let providerWriteAttempts = 0;
+
+    const results = await Promise.allSettled(
+      trackIds.map((spotifyTrackId) =>
         confirmProbableLike(
           { userId: user.id, spotifyTrackId },
           {
-            resolveSpotifyIdentity: async () => ({
-              historicalSpotifyTrackId: spotifyTrackId,
-              spotifyTrackId,
-              spotifyUri: `spotify:track:${spotifyTrackId}`,
-              spotifyUrl: `https://open.spotify.com/track/${spotifyTrackId}`,
-              trackName: `Concurrent Candidate ${trackIndex + 1}`,
-              primaryArtistId: spotifyArtistId,
-              primaryArtistName: "Concurrent Artist",
-              albumId: `concurrent-album-${trackIndex}-${suffix}`,
-              albumName: `Concurrent Album ${trackIndex + 1}`,
-              durationMs: 205_000,
-              isrc: null,
-              resolution: "HISTORICAL_ID_STILL_CURRENT" as const,
-            }),
-            saveTrackToSpotify: async ({ spotifyTrackId: providerTrackId }) => {
-              providerWrites.push(providerTrackId);
+            resolveSpotifyIdentity: async () => {
+              identityResolutionAttempts += 1;
+              throw new Error("identity resolution must remain unreachable");
+            },
+            saveTrackToSpotify: async () => {
+              providerWriteAttempts += 1;
+              throw new Error("Spotify write must remain unreachable");
             },
           },
         ),
       ),
     );
-    assert.equal(results.every((result) => result.artistAffinityUpdated), true);
-    assert.deepEqual(new Set(providerWrites), new Set(trackIds));
 
+    assert.equal(results.length, 2);
+    for (const result of results) {
+      assert.equal(result.status, "rejected");
+      if (result.status === "rejected") {
+        assert.ok(result.reason instanceof ProbableLikeCandidateNotFoundError);
+      }
+    }
+
+    assert.equal(identityResolutionAttempts, 0);
+    assert.equal(providerWriteAttempts, 0);
     assert.equal(
-      await prisma.likedTrackPreference.count({
-        where: { userId: user.id, isLiked: true },
-      }),
-      2,
+      await prisma.likedTrackPreference.count({ where: { userId: user.id } }),
+      0,
     );
     assert.equal(
-      await prisma.artistAffinityEvidence.count({
-        where: {
-          userId: user.id,
-          spotifyArtistId,
-          active: true,
-        },
-      }),
-      2,
+      await prisma.artistAffinityEvidence.count({ where: { userId: user.id } }),
+      0,
     );
-
-    const affinity = await prisma.artistAffinityState.findUniqueOrThrow({
-      where: {
-        userId_spotifyArtistId: { userId: user.id, spotifyArtistId },
-      },
-    });
-    assert.equal(affinity.active, true);
-    assert.equal(affinity.likedTrackCount, 2);
-
+    assert.equal(
+      await prisma.artistAffinityState.count({ where: { userId: user.id } }),
+      0,
+    );
     assert.equal(
       await prisma.historyLikeAction.count({ where: { userId: user.id } }),
-      2,
+      0,
+    );
+    assert.equal(
+      await prisma.trackListeningEvent.count({ where: { userId: user.id } }),
+      6,
     );
   },
 );
