@@ -1,5 +1,3 @@
-import type { User } from "@prisma/client";
-
 import type { IncrementalSourceBatch } from "@/jobs/incremental-planning";
 
 import {
@@ -225,6 +223,17 @@ export class SpotifyIncrementalReader {
       },
       readNext: async () => {
         if (done) return { candidates: [], done: true };
+
+        // When the real SAVED_EPISODES source also participates in this run it
+        // is the single owner of the shared saved traversal and reroutes this
+        // SHOW subset with SHOW provenance. Returning an empty batch here avoids
+        // duplicate candidates while preserving the target's configured source
+        // authority on the rerouted candidates.
+        if (currentPodcast07RuntimeState()?.activeSavedSource) {
+          done = true;
+          return { candidates: [], done: true };
+        }
+
         const universe = await this.readSavedUniverse();
         done = true;
         const policy = this.showPolicies.get(override.sourcePlaylistId);
