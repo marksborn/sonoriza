@@ -16,6 +16,7 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
+      "@/services/spotify/incremental-reader": ["./src/services/spotify/podcast-07-incremental-reader"],
       "@/*": ["./src/*"]
     }
   },
