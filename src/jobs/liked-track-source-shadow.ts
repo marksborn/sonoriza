@@ -14,7 +14,10 @@ import {
   type RunTarget,
 } from "@/services/playlist-planner";
 import type { EffectiveSharingPolicy } from "@/services/playlist-planner/target-sharing-shadow";
-import type { TargetSharingReservationMap } from "@/services/playlist-planner/target-sharing-runtime";
+import {
+  findTargetSharingViolations,
+  type TargetSharingReservationMap,
+} from "@/services/playlist-planner/target-sharing-runtime";
 import { filterMusicCandidatesForRepeat } from "@/services/spotify/recently-played";
 
 import {
@@ -714,12 +717,43 @@ export function buildLikedTrackProductivePilotPlan(input: {
     pools: variantPools,
     targets: context.targets,
     musicPoolByTargetId: variantMusicPoolByTargetId,
+
+    // #332: this is a nested authoritative replan. It must keep the exact
+    // TARGET-SCOPE-01 contracts used by the canonical planner instead of
+    // silently returning to legacy/global behavior.
+    sourceIdsByTargetId: context.sourceIdsByTargetId,
+    sharingPolicyByTargetId: context.sharingPolicyByTargetId,
+    externalReservationsByUri: context.externalReservationsByUri,
+
     preservedByTargetId: context.preservedByTargetId,
     blockedMusicTrackIdsByTargetId: context.blockedMusicTrackIdsByTargetId,
     initialReserved: context.initialReserved,
   });
 
   const guardFailures: Array<Record<string, unknown>> = [];
+
+  // Defense in depth: a productive optional postprocessor must never replace
+  // an authoritative baseline with a target-sharing-invalid plan, even if a
+  // future nested-planner change accidentally weakens reservation handling.
+  const targetSharingViolations = findTargetSharingViolations({
+    targets: variantPlan.targets.map((planned) => ({
+      targetPlaylistId: planned.targetPlaylistId,
+      name: planned.name,
+      uris: planned.result.items.map((item) => item.uri),
+    })),
+    sharingPolicyByTargetId:
+      context.sharingPolicyByTargetId ??
+      new Map<string, EffectiveSharingPolicy>(),
+    externalReservationsByUri: context.externalReservationsByUri,
+  });
+
+  if (targetSharingViolations.length > 0) {
+    guardFailures.push({
+      reason: "TARGET_SHARING_VIOLATION",
+      violationCount: targetSharingViolations.length,
+      violations: targetSharingViolations.slice(0, 10),
+    });
+  }
   const targets = context.plan.targets.map((currentTarget) => {
     const variantTarget = variantPlan.targets.find(
       (target) => target.targetPlaylistId === currentTarget.targetPlaylistId,
