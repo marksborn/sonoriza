@@ -29,16 +29,21 @@ export type PodcastRandomPolicyValue =
 export type PodcastExpiryPolicyValue =
   | "STRICT_EXPIRY"
   | "ALLOW_IN_PROGRESS_TO_FINISH";
+export type PodcastShowEpisodeScopeValue = "ALL_EPISODES" | "SAVED_ONLY";
 
 /**
  * Planner-facing PODCAST-05 policy. PODCAST-06 Gate 3 deliberately does not
  * widen this contract, so cadence/priority still cannot influence selection.
+ * PODCAST-07 Gate 1 persists showEpisodeScope but no planner/runtime consumer
+ * uses it yet. The field remains optional in this legacy planner contract so
+ * existing callers do not need a behavior-only change in the persistence gate.
  */
 export type PodcastShowPolicySnapshot = {
   sourcePlaylistId: string;
   episodeEligibility: PodcastEpisodeEligibilityValue;
   episodeOrder: PodcastShowOrderValue;
   randomPolicy: PodcastRandomPolicyValue;
+  showEpisodeScope?: PodcastShowEpisodeScopeValue;
   startEpisodeId: string | null;
   strictSequence: boolean;
   maxReleaseAgeDays: number | null;
@@ -75,13 +80,16 @@ export type PodcastShowPolicyUpdate = Pick<
   | "expiryPolicy"
   | "maxEpisodesPerCycle"
 > &
-  Partial<PodcastShowCadencePolicySnapshot>;
+  Partial<PodcastShowCadencePolicySnapshot> & {
+    /** PODCAST-07 Gate 1. Omission preserves the existing scope. */
+    showEpisodeScope?: PodcastShowEpisodeScopeValue;
+  };
 
 /**
  * PODCAST-05 traversal policy is loaded only for explicit SHOW sources.
  * PODCAST-06 cadence/priority are source-independent and joined by Spotify show
- * identity from PodcastShowCadencePolicy. The planner-facing snapshot remains
- * narrower, so Gate 3 is persistence/read-model only.
+ * identity from PodcastShowCadencePolicy. PODCAST-07 Gate 1 exposes the stored
+ * episode scope in the read-model without applying it to candidate collection.
  */
 export async function loadPodcastShowPolicies(
   userId: string,
@@ -103,6 +111,7 @@ export async function loadPodcastShowPolicies(
             episodeEligibility: true,
             episodeOrder: true,
             randomPolicy: true,
+            showEpisodeScope: true,
             startEpisodeId: true,
             strictSequence: true,
             maxReleaseAgeDays: true,
@@ -125,6 +134,7 @@ export async function loadPodcastShowPolicies(
             episodeEligibility: policy.episodeEligibility,
             episodeOrder: policy.episodeOrder,
             randomPolicy: policy.randomPolicy,
+            showEpisodeScope: policy.showEpisodeScope,
             startEpisodeId: normalizedId(policy.startEpisodeId),
             strictSequence: policy.strictSequence,
             maxReleaseAgeDays: normalizeNullableNonNegativeInt(
@@ -190,6 +200,7 @@ export async function savePodcastShowPolicy(
         episodeEligibility: input.episodeEligibility,
         episodeOrder: input.episodeOrder,
         randomPolicy: input.randomPolicy,
+        showEpisodeScope: input.showEpisodeScope ?? "ALL_EPISODES",
         startEpisodeId,
         strictSequence: input.strictSequence,
         maxReleaseAgeDays,
@@ -203,6 +214,9 @@ export async function savePodcastShowPolicy(
         episodeEligibility: input.episodeEligibility,
         episodeOrder: input.episodeOrder,
         randomPolicy: input.randomPolicy,
+        ...(input.showEpisodeScope !== undefined
+          ? { showEpisodeScope: input.showEpisodeScope }
+          : {}),
         startEpisodeId,
         strictSequence: input.strictSequence,
         maxReleaseAgeDays,
@@ -299,7 +313,8 @@ export async function savePodcastShowPolicy(
 
 /**
  * Reset remains PODCAST-05-local. It changes traversal history only and never
- * touches the source-independent PODCAST-06 cadence/priority row.
+ * touches the source-independent PODCAST-06 cadence/priority row or the
+ * PODCAST-07 episode-source scope.
  */
 export async function resetPodcastShowPolicyProgress(
   userId: string,
@@ -334,6 +349,7 @@ export async function resetPodcastShowPolicyProgress(
       episodeEligibility: fallback.episodeEligibility,
       episodeOrder: fallback.episodeOrder,
       randomPolicy: fallback.randomPolicy,
+      showEpisodeScope: fallback.showEpisodeScope ?? "ALL_EPISODES",
       strictSequence: fallback.strictSequence,
       maxReleaseAgeDays: fallback.maxReleaseAgeDays,
       expiryPolicy: fallback.expiryPolicy,
@@ -365,6 +381,7 @@ function legacyPolicy(input: {
     episodeOrder:
       input.episodeOrder === "NEWEST_FIRST" ? "NEWEST_FIRST" : "OLDEST_FIRST",
     randomPolicy: "WITHOUT_REPLACEMENT",
+    showEpisodeScope: "ALL_EPISODES",
     startEpisodeId: null,
     strictSequence: true,
     maxReleaseAgeDays: null,
