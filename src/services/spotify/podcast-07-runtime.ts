@@ -527,8 +527,10 @@ export function applyPodcast07SavedEpisodesCandidates(input: {
   // Preserve inter-show placement from /me/episodes while replacing only the
   // relative order/eligibility inside each show. This avoids turning show id
   // ordering into a new global ranking policy.
-  const queues = new Map(
-    [...resolved.entries()].map(([showId, group]) => [showId, [...group]] as const),
+  const queues = new Map<string, Candidate[]>(
+    [...resolved.entries()].map(
+      ([showId, group]): [string, Candidate[]] => [showId, [...group]],
+    ),
   );
   const output: Candidate[] = [];
   const emittedUngrouped = new Set<Candidate>();
