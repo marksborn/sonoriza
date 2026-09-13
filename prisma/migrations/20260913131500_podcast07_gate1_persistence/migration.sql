@@ -28,6 +28,9 @@ CREATE TABLE "PodcastSavedEpisodesPolicy" (
   CONSTRAINT "PodcastSavedEpisodesPolicy_pkey" PRIMARY KEY ("sourcePlaylistId")
 );
 
+CREATE UNIQUE INDEX "PodcastSavedEpisodesPolicy_userId_sourcePlaylistId_key"
+  ON "PodcastSavedEpisodesPolicy"("userId", "sourcePlaylistId");
+
 CREATE INDEX "PodcastSavedEpisodesPolicy_userId_idx"
   ON "PodcastSavedEpisodesPolicy"("userId");
 
