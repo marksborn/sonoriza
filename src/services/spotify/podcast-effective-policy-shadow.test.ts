@@ -42,7 +42,7 @@ function showPolicy(
     randomRound: 0,
     cadenceMaxEpisodes: null,
     cadenceUnit: null,
-    priority: 0,
+    priority: "NORMAL",
   };
 }
 
