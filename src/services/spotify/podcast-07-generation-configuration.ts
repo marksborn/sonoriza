@@ -204,6 +204,15 @@ export function podcast07ConfigurationFingerprint(
   baseFingerprint: string,
   snapshot: Podcast07FingerprintSnapshot,
 ): string {
+  const hasEffectivePodcast07Configuration =
+    snapshot.savedEpisodes.some((policy) => policy.enabled) ||
+    snapshot.shows.some((show) => show.authority === "SHOW_OVERRIDE");
+
+  // Preserve existing CONFIG-04 evidence when PODCAST-07 is completely neutral.
+  // Deploying Gate 6 alone must not invalidate simulations for users who have
+  // not enabled the SAVED_EPISODES default and have no explicit SHOW override.
+  if (!hasEffectivePodcast07Configuration) return baseFingerprint;
+
   return createHash("sha256")
     .update(
       JSON.stringify({
