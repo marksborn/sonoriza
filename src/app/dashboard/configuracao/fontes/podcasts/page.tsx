@@ -214,6 +214,9 @@ export default async function PodcastPoliciesPage({
         enabled: true,
         includePlayed: true,
         episodeOrder: true,
+        podcastShowPolicy: {
+          select: { sourcePlaylistId: true },
+        },
       },
     }),
     loadPodcastShowPolicies(session.user.id),
@@ -260,7 +263,7 @@ export default async function PodcastPoliciesPage({
       id: show.id,
       name: show.name ?? "Programa do Spotify",
       enabled: show.enabled,
-      hasExplicitPolicy: storedPolicy !== undefined,
+      hasExplicitPolicy: show.podcastShowPolicy !== null,
       policy: {
         sourcePlaylistId: show.id,
         episodeEligibility: policy.episodeEligibility,
