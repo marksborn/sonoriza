@@ -1,3 +1,8 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -6,6 +11,17 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: "2mb",
     },
+  },
+  webpack(config) {
+    config.resolve = config.resolve ?? {};
+    config.resolve.alias = {
+      ...(config.resolve.alias ?? {}),
+      "@/services/spotify/incremental-reader": path.resolve(
+        rootDir,
+        "src/services/spotify/podcast-07-incremental-reader.ts",
+      ),
+    };
+    return config;
   },
   async headers() {
     return [

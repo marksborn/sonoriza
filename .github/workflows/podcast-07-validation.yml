@@ -6,6 +6,7 @@ on:
       - "prisma/schema.prisma"
       - "prisma/podcast-saved-episodes-policy.prisma"
       - "prisma/migrations/**"
+      - "next.config.mjs"
       - "tsconfig.json"
       - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
       - "src/app/dashboard/configuracao/fontes/podcasts/podcast-policy-client.tsx"
@@ -31,6 +32,7 @@ on:
       - "src/services/spotify/podcast-07-ui.test.ts"
       - "src/services/spotify/podcast-07-runtime.ts"
       - "src/services/spotify/podcast-07-runtime.test.ts"
+      - "src/services/spotify/podcast-07-runtime-resolution.test.ts"
       - "src/services/spotify/podcast-07-incremental-reader.ts"
       - "src/services/spotify/podcast-07-incremental-runtime.ts"
       - "src/services/spotify/podcast-show-policy-v2.test.ts"
@@ -42,6 +44,7 @@ on:
       - "prisma/schema.prisma"
       - "prisma/podcast-saved-episodes-policy.prisma"
       - "prisma/migrations/**"
+      - "next.config.mjs"
       - "tsconfig.json"
       - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
       - "src/app/dashboard/configuracao/fontes/podcasts/podcast-policy-client.tsx"
@@ -67,6 +70,7 @@ on:
       - "src/services/spotify/podcast-07-ui.test.ts"
       - "src/services/spotify/podcast-07-runtime.ts"
       - "src/services/spotify/podcast-07-runtime.test.ts"
+      - "src/services/spotify/podcast-07-runtime-resolution.test.ts"
       - "src/services/spotify/podcast-07-incremental-reader.ts"
       - "src/services/spotify/podcast-07-incremental-runtime.ts"
       - "src/services/spotify/podcast-show-policy-v2.test.ts"
@@ -126,6 +130,7 @@ jobs:
           src/services/spotify/podcast-07-generation-configuration.test.ts
           src/services/spotify/podcast-07-ui.test.ts
           src/services/spotify/podcast-07-runtime.test.ts
+          src/services/spotify/podcast-07-runtime-resolution.test.ts
           src/services/spotify/podcast-show-policy.test.ts
           src/services/spotify/podcast-show-policy-v2.test.ts
       - run: npm run typecheck
