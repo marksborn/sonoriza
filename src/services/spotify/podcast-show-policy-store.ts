@@ -35,14 +35,15 @@ export type PodcastShowEpisodeScopeValue = "ALL_EPISODES" | "SAVED_ONLY";
  * Planner-facing PODCAST-05 policy. PODCAST-06 Gate 3 deliberately does not
  * widen this contract, so cadence/priority still cannot influence selection.
  * PODCAST-07 Gate 1 persists showEpisodeScope but no planner/runtime consumer
- * uses it yet.
+ * uses it yet. The field remains optional in this legacy planner contract so
+ * existing callers do not need a behavior-only change in the persistence gate.
  */
 export type PodcastShowPolicySnapshot = {
   sourcePlaylistId: string;
   episodeEligibility: PodcastEpisodeEligibilityValue;
   episodeOrder: PodcastShowOrderValue;
   randomPolicy: PodcastRandomPolicyValue;
-  showEpisodeScope: PodcastShowEpisodeScopeValue;
+  showEpisodeScope?: PodcastShowEpisodeScopeValue;
   startEpisodeId: string | null;
   strictSequence: boolean;
   maxReleaseAgeDays: number | null;
@@ -348,7 +349,7 @@ export async function resetPodcastShowPolicyProgress(
       episodeEligibility: fallback.episodeEligibility,
       episodeOrder: fallback.episodeOrder,
       randomPolicy: fallback.randomPolicy,
-      showEpisodeScope: fallback.showEpisodeScope,
+      showEpisodeScope: fallback.showEpisodeScope ?? "ALL_EPISODES",
       strictSequence: fallback.strictSequence,
       maxReleaseAgeDays: fallback.maxReleaseAgeDays,
       expiryPolicy: fallback.expiryPolicy,
