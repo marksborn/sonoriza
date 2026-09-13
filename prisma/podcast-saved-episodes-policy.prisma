@@ -7,18 +7,19 @@
 // ---------------------------------------------------------------------------
 
 model PodcastSavedEpisodesPolicy {
-  sourcePlaylistId   String                               @id
+  sourcePlaylistId   String                             @id
   userId             String
-  enabled            Boolean                              @default(false)
-  episodeOrder       PodcastShowOrder                     @default(RANDOM)
-  randomPolicy       PodcastRandomPolicy                  @default(WITHOUT_REPLACEMENT)
+  enabled            Boolean                            @default(false)
+  episodeOrder       PodcastShowOrder                   @default(RANDOM)
+  randomPolicy       PodcastRandomPolicy                @default(WITHOUT_REPLACEMENT)
   cadenceMaxEpisodes Int?
   cadenceUnit        PodcastCadenceUnit?
-  frequencyScope     PodcastSavedEpisodesFrequencyScope   @default(PER_SHOW)
-  createdAt          DateTime                             @default(now())
-  updatedAt          DateTime                             @updatedAt
+  frequencyScope     PodcastSavedEpisodesFrequencyScope @default(PER_SHOW)
+  createdAt          DateTime                           @default(now())
+  updatedAt          DateTime                           @updatedAt
 
   source SourcePlaylist @relation(fields: [userId, sourcePlaylistId], references: [userId, id], onDelete: Cascade)
 
+  @@unique([userId, sourcePlaylistId])
   @@index([userId])
 }
