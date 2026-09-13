@@ -6,6 +6,9 @@ on:
       - "prisma/schema.prisma"
       - "prisma/podcast-saved-episodes-policy.prisma"
       - "prisma/migrations/**"
+      - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
+      - "src/app/dashboard/configuracao/fontes/podcasts/podcast-policy-client.tsx"
+      - "src/services/calendar-event-composition-generation.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-store.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-store.integration.test.ts"
       - "src/services/spotify/podcast-show-policy-store.ts"
@@ -18,6 +21,10 @@ on:
       - "src/services/spotify/podcast-inherited-cadence-shadow.test.ts"
       - "src/services/spotify/podcast-global-pool-cadence-shadow.ts"
       - "src/services/spotify/podcast-global-pool-cadence-shadow.test.ts"
+      - "src/services/spotify/podcast-07-generation-configuration.ts"
+      - "src/services/spotify/podcast-07-generation-configuration.test.ts"
+      - "src/services/spotify/podcast-07-ui.test.ts"
+      - "src/services/spotify/podcast-show-policy-v2.test.ts"
       - ".github/workflows/podcast-07-validation.yml"
   push:
     branches:
@@ -26,6 +33,9 @@ on:
       - "prisma/schema.prisma"
       - "prisma/podcast-saved-episodes-policy.prisma"
       - "prisma/migrations/**"
+      - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
+      - "src/app/dashboard/configuracao/fontes/podcasts/podcast-policy-client.tsx"
+      - "src/services/calendar-event-composition-generation.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-store.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-store.integration.test.ts"
       - "src/services/spotify/podcast-show-policy-store.ts"
@@ -38,6 +48,10 @@ on:
       - "src/services/spotify/podcast-inherited-cadence-shadow.test.ts"
       - "src/services/spotify/podcast-global-pool-cadence-shadow.ts"
       - "src/services/spotify/podcast-global-pool-cadence-shadow.test.ts"
+      - "src/services/spotify/podcast-07-generation-configuration.ts"
+      - "src/services/spotify/podcast-07-generation-configuration.test.ts"
+      - "src/services/spotify/podcast-07-ui.test.ts"
+      - "src/services/spotify/podcast-show-policy-v2.test.ts"
       - ".github/workflows/podcast-07-validation.yml"
   workflow_dispatch:
 
@@ -82,7 +96,7 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PODCAST-07 Gates 1-5 validation
+      - name: PODCAST-07 Gates 1-6 validation
         run: >-
           npx tsx --test --test-concurrency=1
           src/services/spotify/podcast-saved-episodes-policy-store.integration.test.ts
@@ -91,6 +105,8 @@ jobs:
           src/services/spotify/podcast-efficient-pool-shadow.test.ts
           src/services/spotify/podcast-inherited-cadence-shadow.test.ts
           src/services/spotify/podcast-global-pool-cadence-shadow.test.ts
+          src/services/spotify/podcast-07-generation-configuration.test.ts
+          src/services/spotify/podcast-07-ui.test.ts
           src/services/spotify/podcast-show-policy.test.ts
           src/services/spotify/podcast-show-policy-v2.test.ts
       - run: npm run typecheck
