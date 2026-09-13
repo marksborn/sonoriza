@@ -72,7 +72,7 @@ jobs:
       - run: npx prisma generate
       - name: PODCAST-07 Gate 1 persistence + Gate 2 effective policy shadow
         run: >-
-          npx tsx --test
+          npx tsx --test --test-concurrency=1
           src/services/spotify/podcast-saved-episodes-policy-store.integration.test.ts
           src/services/spotify/podcast-effective-policy-shadow.test.ts
           src/services/spotify/podcast-effective-policy-shadow.integration.test.ts
