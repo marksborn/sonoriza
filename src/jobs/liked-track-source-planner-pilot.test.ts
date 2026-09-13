@@ -108,6 +108,160 @@ test("Gate 5A changes only the allowlisted target and preserves a ready non-allo
   assert.equal(targetEvidence.exclusiveLikedSelectedCount, 1);
 });
 
+
+test("#332 productive liked replan preserves target source scope", () => {
+  const target = targetRule("carro", 1_200_000, 0);
+
+  const current = Array.from(
+    { length: 30 },
+    (_, index) => candidate(`current-${index}`, 60_000),
+  );
+
+  const outsideScopeLiked = {
+    ...candidate("liked-outside-scope", 60_000),
+    sourcePlaylistId: "source-blocked",
+  };
+
+  const pools = {
+    music: current,
+    podcasts: [] as Candidate[],
+  };
+
+  const sourceIdsByTargetId = new Map<string, ReadonlySet<string>>([
+    ["carro", new Set(["source-allowed"])],
+  ]);
+
+  const currentPlan = planRun({
+    pools,
+    targets: [target],
+    sourceIdsByTargetId,
+  });
+
+  const proposal = buildLikedTrackProductivePilotPlan({
+    candidates: [outsideScopeLiked],
+    targetIds: new Set(["carro"]),
+    context: {
+      pools,
+      plan: currentPlan,
+      targets: [target],
+      sourceIdsByTargetId,
+    },
+  });
+
+  assert.equal(proposal.safe, true);
+
+  assert.equal(
+    proposal.plan.targets[0]!.result.items.some(
+      (item) => item.spotifyTrackId === "liked-outside-scope",
+    ),
+    false,
+  );
+});
+
+test("#332 productive liked replan preserves EXCLUSIVE external reservations", () => {
+  const target = targetRule("carro", 1_200_000, 0);
+
+  const current = Array.from(
+    { length: 30 },
+    (_, index) => candidate(`current-${index}`, 60_000),
+  );
+
+  const reservedLiked = candidate(
+    "liked-reserved-by-trabalho",
+    60_000,
+  );
+
+  const pools = {
+    music: current,
+    podcasts: [] as Candidate[],
+  };
+
+  const sharingPolicyByTargetId =
+    new Map<string, "EXCLUSIVE" | "SHAREABLE">([
+      ["carro", "EXCLUSIVE"],
+    ]);
+
+  const externalReservationsByUri = new Map([
+    [
+      reservedLiked.uri,
+      [
+        {
+          targetPlaylistId: "trabalho",
+          sharingPolicy: "EXCLUSIVE" as const,
+        },
+      ],
+    ],
+  ]);
+
+  const currentPlan = planRun({
+    pools,
+    targets: [target],
+    sharingPolicyByTargetId,
+    externalReservationsByUri,
+  });
+
+  assert.equal(
+    currentPlan.targets[0]!.result.items.some(
+      (item) =>
+        item.spotifyTrackId ===
+        "liked-reserved-by-trabalho",
+    ),
+    false,
+  );
+
+  const proposal = buildLikedTrackProductivePilotPlan({
+    candidates: [reservedLiked],
+    targetIds: new Set(["carro"]),
+    context: {
+      pools,
+      plan: currentPlan,
+      targets: [target],
+      sharingPolicyByTargetId,
+      externalReservationsByUri,
+    },
+  });
+
+  assert.equal(proposal.safe, true);
+
+  assert.equal(
+    proposal.plan.targets[0]!.result.items.some(
+      (item) =>
+        item.spotifyTrackId ===
+        "liked-reserved-by-trabalho",
+    ),
+    false,
+  );
+
+  assert.equal(
+    proposal.guardFailures.some(
+      (failure) =>
+        failure.reason === "TARGET_SHARING_VIOLATION",
+    ),
+    false,
+  );
+
+  const runtimeTarget =
+    proposal.plan.targetSharingRuntime?.targets.find(
+      (entry) =>
+        entry.targetPlaylistId === "carro",
+    );
+
+  assert.equal(
+    runtimeTarget?.effectiveSharingPolicy,
+    "EXCLUSIVE",
+  );
+
+  assert.equal(
+    runtimeTarget?.blockedByPolicyCount,
+    1,
+  );
+
+  assert.deepEqual(
+    runtimeTarget?.conflictingTargetIds,
+    ["trabalho"],
+  );
+});
+
 test("Gate 5A removes target-scoped negative liked candidates before productive arbitration", () => {
   const target = targetRule("target-1", 1_200_000, 0);
   const current = Array.from({ length: 30 }, (_, index) =>
