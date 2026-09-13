@@ -1,0 +1,24 @@
+// ---------------------------------------------------------------------------
+// PODCAST-07 Gate 1 — default policy for SAVED_EPISODES.
+//
+// Persistence only. No planner/runtime consumer reads this model in Gate 1.
+// Absence of a row is the backward-compatible neutral state; rows are created
+// only after explicit configuration of the SAVED_EPISODES source.
+// ---------------------------------------------------------------------------
+
+model PodcastSavedEpisodesPolicy {
+  sourcePlaylistId   String                               @id
+  userId             String
+  enabled            Boolean                              @default(false)
+  episodeOrder       PodcastShowOrder                     @default(RANDOM)
+  randomPolicy       PodcastRandomPolicy                  @default(WITHOUT_REPLACEMENT)
+  cadenceMaxEpisodes Int?
+  cadenceUnit        PodcastCadenceUnit?
+  frequencyScope     PodcastSavedEpisodesFrequencyScope   @default(PER_SHOW)
+  createdAt          DateTime                             @default(now())
+  updatedAt          DateTime                             @updatedAt
+
+  source SourcePlaylist @relation(fields: [userId, sourcePlaylistId], references: [userId, id], onDelete: Cascade)
+
+  @@index([userId])
+}
