@@ -17,16 +17,18 @@ import {
   generatePlaylists as baseGeneratePlaylists,
   type GeneratePlaylistsOptions,
   type GeneratePlaylistsResult,
-} from "./generate-playlists";
+} from "./generate-playlists-base";
 
-export type { GeneratePlaylistsOptions, GeneratePlaylistsResult } from "./generate-playlists";
+export type {
+  GeneratePlaylistsOptions,
+  GeneratePlaylistsResult,
+} from "./generate-playlists-base";
 
 /**
- * PODCAST-07 Gate 7 controlled runtime boundary.
- *
- * This wrapper is selected by an exact tsconfig path alias. The pre-Gate-7
- * generator remains intact and is called through a relative import, making OFF
- * and non-allowlisted ACTIVE straightforward fail-closed paths.
+ * PODCAST-07 Gate 7 controlled runtime boundary shared by every generation
+ * caller. The pre-Gate-7 generator lives in generate-playlists-base.ts, while
+ * generate-playlists.ts is now a thin canonical facade over this wrapper.
+ * OFF/SHADOW and non-allowlisted ACTIVE remain fail-closed to legacy behavior.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -161,12 +163,15 @@ async function appendPodcast07RuntimeSummary(
     !Array.isArray(row.summary)
       ? (row.summary as Prisma.JsonObject)
       : {};
+  const evidence = JSON.parse(
+    JSON.stringify(podcast07RuntimeSummary(state)),
+  ) as Prisma.InputJsonValue;
   await prisma.generationRun.update({
     where: { id: runId },
     data: {
       summary: {
         ...current,
-        podcast07Runtime: podcast07RuntimeSummary(state),
+        podcast07Runtime: evidence,
       } as Prisma.InputJsonValue,
     },
   });
