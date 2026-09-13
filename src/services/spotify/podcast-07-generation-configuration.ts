@@ -44,7 +44,7 @@ type SavedPolicyRow = Readonly<{
   episodeOrder: "OLDEST_FIRST" | "NEWEST_FIRST" | "RANDOM";
   randomPolicy: "WITHOUT_REPLACEMENT" | "WITH_REPLACEMENT";
   cadenceMaxEpisodes: number | null;
-  cadenceUnit: "WEEK" | null;
+  cadenceUnit: "DAY" | "WEEK" | "MONTH" | null;
   frequencyScope: "PER_SHOW" | "GLOBAL_POOL";
 }>;
 
