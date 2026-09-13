@@ -16,6 +16,8 @@ on:
       - "src/services/spotify/podcast-efficient-pool-shadow.test.ts"
       - "src/services/spotify/podcast-inherited-cadence-shadow.ts"
       - "src/services/spotify/podcast-inherited-cadence-shadow.test.ts"
+      - "src/services/spotify/podcast-global-pool-cadence-shadow.ts"
+      - "src/services/spotify/podcast-global-pool-cadence-shadow.test.ts"
       - ".github/workflows/podcast-07-validation.yml"
   push:
     branches:
@@ -34,6 +36,8 @@ on:
       - "src/services/spotify/podcast-efficient-pool-shadow.test.ts"
       - "src/services/spotify/podcast-inherited-cadence-shadow.ts"
       - "src/services/spotify/podcast-inherited-cadence-shadow.test.ts"
+      - "src/services/spotify/podcast-global-pool-cadence-shadow.ts"
+      - "src/services/spotify/podcast-global-pool-cadence-shadow.test.ts"
       - ".github/workflows/podcast-07-validation.yml"
   workflow_dispatch:
 
@@ -78,7 +82,7 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PODCAST-07 Gates 1-4 validation
+      - name: PODCAST-07 Gates 1-5 validation
         run: >-
           npx tsx --test --test-concurrency=1
           src/services/spotify/podcast-saved-episodes-policy-store.integration.test.ts
@@ -86,6 +90,7 @@ jobs:
           src/services/spotify/podcast-effective-policy-shadow.integration.test.ts
           src/services/spotify/podcast-efficient-pool-shadow.test.ts
           src/services/spotify/podcast-inherited-cadence-shadow.test.ts
+          src/services/spotify/podcast-global-pool-cadence-shadow.test.ts
           src/services/spotify/podcast-show-policy.test.ts
           src/services/spotify/podcast-show-policy-v2.test.ts
       - run: npm run typecheck
