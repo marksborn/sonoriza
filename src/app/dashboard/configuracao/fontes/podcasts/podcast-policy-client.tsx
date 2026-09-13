@@ -5,11 +5,30 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { UiIcon } from "@/components/UiIcon";
 
+export type PodcastPolicyClientSavedValue = {
+  sourcePlaylistId: string;
+  enabled: boolean;
+  episodeOrder: "OLDEST_FIRST" | "NEWEST_FIRST" | "RANDOM";
+  randomPolicy: "WITHOUT_REPLACEMENT" | "WITH_REPLACEMENT";
+  cadenceMaxEpisodes: number | null;
+  cadenceUnit: "WEEK" | null;
+  frequencyScope: "PER_SHOW" | "GLOBAL_POOL";
+};
+
+export type PodcastPolicyClientSavedSource = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+  policy: PodcastPolicyClientSavedValue;
+};
+
 export type PodcastPolicyClientValue = {
   sourcePlaylistId: string;
   episodeEligibility: "UNPLAYED_ONLY" | "PLAYED_ONLY" | "ALL";
   episodeOrder: "OLDEST_FIRST" | "NEWEST_FIRST" | "RANDOM";
   randomPolicy: "WITHOUT_REPLACEMENT" | "WITH_REPLACEMENT";
+  showEpisodeScope: "ALL_EPISODES" | "SAVED_ONLY";
   startEpisodeId: string | null;
   strictSequence: boolean;
   maxReleaseAgeDays: number | null;
@@ -25,11 +44,11 @@ export type PodcastPolicyClientShow = {
   id: string;
   name: string;
   enabled: boolean;
+  hasExplicitPolicy: boolean;
   policy: PodcastPolicyClientValue;
 };
 
 type ServerFormAction = (formData: FormData) => Promise<void>;
-
 type CadenceMode = "UNLIMITED" | "LIMITED";
 
 const selectClass =
@@ -42,22 +61,28 @@ const secondaryButtonClass =
   "inline-flex items-center justify-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-2.5 text-sm font-black text-ink-inverse transition hover:border-brand-400/55";
 
 export function PodcastPolicyClient({
+  savedSources,
   shows,
   initialOpenId,
+  initialOpenSavedId,
+  updateSavedEpisodesPolicyAction,
   updateShowPolicyAction,
   resetShowProgressAction,
 }: {
+  savedSources: PodcastPolicyClientSavedSource[];
   shows: PodcastPolicyClientShow[];
   initialOpenId: string | null;
+  initialOpenSavedId: string | null;
+  updateSavedEpisodesPolicyAction: ServerFormAction;
   updateShowPolicyAction: ServerFormAction;
   resetShowProgressAction: ServerFormAction;
 }) {
   const directShow = initialOpenId
     ? shows.find((show) => show.id === initialOpenId) ?? null
     : null;
-
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(initialOpenId);
+  const [openSavedId, setOpenSavedId] = useState<string | null>(initialOpenSavedId);
   const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
   const filtered = useMemo(
     () =>
@@ -73,10 +98,7 @@ export function PodcastPolicyClient({
     return (
       <>
         <div className="mt-5 flex items-center justify-between gap-2">
-          <Link
-            href="/dashboard/configuracao/fontes"
-            className={secondaryButtonClass}
-          >
+          <Link href="/dashboard/configuracao/fontes" className={secondaryButtonClass}>
             <UiIcon name="arrow-left" size={16} />
             Fontes
           </Link>
@@ -88,7 +110,6 @@ export function PodcastPolicyClient({
             Todos os programas
           </Link>
         </div>
-
         <div className="mt-3">
           <PodcastPolicyCard
             show={directShow}
@@ -105,49 +126,234 @@ export function PodcastPolicyClient({
 
   return (
     <>
-      <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <label className="relative block min-w-0 flex-1">
-          <span className="sr-only">Buscar programa</span>
-          <UiIcon
-            name="search"
-            size={17}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-inverse"
-          />
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar programa…"
-            className="w-full rounded-xl border border-line-dark bg-surface-dark py-2.5 pl-10 pr-3 text-sm font-bold text-ink-inverse outline-none transition placeholder:text-muted-inverse/55 focus:border-accent/70"
-          />
-        </label>
-        <div className="flex shrink-0 gap-2 text-xs font-black text-muted-inverse">
-          <span className="product-badge">{filtered.length} exibidos</span>
-          <span className="product-badge">{shows.length} programas</span>
-        </div>
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="mt-4 rounded-2xl border border-dashed border-line-dark bg-surface-subtle/45 p-6 text-center">
-          <p className="font-black text-ink-inverse">Nenhum programa encontrado</p>
-          <p className="mt-1 text-sm text-muted-inverse">Tente outro nome na busca.</p>
-        </div>
-      ) : (
-        <div className="mt-4 space-y-3">
-          {filtered.map((show) => (
-            <PodcastPolicyCard
-              key={show.id}
-              show={show}
-              open={openId === show.id}
-              onToggle={() => setOpenId(openId === show.id ? null : show.id)}
-              directMode={false}
-              updateShowPolicyAction={updateShowPolicyAction}
-              resetShowProgressAction={resetShowProgressAction}
+      {savedSources.length > 0 && (
+        <div className="mt-6 space-y-3">
+          {savedSources.map((source) => (
+            <SavedEpisodesPolicyCard
+              key={source.id}
+              source={source}
+              open={openSavedId === source.id}
+              onToggle={() =>
+                setOpenSavedId(openSavedId === source.id ? null : source.id)
+              }
+              updateAction={updateSavedEpisodesPolicyAction}
             />
           ))}
         </div>
       )}
+
+      {shows.length > 0 && (
+        <>
+          <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-line-dark/55 bg-surface-subtle/55 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <label className="relative block min-w-0 flex-1">
+              <span className="sr-only">Buscar programa</span>
+              <UiIcon
+                name="search"
+                size={17}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-inverse"
+              />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Buscar programa…"
+                className="w-full rounded-xl border border-line-dark bg-surface-dark py-2.5 pl-10 pr-3 text-sm font-bold text-ink-inverse outline-none transition placeholder:text-muted-inverse/55 focus:border-accent/70"
+              />
+            </label>
+            <div className="flex shrink-0 gap-2 text-xs font-black text-muted-inverse">
+              <span className="product-badge">{filtered.length} exibidos</span>
+              <span className="product-badge">{shows.length} programas</span>
+            </div>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="mt-4 rounded-2xl border border-dashed border-line-dark bg-surface-subtle/45 p-6 text-center">
+              <p className="font-black text-ink-inverse">Nenhum programa encontrado</p>
+              <p className="mt-1 text-sm text-muted-inverse">Tente outro nome na busca.</p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {filtered.map((show) => (
+                <PodcastPolicyCard
+                  key={show.id}
+                  show={show}
+                  open={openId === show.id}
+                  onToggle={() => setOpenId(openId === show.id ? null : show.id)}
+                  directMode={false}
+                  updateShowPolicyAction={updateShowPolicyAction}
+                  resetShowProgressAction={resetShowProgressAction}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </>
+  );
+}
+
+function SavedEpisodesPolicyCard({
+  source,
+  open,
+  onToggle,
+  updateAction,
+}: {
+  source: PodcastPolicyClientSavedSource;
+  open: boolean;
+  onToggle: () => void;
+  updateAction: ServerFormAction;
+}) {
+  const policy = source.policy;
+  const [order, setOrder] = useState(policy.episodeOrder);
+  const [cadenceMode, setCadenceMode] = useState<CadenceMode>(
+    source.configured && policy.cadenceMaxEpisodes == null ? "UNLIMITED" : "LIMITED",
+  );
+  const [frequencyScope, setFrequencyScope] = useState(policy.frequencyScope);
+  const random = order === "RANDOM";
+  const limitedCadence = cadenceMode === "LIMITED";
+
+  return (
+    <section className="product-panel overflow-hidden">
+      <div className="p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="product-badge">Padrão</span>
+              <span className="product-badge">Seus episódios</span>
+              <span
+                className={
+                  policy.enabled
+                    ? "status-success rounded-full border px-2.5 py-1 text-xs font-black"
+                    : "product-badge"
+                }
+              >
+                {policy.enabled ? "Política ativa" : "Política neutra"}
+              </span>
+            </div>
+            <h2 className="mt-2 text-lg font-black text-ink-inverse sm:text-xl">
+              {source.name}
+            </h2>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="product-badge">{savedOrderLabel(policy)}</span>
+              <span className="product-badge">{savedCadenceLabel(policy)}</span>
+              <span className="product-badge">
+                {policy.frequencyScope === "PER_SHOW" ? "Por show" : "Lista inteira"}
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-muted-inverse/70">
+              Programas sem override explícito herdam esta política quando aparecem em Seus episódios.
+            </p>
+          </div>
+          <button type="button" onClick={onToggle} aria-expanded={open} className={secondaryButtonClass}>
+            <UiIcon name={open ? "close" : "settings"} size={16} />
+            <span className="hidden sm:inline">{open ? "Fechar" : "Editar política"}</span>
+            <span className="sm:hidden">{open ? "Fechar" : "Editar"}</span>
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="border-t border-line-dark/55 bg-surface-subtle/30 p-4 sm:p-5">
+          <form action={updateAction} className="grid gap-4 lg:grid-cols-2">
+            <input type="hidden" name="sourcePlaylistId" value={source.id} />
+
+            <div className="rounded-xl border border-line-dark/55 bg-surface-dark/45 p-4 lg:col-span-2">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input type="checkbox" name="enabled" defaultChecked={policy.enabled} className="mt-1 h-4 w-4" />
+                <span>
+                  <span className="block text-sm font-black text-ink-inverse">
+                    Usar como política padrão de Seus episódios
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-muted-inverse">
+                    Desmarcado mantém o comportamento anterior; marcado aplica este padrão aos shows sem override.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <Field label="Ordem dos episódios" help="A ordem é aplicada dentro de cada show, nunca misturando uma sequência global entre programas.">
+              <select
+                name="episodeOrder"
+                value={order}
+                onChange={(event) => setOrder(event.target.value as PodcastPolicyClientSavedValue["episodeOrder"])}
+                className={selectClass}
+              >
+                <option value="RANDOM">Aleatório</option>
+                <option value="OLDEST_FIRST">Mais antigos primeiro</option>
+                <option value="NEWEST_FIRST">Mais recentes primeiro</option>
+              </select>
+            </Field>
+
+            {random ? (
+              <Field label="Repetição" help="Define a rodada aleatória herdada pelos shows sem override.">
+                <select name="randomPolicy" defaultValue={policy.randomPolicy} className={selectClass}>
+                  <option value="WITHOUT_REPLACEMENT">Evitar repetir até percorrer a rodada</option>
+                  <option value="WITH_REPLACEMENT">Permitir repetição</option>
+                </select>
+              </Field>
+            ) : (
+              <div className="hidden lg:block" />
+            )}
+
+            <Field label="Frequência de escuta" help="Só o início factual de escuta consome a frequência; episódios em andamento podem continuar.">
+              <div className="space-y-3">
+                <select
+                  name="cadenceMode"
+                  value={cadenceMode}
+                  onChange={(event) => setCadenceMode(event.target.value as CadenceMode)}
+                  className={selectClass}
+                >
+                  <option value="LIMITED">Limitar por semana</option>
+                  <option value="UNLIMITED">Sem limite</option>
+                </select>
+                {limitedCadence && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      name="cadenceMaxEpisodes"
+                      min={1}
+                      defaultValue={policy.cadenceMaxEpisodes ?? 1}
+                      className={inputClass}
+                      aria-label="Máximo de episódios por semana"
+                    />
+                    <span className="shrink-0 text-xs font-bold text-muted-inverse">episódio(s) / semana</span>
+                  </div>
+                )}
+              </div>
+            </Field>
+
+            <Field
+              label="Contabilizar frequência por"
+              help={
+                frequencyScope === "PER_SHOW"
+                  ? "“1 por semana” permite até um episódio por semana de cada programa presente em Seus episódios."
+                  : "“1 por semana” permite até um episódio por semana considerando Seus episódios como um único conjunto."
+              }
+            >
+              <select
+                name="frequencyScope"
+                value={frequencyScope}
+                onChange={(event) => setFrequencyScope(event.target.value as PodcastPolicyClientSavedValue["frequencyScope"])}
+                className={selectClass}
+              >
+                <option value="PER_SHOW">Cada show</option>
+                <option value="GLOBAL_POOL">Lista inteira</option>
+              </select>
+            </Field>
+
+            <div className="flex flex-col gap-3 border-t border-line-dark/50 pt-4 lg:col-span-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="max-w-2xl text-xs leading-5 text-muted-inverse">
+                Salvar altera a configuração que participa da simulação. Nenhuma playlist é gerada por esta ação.
+              </p>
+              <button type="submit" className={buttonClass}>
+                <UiIcon name="check" size={16} />
+                Salvar política padrão
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -186,6 +392,9 @@ function PodcastPolicyCard({
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="product-badge">Programa</span>
+                <span className="product-badge">
+                  {show.hasExplicitPolicy ? "Override próprio" : "Herda Seus episódios"}
+                </span>
                 <span
                   className={
                     show.enabled
@@ -196,29 +405,25 @@ function PodcastPolicyCard({
                   {show.enabled ? "Ativo" : "Desativado"}
                 </span>
               </div>
-              <h2 className="mt-2 truncate text-lg font-black text-ink-inverse sm:text-xl">
-                {show.name}
-              </h2>
+              <h2 className="mt-2 truncate text-lg font-black text-ink-inverse sm:text-xl">{show.name}</h2>
               <div className="mt-3 flex flex-wrap gap-2">
-                {summaryChips(policy).map((chip) => (
-                  <span key={chip} className="product-badge">
-                    {chip}
-                  </span>
-                ))}
+                {show.hasExplicitPolicy ? (
+                  summaryChips(policy).map((chip) => (
+                    <span key={chip} className="product-badge">{chip}</span>
+                  ))
+                ) : (
+                  <span className="product-badge">Política padrão de Seus episódios</span>
+                )}
               </div>
               <p className="mt-2 text-xs leading-5 text-muted-inverse/70">
-                {memoryDescription(policy)}
+                {show.hasExplicitPolicy
+                  ? memoryDescription(policy)
+                  : "Nenhuma política de SHOW foi persistida. Salvar abaixo cria um override autoritativo para este programa."}
               </p>
             </div>
-
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-expanded={open}
-              className={secondaryButtonClass}
-            >
+            <button type="button" onClick={onToggle} aria-expanded={open} className={secondaryButtonClass}>
               <UiIcon name={open ? "close" : "settings"} size={16} />
-              <span className="hidden sm:inline">{open ? "Fechar" : "Editar política"}</span>
+              <span className="hidden sm:inline">{open ? "Fechar" : show.hasExplicitPolicy ? "Editar override" : "Criar override"}</span>
               <span className="sm:hidden">{open ? "Fechar" : "Editar"}</span>
             </button>
           </div>
@@ -229,53 +434,44 @@ function PodcastPolicyCard({
         <div className="flex items-center justify-between gap-3 border-b border-line-dark/55 px-4 py-3 sm:px-5">
           <div className="min-w-0">
             <p className="text-[0.68rem] font-black uppercase tracking-[0.14em] text-accent-400">
-              Editar política
+              {show.hasExplicitPolicy ? "Editar override" : "Criar override"}
             </p>
-            <h2 className="mt-0.5 truncate text-lg font-black text-ink-inverse">
-              {show.name}
-            </h2>
+            <h2 className="mt-0.5 truncate text-lg font-black text-ink-inverse">{show.name}</h2>
           </div>
-          <span
-            className={
-              show.enabled
-                ? "status-success rounded-full border px-2.5 py-1 text-xs font-black"
-                : "product-badge"
-            }
-          >
-            {show.enabled ? "Ativo" : "Desativado"}
-          </span>
+          <span className="product-badge">{show.hasExplicitPolicy ? "Override próprio" : "Herda Seus episódios"}</span>
         </div>
       )}
 
       {open && (
         <div className={`${directMode ? "" : "border-t border-line-dark/55"} bg-surface-subtle/30 p-4 sm:p-5`}>
+          {!show.hasExplicitPolicy && (
+            <div className="status-info mb-4 rounded-xl border p-3 text-xs font-bold leading-5">
+              Este programa está herdando Seus episódios. Salvar este formulário cria uma política própria e passa a prevalecer sobre o padrão.
+            </div>
+          )}
           <form action={updateShowPolicyAction} className="grid gap-4 lg:grid-cols-2">
             <input type="hidden" name="sourcePlaylistId" value={show.id} />
 
+            <Field label="Fonte dos episódios" help="O override pode usar o catálogo inteiro do programa ou apenas a interseção com Seus episódios.">
+              <select name="showEpisodeScope" defaultValue={policy.showEpisodeScope} className={selectClass}>
+                <option value="ALL_EPISODES">Todos os episódios do programa</option>
+                <option value="SAVED_ONLY">Somente episódios salvos</option>
+              </select>
+            </Field>
+
             <Field label="Episódios" help="Define quais estados de escuta podem participar.">
-              <select
-                name="episodeEligibility"
-                defaultValue={policy.episodeEligibility}
-                className={selectClass}
-              >
+              <select name="episodeEligibility" defaultValue={policy.episodeEligibility} className={selectClass}>
                 <option value="UNPLAYED_ONLY">Somente não concluídos</option>
                 <option value="PLAYED_ONLY">Somente já escutados</option>
                 <option value="ALL">Escutados e não escutados</option>
               </select>
             </Field>
 
-            <Field
-              label="Ordem dos episódios"
-              help="Define a ordem de seleção no catálogo completo deste programa."
-            >
+            <Field label="Ordem dos episódios" help="Define a ordem de seleção dentro deste programa.">
               <select
                 name="episodeOrder"
                 value={order}
-                onChange={(event) =>
-                  setOrder(
-                    event.target.value as PodcastPolicyClientValue["episodeOrder"],
-                  )
-                }
+                onChange={(event) => setOrder(event.target.value as PodcastPolicyClientValue["episodeOrder"])}
                 className={selectClass}
               >
                 <option value="OLDEST_FIRST">Mais antigos primeiro</option>
@@ -285,39 +481,19 @@ function PodcastPolicyCard({
             </Field>
 
             {random ? (
-              <Field
-                label="Repetição do aleatório"
-                help="Escolha se uma rodada precisa percorrer todos antes de repetir."
-              >
-                <select
-                  name="randomPolicy"
-                  defaultValue={policy.randomPolicy}
-                  className={selectClass}
-                >
-                  <option value="WITHOUT_REPLACEMENT">
-                    Evitar repetição até percorrer todos
-                  </option>
+              <Field label="Repetição do aleatório" help="Escolha se uma rodada precisa percorrer todos antes de repetir.">
+                <select name="randomPolicy" defaultValue={policy.randomPolicy} className={selectClass}>
+                  <option value="WITHOUT_REPLACEMENT">Evitar repetição até percorrer todos</option>
                   <option value="WITH_REPLACEMENT">Permitir repetição</option>
                 </select>
               </Field>
             ) : (
-              <Field
-                label="Começar a partir de"
-                help="Opcional: ID, URI spotify:episode:… ou link do episódio."
-              >
-                <input
-                  name="startEpisode"
-                  defaultValue={policy.startEpisodeId ?? ""}
-                  placeholder="Automático"
-                  className={inputClass}
-                />
+              <Field label="Começar a partir de" help="Opcional: ID, URI spotify:episode:… ou link do episódio.">
+                <input name="startEpisode" defaultValue={policy.startEpisodeId ?? ""} placeholder="Automático" className={inputClass} />
               </Field>
             )}
 
-            <Field
-              label="Validade após lançamento"
-              help="Vazio = sem expiração. Útil para notícias e conteúdo temporal."
-            >
+            <Field label="Validade após lançamento" help="Vazio = sem expiração. Útil para notícias e conteúdo temporal.">
               <div className="flex items-center gap-2">
                 <input
                   type="number"
@@ -334,27 +510,15 @@ function PodcastPolicyCard({
             </Field>
 
             {hasExpiry && (
-              <Field
-                label="Quando vencer em andamento"
-                help="Só importa quando existe uma janela de validade."
-              >
-                <select
-                  name="expiryPolicy"
-                  defaultValue={policy.expiryPolicy}
-                  className={selectClass}
-                >
+              <Field label="Quando vencer em andamento" help="Só importa quando existe uma janela de validade.">
+                <select name="expiryPolicy" defaultValue={policy.expiryPolicy} className={selectClass}>
                   <option value="STRICT_EXPIRY">Expirar mesmo em andamento</option>
-                  <option value="ALLOW_IN_PROGRESS_TO_FINISH">
-                    Deixar terminar se começou dentro da janela
-                  </option>
+                  <option value="ALLOW_IN_PROGRESS_TO_FINISH">Deixar terminar se começou dentro da janela</option>
                 </select>
               </Field>
             )}
 
-            <Field
-              label="Máximo global por ciclo"
-              help="Compartilhado entre todos os destinos do mesmo ciclo."
-            >
+            <Field label="Máximo global por ciclo" help="Compartilhado entre todos os destinos do mesmo ciclo.">
               <input
                 type="number"
                 name="maxEpisodesPerCycle"
@@ -366,10 +530,7 @@ function PodcastPolicyCard({
               />
             </Field>
 
-            <Field
-              label="Frequência de escuta"
-              help="Limita novos episódios deste programa por período civil. Só escuta real consome a frequência; um episódio em andamento pode terminar."
-            >
+            <Field label="Frequência de escuta" help="Limita novos episódios deste programa por período civil. Só escuta real consome a frequência; um episódio em andamento pode terminar.">
               <div className="space-y-3">
                 <select
                   name="cadenceMode"
@@ -380,23 +541,10 @@ function PodcastPolicyCard({
                   <option value="UNLIMITED">Sem limite</option>
                   <option value="LIMITED">Limitar por período</option>
                 </select>
-
                 {limitedCadence && (
                   <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] gap-2">
-                    <input
-                      type="number"
-                      name="cadenceMaxEpisodes"
-                      min={1}
-                      defaultValue={policy.cadenceMaxEpisodes ?? 1}
-                      aria-label="Máximo de episódios por período"
-                      className={inputClass}
-                    />
-                    <select
-                      name="cadenceUnit"
-                      defaultValue={policy.cadenceUnit ?? "WEEK"}
-                      aria-label="Período da frequência"
-                      className={selectClass}
-                    >
+                    <input type="number" name="cadenceMaxEpisodes" min={1} defaultValue={policy.cadenceMaxEpisodes ?? 1} aria-label="Máximo de episódios por período" className={inputClass} />
+                    <select name="cadenceUnit" defaultValue={policy.cadenceUnit ?? "WEEK"} aria-label="Período da frequência" className={selectClass}>
                       <option value="DAY">por dia</option>
                       <option value="WEEK">por semana</option>
                       <option value="MONTH">por mês</option>
@@ -406,10 +554,7 @@ function PodcastPolicyCard({
               </div>
             </Field>
 
-            <Field
-              label="Prioridade"
-              help="Prioridade só ordena episódios que já passaram por estado, frequência, validade, duração e demais regras."
-            >
+            <Field label="Prioridade" help="Prioridade só ordena episódios que já passaram por estado, frequência, validade, duração e demais regras.">
               <select name="priority" defaultValue={policy.priority} className={selectClass}>
                 <option value="NORMAL">Normal</option>
                 <option value="PRIORITY">Prioritário — considerar antes dos normais</option>
@@ -419,19 +564,10 @@ function PodcastPolicyCard({
             {!random && (
               <div className="rounded-xl border border-line-dark/55 bg-surface-dark/45 p-4">
                 <label className="flex min-h-11 cursor-pointer items-start gap-3">
-                  <input
-                    type="checkbox"
-                    name="strictSequence"
-                    defaultChecked={policy.strictSequence}
-                    className="mt-1 h-4 w-4"
-                  />
+                  <input type="checkbox" name="strictSequence" defaultChecked={policy.strictSequence} className="mt-1 h-4 w-4" />
                   <span>
-                    <span className="block text-sm font-black text-ink-inverse">
-                      Sequência estrita
-                    </span>
-                    <span className="mt-1 block text-xs leading-5 text-muted-inverse">
-                      Não pula o próximo episódio esperado só porque um posterior cabe no destino.
-                    </span>
+                    <span className="block text-sm font-black text-ink-inverse">Sequência estrita</span>
+                    <span className="mt-1 block text-xs leading-5 text-muted-inverse">Não pula o próximo episódio esperado só porque um posterior cabe no destino.</span>
                   </span>
                 </label>
               </div>
@@ -439,37 +575,31 @@ function PodcastPolicyCard({
 
             <div className="flex flex-col gap-3 border-t border-line-dark/50 pt-4 lg:col-span-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="max-w-2xl text-xs leading-5 text-muted-inverse">
-                Salvar aplica todas as regras deste programa. A memória de sequência/rodada é reiniciada, mas histórico de escuta, consumo de frequência e biblioteca do Spotify não são alterados.
+                Salvar torna este SHOW autoritativo. A configuração entra no fingerprint e exige nova simulação antes de uma geração real.
               </p>
               <button type="submit" className={buttonClass}>
                 <UiIcon name="check" size={16} />
-                Salvar política
+                Salvar override
               </button>
             </div>
           </form>
 
-          <form action={resetShowProgressAction} className="mt-3 flex justify-end">
-            <input type="hidden" name="sourcePlaylistId" value={show.id} />
-            <button type="submit" className={secondaryButtonClass}>
-              <UiIcon name="repeat" size={16} />
-              Reiniciar sequência / rodada
-            </button>
-          </form>
+          {show.hasExplicitPolicy && (
+            <form action={resetShowProgressAction} className="mt-3 flex justify-end">
+              <input type="hidden" name="sourcePlaylistId" value={show.id} />
+              <button type="submit" className={secondaryButtonClass}>
+                <UiIcon name="repeat" size={16} />
+                Reiniciar sequência / rodada
+              </button>
+            </form>
+          )}
         </div>
       )}
     </section>
   );
 }
 
-function Field({
-  label,
-  help,
-  children,
-}: {
-  label: string;
-  help: string;
-  children: ReactNode;
-}) {
+function Field({ label, help, children }: { label: string; help: string; children: ReactNode }) {
   return (
     <label className="block rounded-xl border border-line-dark/55 bg-surface-dark/45 p-4">
       <span className="block text-sm font-black text-ink-inverse">{label}</span>
@@ -479,8 +609,22 @@ function Field({
   );
 }
 
+function savedOrderLabel(policy: PodcastPolicyClientSavedValue): string {
+  if (policy.episodeOrder === "OLDEST_FIRST") return "Antigos → novos";
+  if (policy.episodeOrder === "NEWEST_FIRST") return "Novos → antigos";
+  return policy.randomPolicy === "WITH_REPLACEMENT" ? "Aleatório · repete" : "Aleatório · sem repetir";
+}
+
+function savedCadenceLabel(policy: PodcastPolicyClientSavedValue): string {
+  return policy.cadenceMaxEpisodes == null ? "Frequência livre" : `${policy.cadenceMaxEpisodes}/semana`;
+}
+
 function summaryChips(policy: PodcastPolicyClientValue): string[] {
-  const chips = [eligibilityLabel(policy.episodeEligibility), orderLabel(policy)];
+  const chips = [
+    policy.showEpisodeScope === "SAVED_ONLY" ? "Somente salvos" : "Todos os episódios",
+    eligibilityLabel(policy.episodeEligibility),
+    orderLabel(policy),
+  ];
   chips.push(
     policy.maxReleaseAgeDays == null
       ? "Sem validade"
@@ -493,36 +637,25 @@ function summaryChips(policy: PodcastPolicyClientValue): string[] {
   );
   chips.push(cadenceLabel(policy));
   if (policy.priority === "PRIORITY") chips.push("Prioritário");
-  if (policy.episodeOrder !== "RANDOM" && policy.strictSequence) {
-    chips.push("Sequência estrita");
-  }
+  if (policy.episodeOrder !== "RANDOM" && policy.strictSequence) chips.push("Sequência estrita");
   return chips;
 }
 
 function eligibilityLabel(value: PodcastPolicyClientValue["episodeEligibility"]): string {
   if (value === "PLAYED_ONLY") return "Já escutados";
-  if (value === "ALL") return "Todos os episódios";
+  if (value === "ALL") return "Todos os estados";
   return "Não concluídos";
 }
 
 function orderLabel(policy: PodcastPolicyClientValue): string {
   if (policy.episodeOrder === "OLDEST_FIRST") return "Antigos → novos";
   if (policy.episodeOrder === "NEWEST_FIRST") return "Novos → antigos";
-  return policy.randomPolicy === "WITH_REPLACEMENT"
-    ? "Aleatório · repete"
-    : "Aleatório · sem repetir";
+  return policy.randomPolicy === "WITH_REPLACEMENT" ? "Aleatório · repete" : "Aleatório · sem repetir";
 }
 
 function cadenceLabel(policy: PodcastPolicyClientValue): string {
-  if (policy.cadenceMaxEpisodes == null || policy.cadenceUnit == null) {
-    return "Frequência livre";
-  }
-  const unit =
-    policy.cadenceUnit === "DAY"
-      ? "dia"
-      : policy.cadenceUnit === "WEEK"
-        ? "semana"
-        : "mês";
+  if (policy.cadenceMaxEpisodes == null || policy.cadenceUnit == null) return "Frequência livre";
+  const unit = policy.cadenceUnit === "DAY" ? "dia" : policy.cadenceUnit === "WEEK" ? "semana" : "mês";
   return `${policy.cadenceMaxEpisodes}/${unit}`;
 }
 
