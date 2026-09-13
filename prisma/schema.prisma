@@ -251,6 +251,16 @@ enum PodcastShowPriority {
   PRIORITY
 }
 
+enum PodcastSavedEpisodesFrequencyScope {
+  PER_SHOW
+  GLOBAL_POOL
+}
+
+enum PodcastShowEpisodeScope {
+  ALL_EPISODES
+  SAVED_ONLY
+}
+
 enum MusicSourceRetentionMode {
   KEEP_ALL
   REMOVE_AFTER_PLAYED
@@ -287,12 +297,13 @@ model SourcePlaylist {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  podcastShowPolicy    PodcastShowPolicy?
-  targetSelections     TargetPlaylistSource[]
-  cleanupRuns          MusicSourceCleanupRun[]
-  ingestionRulesTarget MusicIngestionRule[]    @relation("MusicIngestionTarget")
-  ingestionRunsTarget  MusicIngestionRun[]     @relation("MusicIngestionRunTarget")
+  user                        User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  podcastShowPolicy           PodcastShowPolicy?
+  podcastSavedEpisodesPolicy  PodcastSavedEpisodesPolicy?
+  targetSelections            TargetPlaylistSource[]
+  cleanupRuns                 MusicSourceCleanupRun[]
+  ingestionRulesTarget        MusicIngestionRule[]         @relation("MusicIngestionTarget")
+  ingestionRunsTarget         MusicIngestionRun[]          @relation("MusicIngestionRunTarget")
 
   @@unique([userId, spotifyType, spotifyId])
   @@unique([userId, id])
@@ -304,6 +315,7 @@ model PodcastShowPolicy {
   episodeEligibility       PodcastEpisodeEligibility @default(UNPLAYED_ONLY)
   episodeOrder             PodcastShowOrder          @default(OLDEST_FIRST)
   randomPolicy             PodcastRandomPolicy       @default(WITHOUT_REPLACEMENT)
+  showEpisodeScope         PodcastShowEpisodeScope   @default(ALL_EPISODES)
   startEpisodeId           String?
   strictSequence           Boolean                   @default(true)
   maxReleaseAgeDays        Int?
