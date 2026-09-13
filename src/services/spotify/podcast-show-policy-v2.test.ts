@@ -198,6 +198,27 @@ function podcast07FingerprintSnapshot(): Podcast07FingerprintSnapshot {
   };
 }
 
+test("PODCAST-07 Gate 6 fingerprint preserves CONFIG-04 when the new policy is neutral", () => {
+  const neutral: Podcast07FingerprintSnapshot = {
+    savedEpisodes: [{
+      spotifyId: "saved",
+      enabled: false,
+      episodeOrder: "RANDOM",
+      randomPolicy: "WITH_REPLACEMENT",
+      cadenceMaxEpisodes: null,
+      cadenceUnit: null,
+      frequencyScope: "PER_SHOW",
+    }],
+    shows: [{
+      spotifyShowId: "show-a",
+      authority: "INHERIT_SAVED_EPISODES",
+      policy: null,
+    }],
+  };
+
+  assert.equal(podcast07ConfigurationFingerprint("base", neutral), "base");
+});
+
 test("PODCAST-07 Gate 6 fingerprint changes for saved scope, cadence and order", () => {
   const base = podcast07FingerprintSnapshot();
   const original = podcast07ConfigurationFingerprint("base", base);
