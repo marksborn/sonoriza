@@ -256,7 +256,7 @@ test("PODCAST-07 Gate 6 canonical UI exposes default policy, frequency scope and
   );
 
   assert.match(page, /savePodcastSavedEpisodesPolicy/);
-  assert.match(page, /hasExplicitPolicy: storedPolicy !== undefined/);
+  assert.match(page, /hasExplicitPolicy: show\.podcastShowPolicy !== null/);
   assert.match(client, /Herda Seus episódios/);
   assert.match(client, /name="frequencyScope"/);
   assert.match(client, /value="GLOBAL_POOL"/);
