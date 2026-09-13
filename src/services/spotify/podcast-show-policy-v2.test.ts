@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { Candidate } from "@/services/playlist-planner";
 
+import {
+  podcast07ConfigurationFingerprint,
+  type Podcast07FingerprintSnapshot,
+} from "./podcast-07-generation-configuration";
 import { applyPodcastShowPolicy } from "./podcast-show-policy";
 import type { PodcastShowPolicySnapshot } from "./podcast-show-policy-store";
 
@@ -162,4 +167,115 @@ test("ALLOW_IN_PROGRESS_TO_FINISH only keeps stale progress first observed while
 
   assert.deepEqual(result.candidates.map((item) => item.spotifyEpisodeId), ["started-in-time"]);
   assert.equal(result.releaseExpiredCount, 1);
+});
+
+function podcast07FingerprintSnapshot(): Podcast07FingerprintSnapshot {
+  return {
+    savedEpisodes: [{
+      spotifyId: "saved",
+      enabled: true,
+      episodeOrder: "RANDOM",
+      randomPolicy: "WITHOUT_REPLACEMENT",
+      cadenceMaxEpisodes: 1,
+      cadenceUnit: "WEEK",
+      frequencyScope: "PER_SHOW",
+    }],
+    shows: [{
+      spotifyShowId: "show-a",
+      authority: "SHOW_OVERRIDE",
+      policy: {
+        episodeEligibility: "UNPLAYED_ONLY",
+        episodeOrder: "OLDEST_FIRST",
+        randomPolicy: "WITHOUT_REPLACEMENT",
+        showEpisodeScope: "ALL_EPISODES",
+        startEpisodeId: null,
+        strictSequence: true,
+        maxReleaseAgeDays: null,
+        expiryPolicy: "STRICT_EXPIRY",
+        maxEpisodesPerCycle: null,
+      },
+    }],
+  };
+}
+
+test("PODCAST-07 Gate 6 fingerprint preserves CONFIG-04 when the new policy is neutral", () => {
+  const neutral: Podcast07FingerprintSnapshot = {
+    savedEpisodes: [{
+      spotifyId: "saved",
+      enabled: false,
+      episodeOrder: "RANDOM",
+      randomPolicy: "WITH_REPLACEMENT",
+      cadenceMaxEpisodes: null,
+      cadenceUnit: null,
+      frequencyScope: "PER_SHOW",
+    }],
+    shows: [{
+      spotifyShowId: "show-a",
+      authority: "INHERIT_SAVED_EPISODES",
+      policy: null,
+    }],
+  };
+
+  assert.equal(podcast07ConfigurationFingerprint("base", neutral), "base");
+});
+
+test("PODCAST-07 Gate 6 fingerprint changes for saved scope, cadence and order", () => {
+  const base = podcast07FingerprintSnapshot();
+  const original = podcast07ConfigurationFingerprint("base", base);
+  const changes: Podcast07FingerprintSnapshot[] = [
+    { ...base, savedEpisodes: [{ ...base.savedEpisodes[0]!, frequencyScope: "GLOBAL_POOL" }] },
+    { ...base, savedEpisodes: [{ ...base.savedEpisodes[0]!, cadenceMaxEpisodes: 2 }] },
+    { ...base, savedEpisodes: [{ ...base.savedEpisodes[0]!, episodeOrder: "OLDEST_FIRST" }] },
+  ];
+  for (const changed of changes) {
+    assert.notEqual(podcast07ConfigurationFingerprint("base", changed), original);
+  }
+});
+
+test("PODCAST-07 Gate 6 fingerprint distinguishes inherited SHOW from explicit override", () => {
+  const base = podcast07FingerprintSnapshot();
+  const inherited: Podcast07FingerprintSnapshot = {
+    ...base,
+    shows: [{
+      spotifyShowId: "show-a",
+      authority: "INHERIT_SAVED_EPISODES",
+      policy: null,
+    }],
+  };
+  assert.notEqual(
+    podcast07ConfigurationFingerprint("base", inherited),
+    podcast07ConfigurationFingerprint("base", base),
+  );
+});
+
+test("PODCAST-07 Gate 6 fingerprint changes when SHOW episode scope changes", () => {
+  const base = podcast07FingerprintSnapshot();
+  const show = base.shows[0]!;
+  assert.equal(show.authority, "SHOW_OVERRIDE");
+  if (show.authority !== "SHOW_OVERRIDE" || !show.policy) return;
+  const changed: Podcast07FingerprintSnapshot = {
+    ...base,
+    shows: [{ ...show, policy: { ...show.policy, showEpisodeScope: "SAVED_ONLY" } }],
+  };
+  assert.notEqual(
+    podcast07ConfigurationFingerprint("base", changed),
+    podcast07ConfigurationFingerprint("base", base),
+  );
+});
+
+test("PODCAST-07 Gate 6 canonical UI exposes default policy, frequency scope and SHOW source scope", () => {
+  const page = readFileSync("src/app/dashboard/configuracao/fontes/podcasts/page.tsx", "utf8");
+  const client = readFileSync(
+    "src/app/dashboard/configuracao/fontes/podcasts/podcast-policy-client.tsx",
+    "utf8",
+  );
+
+  assert.match(page, /savePodcastSavedEpisodesPolicy/);
+  assert.match(page, /hasExplicitPolicy: show\.podcastShowPolicy !== null/);
+  assert.match(client, /Herda Seus episódios/);
+  assert.match(client, /name="frequencyScope"/);
+  assert.match(client, /value="GLOBAL_POOL"/);
+  assert.match(client, /name="showEpisodeScope"/);
+  assert.match(client, /value="ALL_EPISODES">Todos os episódios do programa/);
+  assert.match(client, /value="SAVED_ONLY">Somente episódios salvos/);
 });

@@ -12,6 +12,7 @@ import type {
   ConfigurationAssessment,
   ConfigurationIssue,
 } from "@/services/configuration-readiness";
+import { assessPodcast07GenerationConfiguration } from "@/services/spotify/podcast-07-generation-configuration";
 
 export type Calendar03GenerationConfiguration = Readonly<{
   assessment: ConfigurationAssessment;
@@ -24,12 +25,21 @@ export type Calendar03GenerationConfiguration = Readonly<{
  * CALENDAR-03 policy of every enabled target. Missing rows are represented by
  * the backward-compatible defaults, so merely inserting an equivalent default
  * row does not churn the fingerprint.
+ *
+ * PODCAST-07 Gate 6 is composed before CALENDAR-03 so every existing caller of
+ * this canonical generation assessment automatically gets the podcast policy
+ * fingerprint without creating a second manual/scheduler path.
  */
 export async function assessCalendar03GenerationConfiguration(
   userId: string,
   baseAssessment: ConfigurationAssessment,
 ): Promise<Calendar03GenerationConfiguration> {
-  const targetIds = baseAssessment.targets.map((target) => target.id);
+  const podcast07Configuration = await assessPodcast07GenerationConfiguration(
+    userId,
+    baseAssessment,
+  );
+  const effectiveBaseAssessment = podcast07Configuration.assessment;
+  const targetIds = effectiveBaseAssessment.targets.map((target) => target.id);
   const rows = targetIds.length === 0
     ? []
     : await prisma.calendarEventCompositionPolicy.findMany({
@@ -44,15 +54,15 @@ export async function assessCalendar03GenerationConfiguration(
     rows.map((row) => [row.targetPlaylistId, row] as const),
   );
   const policies = new Map<string, CalendarEventCompositionPolicySnapshot>();
-  const issues = [...baseAssessment.issues];
-  const hasMusicSource = baseAssessment.sources.some(
+  const issues = [...effectiveBaseAssessment.issues];
+  const hasMusicSource = effectiveBaseAssessment.sources.some(
     (source) => source.kind === "MUSIC",
   );
-  const hasPodcastSource = baseAssessment.sources.some(
+  const hasPodcastSource = effectiveBaseAssessment.sources.some(
     (source) => source.kind === "PODCAST",
   );
 
-  for (const target of baseAssessment.targets) {
+  for (const target of effectiveBaseAssessment.targets) {
     const row = rowByTargetId.get(target.id);
     const policy = row
       ? normalizeCalendarEventCompositionPolicy(target.id, {
@@ -99,13 +109,13 @@ export async function assessCalendar03GenerationConfiguration(
     left.targetPlaylistId.localeCompare(right.targetPlaylistId),
   );
   const fingerprint = sha256({
-    baseFingerprint: baseAssessment.fingerprint,
+    baseFingerprint: effectiveBaseAssessment.fingerprint,
     calendar03Policies: fingerprintPolicies,
   });
 
   return {
     assessment: {
-      ...baseAssessment,
+      ...effectiveBaseAssessment,
       issues,
       fingerprint,
     },

@@ -81,8 +81,9 @@ export async function loadPodcastSavedEpisodesPolicy(
 /**
  * Persists the explicit default policy for a SAVED_EPISODES source.
  *
- * Gate 1 is deliberately persistence-only: this writer is not called from the
- * planner/generation runtime and performs no provider access.
+ * Gate 6 wires this writer to the canonical podcasts configuration UI. Saving
+ * configuration still performs no provider access and no playlist generation;
+ * runtime influence remains owned by Gate 7.
  */
 export async function savePodcastSavedEpisodesPolicy(
   userId: string,

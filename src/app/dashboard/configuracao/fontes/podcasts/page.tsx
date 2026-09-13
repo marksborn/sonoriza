@@ -4,6 +4,13 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import {
+  loadPodcastSavedEpisodesPolicy,
+  savePodcastSavedEpisodesPolicy,
+  type PodcastSavedEpisodesFrequencyScopeValue,
+  type PodcastSavedEpisodesOrderValue,
+  type PodcastSavedEpisodesRandomPolicyValue,
+} from "@/services/spotify/podcast-saved-episodes-policy-store";
 import { hydratePodcastShowPolicyHistory } from "@/services/spotify/podcast-show-policy-history";
 import {
   loadPodcastShowPolicies,
@@ -12,17 +19,75 @@ import {
   type PodcastEpisodeEligibilityValue,
   type PodcastExpiryPolicyValue,
   type PodcastRandomPolicyValue,
+  type PodcastShowEpisodeScopeValue,
   type PodcastShowOrderValue,
   type PodcastShowPolicyStoredSnapshot,
 } from "@/services/spotify/podcast-show-policy-store";
 
 import {
   PodcastPolicyClient,
+  type PodcastPolicyClientSavedSource,
   type PodcastPolicyClientShow,
 } from "./podcast-policy-client";
 
 const secondaryButtonClass =
   "inline-flex items-center justify-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-2.5 text-sm font-black text-ink-inverse transition hover:border-brand-400/55";
+
+async function updateSavedEpisodesPolicy(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+
+  const sourcePlaylistId = requiredText(formData, "sourcePlaylistId");
+  const episodeOrder = enumValue(
+    formData,
+    "episodeOrder",
+    ["OLDEST_FIRST", "NEWEST_FIRST", "RANDOM"] as const,
+  ) as PodcastSavedEpisodesOrderValue;
+  const randomPolicy: PodcastSavedEpisodesRandomPolicyValue =
+    episodeOrder === "RANDOM"
+      ? (enumValue(
+          formData,
+          "randomPolicy",
+          ["WITHOUT_REPLACEMENT", "WITH_REPLACEMENT"] as const,
+        ) as PodcastSavedEpisodesRandomPolicyValue)
+      : "WITHOUT_REPLACEMENT";
+  const cadenceMode = enumValue(
+    formData,
+    "cadenceMode",
+    ["UNLIMITED", "LIMITED"] as const,
+  );
+  const cadenceMaxEpisodes =
+    cadenceMode === "LIMITED"
+      ? requiredPositiveInt(formData, "cadenceMaxEpisodes")
+      : null;
+  const cadenceUnit = cadenceMode === "LIMITED" ? ("WEEK" as const) : null;
+  const frequencyScope = enumValue(
+    formData,
+    "frequencyScope",
+    ["PER_SHOW", "GLOBAL_POOL"] as const,
+  ) as PodcastSavedEpisodesFrequencyScopeValue;
+
+  const saved = await savePodcastSavedEpisodesPolicy(
+    session.user.id,
+    sourcePlaylistId,
+    {
+      enabled: formData.get("enabled") === "on",
+      episodeOrder,
+      randomPolicy,
+      cadenceMaxEpisodes,
+      cadenceUnit,
+      frequencyScope,
+    },
+  );
+
+  if (!saved) redirect("/dashboard/configuracao/fontes/podcasts?erro=fonte");
+  revalidatePodcastConfiguration();
+  redirect(
+    `/dashboard/configuracao/fontes/podcasts?salvo=1&saved=${encodeURIComponent(sourcePlaylistId)}`,
+  );
+}
 
 async function updateShowPolicy(formData: FormData) {
   "use server";
@@ -41,6 +106,11 @@ async function updateShowPolicy(formData: FormData) {
     "episodeOrder",
     ["OLDEST_FIRST", "NEWEST_FIRST", "RANDOM"] as const,
   ) as PodcastShowOrderValue;
+  const showEpisodeScope = enumValue(
+    formData,
+    "showEpisodeScope",
+    ["ALL_EPISODES", "SAVED_ONLY"] as const,
+  ) as PodcastShowEpisodeScopeValue;
   const maxReleaseAgeDays = optionalInt(formData, "maxReleaseAgeDays", 0, 36500);
 
   const randomPolicy: PodcastRandomPolicyValue =
@@ -84,6 +154,7 @@ async function updateShowPolicy(formData: FormData) {
     episodeEligibility,
     episodeOrder,
     randomPolicy,
+    showEpisodeScope,
     startEpisodeId:
       episodeOrder === "RANDOM"
         ? null
@@ -99,9 +170,7 @@ async function updateShowPolicy(formData: FormData) {
   });
 
   if (!saved) redirect("/dashboard/configuracao/fontes/podcasts?erro=fonte");
-  revalidatePath("/dashboard/configuracao/fontes");
-  revalidatePath("/dashboard/configuracao/fontes/podcasts");
-  revalidatePath("/dashboard/configuracao/revisao");
+  revalidatePodcastConfiguration();
   redirect(
     `/dashboard/configuracao/fontes/podcasts?salvo=1&show=${encodeURIComponent(sourcePlaylistId)}`,
   );
@@ -129,20 +198,25 @@ export default async function PodcastPoliciesPage({
   if (!session?.user?.id) redirect("/");
 
   const params = (await searchParams) ?? {};
-  const [shows, basePolicies] = await Promise.all([
+  const [sources, basePolicies] = await Promise.all([
     prisma.sourcePlaylist.findMany({
       where: {
         userId: session.user.id,
         kind: "PODCAST",
-        spotifyType: "SHOW",
+        spotifyType: { in: ["SHOW", "SAVED_EPISODES"] },
       },
-      orderBy: [{ enabled: "desc" }, { name: "asc" }],
+      orderBy: [{ spotifyType: "desc" }, { enabled: "desc" }, { name: "asc" }],
       select: {
         id: true,
         name: true,
+        spotifyId: true,
+        spotifyType: true,
         enabled: true,
         includePlayed: true,
         episodeOrder: true,
+        podcastShowPolicy: {
+          select: { sourcePlaylistId: true },
+        },
       },
     }),
     loadPodcastShowPolicies(session.user.id),
@@ -152,6 +226,34 @@ export default async function PodcastPoliciesPage({
     basePolicies,
   );
 
+  const savedSourcesRaw = sources.filter(
+    (source) => source.spotifyType === "SAVED_EPISODES",
+  );
+  const savedPolicyRows = await Promise.all(
+    savedSourcesRaw.map(async (source) => ({
+      source,
+      policy: await loadPodcastSavedEpisodesPolicy(session.user.id, source.id),
+    })),
+  );
+  const savedSources: PodcastPolicyClientSavedSource[] = savedPolicyRows.map(
+    ({ source, policy }) => ({
+      id: source.id,
+      name: source.name ?? "Seus episódios",
+      enabled: source.enabled,
+      configured: policy !== null,
+      policy: policy ?? {
+        sourcePlaylistId: source.id,
+        enabled: false,
+        episodeOrder: "RANDOM",
+        randomPolicy: "WITH_REPLACEMENT",
+        cadenceMaxEpisodes: null,
+        cadenceUnit: null,
+        frequencyScope: "PER_SHOW",
+      },
+    }),
+  );
+
+  const shows = sources.filter((source) => source.spotifyType === "SHOW");
   const clientShows: PodcastPolicyClientShow[] = shows.map((show) => {
     const storedPolicy = basePolicies.get(show.id);
     const policy =
@@ -161,11 +263,13 @@ export default async function PodcastPoliciesPage({
       id: show.id,
       name: show.name ?? "Programa do Spotify",
       enabled: show.enabled,
+      hasExplicitPolicy: show.podcastShowPolicy !== null,
       policy: {
         sourcePlaylistId: show.id,
         episodeEligibility: policy.episodeEligibility,
         episodeOrder: policy.episodeOrder,
         randomPolicy: policy.randomPolicy,
+        showEpisodeScope: storedPolicy?.showEpisodeScope ?? "ALL_EPISODES",
         startEpisodeId: policy.startEpisodeId,
         strictSequence: policy.strictSequence,
         maxReleaseAgeDays: policy.maxReleaseAgeDays,
@@ -183,6 +287,10 @@ export default async function PodcastPoliciesPage({
   const initialOpenId = clientShows.some((show) => show.id === requestedShow)
     ? requestedShow
     : null;
+  const requestedSaved = singleParam(params.saved);
+  const initialOpenSavedId = savedSources.some((source) => source.id === requestedSaved)
+    ? requestedSaved
+    : null;
 
   return (
     <main className="min-h-screen bg-canvas-dark px-5 py-8 sm:px-8 lg:px-10">
@@ -191,13 +299,13 @@ export default async function PodcastPoliciesPage({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">
-                PODCAST-05 · PODCAST-06
+                PODCAST-05 · PODCAST-06 · PODCAST-07
               </p>
               <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse">
                 Políticas de podcasts
               </h1>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
-                Um único lugar para configurar sequência, replay, validade, frequência de escuta e prioridade de cada programa.
+                Seus episódios define o comportamento padrão. Configure um programa individual somente quando ele precisar de um override próprio.
               </p>
             </div>
             <Link href="/dashboard/configuracao/fontes" className={secondaryButtonClass}>
@@ -208,7 +316,7 @@ export default async function PodcastPoliciesPage({
 
         {params.salvo === "1" && (
           <div className="status-success mt-5 rounded-2xl border p-4 text-sm font-bold">
-            Política salva. A alteração só será usada no próximo planejamento; nenhuma playlist foi gerada agora.
+            Política salva. A configuração mudou; faça uma nova simulação antes da próxima geração real.
           </div>
         )}
         {params.reiniciado === "1" && (
@@ -218,21 +326,24 @@ export default async function PodcastPoliciesPage({
         )}
         {params.erro === "fonte" && (
           <div className="status-warning mt-5 rounded-2xl border p-4 text-sm font-bold">
-            O programa não pertence mais à sua configuração de fontes.
+            A fonte não pertence mais à sua configuração de podcasts.
           </div>
         )}
 
-        {clientShows.length === 0 ? (
+        {savedSources.length === 0 && clientShows.length === 0 ? (
           <section className="product-panel mt-6 p-6 text-center">
-            <p className="font-black text-ink-inverse">Nenhum programa individual configurado</p>
+            <p className="font-black text-ink-inverse">Nenhuma fonte de podcast configurada</p>
             <p className="mt-2 text-sm text-muted-inverse">
-              Adicione um programa em Fontes para criar uma política própria de sequência, replay, frequência ou prioridade.
+              Adicione Seus episódios ou um programa em Fontes para configurar as políticas.
             </p>
           </section>
         ) : (
           <PodcastPolicyClient
+            savedSources={savedSources}
             shows={clientShows}
             initialOpenId={initialOpenId}
+            initialOpenSavedId={initialOpenSavedId}
+            updateSavedEpisodesPolicyAction={updateSavedEpisodesPolicy}
             updateShowPolicyAction={updateShowPolicy}
             resetShowProgressAction={resetShowProgress}
           />
@@ -252,6 +363,7 @@ function defaultPolicy(
     episodeEligibility: includePlayed ? "ALL" : "UNPLAYED_ONLY",
     episodeOrder: episodeOrder === "NEWEST_FIRST" ? "NEWEST_FIRST" : "OLDEST_FIRST",
     randomPolicy: "WITHOUT_REPLACEMENT",
+    showEpisodeScope: "ALL_EPISODES",
     startEpisodeId: null,
     strictSequence: true,
     maxReleaseAgeDays: null,
@@ -267,6 +379,12 @@ function defaultPolicy(
     publishedEpisodeIds: [],
   };
   return policy;
+}
+
+function revalidatePodcastConfiguration() {
+  revalidatePath("/dashboard/configuracao/fontes");
+  revalidatePath("/dashboard/configuracao/fontes/podcasts");
+  revalidatePath("/dashboard/configuracao/revisao");
 }
 
 function singleParam(value: string | string[] | undefined): string | null {
