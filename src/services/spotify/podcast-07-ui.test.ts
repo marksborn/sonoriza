@@ -39,7 +39,7 @@ test("Gate 6 makes SHOW inheritance and episode scope explicit", () => {
   const page = pageSource();
   const client = clientSource();
 
-  assert.match(page, /hasExplicitPolicy: storedPolicy !== undefined/);
+  assert.match(page, /hasExplicitPolicy: show\.podcastShowPolicy !== null/);
   assert.match(page, /showEpisodeScope/);
   assert.match(client, /Herda Seus episódios/);
   assert.match(client, /Override próprio/);
