@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma";
 import type { ConfigurationAssessment } from "@/services/configuration-readiness";
 
 export type Podcast07SavedEpisodesFingerprintPolicy = Readonly<{
-  sourcePlaylistId: string;
   spotifyId: string;
   enabled: boolean;
   episodeOrder: "OLDEST_FIRST" | "NEWEST_FIRST" | "RANDOM";
@@ -15,7 +14,6 @@ export type Podcast07SavedEpisodesFingerprintPolicy = Readonly<{
 }>;
 
 export type Podcast07ShowFingerprintPolicy = Readonly<{
-  sourcePlaylistId: string;
   spotifyShowId: string;
   authority: "INHERIT_SAVED_EPISODES" | "SHOW_OVERRIDE";
   policy: null | Readonly<{
@@ -28,9 +26,6 @@ export type Podcast07ShowFingerprintPolicy = Readonly<{
     maxReleaseAgeDays: number | null;
     expiryPolicy: "STRICT_EXPIRY" | "ALLOW_IN_PROGRESS_TO_FINISH";
     maxEpisodesPerCycle: number | null;
-    cadenceMaxEpisodes: number | null;
-    cadenceUnit: "DAY" | "WEEK" | "MONTH" | null;
-    priority: "NORMAL" | "PRIORITY";
   }>;
 }>;
 
@@ -44,25 +39,62 @@ export type Podcast07GenerationConfiguration = Readonly<{
   fingerprintSnapshot: Podcast07FingerprintSnapshot;
 }>;
 
-const neutralSavedPolicy = (sourcePlaylistId: string, spotifyId: string) => ({
-  sourcePlaylistId,
-  spotifyId,
-  enabled: false,
-  episodeOrder: "RANDOM" as const,
-  randomPolicy: "WITH_REPLACEMENT" as const,
-  cadenceMaxEpisodes: null,
-  cadenceUnit: null,
-  frequencyScope: "PER_SHOW" as const,
-});
+type SavedPolicyRow = Readonly<{
+  enabled: boolean;
+  episodeOrder: "OLDEST_FIRST" | "NEWEST_FIRST" | "RANDOM";
+  randomPolicy: "WITHOUT_REPLACEMENT" | "WITH_REPLACEMENT";
+  cadenceMaxEpisodes: number | null;
+  cadenceUnit: "WEEK" | null;
+  frequencyScope: "PER_SHOW" | "GLOBAL_POOL";
+}>;
+
+function neutralSavedPolicy(spotifyId: string): Podcast07SavedEpisodesFingerprintPolicy {
+  return {
+    spotifyId,
+    enabled: false,
+    episodeOrder: "RANDOM",
+    randomPolicy: "WITH_REPLACEMENT",
+    cadenceMaxEpisodes: null,
+    cadenceUnit: null,
+    frequencyScope: "PER_SHOW",
+  };
+}
+
+function effectiveSavedPolicy(
+  spotifyId: string,
+  row: SavedPolicyRow | undefined,
+): Podcast07SavedEpisodesFingerprintPolicy {
+  if (!row?.enabled) return neutralSavedPolicy(spotifyId);
+
+  const cadenceConfigured =
+    row.cadenceMaxEpisodes !== null && row.cadenceUnit === "WEEK";
+  return {
+    spotifyId,
+    enabled: true,
+    episodeOrder: row.episodeOrder,
+    randomPolicy:
+      row.episodeOrder === "RANDOM"
+        ? row.randomPolicy
+        : "WITHOUT_REPLACEMENT",
+    cadenceMaxEpisodes: cadenceConfigured ? row.cadenceMaxEpisodes : null,
+    cadenceUnit: cadenceConfigured ? "WEEK" : null,
+    frequencyScope: cadenceConfigured ? row.frequencyScope : "PER_SHOW",
+  };
+}
 
 /**
  * PODCAST-07 Gate 6 fingerprint decorator.
  *
- * Only plan-affecting configuration participates. Runtime memory such as random
- * round/cursors and factual listening state intentionally stay out of CONFIG-04.
- * Missing SAVED_EPISODES policy is normalized to the neutral persisted default,
- * while presence/absence of a SHOW policy remains explicit because it changes
- * authority (inheritance vs authoritative override).
+ * Only effective, plan-affecting configuration participates. Runtime memory
+ * such as random round/cursors and factual listening state intentionally stay
+ * out of CONFIG-04. A disabled or absent SAVED_EPISODES policy normalizes to
+ * the same neutral value, and irrelevant conditional fields are normalized so
+ * cosmetic/stale values do not invalidate a simulation.
+ *
+ * PODCAST-06 cadence/priority remains canonical in PodcastShowCadencePolicy and
+ * already participates in the base CONFIG-04 fingerprint. This decorator adds
+ * the PODCAST-07 dimensions that were previously missing: SAVED_EPISODES
+ * defaults, inheritance authority, SHOW traversal policy and showEpisodeScope.
  */
 export async function assessPodcast07GenerationConfiguration(
   userId: string,
@@ -89,7 +121,7 @@ export async function assessPodcast07GenerationConfiguration(
           },
         }),
         prisma.podcastShowPolicy.findMany({
-          where: { userId, sourcePlaylistId: { in: sourceIds } },
+          where: { sourcePlaylistId: { in: sourceIds } },
           select: {
             sourcePlaylistId: true,
             episodeEligibility: true,
@@ -101,9 +133,6 @@ export async function assessPodcast07GenerationConfiguration(
             maxReleaseAgeDays: true,
             expiryPolicy: true,
             maxEpisodesPerCycle: true,
-            cadenceMaxEpisodes: true,
-            cadenceUnit: true,
-            priority: true,
           },
         }),
       ]);
@@ -117,21 +146,10 @@ export async function assessPodcast07GenerationConfiguration(
 
   const savedEpisodes: Podcast07SavedEpisodesFingerprintPolicy[] = podcastSources
     .filter((source) => source.spotifyType === "SAVED_EPISODES")
-    .map((source) => {
-      const row = savedBySource.get(source.id);
-      if (!row) return neutralSavedPolicy(source.id, source.spotifyId);
-      return {
-        sourcePlaylistId: source.id,
-        spotifyId: source.spotifyId,
-        enabled: row.enabled,
-        episodeOrder: row.episodeOrder,
-        randomPolicy: row.randomPolicy,
-        cadenceMaxEpisodes: row.cadenceMaxEpisodes,
-        cadenceUnit: row.cadenceUnit,
-        frequencyScope: row.frequencyScope,
-      };
-    })
-    .sort((left, right) => left.sourcePlaylistId.localeCompare(right.sourcePlaylistId));
+    .map((source) =>
+      effectiveSavedPolicy(source.spotifyId, savedBySource.get(source.id)),
+    )
+    .sort((left, right) => left.spotifyId.localeCompare(right.spotifyId));
 
   const shows: Podcast07ShowFingerprintPolicy[] = podcastSources
     .filter((source) => source.spotifyType === "SHOW")
@@ -139,29 +157,31 @@ export async function assessPodcast07GenerationConfiguration(
       const row = showBySource.get(source.id);
       if (!row) {
         return {
-          sourcePlaylistId: source.id,
           spotifyShowId: source.spotifyId,
           authority: "INHERIT_SAVED_EPISODES" as const,
           policy: null,
         };
       }
+
+      const random = row.episodeOrder === "RANDOM";
+      const hasExpiry = row.maxReleaseAgeDays !== null;
       return {
-        sourcePlaylistId: source.id,
         spotifyShowId: source.spotifyId,
         authority: "SHOW_OVERRIDE" as const,
         policy: {
           episodeEligibility: row.episodeEligibility,
           episodeOrder: row.episodeOrder,
-          randomPolicy: row.randomPolicy,
+          randomPolicy: random
+            ? row.randomPolicy
+            : "WITHOUT_REPLACEMENT",
           showEpisodeScope: row.showEpisodeScope,
-          startEpisodeId: row.startEpisodeId,
-          strictSequence: row.strictSequence,
+          startEpisodeId: random ? null : row.startEpisodeId,
+          strictSequence: random ? false : row.strictSequence,
           maxReleaseAgeDays: row.maxReleaseAgeDays,
-          expiryPolicy: row.expiryPolicy,
+          expiryPolicy: hasExpiry
+            ? row.expiryPolicy
+            : "STRICT_EXPIRY",
           maxEpisodesPerCycle: row.maxEpisodesPerCycle,
-          cadenceMaxEpisodes: row.cadenceMaxEpisodes,
-          cadenceUnit: row.cadenceUnit,
-          priority: row.priority,
         },
       };
     })
@@ -190,7 +210,7 @@ export function podcast07ConfigurationFingerprint(
         baseFingerprint,
         podcast07: {
           savedEpisodes: [...snapshot.savedEpisodes].sort((left, right) =>
-            left.sourcePlaylistId.localeCompare(right.sourcePlaylistId),
+            left.spotifyId.localeCompare(right.spotifyId),
           ),
           shows: [...snapshot.shows].sort((left, right) =>
             left.spotifyShowId.localeCompare(right.spotifyShowId),
