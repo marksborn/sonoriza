@@ -13,6 +13,10 @@ import { loadPodcastSavedEpisodesPublishedHistory } from "@/services/spotify/pod
 import { loadPodcastSavedEpisodesPolicy } from "@/services/spotify/podcast-saved-episodes-policy-store";
 import { loadPodcastShowCadencePolicies } from "@/services/spotify/podcast-show-cadence-policy-store";
 import { loadPodcastShowPolicies } from "@/services/spotify/podcast-show-policy-store";
+import {
+  recentPublishedEpisodeIds,
+  selectPodcast07PlaybackRefreshEpisodeIds,
+} from "@/services/spotify/podcast07-playback-refresh";
 
 import {
   generatePlaylists as baseGeneratePlaylists,
@@ -24,11 +28,6 @@ export type {
   GeneratePlaylistsOptions,
   GeneratePlaylistsResult,
 } from "./generate-playlists-base";
-
-const PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES = 8;
-const PODCAST07_PLAYBACK_REFRESH_TTL_MS = 60 * 60 * 1000;
-const PODCAST07_PLAYBACK_REFRESH_RECENT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
-const PODCAST07_PLAYBACK_REFRESH_RECENT_PER_SHOW = 2;
 
 /**
  * PODCAST-07 Gate 7 controlled runtime boundary shared by every generation
@@ -84,57 +83,41 @@ export async function generatePlaylists(
       : new Map<string, readonly string[]>();
 
   // #350: refresh factual playback before cadence, but never traverse the full
-  // publication history on every generation. Only a small, recent set of
-  // unresolved episodes can produce provider reads:
-  // - at most the two most recently published episodes per show;
-  // - only NOT_STARTED / IN_PROGRESS canonical rows;
-  // - only rows observed in the recent planning window;
-  // - at most eight direct Spotify reads per generation;
-  // - a one-hour TTL prevents repeatedly refreshing the same row.
-  //
-  // COMPLETED is sticky in the canonical merge, so completed rows never need a
-  // provider refresh here. The normal collection/pre-write paths remain intact.
+  // publication history on every generation. The pure selector owns the hard
+  // quota/TTL/window rules; this query is restricted to only the two most recent
+  // published episode IDs per show so the DB work is bounded before provider IO.
   if (
     defaultPolicy?.enabled === true &&
     defaultPolicy.cadenceMaxEpisodes !== null &&
     defaultPolicy.cadenceUnit !== null
   ) {
-    const recentPublishedIds = new Set<string>();
-    for (const episodeIds of defaultPublishedEpisodeIdsByShow.values()) {
-      const uniqueRecent = [...new Set([...episodeIds].reverse())].slice(
-        0,
-        PODCAST07_PLAYBACK_REFRESH_RECENT_PER_SHOW,
-      );
-      for (const episodeId of uniqueRecent) recentPublishedIds.add(episodeId);
-    }
+    const recentPublishedIds = recentPublishedEpisodeIds(
+      defaultPublishedEpisodeIdsByShow,
+    );
 
     if (recentPublishedIds.size > 0) {
       const now = new Date();
-      const staleBefore = new Date(
-        now.getTime() - PODCAST07_PLAYBACK_REFRESH_TTL_MS,
-      );
-      const recentAfter = new Date(
-        now.getTime() - PODCAST07_PLAYBACK_REFRESH_RECENT_WINDOW_MS,
-      );
-      const refreshCandidates = await prisma.episodeListeningState.findMany({
+      const refreshStateRows = await prisma.episodeListeningState.findMany({
         where: {
           userId: opts.userId,
           spotifyEpisodeId: { in: [...recentPublishedIds] },
-          status: { in: ["NOT_STARTED", "IN_PROGRESS"] },
-          lastObservedAt: {
-            gte: recentAfter,
-            lte: staleBefore,
-          },
         },
-        orderBy: { lastObservedAt: "desc" },
-        take: PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES,
-        select: { spotifyEpisodeId: true },
+        select: {
+          spotifyEpisodeId: true,
+          status: true,
+          lastObservedAt: true,
+        },
+      });
+      const refreshEpisodeIds = selectPodcast07PlaybackRefreshEpisodeIds({
+        publishedEpisodeIdsByShow: defaultPublishedEpisodeIdsByShow,
+        listeningStates: refreshStateRows,
+        now,
       });
 
-      if (refreshCandidates.length > 0) {
+      if (refreshEpisodeIds.length > 0) {
         await refreshAuthoritativePodcastListeningStates(
           opts.userId,
-          refreshCandidates.map((entry) => entry.spotifyEpisodeId),
+          refreshEpisodeIds,
           now,
         );
       }
