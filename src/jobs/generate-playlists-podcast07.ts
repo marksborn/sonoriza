@@ -13,10 +13,7 @@ import { loadPodcastSavedEpisodesPublishedHistory } from "@/services/spotify/pod
 import { loadPodcastSavedEpisodesPolicy } from "@/services/spotify/podcast-saved-episodes-policy-store";
 import { loadPodcastShowCadencePolicies } from "@/services/spotify/podcast-show-cadence-policy-store";
 import { loadPodcastShowPolicies } from "@/services/spotify/podcast-show-policy-store";
-import {
-  recentPublishedEpisodeIds,
-  selectPodcast07PlaybackRefreshEpisodeIds,
-} from "@/services/spotify/podcast07-playback-refresh";
+import { planPodcast07PlaybackRefresh } from "@/services/spotify/podcast07-playback-refresh";
 
 import {
   generatePlaylists as baseGeneratePlaylists,
@@ -28,6 +25,30 @@ export type {
   GeneratePlaylistsOptions,
   GeneratePlaylistsResult,
 } from "./generate-playlists-base";
+
+type Podcast07PlaybackRefreshEvidence = Readonly<{
+  eligibleEpisodeCount: number;
+  eligibleShowCount: number;
+  selectedEpisodeCount: number;
+  selectedShowCount: number;
+  refreshedEpisodeCount: number;
+  completedFoundCount: number;
+  skippedByBudgetCount: number;
+  selectedEpisodeIds: readonly string[];
+  selectedByShowId: Readonly<Record<string, readonly string[]>>;
+}>;
+
+const EMPTY_PLAYBACK_REFRESH_EVIDENCE: Podcast07PlaybackRefreshEvidence = {
+  eligibleEpisodeCount: 0,
+  eligibleShowCount: 0,
+  selectedEpisodeCount: 0,
+  selectedShowCount: 0,
+  refreshedEpisodeCount: 0,
+  completedFoundCount: 0,
+  skippedByBudgetCount: 0,
+  selectedEpisodeIds: [],
+  selectedByShowId: {},
+};
 
 /**
  * PODCAST-07 Gate 7 controlled runtime boundary shared by every generation
@@ -82,25 +103,30 @@ export async function generatePlaylists(
       ? await loadPodcastSavedEpisodesPublishedHistory(opts.userId, savedSource.id)
       : new Map<string, readonly string[]>();
 
-  // #350: refresh factual playback before cadence, but never traverse the full
-  // publication history on every generation. The pure selector owns the hard
-  // quota/TTL/window rules; this query is restricted to only the two most recent
-  // published episode IDs per show so the DB work is bounded before provider IO.
+  let playbackRefreshEvidence = EMPTY_PLAYBACK_REFRESH_EVIDENCE;
+
+  // #350 v2: refresh factual playback before cadence from the unresolved
+  // publication backlog, not merely from the two newest publications. DB work
+  // may inspect the known history, while provider IO remains hard-capped by the
+  // pure planner. Updating lastObservedAt rotates the bounded budget across the
+  // backlog on later generations.
   if (
     defaultPolicy?.enabled === true &&
     defaultPolicy.cadenceMaxEpisodes !== null &&
     defaultPolicy.cadenceUnit !== null
   ) {
-    const recentPublishedIds = recentPublishedEpisodeIds(
-      defaultPublishedEpisodeIdsByShow,
-    );
+    const publishedEpisodeIds = [
+      ...new Set(
+        [...defaultPublishedEpisodeIdsByShow.values()].flatMap((ids) => [...ids]),
+      ),
+    ];
 
-    if (recentPublishedIds.size > 0) {
+    if (publishedEpisodeIds.length > 0) {
       const now = new Date();
       const refreshStateRows = await prisma.episodeListeningState.findMany({
         where: {
           userId: opts.userId,
-          spotifyEpisodeId: { in: [...recentPublishedIds] },
+          spotifyEpisodeId: { in: publishedEpisodeIds },
         },
         select: {
           spotifyEpisodeId: true,
@@ -108,25 +134,43 @@ export async function generatePlaylists(
           lastObservedAt: true,
         },
       });
-      const refreshEpisodeIds = selectPodcast07PlaybackRefreshEpisodeIds({
+      const refreshPlan = planPodcast07PlaybackRefresh({
         publishedEpisodeIdsByShow: defaultPublishedEpisodeIdsByShow,
         listeningStates: refreshStateRows,
         now,
       });
 
-      if (refreshEpisodeIds.length > 0) {
-        await refreshAuthoritativePodcastListeningStates(
+      let refreshedEpisodeCount = 0;
+      let completedFoundCount = 0;
+      if (refreshPlan.selectedEpisodeIds.length > 0) {
+        const refreshed = await refreshAuthoritativePodcastListeningStates(
           opts.userId,
-          refreshEpisodeIds,
+          refreshPlan.selectedEpisodeIds,
           now,
         );
+        refreshedEpisodeCount = refreshed.size;
+        completedFoundCount = [...refreshed.values()].filter(
+          (entry) => entry.status === "COMPLETED",
+        ).length;
       }
+
+      playbackRefreshEvidence = {
+        eligibleEpisodeCount: refreshPlan.eligibleEpisodeCount,
+        eligibleShowCount: refreshPlan.eligibleShowCount,
+        selectedEpisodeCount: refreshPlan.selectedEpisodeIds.length,
+        selectedShowCount: refreshPlan.selectedShowCount,
+        refreshedEpisodeCount,
+        completedFoundCount,
+        skippedByBudgetCount: refreshPlan.skippedByBudgetCount,
+        selectedEpisodeIds: refreshPlan.selectedEpisodeIds,
+        selectedByShowId: refreshPlan.selectedByShowId,
+      };
     }
   }
 
   // Read after the bounded authoritative refresh so cadence sees any factual
-  // transition discovered above without turning every generation into a full
-  // playback-state rescan.
+  // transition discovered above without turning every generation into an
+  // unbounded provider rescan.
   const listeningStates = await prisma.episodeListeningState.findMany({
     where: { userId: opts.userId },
     select: {
@@ -179,7 +223,11 @@ export async function generatePlaylists(
   // The underlying generator remains authoritative. Observability failure after
   // a successful real Spotify write must not create a retry hazard.
   try {
-    await appendPodcast07RuntimeSummary(result.runId, state);
+    await appendPodcast07RuntimeSummary(
+      result.runId,
+      state,
+      playbackRefreshEvidence,
+    );
   } catch (error) {
     try {
       await prisma.generationLog.create({
@@ -202,6 +250,7 @@ export async function generatePlaylists(
 async function appendPodcast07RuntimeSummary(
   runId: string,
   state: ReturnType<typeof createPodcast07RuntimeState>,
+  playbackRefresh: Podcast07PlaybackRefreshEvidence,
 ): Promise<void> {
   const row = await prisma.generationRun.findUnique({
     where: { id: runId },
@@ -214,7 +263,10 @@ async function appendPodcast07RuntimeSummary(
       ? (row.summary as Prisma.JsonObject)
       : {};
   const evidence = JSON.parse(
-    JSON.stringify(podcast07RuntimeSummary(state)),
+    JSON.stringify({
+      ...podcast07RuntimeSummary(state),
+      playbackRefresh,
+    }),
   ) as Prisma.InputJsonValue;
   await prisma.generationRun.update({
     where: { id: runId },
