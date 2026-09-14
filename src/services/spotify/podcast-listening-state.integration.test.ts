@@ -25,6 +25,7 @@ databaseTest(
         | undefined,
     };
     let observationSettled = false;
+    const observedAt = new Date("2026-08-09T18:00:00.000Z");
 
     try {
       await prisma.$transaction(async (tx) => {
@@ -43,7 +44,7 @@ databaseTest(
               durationMs: 100_000,
               resumePositionMs: 100_000,
               fullyPlayed: true,
-              observedAt: new Date("2026-08-09T18:00:00.000Z"),
+              observedAt,
             },
           ])
           .finally(() => {
@@ -63,9 +64,9 @@ databaseTest(
       const resolved = await pending;
       assert.equal(resolved.get("episode-concurrent")?.status, "COMPLETED");
       assert.equal(
-        resolved.get("episode-concurrent")?.firstProgressObservedAt,
-        null,
-        "baseline completion must not invent a first-listening timestamp",
+        resolved.get("episode-concurrent")?.firstProgressObservedAt?.toISOString(),
+        observedAt.toISOString(),
+        "baseline completion must record the factual first observation of progress",
       );
     } finally {
       await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
