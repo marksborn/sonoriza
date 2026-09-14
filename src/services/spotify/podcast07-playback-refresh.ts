@@ -1,7 +1,5 @@
 export const PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES = 8;
 export const PODCAST07_PLAYBACK_REFRESH_TTL_MS = 60 * 60 * 1000;
-export const PODCAST07_PLAYBACK_REFRESH_RECENT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
-export const PODCAST07_PLAYBACK_REFRESH_RECENT_PER_SHOW = 2;
 
 export type Podcast07RefreshListeningState = Readonly<{
   spotifyEpisodeId: string;
@@ -9,52 +7,118 @@ export type Podcast07RefreshListeningState = Readonly<{
   lastObservedAt: Date;
 }>;
 
+export type Podcast07PlaybackRefreshPlan = Readonly<{
+  selectedEpisodeIds: readonly string[];
+  eligibleEpisodeCount: number;
+  eligibleShowCount: number;
+  selectedShowCount: number;
+  skippedByBudgetCount: number;
+  selectedByShowId: Readonly<Record<string, readonly string[]>>;
+}>;
+
 /**
  * Builds the bounded provider-read set used by PODCAST-07 before cadence.
  *
- * The caller may load canonical rows only for `recentPublishedEpisodeIds()`;
- * this function then applies the factual-state/TTL/recent-window guards and the
- * hard per-generation cap. COMPLETED is deliberately excluded because canonical
- * completion is sticky.
+ * Selection is show-oriented instead of publication-recency-oriented:
+ * - every published episode known to Sonoriza may be considered;
+ * - COMPLETED rows remain excluded because canonical completion is sticky;
+ * - a one-hour TTL prevents re-reading the same unresolved fact too often;
+ * - the first pass takes at most one oldest unresolved episode per show, so one
+ *   large show cannot starve all others;
+ * - any remaining budget is filled by the globally stalest unresolved rows;
+ * - provider reads are still hard-capped per generation.
+ *
+ * Authoritative refresh updates lastObservedAt, so repeated generations rotate
+ * through an unresolved backlog instead of repeatedly selecting the same rows.
  */
+export function planPodcast07PlaybackRefresh(input: {
+  publishedEpisodeIdsByShow: ReadonlyMap<string, readonly string[]>;
+  listeningStates: readonly Podcast07RefreshListeningState[];
+  now: Date;
+}): Podcast07PlaybackRefreshPlan {
+  const showByEpisodeId = new Map<string, string>();
+  for (const [showId, episodeIds] of input.publishedEpisodeIdsByShow.entries()) {
+    for (const episodeId of episodeIds) {
+      if (!showByEpisodeId.has(episodeId)) showByEpisodeId.set(episodeId, showId);
+    }
+  }
+
+  const staleBeforeMs = input.now.getTime() - PODCAST07_PLAYBACK_REFRESH_TTL_MS;
+  const eligible = input.listeningStates
+    .filter((entry) => {
+      if (entry.status === "COMPLETED") return false;
+      if (!showByEpisodeId.has(entry.spotifyEpisodeId)) return false;
+      return entry.lastObservedAt.getTime() <= staleBeforeMs;
+    })
+    .map((entry) => ({
+      ...entry,
+      showId: showByEpisodeId.get(entry.spotifyEpisodeId)!,
+    }));
+
+  const byShow = new Map<string, typeof eligible>();
+  for (const entry of eligible) {
+    const rows = byShow.get(entry.showId) ?? [];
+    rows.push(entry);
+    byShow.set(entry.showId, rows);
+  }
+  for (const rows of byShow.values()) {
+    rows.sort((a, b) => a.lastObservedAt.getTime() - b.lastObservedAt.getTime());
+  }
+
+  const firstPerShow = [...byShow.entries()]
+    .map(([showId, rows]) => ({ showId, entry: rows[0]! }))
+    .sort((a, b) => {
+      const byAge =
+        a.entry.lastObservedAt.getTime() - b.entry.lastObservedAt.getTime();
+      return byAge !== 0 ? byAge : a.showId.localeCompare(b.showId);
+    });
+
+  const selected: Array<(typeof eligible)[number]> = [];
+  const selectedIds = new Set<string>();
+  for (const candidate of firstPerShow) {
+    if (selected.length >= PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES) break;
+    selected.push(candidate.entry);
+    selectedIds.add(candidate.entry.spotifyEpisodeId);
+  }
+
+  if (selected.length < PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES) {
+    const remaining = eligible
+      .filter((entry) => !selectedIds.has(entry.spotifyEpisodeId))
+      .sort((a, b) => {
+        const byAge =
+          a.lastObservedAt.getTime() - b.lastObservedAt.getTime();
+        if (byAge !== 0) return byAge;
+        const byShow = a.showId.localeCompare(b.showId);
+        return byShow !== 0
+          ? byShow
+          : a.spotifyEpisodeId.localeCompare(b.spotifyEpisodeId);
+      });
+    for (const entry of remaining) {
+      if (selected.length >= PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES) break;
+      selected.push(entry);
+      selectedIds.add(entry.spotifyEpisodeId);
+    }
+  }
+
+  const selectedByShowId: Record<string, string[]> = {};
+  for (const entry of selected) {
+    (selectedByShowId[entry.showId] ??= []).push(entry.spotifyEpisodeId);
+  }
+
+  return {
+    selectedEpisodeIds: selected.map((entry) => entry.spotifyEpisodeId),
+    eligibleEpisodeCount: eligible.length,
+    eligibleShowCount: byShow.size,
+    selectedShowCount: Object.keys(selectedByShowId).length,
+    skippedByBudgetCount: Math.max(0, eligible.length - selected.length),
+    selectedByShowId,
+  };
+}
+
 export function selectPodcast07PlaybackRefreshEpisodeIds(input: {
   publishedEpisodeIdsByShow: ReadonlyMap<string, readonly string[]>;
   listeningStates: readonly Podcast07RefreshListeningState[];
   now: Date;
 }): string[] {
-  const recentPublishedIds = recentPublishedEpisodeIds(
-    input.publishedEpisodeIdsByShow,
-  );
-  if (recentPublishedIds.size === 0) return [];
-
-  const staleBeforeMs = input.now.getTime() - PODCAST07_PLAYBACK_REFRESH_TTL_MS;
-  const recentAfterMs =
-    input.now.getTime() - PODCAST07_PLAYBACK_REFRESH_RECENT_WINDOW_MS;
-
-  return input.listeningStates
-    .filter((entry) => {
-      if (!recentPublishedIds.has(entry.spotifyEpisodeId)) return false;
-      if (entry.status === "COMPLETED") return false;
-      const observedAt = entry.lastObservedAt.getTime();
-      return observedAt >= recentAfterMs && observedAt <= staleBeforeMs;
-    })
-    .sort(
-      (a, b) => b.lastObservedAt.getTime() - a.lastObservedAt.getTime(),
-    )
-    .slice(0, PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES)
-    .map((entry) => entry.spotifyEpisodeId);
-}
-
-export function recentPublishedEpisodeIds(
-  publishedEpisodeIdsByShow: ReadonlyMap<string, readonly string[]>,
-): Set<string> {
-  const result = new Set<string>();
-  for (const episodeIds of publishedEpisodeIdsByShow.values()) {
-    const uniqueRecent = [...new Set([...episodeIds].reverse())].slice(
-      0,
-      PODCAST07_PLAYBACK_REFRESH_RECENT_PER_SHOW,
-    );
-    for (const episodeId of uniqueRecent) result.add(episodeId);
-  }
-  return result;
+  return [...planPodcast07PlaybackRefresh(input).selectedEpisodeIds];
 }
