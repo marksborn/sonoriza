@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { inflateSync } from "node:zlib";
 
 import manifest from "../app/manifest";
 
@@ -18,6 +19,58 @@ function readPngDimensions(relativePath: string) {
     width: data.readUInt32BE(16),
     height: data.readUInt32BE(20),
   };
+}
+
+// Checking IHDR alone accepts truncated images that browsers may display
+// tolerantly but a WebAPK packager cannot decode.
+function assertPngIntegrity(relativePath: string) {
+  const data = readFileSync(path.join(root, relativePath));
+  const { width, height } = readPngDimensions(relativePath);
+  const imageData: Buffer[] = [];
+  let ended = false;
+  let offset = 8;
+  while (offset < data.length) {
+    assert.ok(offset + 12 <= data.length, `${relativePath}: truncated chunk`);
+    const length = data.readUInt32BE(offset);
+    const type = data.toString("ascii", offset + 4, offset + 8);
+    const end = offset + 12 + length;
+    assert.ok(end <= data.length, `${relativePath}: truncated ${type}`);
+    let crc = 0xffffffff;
+    for (const byte of data.subarray(offset + 4, end - 4)) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) {
+        crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+      }
+    }
+    assert.equal((crc ^ 0xffffffff) >>> 0, data.readUInt32BE(end - 4), `${relativePath}: ${type} CRC`);
+    if (type === "IDAT") imageData.push(data.subarray(offset + 8, end - 4));
+    offset = end;
+    if (type === "IEND") {
+      assert.equal(length, 0);
+      ended = true;
+      break;
+    }
+  }
+  assert.ok(ended, `${relativePath}: missing IEND`);
+  assert.equal(offset, data.length, `${relativePath}: trailing bytes`);
+  assert.ok(imageData.length > 0, `${relativePath}: missing IDAT`);
+  // Our shipped icons are 8-bit, non-interlaced PNGs.
+  assert.equal(data[24], 8, `${relativePath}: bit depth`);
+  assert.equal(data[28], 0, `${relativePath}: interlace`);
+  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number>)[data.readUInt8(25)];
+  assert.ok(channels, `${relativePath}: color type`);
+  const pixels = inflateSync(Buffer.concat(imageData));
+  const stride = width * channels + 1;
+  assert.equal(pixels.length, height * stride, `${relativePath}: incomplete scanlines`);
+  for (let row = 0; row < height; row++) {
+    assert.ok(pixels.readUInt8(row * stride) <= 4, `${relativePath}: invalid PNG filter`);
+  }
+}
+
+for (const size of [180, 192, 512]) {
+  test(`PWA-01 ${size}px icon has complete chunks, valid checksums and pixel data`, () => {
+    assertPngIntegrity(`public/pwa-icon-${size}.png`);
+  });
 }
 
 test("PWA-01 manifest exposes the installable Sonoriza contract", () => {

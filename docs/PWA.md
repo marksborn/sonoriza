@@ -1,5 +1,30 @@
 # PWA-01 — Sonoriza instalável
 
+## Correção de integridade do ícone 512 — #85
+
+A tentativa de instalação no Chrome Android em 10/09/2026 registrou
+`WebAPK server returned response code 500`. O PNG 512 servido naquele teste
+(SHA-256 `e9fc8ed1f77890f752b4cd6bb604b2ff21b5fc5397b2a2dd06c4b8587e37cd7a`)
+tinha 13.581 bytes, mas declarava um bloco IDAT que terminaria no byte 13.590.
+A descompressão e a leitura estrita pelo Sharp falharam. Os PNGs 180 e 192
+passaram na validação de integridade.
+
+O ícone 512 foi regenerado com Sharp 0.35.4 a partir de `public/sonoriza-mark.webp`:
+marca redimensionada para caber em 320×320, centralizada em uma tela 512×512
+com fundo `#0B021F`, exportada como PNG com compressão 9. A marca, a URL do
+ícone, o manifest e o service worker foram preservados.
+
+`npm run test:pwa` agora verifica limites dos blocos, CRC, IEND, descompressão
+dos blocos IDAT concatenados e quantidade/filtros das linhas de pixels dos três
+ícones. Antes da correção, o teste novo falhou em `truncated IDAT` no 512;
+o teste anterior de assinatura/dimensões aceitava esse mesmo arquivo.
+
+Isso corrige um arquivo comprovadamente inválido, mas ainda não comprova a
+resolução do HTTP 500 remoto. Depois de merge/deploy autorizado, conferir o
+hash do PNG público e repetir a instalação no Chrome Android com captura de
+log. O aceite exige novo pacote em Configurações → Aplicativos, abertura
+standalone e validação de links. Manter #85 aberta até essa evidência.
+
 A PWA-01 torna o Sonoriza instalável em navegadores compatíveis sem alterar autenticação, Spotify, Google, planner ou scheduler.
 
 ## O que foi adicionado
@@ -13,7 +38,7 @@ A PWA-01 torna o Sonoriza instalável em navegadores compatíveis sem alterar au
 
 ## Política de cache
 
-A PWA-01 **não implementa cache offline**. O service worker não possui `fetch` handler, não usa a Cache API e não persiste HTML, `/dashboard`, `/api`, `/auth` ou respostas autenticadas.
+A PWA-01 **não implementa cache offline**. Desde a PR #235, o service worker possui um `fetch` handler network-only para navegações GET da mesma origem, excluindo `/api/`. Não usa a Cache API e não persiste HTML, `/dashboard`, `/api`, `/auth` ou respostas autenticadas.
 
 Isso é intencional: o Sonoriza trabalha com sessão e estado operacional mutável. Um cache offline genérico poderia apresentar configuração, autenticação ou resultados de playlist obsoletos.
 
