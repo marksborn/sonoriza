@@ -25,6 +25,7 @@ export type PodcastCadenceShadowEvaluation = {
   showId: string;
   maxEpisodes: number;
   consumedEpisodeIds: string[];
+  completedConsumedEpisodeIds: string[];
   consumedCount: number;
   limitReached: boolean;
   newEpisodeAllowedByCadence: boolean;
@@ -116,15 +117,12 @@ export function evaluatePodcastShowCadenceShadow(input: {
   });
 
   const consumedEpisodeIds = new Set<string>();
+  const completedConsumedEpisodeIds = new Set<string>();
   const inProgressContinuationEpisodeIds = new Set<string>();
   const legacyConsumptionWithoutTimestampEpisodeIds = new Set<string>();
 
   for (const entry of input.evidence) {
     if (entry.spotifyShowId !== showId) continue;
-
-    if (entry.status === "IN_PROGRESS") {
-      inProgressContinuationEpisodeIds.add(entry.spotifyEpisodeId);
-    }
 
     if (
       entry.status !== "NOT_STARTED" &&
@@ -137,15 +135,21 @@ export function evaluatePodcastShowCadenceShadow(input: {
     if (!observedAt) continue;
     assertValidDate(observedAt, "firstProgressObservedAt");
 
-    if (
+    const insideWindow =
       observedAt.getTime() >= window.start.getTime() &&
-      observedAt.getTime() < window.endExclusive.getTime()
-    ) {
-      consumedEpisodeIds.add(entry.spotifyEpisodeId);
+      observedAt.getTime() < window.endExclusive.getTime();
+    if (!insideWindow) continue;
+
+    consumedEpisodeIds.add(entry.spotifyEpisodeId);
+    if (entry.status === "COMPLETED") {
+      completedConsumedEpisodeIds.add(entry.spotifyEpisodeId);
+    } else if (entry.status === "IN_PROGRESS") {
+      inProgressContinuationEpisodeIds.add(entry.spotifyEpisodeId);
     }
   }
 
   const consumed = [...consumedEpisodeIds].sort();
+  const completedConsumed = [...completedConsumedEpisodeIds].sort();
   const consumedCount = consumed.length;
   const limitReached = consumedCount >= input.maxEpisodes;
 
@@ -153,6 +157,7 @@ export function evaluatePodcastShowCadenceShadow(input: {
     showId,
     maxEpisodes: input.maxEpisodes,
     consumedEpisodeIds: consumed,
+    completedConsumedEpisodeIds: completedConsumed,
     consumedCount,
     limitReached,
     newEpisodeAllowedByCadence: !limitReached,
