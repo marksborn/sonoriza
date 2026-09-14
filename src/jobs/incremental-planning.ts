@@ -98,7 +98,7 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   sharingPolicyByTargetId?: ReadonlyMap<string, EffectiveSharingPolicy>;
   /** Managed destinations outside this batch, keyed by URI. */
   externalReservationsByUri?: TargetSharingReservationMap;
-  /** MUSIC-05 legacy seam; Gate 5B productive caller passes no provider-derived signals. */
+  /** MUSIC-05 + MUSIC-07 target-local eligibility blockers. */
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
   onBatch?: (source: TSource, batch: IncrementalSourceBatch) => void;
@@ -111,6 +111,27 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
 };
 
 const MAX_MUSIC_REPEAT_PREWRITE_REPLANS = 2;
+
+export function mergeBlockedMusicTrackIdsByTargetId(
+  base: ReadonlyMap<string, ReadonlySet<string>> | undefined,
+  music07: ReadonlyMap<string, ReadonlySet<string>> | undefined,
+): Map<string, ReadonlySet<string>> {
+  const result = new Map<string, ReadonlySet<string>>();
+  const targetIds = new Set<string>([
+    ...(base?.keys() ?? []),
+    ...(music07?.keys() ?? []),
+  ]);
+
+  for (const targetId of targetIds) {
+    const merged = new Set<string>([
+      ...(base?.get(targetId) ?? []),
+      ...(music07?.get(targetId) ?? []),
+    ]);
+    if (merged.size > 0) result.set(targetId, merged);
+  }
+
+  return result;
+}
 
 export async function collectIncrementally<
   TSource extends IncrementalCandidateSource,
@@ -132,6 +153,13 @@ export async function collectIncrementally<
 }: CollectIncrementallyOptions<TSource>): Promise<IncrementalPlanningResult<TSource>> {
   const targetById = new Map(targets.map((target) => [target.targetPlaylistId, target]));
   const relevantKinds = sourceKindsUsedByTargets(targets);
+  const music07BlockedByTargetId =
+    currentMusicRepeatState()?.music07Eligibility?.blockedTrackIdsByTargetId;
+  const effectiveBlockedMusicTrackIdsByTargetId =
+    mergeBlockedMusicTrackIdsByTargetId(
+      blockedMusicTrackIdsByTargetId,
+      music07BlockedByTargetId,
+    );
 
   // #278/#186 keep two independent authorities for Saved Tracks:
   // - direct operational planner use may be approved;
@@ -334,7 +362,7 @@ export async function collectIncrementally<
     sharingPolicyByTargetId,
     externalReservationsByUri,
     preservedByTargetId: activePreservedByTargetId,
-    blockedMusicTrackIdsByTargetId,
+    blockedMusicTrackIdsByTargetId: effectiveBlockedMusicTrackIdsByTargetId,
     initialReserved,
   });
   let qualityFailures = failedTargets(plan);
@@ -353,7 +381,7 @@ export async function collectIncrementally<
       sharingPolicyByTargetId,
       externalReservationsByUri,
       preservedByTargetId: activePreservedByTargetId,
-      blockedMusicTrackIdsByTargetId,
+      blockedMusicTrackIdsByTargetId: effectiveBlockedMusicTrackIdsByTargetId,
       initialReserved,
     });
     qualityFailures = failedTargets(plan);
@@ -451,7 +479,7 @@ export async function collectIncrementally<
       sharingPolicyByTargetId,
       externalReservationsByUri,
       preservedByTargetId: activePreservedByTargetId,
-      blockedMusicTrackIdsByTargetId,
+      blockedMusicTrackIdsByTargetId: effectiveBlockedMusicTrackIdsByTargetId,
       initialReserved,
     });
   };
