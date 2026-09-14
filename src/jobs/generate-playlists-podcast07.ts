@@ -25,6 +25,11 @@ export type {
   GeneratePlaylistsResult,
 } from "./generate-playlists-base";
 
+const PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES = 8;
+const PODCAST07_PLAYBACK_REFRESH_TTL_MS = 60 * 60 * 1000;
+const PODCAST07_PLAYBACK_REFRESH_RECENT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const PODCAST07_PLAYBACK_REFRESH_RECENT_PER_SHOW = 2;
+
 /**
  * PODCAST-07 Gate 7 controlled runtime boundary shared by every generation
  * caller. The pre-Gate-7 generator lives in generate-playlists-base.ts, while
@@ -78,34 +83,67 @@ export async function generatePlaylists(
       ? await loadPodcastSavedEpisodesPublishedHistory(opts.userId, savedSource.id)
       : new Map<string, readonly string[]>();
 
-  // #350: cadence must use current factual playback, not the snapshot that
-  // happened to be observed while collecting candidates. Re-read episodes that
-  // PODCAST-07 has already published under the active default policy before we
-  // freeze the listening-state snapshot used by the cadence runtime.
+  // #350: refresh factual playback before cadence, but never traverse the full
+  // publication history on every generation. Only a small, recent set of
+  // unresolved episodes can produce provider reads:
+  // - at most the two most recently published episodes per show;
+  // - only NOT_STARTED / IN_PROGRESS canonical rows;
+  // - only rows observed in the recent planning window;
+  // - at most eight direct Spotify reads per generation;
+  // - a one-hour TTL prevents repeatedly refreshing the same row.
   //
-  // The direct episode endpoint is already the authoritative path used by the
-  // pre-write completion gate. The canonical merge keeps COMPLETED sticky and
-  // records observedAt as firstProgressObservedAt instead of inventing a past
-  // playback timestamp.
+  // COMPLETED is sticky in the canonical merge, so completed rows never need a
+  // provider refresh here. The normal collection/pre-write paths remain intact.
   if (
     defaultPolicy?.enabled === true &&
     defaultPolicy.cadenceMaxEpisodes !== null &&
     defaultPolicy.cadenceUnit !== null
   ) {
-    const publishedEpisodeIds = [
-      ...new Set(
-        [...defaultPublishedEpisodeIdsByShow.values()].flatMap((ids) => [...ids]),
-      ),
-    ];
-    await refreshAuthoritativePodcastListeningStates(
-      opts.userId,
-      publishedEpisodeIds,
-    );
+    const recentPublishedIds = new Set<string>();
+    for (const episodeIds of defaultPublishedEpisodeIdsByShow.values()) {
+      const uniqueRecent = [...new Set([...episodeIds].reverse())].slice(
+        0,
+        PODCAST07_PLAYBACK_REFRESH_RECENT_PER_SHOW,
+      );
+      for (const episodeId of uniqueRecent) recentPublishedIds.add(episodeId);
+    }
+
+    if (recentPublishedIds.size > 0) {
+      const now = new Date();
+      const staleBefore = new Date(
+        now.getTime() - PODCAST07_PLAYBACK_REFRESH_TTL_MS,
+      );
+      const recentAfter = new Date(
+        now.getTime() - PODCAST07_PLAYBACK_REFRESH_RECENT_WINDOW_MS,
+      );
+      const refreshCandidates = await prisma.episodeListeningState.findMany({
+        where: {
+          userId: opts.userId,
+          spotifyEpisodeId: { in: [...recentPublishedIds] },
+          status: { in: ["NOT_STARTED", "IN_PROGRESS"] },
+          lastObservedAt: {
+            gte: recentAfter,
+            lte: staleBefore,
+          },
+        },
+        orderBy: { lastObservedAt: "desc" },
+        take: PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES,
+        select: { spotifyEpisodeId: true },
+      });
+
+      if (refreshCandidates.length > 0) {
+        await refreshAuthoritativePodcastListeningStates(
+          opts.userId,
+          refreshCandidates.map((entry) => entry.spotifyEpisodeId),
+          now,
+        );
+      }
+    }
   }
 
-  // Read after the authoritative refresh. Previously this snapshot was loaded
-  // in the initial Promise.all, before any provider refresh could correct stale
-  // NOT_STARTED/IN_PROGRESS rows for cadence evaluation.
+  // Read after the bounded authoritative refresh so cadence sees any factual
+  // transition discovered above without turning every generation into a full
+  // playback-state rescan.
   const listeningStates = await prisma.episodeListeningState.findMany({
     where: { userId: opts.userId },
     select: {
