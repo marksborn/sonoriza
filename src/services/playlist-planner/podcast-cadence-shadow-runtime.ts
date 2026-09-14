@@ -314,7 +314,7 @@ function buildPodcast06Projection(input: {
             : "READY_SHADOW";
 
   const showEvidence: Podcast06ShowShadowEvidence[] = [];
-  const blockedNewPodcastShowIds = new Set<string>();
+  const blockedPodcastEpisodeIds = new Set<string>();
 
   for (const policy of [...input.policies.values()].sort((a, b) =>
     a.spotifyShowId.localeCompare(b.spotifyShowId),
@@ -322,18 +322,11 @@ function buildPodcast06Projection(input: {
     const showCandidates = podcastCandidates.filter(
       (candidate) => candidate.programId === policy.spotifyShowId,
     );
-    const continuationIds = showCandidates
-      .filter(
-        (candidate) =>
-          candidate.podcastListeningStatus === "IN_PROGRESS" &&
-          Boolean(candidate.spotifyEpisodeId),
-      )
-      .map((candidate) => candidate.spotifyEpisodeId!)
-      .sort();
 
     let consumedCount: number | null = null;
     let limitReached: boolean | null = null;
     let newEpisodeAllowedByCadence: boolean | null = null;
+    let continuationIds: string[] = [];
     const projectedBlocked: string[] = [];
     const diagnosticCodes: string[] = [];
 
@@ -352,16 +345,27 @@ function buildPodcast06Projection(input: {
       limitReached = evaluation.limitReached;
       newEpisodeAllowedByCadence = evaluation.newEpisodeAllowedByCadence;
 
+      // Continuation is an exception only while the current cadence slot is
+      // occupied by that same IN_PROGRESS episode. Once any episode from the
+      // show is COMPLETED in the current window, the user's quota is consumed
+      // and no other episode from the show may enter until the next window.
+      const allowedContinuationIds = new Set(
+        evaluation.completedConsumedEpisodeIds.length > 0
+          ? []
+          : evaluation.inProgressContinuationEpisodeIds,
+      );
+      continuationIds = [...allowedContinuationIds].sort();
+
       if (evaluation.limitReached) {
         diagnosticCodes.push("SHOW_CADENCE_LIMIT_REACHED");
-        blockedNewPodcastShowIds.add(policy.spotifyShowId);
+        if (evaluation.completedConsumedEpisodeIds.length > 0) {
+          diagnosticCodes.push("SHOW_CADENCE_COMPLETED_SLOT_CONSUMED");
+        }
         for (const candidate of showCandidates) {
-          if (
-            candidate.podcastListeningStatus !== "IN_PROGRESS" &&
-            candidate.spotifyEpisodeId
-          ) {
-            projectedBlocked.push(candidate.spotifyEpisodeId);
-          }
+          const episodeId = candidate.spotifyEpisodeId;
+          if (!episodeId || allowedContinuationIds.has(episodeId)) continue;
+          projectedBlocked.push(episodeId);
+          blockedPodcastEpisodeIds.add(episodeId);
         }
       }
       if (continuationIds.length > 0) {
@@ -389,11 +393,11 @@ function buildPodcast06Projection(input: {
     });
   }
 
-  const eligibleCandidates = podcastCandidates.filter((candidate) => {
-    const programId = normalizedOptionalText(candidate.programId);
-    if (!programId || !blockedNewPodcastShowIds.has(programId)) return true;
-    return candidate.podcastListeningStatus === "IN_PROGRESS";
-  });
+  const eligibleCandidates = podcastCandidates.filter(
+    (candidate) =>
+      !candidate.spotifyEpisodeId ||
+      !blockedPodcastEpisodeIds.has(candidate.spotifyEpisodeId),
+  );
   const projected = stablePriorityProjection(eligibleCandidates, input.policies);
   const actualPoolOrderEpisodeIds = eligibleCandidates.flatMap((candidate) =>
     candidate.spotifyEpisodeId ? [candidate.spotifyEpisodeId] : [],
