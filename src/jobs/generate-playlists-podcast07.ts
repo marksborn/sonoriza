@@ -8,10 +8,15 @@ import {
   type Podcast07ShowOverrideRuntime,
   type Podcast07SourceDescriptor,
 } from "@/services/spotify/podcast-07-runtime";
+import { refreshAuthoritativePodcastListeningStates } from "@/services/spotify/podcast-authoritative-state";
 import { loadPodcastSavedEpisodesPublishedHistory } from "@/services/spotify/podcast-saved-episodes-policy-history";
 import { loadPodcastSavedEpisodesPolicy } from "@/services/spotify/podcast-saved-episodes-policy-store";
 import { loadPodcastShowCadencePolicies } from "@/services/spotify/podcast-show-cadence-policy-store";
 import { loadPodcastShowPolicies } from "@/services/spotify/podcast-show-policy-store";
+import {
+  recentPublishedEpisodeIds,
+  selectPodcast07PlaybackRefreshEpisodeIds,
+} from "@/services/spotify/podcast07-playback-refresh";
 
 import {
   generatePlaylists as baseGeneratePlaylists,
@@ -33,37 +38,27 @@ export type {
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
 ): Promise<GeneratePlaylistsResult> {
-  const [user, podcastSources, cadencePolicies, listeningStates, showPolicies] =
-    await Promise.all([
-      prisma.user.findUnique({
-        where: { id: opts.userId },
-        select: { email: true },
-      }),
-      prisma.sourcePlaylist.findMany({
-        where: { userId: opts.userId, kind: "PODCAST" },
-        orderBy: { id: "asc" },
-        select: {
-          id: true,
-          kind: true,
-          spotifyType: true,
-          spotifyId: true,
-          name: true,
-          enabled: true,
-          includePlayed: true,
-        },
-      }),
-      loadPodcastShowCadencePolicies(opts.userId),
-      prisma.episodeListeningState.findMany({
-        where: { userId: opts.userId },
-        select: {
-          spotifyEpisodeId: true,
-          spotifyShowId: true,
-          status: true,
-          firstProgressObservedAt: true,
-        },
-      }),
-      loadPodcastShowPolicies(opts.userId),
-    ]);
+  const [user, podcastSources, cadencePolicies, showPolicies] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: opts.userId },
+      select: { email: true },
+    }),
+    prisma.sourcePlaylist.findMany({
+      where: { userId: opts.userId, kind: "PODCAST" },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        kind: true,
+        spotifyType: true,
+        spotifyId: true,
+        name: true,
+        enabled: true,
+        includePlayed: true,
+      },
+    }),
+    loadPodcastShowCadencePolicies(opts.userId),
+    loadPodcastShowPolicies(opts.userId),
+  ]);
 
   const savedSourceRow = podcastSources.find(
     (source) => source.spotifyType === "SAVED_EPISODES",
@@ -86,6 +81,61 @@ export async function generatePlaylists(
     savedSource && defaultPolicy?.enabled
       ? await loadPodcastSavedEpisodesPublishedHistory(opts.userId, savedSource.id)
       : new Map<string, readonly string[]>();
+
+  // #350: refresh factual playback before cadence, but never traverse the full
+  // publication history on every generation. The pure selector owns the hard
+  // quota/TTL/window rules; this query is restricted to only the two most recent
+  // published episode IDs per show so the DB work is bounded before provider IO.
+  if (
+    defaultPolicy?.enabled === true &&
+    defaultPolicy.cadenceMaxEpisodes !== null &&
+    defaultPolicy.cadenceUnit !== null
+  ) {
+    const recentPublishedIds = recentPublishedEpisodeIds(
+      defaultPublishedEpisodeIdsByShow,
+    );
+
+    if (recentPublishedIds.size > 0) {
+      const now = new Date();
+      const refreshStateRows = await prisma.episodeListeningState.findMany({
+        where: {
+          userId: opts.userId,
+          spotifyEpisodeId: { in: [...recentPublishedIds] },
+        },
+        select: {
+          spotifyEpisodeId: true,
+          status: true,
+          lastObservedAt: true,
+        },
+      });
+      const refreshEpisodeIds = selectPodcast07PlaybackRefreshEpisodeIds({
+        publishedEpisodeIdsByShow: defaultPublishedEpisodeIdsByShow,
+        listeningStates: refreshStateRows,
+        now,
+      });
+
+      if (refreshEpisodeIds.length > 0) {
+        await refreshAuthoritativePodcastListeningStates(
+          opts.userId,
+          refreshEpisodeIds,
+          now,
+        );
+      }
+    }
+  }
+
+  // Read after the bounded authoritative refresh so cadence sees any factual
+  // transition discovered above without turning every generation into a full
+  // playback-state rescan.
+  const listeningStates = await prisma.episodeListeningState.findMany({
+    where: { userId: opts.userId },
+    select: {
+      spotifyEpisodeId: true,
+      spotifyShowId: true,
+      status: true,
+      firstProgressObservedAt: true,
+    },
+  });
 
   const showOverrides: Podcast07ShowOverrideRuntime[] = podcastSources.flatMap(
     (source) => {
