@@ -69,10 +69,11 @@ type ExistingPodcastListeningState = Pick<
  * not silently make the episode eligible again. Replay remains an explicit
  * source policy.
  *
- * Before completion, progress is monotonic. PODCAST-05 additionally remembers
- * the first observed transition from a known zero-progress canonical state to
- * positive progress. An episode first discovered with existing progress keeps
- * firstProgressObservedAt=null because its real start time is not known.
+ * Before completion, progress is monotonic. PODCAST-05 remembers the first
+ * factual observation of positive progress. If an episode is first discovered
+ * already in progress, observedAt is not an invented playback-start timestamp:
+ * it is the instant at which Sonoriza first observed positive progress. This is
+ * also used to heal legacy IN_PROGRESS/COMPLETED rows that predate the marker.
  *
  * PODCAST-06 keeps the Spotify show identity as immutable episode provenance.
  * A later observation may omit show metadata, but it may never silently move an
@@ -108,14 +109,11 @@ export function mergePodcastListeningState(
     0,
     durationMs,
   );
+  const observedProgress =
+    (observedResume !== null && observedResume > 0) ||
+    observation.fullyPlayed === true;
   const firstProgressObservedAt =
-    existing?.firstProgressObservedAt ??
-    (existing !== null &&
-    existing.resumePositionMs === 0 &&
-    observedResume !== null &&
-    observedResume > 0
-      ? observedAt
-      : null);
+    existing?.firstProgressObservedAt ?? (observedProgress ? observedAt : null);
 
   if (existing?.status === "COMPLETED" || observation.fullyPlayed === true) {
     return {
