@@ -285,9 +285,9 @@ test("Gate 5A ACTIVE requires an exact case-insensitive email allowlist match", 
   );
 });
 
-test("Gate 5A ACTIVE blocks a new episode at cadence limit but keeps IN_PROGRESS", () => {
-  const continuation = podcast({
-    id: "continuation",
+test("Gate 5A ACTIVE blocks stale IN_PROGRESS when a show completed its weekly slot", () => {
+  const staleContinuation = podcast({
+    id: "stale-continuation",
     showId: SCICAST,
     status: "IN_PROGRESS",
   });
@@ -303,6 +303,12 @@ test("Gate 5A ACTIVE blocks a new episode at cadence limit but keeps IN_PROGRESS
         status: "COMPLETED",
         firstProgressObservedAt: new Date("2026-09-07T12:00:00Z"),
       },
+      {
+        spotifyEpisodeId: "stale-continuation",
+        spotifyShowId: SCICAST,
+        status: "IN_PROGRESS",
+        firstProgressObservedAt: new Date("2026-08-30T12:00:00Z"),
+      },
     ],
     timeZone: "America/Sao_Paulo",
     asOf: new Date("2026-09-08T12:00:00Z"),
@@ -312,19 +318,22 @@ test("Gate 5A ACTIVE blocks a new episode at cadence limit but keeps IN_PROGRESS
   });
 
   const output = runWithPodcast06PlannerShadowRuntimeState(state, () =>
-    applyPodcast06PlannerRuntimeToCandidates([next, continuation]),
+    applyPodcast06PlannerRuntimeToCandidates([next, staleContinuation]),
   );
   const summary = podcast06PlannerShadowRuntimeSummary(state);
 
-  assert.deepEqual(output.map((candidate) => candidate.spotifyEpisodeId), [
-    "continuation",
-  ]);
+  assert.deepEqual(output.map((candidate) => candidate.spotifyEpisodeId), []);
   assert.equal(summary.status, "READY_SHADOW");
   assert.equal(summary.plannerInfluence, true);
   assert.equal(summary.effectiveMode, "ACTIVE");
+  assert.deepEqual(summary.shows[0]?.inProgressContinuationEpisodeIds, []);
+  assert.deepEqual(summary.shows[0]?.projectedBlockedEpisodeIds, [
+    "next",
+    "stale-continuation",
+  ]);
   assert.deepEqual(summary.shows[0]?.diagnosticCodes, [
     "SHOW_CADENCE_LIMIT_REACHED",
-    "SHOW_CADENCE_IN_PROGRESS_CONTINUATION",
+    "SHOW_CADENCE_COMPLETED_SLOT_CONSUMED",
   ]);
 });
 
