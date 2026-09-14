@@ -8,6 +8,7 @@ import {
   type Podcast07ShowOverrideRuntime,
   type Podcast07SourceDescriptor,
 } from "@/services/spotify/podcast-07-runtime";
+import { refreshAuthoritativePodcastListeningStates } from "@/services/spotify/podcast-authoritative-state";
 import { loadPodcastSavedEpisodesPublishedHistory } from "@/services/spotify/podcast-saved-episodes-policy-history";
 import { loadPodcastSavedEpisodesPolicy } from "@/services/spotify/podcast-saved-episodes-policy-store";
 import { loadPodcastShowCadencePolicies } from "@/services/spotify/podcast-show-cadence-policy-store";
@@ -33,37 +34,27 @@ export type {
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
 ): Promise<GeneratePlaylistsResult> {
-  const [user, podcastSources, cadencePolicies, listeningStates, showPolicies] =
-    await Promise.all([
-      prisma.user.findUnique({
-        where: { id: opts.userId },
-        select: { email: true },
-      }),
-      prisma.sourcePlaylist.findMany({
-        where: { userId: opts.userId, kind: "PODCAST" },
-        orderBy: { id: "asc" },
-        select: {
-          id: true,
-          kind: true,
-          spotifyType: true,
-          spotifyId: true,
-          name: true,
-          enabled: true,
-          includePlayed: true,
-        },
-      }),
-      loadPodcastShowCadencePolicies(opts.userId),
-      prisma.episodeListeningState.findMany({
-        where: { userId: opts.userId },
-        select: {
-          spotifyEpisodeId: true,
-          spotifyShowId: true,
-          status: true,
-          firstProgressObservedAt: true,
-        },
-      }),
-      loadPodcastShowPolicies(opts.userId),
-    ]);
+  const [user, podcastSources, cadencePolicies, showPolicies] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: opts.userId },
+      select: { email: true },
+    }),
+    prisma.sourcePlaylist.findMany({
+      where: { userId: opts.userId, kind: "PODCAST" },
+      orderBy: { id: "asc" },
+      select: {
+        id: true,
+        kind: true,
+        spotifyType: true,
+        spotifyId: true,
+        name: true,
+        enabled: true,
+        includePlayed: true,
+      },
+    }),
+    loadPodcastShowCadencePolicies(opts.userId),
+    loadPodcastShowPolicies(opts.userId),
+  ]);
 
   const savedSourceRow = podcastSources.find(
     (source) => source.spotifyType === "SAVED_EPISODES",
@@ -86,6 +77,44 @@ export async function generatePlaylists(
     savedSource && defaultPolicy?.enabled
       ? await loadPodcastSavedEpisodesPublishedHistory(opts.userId, savedSource.id)
       : new Map<string, readonly string[]>();
+
+  // #350: cadence must use current factual playback, not the snapshot that
+  // happened to be observed while collecting candidates. Re-read episodes that
+  // PODCAST-07 has already published under the active default policy before we
+  // freeze the listening-state snapshot used by the cadence runtime.
+  //
+  // The direct episode endpoint is already the authoritative path used by the
+  // pre-write completion gate. The canonical merge keeps COMPLETED sticky and
+  // records observedAt as firstProgressObservedAt instead of inventing a past
+  // playback timestamp.
+  if (
+    defaultPolicy?.enabled === true &&
+    defaultPolicy.cadenceMaxEpisodes !== null &&
+    defaultPolicy.cadenceUnit !== null
+  ) {
+    const publishedEpisodeIds = [
+      ...new Set(
+        [...defaultPublishedEpisodeIdsByShow.values()].flatMap((ids) => [...ids]),
+      ),
+    ];
+    await refreshAuthoritativePodcastListeningStates(
+      opts.userId,
+      publishedEpisodeIds,
+    );
+  }
+
+  // Read after the authoritative refresh. Previously this snapshot was loaded
+  // in the initial Promise.all, before any provider refresh could correct stale
+  // NOT_STARTED/IN_PROGRESS rows for cadence evaluation.
+  const listeningStates = await prisma.episodeListeningState.findMany({
+    where: { userId: opts.userId },
+    select: {
+      spotifyEpisodeId: true,
+      spotifyShowId: true,
+      status: true,
+      firstProgressObservedAt: true,
+    },
+  });
 
   const showOverrides: Podcast07ShowOverrideRuntime[] = podcastSources.flatMap(
     (source) => {
