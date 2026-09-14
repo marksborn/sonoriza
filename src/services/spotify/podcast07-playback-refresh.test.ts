@@ -6,7 +6,7 @@ import { createVolatilePodcastListeningStateStore } from "./podcast-listening-st
 import { evaluatePodcastShowCadenceShadow } from "./podcast-show-cadence-shadow";
 import {
   PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES,
-  recentPublishedEpisodeIds,
+  planPodcast07PlaybackRefresh,
   selectPodcast07PlaybackRefreshEpisodeIds,
 } from "./podcast07-playback-refresh";
 
@@ -26,18 +26,36 @@ function row(
   };
 }
 
-test("refresh scope keeps only the two most recently published episodes per show", () => {
-  const ids = recentPublishedEpisodeIds(
-    new Map([
-      ["show-a", ["a-1", "a-2", "a-3", "a-3"]],
-      ["show-b", ["b-1", "b-2", "b-3"]],
-    ]),
-  );
+test("refresh rotates the oldest unresolved episode per show instead of only recent publications", () => {
+  const byShow = new Map<string, readonly string[]>([
+    ["show-a", ["a-old", "a-new-1", "a-new-2"]],
+    ["show-b", ["b-old", "b-new"]],
+  ]);
+  const plan = planPodcast07PlaybackRefresh({
+    publishedEpisodeIdsByShow: byShow,
+    listeningStates: [
+      row("a-old", "NOT_STARTED", 20 * DAY),
+      row("a-new-1", "NOT_STARTED", 3 * HOUR),
+      row("a-new-2", "NOT_STARTED", 2 * HOUR),
+      row("b-old", "IN_PROGRESS", 10 * DAY),
+      row("b-new", "NOT_STARTED", 4 * HOUR),
+    ],
+    now: NOW,
+  });
 
-  assert.deepEqual([...ids].sort(), ["a-2", "a-3", "b-2", "b-3"]);
+  assert.deepEqual(plan.selectedEpisodeIds, [
+    "a-old",
+    "b-old",
+    "b-new",
+    "a-new-1",
+    "a-new-2",
+  ]);
+  assert.equal(plan.eligibleShowCount, 2);
+  assert.equal(plan.selectedShowCount, 2);
+  assert.equal(plan.skippedByBudgetCount, 0);
 });
 
-test("refresh selection enforces TTL, recent window, sticky completion and hard provider cap", () => {
+test("refresh selection keeps TTL, sticky completion and hard provider cap", () => {
   const byShow = new Map<string, readonly string[]>();
   const states = [];
 
@@ -53,32 +71,58 @@ test("refresh selection enforces TTL, recent window, sticky completion and hard 
   byShow.set("show-fresh", ["fresh"]);
   states.push(row("fresh", "IN_PROGRESS", 30 * 60 * 1000));
 
-  byShow.set("show-old", ["old"]);
-  states.push(row("old", "NOT_STARTED", 15 * DAY));
-
-  const selected = selectPodcast07PlaybackRefreshEpisodeIds({
+  const plan = planPodcast07PlaybackRefresh({
     publishedEpisodeIdsByShow: byShow,
     listeningStates: states,
     now: NOW,
   });
 
-  assert.equal(selected.length, PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES);
-  assert.deepEqual(selected, [
-    "episode-0",
-    "episode-1",
-    "episode-2",
-    "episode-3",
-    "episode-4",
-    "episode-5",
-    "episode-6",
+  assert.equal(
+    plan.selectedEpisodeIds.length,
+    PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES,
+  );
+  assert.deepEqual(plan.selectedEpisodeIds, [
+    "episode-11",
+    "episode-10",
+    "episode-9",
+    "episode-8",
     "episode-7",
+    "episode-6",
+    "episode-5",
+    "episode-4",
   ]);
-  assert.equal(selected.includes("completed"), false);
-  assert.equal(selected.includes("fresh"), false);
-  assert.equal(selected.includes("old"), false);
+  assert.equal(plan.eligibleEpisodeCount, 12);
+  assert.equal(plan.eligibleShowCount, 12);
+  assert.equal(plan.selectedShowCount, 8);
+  assert.equal(plan.skippedByBudgetCount, 4);
+  assert.equal(plan.selectedEpisodeIds.includes("completed"), false);
+  assert.equal(plan.selectedEpisodeIds.includes("fresh"), false);
 });
 
-test("#350 Japan regression: stale NOT_STARTED refreshes to COMPLETED before weekly cadence", async () => {
+test("a refreshed row rotates out under TTL on the immediately repeated generation", () => {
+  const byShow = new Map<string, readonly string[]>([["show-a", ["a-1", "a-2"]]]);
+  const first = selectPodcast07PlaybackRefreshEpisodeIds({
+    publishedEpisodeIdsByShow: byShow,
+    listeningStates: [
+      row("a-1", "NOT_STARTED", 5 * HOUR),
+      row("a-2", "NOT_STARTED", 4 * HOUR),
+    ],
+    now: NOW,
+  });
+  assert.deepEqual(first, ["a-1", "a-2"]);
+
+  const second = selectPodcast07PlaybackRefreshEpisodeIds({
+    publishedEpisodeIdsByShow: byShow,
+    listeningStates: [
+      { ...row("a-1", "NOT_STARTED", 5 * HOUR), lastObservedAt: NOW },
+      row("a-2", "NOT_STARTED", 4 * HOUR),
+    ],
+    now: NOW,
+  });
+  assert.deepEqual(second, ["a-2"]);
+});
+
+test("#350 Japan regression: older published episode is selected and completes before weekly cadence", async () => {
   const userId = "cmshwqbpw0000jipbjo70j5nq";
   const showId = "2ncLC8MhGwXeQFGOipZa5z";
   const japanEpisodeId = "65fR8aTTAiOFQVSs9YkCpb";
@@ -97,22 +141,26 @@ test("#350 Japan regression: stale NOT_STARTED refreshes to COMPLETED before wee
   ]);
 
   const selected = selectPodcast07PlaybackRefreshEpisodeIds({
-    publishedEpisodeIdsByShow: new Map([[showId, [japanEpisodeId]]]),
+    publishedEpisodeIdsByShow: new Map([
+      [showId, [japanEpisodeId, "newer-1", "newer-2"]],
+    ]),
     listeningStates: [
       {
         spotifyEpisodeId: japanEpisodeId,
         status: "NOT_STARTED",
         lastObservedAt: new Date("2026-09-14T09:15:20.013Z"),
       },
+      row("newer-1", "NOT_STARTED", 3 * HOUR),
+      row("newer-2", "NOT_STARTED", 2 * HOUR),
     ],
     now: NOW,
   });
-  assert.deepEqual(selected, [japanEpisodeId]);
+  assert.equal(selected[0], japanEpisodeId);
 
   let providerCalls = 0;
   const refreshed = await refreshAuthoritativePodcastListeningStates(
     userId,
-    selected,
+    [japanEpisodeId],
     NOW,
     {
       stateStore: store,
