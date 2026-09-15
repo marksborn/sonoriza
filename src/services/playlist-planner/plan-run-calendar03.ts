@@ -18,6 +18,15 @@ import {
   type PlanRunResult,
   type RunTarget,
 } from "./plan-run";
+import {
+  LEGACY_GLOBAL_SHARING_POLICY,
+} from "./target-sharing-shadow";
+import {
+  addTargetReservations,
+  cloneReservationMap,
+  reservationsForTarget,
+  type TargetSharingRuntimeEvidence,
+} from "./target-sharing-runtime";
 import type {
   Candidate,
   PlanResult,
@@ -74,16 +83,59 @@ export function planRun(input: PlanRunInput): PlanRunResult {
 
     if (preserved.length === 0 && target.durationBlocks?.length) {
       const targetPools = poolsForTarget(input, target, podcastRuntimePool);
+      const reservationOwners = cloneReservationMap(input.externalReservationsByUri);
+      const effectiveSharingPolicy =
+        input.sharingPolicyByTargetId?.get(target.targetPlaylistId) ??
+        LEGACY_GLOBAL_SHARING_POLICY;
+      const sharingReservation = input.sharingPolicyByTargetId
+        ? reservationsForTarget({
+            targetPlaylistId: target.targetPlaylistId,
+            effectiveSharingPolicy,
+            legacyHardReserved: input.initialReserved,
+            reservationsByUri: reservationOwners,
+          })
+        : null;
       const projection = projectCalendar03EventComposition({
         policy,
         blocks: target.durationBlocks,
         rules: target.rules,
         pools: targetPools,
-        reserved: input.initialReserved,
+        reserved:
+          sharingReservation?.forbiddenUris ??
+          new Set(input.initialReserved ?? []),
       });
 
       if (projection.status === "READY_SHADOW") {
         const result = projectionToPlanResult(target, projection);
+        let targetSharingRuntime: TargetSharingRuntimeEvidence | undefined;
+
+        if (sharingReservation && input.sharingPolicyByTargetId) {
+          addTargetReservations({
+            targetPlaylistId: target.targetPlaylistId,
+            sharingPolicy: effectiveSharingPolicy,
+            uris: result.usedUris,
+            reservationsByUri: reservationOwners,
+          });
+          targetSharingRuntime = {
+            gate: 5,
+            mode: "ACTIVE",
+            plannerInfluence: true,
+            legacyHardReservedCount: new Set(input.initialReserved ?? []).size,
+            ownedReservationUriCount: reservationOwners.size,
+            targets: [
+              {
+                targetPlaylistId: target.targetPlaylistId,
+                targetName: target.name,
+                effectiveSharingPolicy,
+                blockedByPolicyCount: sharingReservation.blockedByPolicyCount,
+                shareableReservationCount:
+                  sharingReservation.shareableReservationCount,
+                conflictingTargetIds: sharingReservation.conflictingTargetIds,
+              },
+            ],
+          };
+        }
+
         const runResult: PlanRunResult = {
           targets: [
             {
@@ -92,6 +144,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
               result,
             },
           ],
+          ...(targetSharingRuntime ? { targetSharingRuntime } : {}),
         };
         recordCalendar03RuntimeTargets(state, [
           evidenceFromProjection(target, policy, projection, true),
