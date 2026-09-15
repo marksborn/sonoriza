@@ -162,6 +162,47 @@ test("ACTIVE single-target applies PODCAST_THEN_MUSIC and never crosses the bloc
   assert.equal(planned.stats.compositionQualityPassed, true);
 });
 
+test("ACTIVE single-target honors external EXCLUSIVE reservations and preserves sharing evidence", () => {
+  const state = calendar03State();
+  const shared = music("shared", 10);
+  const fresh = music("fresh", 10);
+
+  const result = runWithCalendar03PlannerRuntimeState(state, () =>
+    planRun({
+      pools: {
+        podcasts: [podcast("p20", "show-a", 20)],
+        music: [shared, fresh],
+      },
+      targets: [target()],
+      sharingPolicyByTargetId: new Map([[TARGET, "EXCLUSIVE" as const]]),
+      externalReservationsByUri: new Map([
+        [
+          shared.uri,
+          [
+            {
+              targetPlaylistId: "trabalho",
+              sharingPolicy: "EXCLUSIVE" as const,
+            },
+          ],
+        ],
+      ]),
+    }),
+  );
+
+  assert.equal(state.evidence.plannerInfluence, true);
+  assert.deepEqual(
+    result.targets[0]!.result.items.map((item) => item.uri),
+    ["spotify:episode:p20", fresh.uri],
+  );
+  assert.equal(result.targets[0]!.result.items.some((item) => item.uri === shared.uri), false);
+  assert.equal(result.targetSharingRuntime?.plannerInfluence, true);
+  assert.equal(result.targetSharingRuntime?.targets[0]?.blockedByPolicyCount, 1);
+  assert.deepEqual(
+    result.targetSharingRuntime?.targets[0]?.conflictingTargetIds,
+    ["trabalho"],
+  );
+});
+
 test("ACTIVE multi-target fails closed to the legacy planner", () => {
   const state = calendar03State({ targets: `${TARGET},other` });
   const result = runWithCalendar03PlannerRuntimeState(state, () =>
