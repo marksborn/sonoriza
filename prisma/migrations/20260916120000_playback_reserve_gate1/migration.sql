@@ -48,6 +48,7 @@ CREATE TABLE "PlaybackReservePolicy" (
     OR
     (
       "reserveMode" = 'DURATION'
+      AND "durationSeconds" IS NOT NULL
       AND "durationSeconds" >= 1
       AND "musicTrackCount" IS NULL
       AND "podcastEpisodeCount" IS NULL
@@ -56,6 +57,7 @@ CREATE TABLE "PlaybackReservePolicy" (
     (
       "reserveMode" = 'MUSIC_TRACKS'
       AND "durationSeconds" IS NULL
+      AND "musicTrackCount" IS NOT NULL
       AND "musicTrackCount" >= 1
       AND "podcastEpisodeCount" IS NULL
       AND "podcastInDurationReserve" = 'DISABLED'
@@ -65,6 +67,7 @@ CREATE TABLE "PlaybackReservePolicy" (
       "reserveMode" = 'PODCAST_EPISODES'
       AND "durationSeconds" IS NULL
       AND "musicTrackCount" IS NULL
+      AND "podcastEpisodeCount" IS NOT NULL
       AND "podcastEpisodeCount" >= 1
       AND "podcastInDurationReserve" = 'DISABLED'
     )
@@ -114,6 +117,7 @@ CREATE TABLE "TargetPlaybackReservePolicy" (
         OR
         (
           "reserveMode" = 'DURATION'
+          AND "durationSeconds" IS NOT NULL
           AND "durationSeconds" >= 1
           AND "musicTrackCount" IS NULL
           AND "podcastEpisodeCount" IS NULL
@@ -122,6 +126,7 @@ CREATE TABLE "TargetPlaybackReservePolicy" (
         (
           "reserveMode" = 'MUSIC_TRACKS'
           AND "durationSeconds" IS NULL
+          AND "musicTrackCount" IS NOT NULL
           AND "musicTrackCount" >= 1
           AND "podcastEpisodeCount" IS NULL
           AND "podcastInDurationReserve" = 'DISABLED'
@@ -131,6 +136,7 @@ CREATE TABLE "TargetPlaybackReservePolicy" (
           "reserveMode" = 'PODCAST_EPISODES'
           AND "durationSeconds" IS NULL
           AND "musicTrackCount" IS NULL
+          AND "podcastEpisodeCount" IS NOT NULL
           AND "podcastEpisodeCount" >= 1
           AND "podcastInDurationReserve" = 'DISABLED'
         )
