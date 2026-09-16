@@ -2,4 +2,4 @@ export {
   generatePlaylists,
   type GeneratePlaylistsOptions,
   type GeneratePlaylistsResult,
-} from "./generate-playlists-podcast07";
+} from "./generate-playlists-playback-reserve";
