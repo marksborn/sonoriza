@@ -76,7 +76,7 @@ function runtime(
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>,
 ): PlaybackReserveShadowRuntimeState {
   return {
-    gate: 3,
+    gate: 4,
     mode: "SHADOW",
     plannerInfluence: false,
     spotifyWriteInfluence: false,
