@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { prisma } from "@/lib/prisma";
+import {
+  loadPlaybackReserveFingerprintEntries,
+  playbackReserveFingerprintPayloadFragment,
+} from "@/services/playback-reserve-gate2";
 import { isValidTimeZone } from "@/services/target-schedule";
 
 type SequenceEntry = "MUSIC" | "PODCAST";
@@ -374,6 +378,12 @@ export async function assessConfiguration(
     scheduleTimezone: target.scheduleTimezone,
   }));
 
+  const playbackReserveFingerprintEntries =
+    await loadPlaybackReserveFingerprintEntries(
+      userId,
+      targets.map((target) => target.id),
+    );
+
   const issues: ConfigurationIssue[] = [];
   const pushIssue = (issue: ConfigurationIssue) => {
     if (!issues.some((current) => current.code === issue.code)) issues.push(issue);
@@ -717,6 +727,9 @@ export async function assessConfiguration(
       windowUnit: musicRepeatPolicy.enabled ? musicRepeatPolicy.windowUnit : null,
     },
     podcastShowCadencePolicies,
+    ...playbackReserveFingerprintPayloadFragment(
+      playbackReserveFingerprintEntries,
+    ),
     sources: sources
       .map((source) => ({
         kind: source.kind,

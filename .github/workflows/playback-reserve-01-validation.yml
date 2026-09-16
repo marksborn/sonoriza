@@ -8,6 +8,9 @@ on:
       - "src/services/playback-reserve-policy.ts"
       - "src/services/playback-reserve-policy.test.ts"
       - "src/services/playback-reserve-policy.integration.test.ts"
+      - "src/services/playback-reserve-gate2.ts"
+      - "src/services/playback-reserve-gate2.test.ts"
+      - "src/services/configuration-readiness.ts"
       - ".github/workflows/playback-reserve-01-validation.yml"
   push:
     branches:
@@ -18,6 +21,9 @@ on:
       - "src/services/playback-reserve-policy.ts"
       - "src/services/playback-reserve-policy.test.ts"
       - "src/services/playback-reserve-policy.integration.test.ts"
+      - "src/services/playback-reserve-gate2.ts"
+      - "src/services/playback-reserve-gate2.test.ts"
+      - "src/services/configuration-readiness.ts"
       - ".github/workflows/playback-reserve-01-validation.yml"
   workflow_dispatch:
 
@@ -62,10 +68,11 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PLAYBACK-RESERVE-01 Gate 1 contract + persistence
+      - name: PLAYBACK-RESERVE-01 Gate 1 + Gate 2 validation
         run: >-
           npx tsx --test
           src/services/playback-reserve-policy.test.ts
           src/services/playback-reserve-policy.integration.test.ts
+          src/services/playback-reserve-gate2.test.ts
       - run: npm run typecheck
       - run: npm run build
