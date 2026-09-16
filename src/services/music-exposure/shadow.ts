@@ -59,6 +59,9 @@ export type MusicExposureShadowEvent = Readonly<{
 }>;
 
 export type MusicExposureShadowProjection = Readonly<{
+  /** Projection identity is target + track. The same Spotify track may appear once per target. */
+  targetPlaylistId: string;
+  targetName: string;
   trackKey: string;
   trackName: string;
   artistName: string;
@@ -115,7 +118,8 @@ export type MusicExposureShadowReport = Readonly<{
  *   consumed inside the observation window;
  * - a matching scrobble for the exposed track confirms consumption and resets
  *   its consecutive unconfirmed-exposure projection;
- * - absence of a scrobble never becomes negative evidence.
+ * - absence of a scrobble never becomes negative evidence;
+ * - streaks/projections are always isolated by targetPlaylistId + trackKey.
  */
 export function buildMusicExposureShadow(input: {
   publications: readonly MusicExposureShadowPublication[];
@@ -245,8 +249,10 @@ export function buildMusicExposureShadow(input: {
     confirmedConsumptionCount: events.filter(
       (event) => event.confirmedConsumptionAt !== null,
     ).length,
-    thresholdTrackCount: projections.filter((row) => row.wouldEnterCooldown).length,
-    uniqueExposedTrackCount: projections.length,
+    thresholdTrackCount: new Set(
+      projections.filter((row) => row.wouldEnterCooldown).map((row) => row.trackKey),
+    ).size,
+    uniqueExposedTrackCount: new Set(projections.map((row) => row.trackKey)).size,
     keepFilledBaselineSkippedCount: [...targetSummaries.values()].reduce(
       (sum, row) => sum + row.keepFilledBaselineSkippedCount,
       0,
@@ -281,10 +287,15 @@ function buildProjection(
   events: readonly MusicExposureShadowEvent[],
   threshold: number,
 ): MusicExposureShadowProjection[] {
-  const byTrack = groupBy(events, (event) => event.trackKey);
+  // #343: projection identity must remain target-local. A track exposed in
+  // Carro and Avulsa produces two independent streaks, never one shared streak.
+  const byTargetTrack = groupBy(
+    events,
+    (event) => `${event.targetPlaylistId}\u0000${event.trackKey}`,
+  );
   const rows: MusicExposureShadowProjection[] = [];
 
-  for (const trackEvents of byTrack.values()) {
+  for (const trackEvents of byTargetTrack.values()) {
     trackEvents.sort(compareEvent);
     let validExposureCount = 0;
     let consecutiveUnconfirmedExposureCount = 0;
@@ -313,6 +324,8 @@ function buildProjection(
 
     const exemplar = trackEvents[trackEvents.length - 1]!;
     rows.push({
+      targetPlaylistId: exemplar.targetPlaylistId,
+      targetName: exemplar.targetName,
       trackKey: exemplar.trackKey,
       trackName: exemplar.trackName,
       artistName: exemplar.artistName,
@@ -338,7 +351,10 @@ function buildProjection(
         left.consecutiveUnconfirmedExposureCount
       );
     }
-    return left.trackKey.localeCompare(right.trackKey);
+    return (
+      left.targetPlaylistId.localeCompare(right.targetPlaylistId) ||
+      left.trackKey.localeCompare(right.trackKey)
+    );
   });
 }
 
