@@ -149,7 +149,9 @@ export async function persistGenerationPlanItemRole(
   const position = nonNegativeInteger(input.position, "position");
   const role = normalizeGenerationPlanRole(input.role);
 
-  let reservePolicy: Prisma.InputJsonValue | typeof Prisma.JsonNull = Prisma.JsonNull;
+  // Prisma.JsonNull is a JSONB literal null, while PRIMARY requires an actual
+  // database NULL so the role/policy shape remains unambiguous at SQL level.
+  let reservePolicy: Prisma.InputJsonValue | typeof Prisma.DbNull = Prisma.DbNull;
 
   if (role === "PRIMARY") {
     if (input.reservePolicy != null) {
