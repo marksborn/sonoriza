@@ -24,6 +24,7 @@ CREATE TABLE "GenerationPlanItemRole" (
     (
       "role" = 'RESERVE'
       AND "reservePolicy" IS NOT NULL
+      AND jsonb_typeof("reservePolicy") = 'object'
     )
   )
 );
