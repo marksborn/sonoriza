@@ -9,6 +9,7 @@ import {
   music07EligibilityRuntimeSummary,
   offMusic07EligibilityRuntimeState,
   resolveMusic07EligibilityScope,
+  selectMusic07ProductiveBlockedTrackIdsByTarget,
   type Music07EligibilityRuntimeState,
 } from "./music-exposure-runtime";
 import type { MusicExposureEligibilityProjection } from "@/services/music-exposure/eligibility-anchor";
@@ -99,7 +100,7 @@ test("GLOBAL requires explicit valid SCOPE and invalid values fail closed", () =
   });
 });
 
-test("Gate 1 ACTIVE retains exactly one allowlisted target", () => {
+test("ALLOWLIST ACTIVE retains exactly one allowlisted target", () => {
   const common = {
     userEmail: "owner@example.com",
     allowedEmails: new Set(["owner@example.com"]),
@@ -148,22 +149,71 @@ test("Gate 1 ACTIVE retains exactly one allowlisted target", () => {
   );
 });
 
-test("Gate 1 refuses ACTIVE GLOBAL even with allowlisted user", () => {
+test("Gate 4 authorizes ACTIVE GLOBAL for an allowlisted user", () => {
   assert.deepEqual(
     evaluateMusic07ActiveScope({
       userEmail: "owner@example.com",
-      targetPlaylistIds: ["target-a", "target-b"],
+      targetPlaylistIds: ["target-a", "target-b", "target-a"],
       allowedEmails: new Set(["owner@example.com"]),
-      allowedTargetIds: new Set(["target-a"]),
+      allowedTargetIds: new Set(["legacy-only"]),
       scopeConfig: resolveMusic07EligibilityScope("GLOBAL"),
     }),
     {
-      allowed: false,
-      status: "ABSTAIN_GLOBAL_ACTIVE_GATE_NOT_ENABLED",
+      allowed: true,
+      status: "READY_ACTIVE",
       targetPlaylistIds: ["target-a", "target-b"],
       legacySingleTargetFilterAllowed: false,
     },
   );
+});
+
+test("Gate 4 GLOBAL without explicit target scope means all projected targets", () => {
+  const decision = evaluateMusic07ActiveScope({
+    userEmail: "owner@example.com",
+    targetPlaylistIds: null,
+    allowedEmails: new Set(["owner@example.com"]),
+    allowedTargetIds: new Set(),
+    scopeConfig: resolveMusic07EligibilityScope("GLOBAL"),
+  });
+  assert.deepEqual(decision, {
+    allowed: true,
+    status: "READY_ACTIVE",
+    targetPlaylistIds: [],
+    legacySingleTargetFilterAllowed: false,
+  });
+
+  const projected = new Map<string, ReadonlySet<string>>([
+    ["target-a", new Set(["A"])],
+    ["target-b", new Set(["B"])],
+  ]);
+  const selected = selectMusic07ProductiveBlockedTrackIdsByTarget(
+    projected,
+    decision,
+    "GLOBAL",
+  );
+  assert.deepEqual([...selected.get("target-a") ?? []], ["A"]);
+  assert.deepEqual([...selected.get("target-b") ?? []], ["B"]);
+});
+
+test("Gate 4 scoped GLOBAL selects only requested target blocked sets", () => {
+  const decision = evaluateMusic07ActiveScope({
+    userEmail: "owner@example.com",
+    targetPlaylistIds: ["target-b"],
+    allowedEmails: new Set(["owner@example.com"]),
+    allowedTargetIds: new Set(),
+    scopeConfig: resolveMusic07EligibilityScope("GLOBAL"),
+  });
+  const projected = new Map<string, ReadonlySet<string>>([
+    ["target-a", new Set(["A"])],
+    ["target-b", new Set(["B"])],
+  ]);
+  const selected = selectMusic07ProductiveBlockedTrackIdsByTarget(
+    projected,
+    decision,
+    "GLOBAL",
+  );
+  assert.equal(selected.has("target-a"), false);
+  assert.deepEqual([...selected.get("target-b") ?? []], ["B"]);
 });
 
 test("ACTIVE requires an allowlisted user", () => {
