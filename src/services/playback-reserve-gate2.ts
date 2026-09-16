@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
@@ -36,7 +36,13 @@ export async function loadPlaybackReserveFingerprintEntries(
   targetPlaylistIds: readonly string[],
 ): Promise<PlaybackReserveFingerprintEntry[]> {
   const normalizedUserId = requiredId(userId, "userId");
-  const targetIds = [...new Set(targetPlaylistIds.map((value) => value.trim()).filter(Boolean))].sort();
+  const targetIds = [
+    ...new Set(
+      targetPlaylistIds
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ].sort();
 
   if (targetIds.length === 0) return [];
 
