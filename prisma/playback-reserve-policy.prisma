@@ -1,13 +1,13 @@
 // ---------------------------------------------------------------------------
-// PLAYBACK-RESERVE-01 Gate 1 — configuration contract and persistence only.
+// PLAYBACK-RESERVE-01 — configuration + explicit plan-role persistence.
 //
-// These models deliberately remain separate from User / TargetPlaylist so the
-// policy can land without changing planner behavior. Missing global policy is
-// equivalent to NONE. Missing target policy is equivalent to INHERIT_GLOBAL.
+// Gate 1 introduced the policy contract with no planner influence. Gate 2 adds
+// a canonical sidecar keyed by (run, target, position) so PRIMARY/RESERVE is
+// stored explicitly rather than inferred from duration or position thresholds.
+// Missing global policy is NONE. Missing target policy is INHERIT_GLOBAL.
 //
-// GenerationPlanRole is introduced here as vocabulary for later gates. Gate 1
-// does not alter GenerationItem and therefore every current generated item
-// remains semantically PRIMARY until a later runtime gate persists the role.
+// Gate 2 still does not alter planner selection/publication. Runtime gates may
+// later persist RESERVE rows together with the effective policy snapshot.
 // ---------------------------------------------------------------------------
 
 enum PlaybackReserveMode {
@@ -59,4 +59,16 @@ model TargetPlaybackReservePolicy {
 
   @@id([userId, targetPlaylistId])
   @@index([userId, policyMode])
+}
+
+model GenerationPlanItemRole {
+  runId            String
+  targetPlaylistId String
+  position         Int
+  role             GenerationPlanRole @default(PRIMARY)
+  reservePolicy    Json?
+  createdAt        DateTime           @default(now())
+
+  @@id([runId, targetPlaylistId, position])
+  @@index([runId, targetPlaylistId, role])
 }
