@@ -14,6 +14,10 @@ import {
 } from "./plan-run-podcast07";
 import { applyPodcast06PlannerRuntimeToCandidates } from "./podcast-cadence-shadow-runtime";
 import {
+  projectCountReserveShadow,
+  type PlaybackReserveCountTargetShadow,
+} from "./playback-reserve-count-shadow";
+import {
   projectDurationReserveShadow,
   type PlaybackReserveDurationTargetShadow,
 } from "./playback-reserve-duration-shadow";
@@ -36,7 +40,7 @@ export type {
 export type PlaybackReserveInactiveTargetShadow = Readonly<{
   targetPlaylistId: string;
   targetName: string;
-  status: "DISABLED_NONE" | "DEFERRED_GATE4" | "NO_POLICY";
+  status: "DISABLED_NONE" | "NO_POLICY";
   plannerInfluence: false;
   spotifyWriteInfluence: false;
   additionalProviderReads: false;
@@ -52,10 +56,11 @@ export type PlaybackReserveInactiveTargetShadow = Readonly<{
 
 export type PlaybackReserveTargetShadowEvidence =
   | PlaybackReserveDurationTargetShadow
+  | PlaybackReserveCountTargetShadow
   | PlaybackReserveInactiveTargetShadow;
 
 export type PlaybackReserveRunShadowEvidence = Readonly<{
-  gate: 3;
+  gate: 4;
   mode: "SHADOW";
   plannerInfluence: false;
   spotifyWriteInfluence: false;
@@ -73,12 +78,12 @@ export type PlanRunResult = BasePlanRunResult &
   }>;
 
 /**
- * PLAYBACK-RESERVE-01 Gate 3 outer planner seam.
+ * PLAYBACK-RESERVE-01 Gate 4 outer planner seam.
  *
  * PRIMARY is always planned first by the complete pre-existing stack. Only
- * after that immutable result exists do we project DURATION reserve segments.
- * The projection receives no authority to modify PRIMARY, request more provider
- * pages or influence Spotify writes.
+ * after that immutable result exists do we project DURATION, MUSIC_TRACKS or
+ * PODCAST_EPISODES reserve segments. The projection receives no authority to
+ * modify PRIMARY, request more provider pages or influence Spotify writes.
  */
 export function planRun(input: PlanRunInput): PlanRunResult {
   const primary = basePlanRun(input);
@@ -135,10 +140,6 @@ export function planRun(input: PlanRunInput): PlanRunResult {
       targets.push(inactiveEvidence(target, planned.result, policy, "DISABLED_NONE"));
       continue;
     }
-    if (policy.reserveMode !== "DURATION") {
-      targets.push(inactiveEvidence(target, planned.result, policy, "DEFERRED_GATE4"));
-      continue;
-    }
 
     const allowedSourceIds = input.sourceIdsByTargetId?.get(target.targetPlaylistId);
     const targetMusicPool = filterConfiguredSourceCandidates(
@@ -174,7 +175,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     const reserved = new Set(shadowReservation.forbiddenUris);
     for (const item of planned.result.items) reserved.add(item.uri);
 
-    const projection = projectDurationReserveShadow({
+    const commonInput = {
       targetPlaylistId: target.targetPlaylistId,
       targetName: target.name,
       policy,
@@ -186,7 +187,12 @@ export function planRun(input: PlanRunInput): PlanRunResult {
       },
       reservedUris: reserved,
       podcastProgramCounts: shadowPodcastProgramCounts,
-    });
+    };
+
+    const projection =
+      policy.reserveMode === "DURATION"
+        ? projectDurationReserveShadow(commonInput)
+        : projectCountReserveShadow(commonInput);
     targets.push(projection);
 
     addTargetReservations({
@@ -202,7 +208,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
   }
 
   const evidence: PlaybackReserveRunShadowEvidence = Object.freeze({
-    gate: 3,
+    gate: 4,
     mode: "SHADOW",
     plannerInfluence: false,
     spotifyWriteInfluence: false,
