@@ -1,0 +1,62 @@
+// ---------------------------------------------------------------------------
+// PLAYBACK-RESERVE-01 Gate 1 — configuration contract and persistence only.
+//
+// These models deliberately remain separate from User / TargetPlaylist so the
+// policy can land without changing planner behavior. Missing global policy is
+// equivalent to NONE. Missing target policy is equivalent to INHERIT_GLOBAL.
+//
+// GenerationPlanRole is introduced here as vocabulary for later gates. Gate 1
+// does not alter GenerationItem and therefore every current generated item
+// remains semantically PRIMARY until a later runtime gate persists the role.
+// ---------------------------------------------------------------------------
+
+enum PlaybackReserveMode {
+  NONE
+  DURATION
+  MUSIC_TRACKS
+  PODCAST_EPISODES
+}
+
+enum PlaybackReservePodcastMode {
+  DISABLED
+  IF_FITS
+}
+
+enum TargetPlaybackReservePolicyMode {
+  INHERIT_GLOBAL
+  OVERRIDE
+}
+
+enum GenerationPlanRole {
+  PRIMARY
+  RESERVE
+}
+
+model PlaybackReservePolicy {
+  userId                   String                      @id
+  reserveMode              PlaybackReserveMode         @default(NONE)
+  durationSeconds          Int?
+  musicTrackCount          Int?
+  podcastEpisodeCount      Int?
+  podcastInDurationReserve PlaybackReservePodcastMode   @default(DISABLED)
+  createdAt                DateTime                     @default(now())
+  updatedAt                DateTime                     @updatedAt
+
+  @@index([reserveMode])
+}
+
+model TargetPlaybackReservePolicy {
+  userId                   String
+  targetPlaylistId         String
+  policyMode               TargetPlaybackReservePolicyMode @default(INHERIT_GLOBAL)
+  reserveMode              PlaybackReserveMode?
+  durationSeconds          Int?
+  musicTrackCount          Int?
+  podcastEpisodeCount      Int?
+  podcastInDurationReserve PlaybackReservePodcastMode?
+  createdAt                DateTime                        @default(now())
+  updatedAt                DateTime                        @updatedAt
+
+  @@id([userId, targetPlaylistId])
+  @@index([userId, policyMode])
+}
