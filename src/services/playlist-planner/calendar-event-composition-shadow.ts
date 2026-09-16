@@ -1,5 +1,6 @@
 import type { CalendarEventCompositionPolicySnapshot } from "../calendar-event-composition-policy";
 import { planPlaylist, type PlannerPools } from "./planner";
+import { selectFittingPodcastsInCanonicalOrder } from "./podcast-fit";
 import type {
   Candidate,
   DurationPlanningBlock,
@@ -93,51 +94,29 @@ export function projectCalendar03EventComposition(
     const targetDurationMs = Math.max(0, block.targetDurationMs);
     const podcastUsableDurationMs = Math.max(0, targetDurationMs - safetyMarginMs);
     const podcastAttempted = eventReceivesPodcast(input.policy, blockIndex);
-    const selectedPodcasts: Candidate[] = [];
-    const strictProgramBlocked = new Set<string>();
-    let podcastDurationMs = 0;
 
-    if (podcastAttempted && podcastUsableDurationMs > 0) {
-      for (const candidate of input.pools.podcasts) {
-        if (selectedPodcasts.length >= input.policy.maxPodcastsPerEvent) break;
-        if (candidate.type !== "PODCAST") continue;
-        if (localReserved.has(candidate.uri)) continue;
+    const podcastFit =
+      podcastAttempted && podcastUsableDurationMs > 0
+        ? selectFittingPodcastsInCanonicalOrder({
+            candidates: input.pools.podcasts,
+            reservedUris: localReserved,
+            budgetMs: podcastUsableDurationMs,
+            maxCount: input.policy.maxPodcastsPerEvent,
+            programCounts,
+            rules: input.rules,
+          })
+        : { selected: [] as readonly Candidate[], selectedDurationMs: 0 };
 
-        const programId = candidate.programId?.trim();
-        if (!programId) continue;
-        if (strictProgramBlocked.has(programId)) continue;
+    const selectedPodcasts = [...podcastFit.selected];
+    const podcastDurationMs = podcastFit.selectedDurationMs;
 
-        const effectiveDurationMs = Math.max(0, candidate.durationMs);
-        if (effectiveDurationMs <= 0) continue;
-
-        const cap = effectiveProgramCap(candidate, input.rules);
-        if ((programCounts.get(programId) ?? 0) >= cap) continue;
-
-        const remainingPodcastWindowMs = Math.max(
-          0,
-          podcastUsableDurationMs - podcastDurationMs,
-        );
-        const maxPodcastDurationMs = input.rules.maxPodcastDurationMs ?? null;
-        const fitsDestinationCap =
-          maxPodcastDurationMs === null ||
-          effectiveDurationMs <= Math.max(0, maxPodcastDurationMs);
-        const fitsCurrentWindow = effectiveDurationMs <= remainingPodcastWindowMs;
-
-        if (!fitsDestinationCap || !fitsCurrentWindow) {
-          if (candidate.podcastStrictSequence) strictProgramBlocked.add(programId);
-          continue;
-        }
-
-        selectedPodcasts.push(
-          programId === candidate.programId
-            ? candidate
-            : { ...candidate, programId },
-        );
-        podcastDurationMs += effectiveDurationMs;
+    for (const podcast of selectedPodcasts) {
+      const programId = podcast.programId?.trim();
+      if (programId) {
         programCounts.set(programId, (programCounts.get(programId) ?? 0) + 1);
-        localReserved.add(candidate.uri);
-        usedUris.add(candidate.uri);
       }
+      localReserved.add(podcast.uri);
+      usedUris.add(podcast.uri);
     }
 
     const blockStartPosition = selected.length;
@@ -236,13 +215,6 @@ function eventReceivesPodcast(
 ): boolean {
   if (policy.podcastEventDistribution === "EVERY_EVENT") return true;
   return blockIndex % policy.podcastEveryNEvents === policy.podcastEventOffset;
-}
-
-function effectiveProgramCap(candidate: Candidate, rules: PlaylistRules): number {
-  const targetCap = Math.max(1, Math.trunc(rules.maxEpisodesPerProgram || 1));
-  const showCap = candidate.podcastMaxEpisodesPerCycle;
-  if (!Number.isInteger(showCap) || Number(showCap) < 1) return targetCap;
-  return Math.min(targetCap, Number(showCap));
 }
 
 function emptyProjection(status: Exclude<Calendar03ShadowStatus, "READY_SHADOW">) {
