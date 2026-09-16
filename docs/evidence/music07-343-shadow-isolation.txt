@@ -1,0 +1,9 @@
+2026-09-16 MUSIC-07 #343 production evidence
+
+GLOBAL+SHADOW: 5 real runs, 5 ready shadow, productiveViolationCount=0, abstentionCount=0.
+Targets observed: Carro, Trabalho, Avulsa.
+Canonical projection: 2 anchors, both Carro.
+Global canonical anchors exactly equal union of per-target projections: onlyGlobal=[], onlyIsolated=[].
+Natural cross-target witnesses: 8 cases where summed streak across targets reached 4 but max target-local streak stayed below 4; no anchor was created.
+Legacy shadow.projections diagnostic mismatch count: 28, confirming it aggregated streaks by track across targets even though canonical eligibility anchors remained isolated.
+This branch fixes shadow.projections to group by targetPlaylistId + trackKey and adds regression tests for cross-target N-1 + 1 isolation.
