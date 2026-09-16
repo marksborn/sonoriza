@@ -14,7 +14,6 @@ export type Music07EligibilityRuntimeStatus =
   | "READY_SHADOW"
   | "READY_ACTIVE"
   | "ABSTAIN_SCOPE_INVALID"
-  | "ABSTAIN_GLOBAL_ACTIVE_GATE_NOT_ENABLED"
   | "ABSTAIN_USER_NOT_ALLOWLISTED"
   | "ABSTAIN_SINGLE_TARGET_SCOPE_REQUIRED"
   | "ABSTAIN_TARGET_NOT_ALLOWLISTED"
@@ -39,13 +38,13 @@ export type Music07EligibilityRuntimeState = {
   status: Music07EligibilityRuntimeStatus;
   projection: MusicExposureEligibilityProjection | null;
   /**
-   * Legacy single-target Gate 4 seam. Explicit GLOBAL never populates this set,
-   * so the old shared-pool filter cannot leak one target's cooldown to another.
+   * Legacy single-target seam. GLOBAL intentionally leaves this empty so the
+   * shared-pool filter can never union cooldowns from different targets.
    */
   blockedTrackIds: ReadonlySet<string>;
-  /** Gate 1 projection for the target-aware planner seam introduced in #343. */
+  /** Target-local projection derived from active SONORIZA_EXPOSURE anchors. */
   projectedBlockedTrackIdsByTargetId: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Productive subset. GLOBAL remains empty until a later approved gate wires it. */
+  /** Productive target-local subset authorized by the current rollout scope. */
   blockedTrackIdsByTargetId: ReadonlyMap<string, ReadonlySet<string>>;
   exposureCooldownSkippedCount: number;
   exposureCooldownSkippedCountByTargetId: Map<string, number>;
@@ -57,21 +56,20 @@ export type Music07ActiveScopeDecision = Readonly<{
   status:
     | "READY_ACTIVE"
     | "ABSTAIN_SCOPE_INVALID"
-    | "ABSTAIN_GLOBAL_ACTIVE_GATE_NOT_ENABLED"
     | "ABSTAIN_USER_NOT_ALLOWLISTED"
     | "ABSTAIN_SINGLE_TARGET_SCOPE_REQUIRED"
     | "ABSTAIN_TARGET_NOT_ALLOWLISTED";
+  /** Empty under GLOBAL means all targets represented by the runtime projection. */
   targetPlaylistIds: readonly string[];
   legacySingleTargetFilterAllowed: boolean;
 }>;
 
 /**
- * #343 Gate 1 scope contract.
+ * #343 rollout scope contract.
  *
- * Missing SCOPE deliberately means legacy ALLOWLIST, not GLOBAL. This preserves
- * the already-deployed single-target pilot after code deployment. GLOBAL is an
- * explicit opt-in and, in this gate, is shadow-only: ACTIVE global influence is
- * fail-closed until the target-aware planner wiring is separately approved.
+ * Missing SCOPE deliberately means legacy ALLOWLIST, never GLOBAL. GLOBAL is
+ * always an explicit opt-in; an empty TARGET_IDS list therefore cannot expand
+ * rollout by itself.
  */
 export function resolveMusic07EligibilityScope(
   value: string | undefined,
@@ -100,12 +98,12 @@ export function resolveMusic07EligibilityScope(
 }
 
 /**
- * Gate 4 compatibility boundary plus #343 Gate 1 scope validation.
+ * #343 Gate 4 active scope decision.
  *
- * ALLOWLIST intentionally retains the exact single-target productive rule in
- * Gate 1. That prevents a deployment of this branch from expanding the current
- * pilot merely because SCOPE was added. GLOBAL may be observed in SHADOW, but
- * productive GLOBAL activation is deliberately refused by this gate.
+ * ALLOWLIST preserves the original single-target productive guard. GLOBAL is
+ * productive only when explicitly selected and the user is allowlisted. Target
+ * isolation is enforced later by blockedTrackIdsByTargetId; the legacy shared
+ * filter stays disabled for GLOBAL.
  */
 export function evaluateMusic07ActiveScope(input: {
   userEmail: string | null;
@@ -135,16 +133,17 @@ export function evaluateMusic07ActiveScope(input: {
     };
   }
 
+  const targetPlaylistIds = normalizeTargetIds(input.targetPlaylistIds);
+
   if (scopeConfig.scope === "GLOBAL") {
     return {
-      allowed: false,
-      status: "ABSTAIN_GLOBAL_ACTIVE_GATE_NOT_ENABLED",
-      targetPlaylistIds: normalizeTargetIds(input.targetPlaylistIds),
+      allowed: true,
+      status: "READY_ACTIVE",
+      targetPlaylistIds,
       legacySingleTargetFilterAllowed: false,
     };
   }
 
-  const targetPlaylistIds = normalizeTargetIds(input.targetPlaylistIds);
   if (targetPlaylistIds.length !== 1) {
     return {
       allowed: false,
@@ -165,8 +164,8 @@ export function evaluateMusic07ActiveScope(input: {
     allowed: true,
     status: "READY_ACTIVE",
     targetPlaylistIds,
-    // Both implicit legacy scope and explicit ALLOWLIST remain equivalent in
-    // Gate 1: one target only, so the existing shared candidate filter is safe.
+    // Implicit legacy scope and explicit ALLOWLIST remain equivalent: one
+    // target only, so the existing shared candidate filter is safe.
     legacySingleTargetFilterAllowed: true,
   };
 }
@@ -181,6 +180,32 @@ export function groupMusic07ActiveTrackIdsByTarget(
     mutable.set(anchor.targetPlaylistId, bucket);
   }
   return new Map(mutable);
+}
+
+/**
+ * Selects the productive target-local blocked sets authorized by the rollout.
+ * GLOBAL + no explicit target scope means every target represented by the
+ * projection. A scoped scheduled run only receives the requested targets.
+ */
+export function selectMusic07ProductiveBlockedTrackIdsByTarget(
+  projected: ReadonlyMap<string, ReadonlySet<string>>,
+  activeDecision: Music07ActiveScopeDecision | null,
+  scope: Music07EligibilityScope,
+): Map<string, ReadonlySet<string>> {
+  const selected = new Map<string, ReadonlySet<string>>();
+  if (!activeDecision?.allowed) return selected;
+
+  const targetPlaylistIds =
+    scope === "GLOBAL" && activeDecision.targetPlaylistIds.length === 0
+      ? [...projected.keys()]
+      : activeDecision.targetPlaylistIds;
+
+  for (const targetPlaylistId of targetPlaylistIds) {
+    const ids = projected.get(targetPlaylistId);
+    if (ids?.size) selected.set(targetPlaylistId, ids);
+  }
+
+  return selected;
 }
 
 export async function prepareMusic07EligibilityRuntime(input: {
@@ -256,14 +281,13 @@ export async function prepareMusic07EligibilityRuntime(input: {
 
     const projectedBlockedTrackIdsByTargetId =
       groupMusic07ActiveTrackIdsByTarget(projection);
-    const blockedTrackIdsByTargetId = new Map<string, ReadonlySet<string>>();
-
-    if (productiveInfluenceAllowed && activeDecision) {
-      for (const targetPlaylistId of activeDecision.targetPlaylistIds) {
-        const ids = projectedBlockedTrackIdsByTargetId.get(targetPlaylistId);
-        if (ids?.size) blockedTrackIdsByTargetId.set(targetPlaylistId, ids);
-      }
-    }
+    const blockedTrackIdsByTargetId = productiveInfluenceAllowed
+      ? selectMusic07ProductiveBlockedTrackIdsByTarget(
+          projectedBlockedTrackIdsByTargetId,
+          activeDecision,
+          scopeConfig.scope,
+        )
+      : new Map<string, ReadonlySet<string>>();
 
     const legacyBlockedTrackIds =
       productiveInfluenceAllowed &&
@@ -321,7 +345,7 @@ export async function prepareMusic07EligibilityRuntime(input: {
   }
 }
 
-/** Legacy single-target candidate seam retained for the existing Gate 4 pilot. */
+/** Legacy single-target candidate seam retained for ALLOWLIST compatibility. */
 export function applyMusic07EligibilityToCandidates(
   candidates: Candidate[],
   state: Music07EligibilityRuntimeState,
@@ -335,10 +359,7 @@ export function applyMusic07EligibilityToCandidates(
   return filtered.candidates;
 }
 
-/**
- * #343 Gate 1 target-aware seam. This is safe to wire in a later gate because
- * the blocked set is selected only from the requested target's own anchors.
- */
+/** Target-aware productive seam used by GLOBAL and target-local planning. */
 export function applyMusic07EligibilityToCandidatesForTarget(
   targetPlaylistId: string,
   candidates: Candidate[],
@@ -502,9 +523,8 @@ function music07TargetDiagnostics(
 function csvSet(value: string | undefined): Set<string> {
   return new Set(
     (value ?? "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-      .map((entry) => (entry.includes("@") ? entry.toLowerCase() : entry)),
+      .split(/[\n,]/)
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean),
   );
 }
