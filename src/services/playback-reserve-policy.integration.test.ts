@@ -206,9 +206,37 @@ databaseTest(
         prisma.playbackReservePolicy.create({
           data: {
             userId,
+            reserveMode: "DURATION",
+            durationSeconds: null,
+            musicTrackCount: null,
+            podcastEpisodeCount: null,
+            podcastInDurationReserve: "DISABLED",
+          },
+        }),
+      );
+
+      await assert.rejects(() =>
+        prisma.playbackReservePolicy.create({
+          data: {
+            userId,
             reserveMode: "MUSIC_TRACKS",
             durationSeconds: 900,
             musicTrackCount: 5,
+            podcastInDurationReserve: "DISABLED",
+          },
+        }),
+      );
+
+      await assert.rejects(() =>
+        prisma.targetPlaybackReservePolicy.create({
+          data: {
+            userId,
+            targetPlaylistId,
+            policyMode: "OVERRIDE",
+            reserveMode: "DURATION",
+            durationSeconds: null,
+            musicTrackCount: null,
+            podcastEpisodeCount: null,
             podcastInDurationReserve: "DISABLED",
           },
         }),
