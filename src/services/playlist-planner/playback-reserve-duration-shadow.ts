@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { EffectivePlaybackReservePolicySnapshot } from "@/services/playback-reserve-policy";
 
 import { planPlaylist, type PlannerPools } from "./planner";
+import { selectFittingPodcastsInCanonicalOrder } from "./podcast-fit";
 import type { Candidate, PlanResult, PlaylistRules } from "./types";
 
 export type PlaybackReserveShadowSelectedItem = Readonly<{
@@ -63,18 +64,24 @@ export type ProjectDurationReserveShadowInput = Readonly<{
 }>;
 
 /**
- * PLAYBACK-RESERVE-01 Gate 3.
+ * PLAYBACK-RESERVE-01 Gate 5.
  *
- * Projects a DURATION reserve after an already-certified PRIMARY plan. The
- * projection is deliberately pure: it never mutates PRIMARY, never writes to
- * Spotify and never asks the provider for more candidates. It can only consume
- * the candidate pool that PRIMARY collection already made available.
+ * Projects a DURATION reserve after an already-certified PRIMARY plan. Podcast
+ * IF_FITS delegates to the same canonical whole-episode fit selector used by
+ * CALENDAR-03: candidate order remains authoritative, duration is only a fit
+ * filter, and Candidate.durationMs is the effective listening duration (for an
+ * IN_PROGRESS episode, the remaining duration supplied by ingestion/runtime).
+ *
+ * The projection remains deliberately pure: it never mutates PRIMARY, never
+ * writes to Spotify and never asks the provider for more candidates. It can
+ * only consume the candidate pool that PRIMARY collection already made
+ * available.
  */
 export function projectDurationReserveShadow(
   input: ProjectDurationReserveShadowInput,
 ): PlaybackReserveDurationTargetShadow {
   if (input.policy.reserveMode !== "DURATION") {
-    throw new Error("Gate 3 duration shadow requires reserveMode DURATION.");
+    throw new Error("Gate 5 duration shadow requires reserveMode DURATION.");
   }
 
   const requestedDurationMs = Math.max(
@@ -82,47 +89,40 @@ export function projectDurationReserveShadow(
     Number(input.policy.durationSeconds ?? 0) * 1000,
   );
   if (requestedDurationMs <= 0) {
-    throw new Error("Gate 3 duration shadow requires a positive duration budget.");
+    throw new Error("Gate 5 duration shadow requires a positive duration budget.");
   }
 
   const primaryItems = input.primary.items;
   const reserved = new Set<string>(input.reservedUris ?? []);
   for (const item of primaryItems) reserved.add(item.uri);
 
-  const programCounts = new Map(input.podcastProgramCounts ?? []);
   const selected: Candidate[] = [];
+  let podcastDurationMs = 0;
 
   let podcastDecision: PlaybackReserveDurationTargetShadow["reserve"]["podcastDecision"] =
     "DISABLED";
 
   if (input.policy.podcastInDurationReserve === "IF_FITS") {
-    const podcast = firstFittingPodcast({
+    const podcastFit = selectFittingPodcastsInCanonicalOrder({
       candidates: input.pools.podcasts,
-      reserved,
+      reservedUris: reserved,
       budgetMs: requestedDurationMs,
-      programCounts,
+      maxCount: 1,
+      programCounts: input.podcastProgramCounts,
       rules: input.rules,
     });
+    const podcast = podcastFit.selected[0] ?? null;
 
     if (podcast) {
       selected.push(podcast);
       reserved.add(podcast.uri);
-      if (podcast.programId) {
-        programCounts.set(
-          podcast.programId,
-          (programCounts.get(podcast.programId) ?? 0) + 1,
-        );
-      }
+      podcastDurationMs = podcastFit.selectedDurationMs;
       podcastDecision = "RESERVE_PODCAST_SELECTED";
     } else {
       podcastDecision = "RESERVE_PODCAST_NO_FITTING_CANDIDATE";
     }
   }
 
-  const podcastDurationMs = selected.reduce(
-    (sum, item) => sum + Math.max(0, item.durationMs),
-    0,
-  );
   const musicBudgetMs = Math.max(0, requestedDurationMs - podcastDurationMs);
 
   if (musicBudgetMs > 0) {
@@ -199,53 +199,6 @@ export function projectDurationReserveShadow(
       selectedItems: Object.freeze(selectedItems),
     }),
   });
-}
-
-function firstFittingPodcast(input: {
-  candidates: readonly Candidate[];
-  reserved: ReadonlySet<string>;
-  budgetMs: number;
-  programCounts: ReadonlyMap<string, number>;
-  rules: PlaylistRules;
-}): Candidate | null {
-  const strictBlockedPrograms = new Set<string>();
-
-  for (const candidate of input.candidates) {
-    if (candidate.type !== "PODCAST") continue;
-    if (input.reserved.has(candidate.uri)) continue;
-
-    const programId = candidate.programId?.trim();
-    if (!programId) continue;
-    if (strictBlockedPrograms.has(programId)) continue;
-
-    const cap = effectivePodcastCap(candidate, input.rules);
-    if ((input.programCounts.get(programId) ?? 0) >= cap) continue;
-
-    const durationMs = Math.max(0, candidate.durationMs);
-    const maxPodcastDurationMs = input.rules.maxPodcastDurationMs ?? null;
-    const exceedsConfiguredMax =
-      maxPodcastDurationMs !== null && durationMs > maxPodcastDurationMs;
-    const fits =
-      durationMs > 0 &&
-      durationMs <= input.budgetMs &&
-      !exceedsConfiguredMax;
-
-    if (!fits) {
-      if (candidate.podcastStrictSequence) strictBlockedPrograms.add(programId);
-      continue;
-    }
-
-    return candidate;
-  }
-
-  return null;
-}
-
-function effectivePodcastCap(candidate: Candidate, rules: PlaylistRules): number {
-  const targetCap = Math.max(1, Math.trunc(rules.maxEpisodesPerProgram || 1));
-  const showCap = candidate.podcastMaxEpisodesPerCycle;
-  if (!Number.isInteger(showCap) || Number(showCap) < 1) return targetCap;
-  return Math.min(targetCap, Number(showCap));
 }
 
 function primaryOrderHash(items: readonly Candidate[]): string {

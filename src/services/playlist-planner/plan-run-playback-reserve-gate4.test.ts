@@ -102,7 +102,7 @@ function runtime(
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>,
 ): PlaybackReserveShadowRuntimeState {
   return {
-    gate: 4,
+    gate: 5,
     mode: "SHADOW",
     plannerInfluence: false,
     spotifyWriteInfluence: false,
@@ -144,7 +144,7 @@ test("Gate 4 MUSIC_TRACKS keeps all PRIMARY immutable before selecting reserve",
   );
 
   assert.deepEqual(primaryProjection(result), primaryProjection(baseline));
-  assert.equal(result.playbackReserveShadow?.gate, 4);
+  assert.equal(result.playbackReserveShadow?.gate, 5);
   const a = result.playbackReserveShadow?.targets.find(
     (entry) => entry.targetPlaylistId === "a",
   );

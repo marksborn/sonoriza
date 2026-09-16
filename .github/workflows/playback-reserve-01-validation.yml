@@ -12,8 +12,13 @@ on:
       - "src/services/playback-reserve-gate2.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/configuration-readiness.ts"
+      - "src/services/playlist-planner/podcast-fit.ts"
+      - "src/services/playlist-planner/podcast-fit.test.ts"
+      - "src/services/playlist-planner/calendar-event-composition-shadow.ts"
+      - "src/services/playlist-planner/calendar-event-composition-shadow.test.ts"
       - "src/services/playlist-planner/playback-reserve-duration-shadow.ts"
       - "src/services/playlist-planner/playback-reserve-duration-shadow.test.ts"
+      - "src/services/playlist-planner/playback-reserve-duration-gate5.test.ts"
       - "src/services/playlist-planner/playback-reserve-count-shadow.ts"
       - "src/services/playlist-planner/playback-reserve-count-shadow.test.ts"
       - "src/services/playlist-planner/plan-run-playback-reserve.ts"
@@ -36,8 +41,13 @@ on:
       - "src/services/playback-reserve-gate2.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/configuration-readiness.ts"
+      - "src/services/playlist-planner/podcast-fit.ts"
+      - "src/services/playlist-planner/podcast-fit.test.ts"
+      - "src/services/playlist-planner/calendar-event-composition-shadow.ts"
+      - "src/services/playlist-planner/calendar-event-composition-shadow.test.ts"
       - "src/services/playlist-planner/playback-reserve-duration-shadow.ts"
       - "src/services/playlist-planner/playback-reserve-duration-shadow.test.ts"
+      - "src/services/playlist-planner/playback-reserve-duration-gate5.test.ts"
       - "src/services/playlist-planner/playback-reserve-count-shadow.ts"
       - "src/services/playlist-planner/playback-reserve-count-shadow.test.ts"
       - "src/services/playlist-planner/plan-run-playback-reserve.ts"
@@ -90,13 +100,16 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PLAYBACK-RESERVE-01 Gate 1 + Gate 2 + Gate 3 + Gate 4 validation
+      - name: PLAYBACK-RESERVE-01 Gates 1-5 validation
         run: >-
           npx tsx --test
           src/services/playback-reserve-policy.test.ts
           src/services/playback-reserve-policy.integration.test.ts
           src/services/playback-reserve-gate2.test.ts
+          src/services/playlist-planner/podcast-fit.test.ts
+          src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/playback-reserve-duration-shadow.test.ts
+          src/services/playlist-planner/playback-reserve-duration-gate5.test.ts
           src/services/playlist-planner/playback-reserve-count-shadow.test.ts
           src/services/playlist-planner/plan-run-playback-reserve.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts

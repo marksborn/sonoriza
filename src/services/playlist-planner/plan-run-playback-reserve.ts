@@ -60,7 +60,7 @@ export type PlaybackReserveTargetShadowEvidence =
   | PlaybackReserveInactiveTargetShadow;
 
 export type PlaybackReserveRunShadowEvidence = Readonly<{
-  gate: 4;
+  gate: 5;
   mode: "SHADOW";
   plannerInfluence: false;
   spotifyWriteInfluence: false;
@@ -78,12 +78,13 @@ export type PlanRunResult = BasePlanRunResult &
   }>;
 
 /**
- * PLAYBACK-RESERVE-01 Gate 4 outer planner seam.
+ * PLAYBACK-RESERVE-01 Gate 5 outer planner seam.
  *
  * PRIMARY is always planned first by the complete pre-existing stack. Only
  * after that immutable result exists do we project DURATION, MUSIC_TRACKS or
- * PODCAST_EPISODES reserve segments. The projection receives no authority to
- * modify PRIMARY, request more provider pages or influence Spotify writes.
+ * PODCAST_EPISODES reserve segments. DURATION/IF_FITS uses the shared
+ * CALENDAR-03 whole-episode fit authority. The projection receives no authority
+ * to modify PRIMARY, request more provider pages or influence Spotify writes.
  */
 export function planRun(input: PlanRunInput): PlanRunResult {
   const primary = basePlanRun(input);
@@ -208,7 +209,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
   }
 
   const evidence: PlaybackReserveRunShadowEvidence = Object.freeze({
-    gate: 4,
+    gate: 5,
     mode: "SHADOW",
     plannerInfluence: false,
     spotifyWriteInfluence: false,

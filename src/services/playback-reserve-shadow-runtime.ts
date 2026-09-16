@@ -8,7 +8,7 @@ import {
 import type { PlaybackReserveRunShadowEvidence } from "@/services/playlist-planner/plan-run-playback-reserve";
 
 export type PlaybackReserveShadowRuntimeState = {
-  gate: 4;
+  gate: 5;
   mode: "SHADOW";
   plannerInfluence: false;
   spotifyWriteInfluence: false;
@@ -41,7 +41,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
   );
 
   return {
-    gate: 4,
+    gate: 5,
     mode: "SHADOW",
     plannerInfluence: false,
     spotifyWriteInfluence: false,
@@ -76,7 +76,7 @@ export function playbackReserveShadowRuntimeSummary(
   state: PlaybackReserveShadowRuntimeState,
 ) {
   return state.evidence ?? {
-    gate: 4 as const,
+    gate: 5 as const,
     mode: "SHADOW" as const,
     plannerInfluence: false as const,
     spotifyWriteInfluence: false as const,
