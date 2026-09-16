@@ -261,7 +261,10 @@ function filterConfiguredSourceCandidates(
 }
 
 function countPodcastPrograms(
-  items: readonly Pick<Candidate, "type" | "programId">[],
+  items: readonly {
+    type: Candidate["type"];
+    programId?: string | null;
+  }[],
   counts: Map<string, number>,
 ): void {
   for (const item of items) {
