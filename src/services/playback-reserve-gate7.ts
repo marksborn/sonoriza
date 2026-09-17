@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import type { PlaybackReserveShadowRuntimeState } from "@/services/playback-reserve-shadow-runtime";
 
 /**
- * PLAYBACK-RESERVE-01 Gate 7 role persistence.
+ * PLAYBACK-RESERVE-01 Gate 7/8 role persistence.
  *
  * The outer PLAYBACK-RESERVE generator seam persists the explicit RESERVE
  * sidecar immediately after the canonical generator has persisted GenerationItem
@@ -19,8 +19,9 @@ export async function persistPlaybackReserveRolesAfterGeneration(input: {
 }): Promise<number> {
   const { state } = input;
   if (state.effectiveMode !== "ACTIVE") return 0;
+  const gate = state.gate >= 8 ? 8 : 7;
   if (!state.evidence || state.evidence.mode !== "ACTIVE") {
-    throw new Error("Gate 7 ACTIVE generation is missing reserve evidence.");
+    throw new Error(`Gate ${gate} ACTIVE generation is missing reserve evidence.`);
   }
 
   const generationItems = await prisma.generationItem.findMany({
@@ -44,7 +45,7 @@ export async function persistPlaybackReserveRolesAfterGeneration(input: {
     const policy = state.policies.get(evidence.targetPlaylistId);
     if (!policy || policy.reserveMode === "NONE") {
       throw new Error(
-        `Gate 7 reserve evidence has no productive policy for ${evidence.targetPlaylistId}.`,
+        `Gate ${gate} reserve evidence has no productive policy for ${evidence.targetPlaylistId}.`,
       );
     }
 
@@ -54,7 +55,7 @@ export async function persistPlaybackReserveRolesAfterGeneration(input: {
       );
       if (!physical || physical.spotifyUri !== selected.uri) {
         throw new Error(
-          `Gate 7 RESERVE item does not match persisted GenerationItem at ${evidence.targetPlaylistId}:${selected.position}.`,
+          `Gate ${gate} RESERVE item does not match persisted GenerationItem at ${evidence.targetPlaylistId}:${selected.position}.`,
         );
       }
 
