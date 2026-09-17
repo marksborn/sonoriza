@@ -4,7 +4,10 @@ import type { EffectivePlaybackReservePolicySnapshot } from "@/services/playback
 
 import { planPlaylist, type PlannerPools } from "./planner";
 import type { Candidate, PlanResult, PlaylistRules } from "./types";
-import type { PlaybackReserveShadowSelectedItem } from "./playback-reserve-duration-shadow";
+import {
+  reserveSelectedItem,
+  type PlaybackReserveShadowSelectedItem,
+} from "./playback-reserve-duration-shadow";
 
 export type PlaybackReserveCountMode = "MUSIC_TRACKS" | "PODCAST_EPISODES";
 
@@ -60,7 +63,8 @@ export type ProjectCountReserveShadowInput = Readonly<{
  * candidates arrive already ordered/filtered by the canonical PODCAST-07 and
  * PODCAST-06 runtime seams; this layer only enforces target caps, duration
  * validity and strict-sequence continuity while selecting up to the requested
- * count. PODCAST_EPISODES never falls back to music.
+ * count. PODCAST_EPISODES never falls back to music. Gate 7 retains the same
+ * selected candidate provenance for an explicitly authorized publication seam.
  */
 export function projectCountReserveShadow(
   input: ProjectCountReserveShadowInput,
@@ -109,16 +113,9 @@ export function projectCountReserveShadow(
     });
   }
 
-  const selectedItems = selected.map((item, index) => ({
-    position: primaryItems.length + index,
-    role: "RESERVE" as const,
-    uri: item.uri,
-    type: item.type,
-    durationMs: Math.max(0, item.durationMs),
-    spotifyTrackId: item.spotifyTrackId ?? null,
-    spotifyEpisodeId: item.spotifyEpisodeId ?? null,
-    programId: item.programId ?? null,
-  }));
+  const selectedItems = selected.map((item, index) =>
+    reserveSelectedItem(item, primaryItems.length + index),
+  );
   const plannedCount = selectedItems.length;
   const shortfallCount = Math.max(0, requestedCount - plannedCount);
   const plannedDurationMs = selectedItems.reduce(
