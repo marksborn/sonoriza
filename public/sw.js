@@ -1,4 +1,4 @@
-const SONORIZA_SW_VERSION = "pwa-01-network-fetch-v1";
+const SONORIZA_SW_VERSION = "pwa-01-notification-badge-v1";
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -30,7 +30,7 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(payload.title, {
       body: payload.body,
       icon: "/pwa-icon-192.png",
-      badge: "/pwa-icon-192.png",
+      badge: "/notification-badge-96x96.png",
       tag: payload.tag,
       data: { url: safeDashboardUrl(payload.url) },
     }),
