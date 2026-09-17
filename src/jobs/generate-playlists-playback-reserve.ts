@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { persistPlaybackReserveRolesAfterGeneration } from "@/services/playback-reserve-gate7";
 import {
   playbackReserveShadowRuntimeSummary,
   preparePlaybackReserveShadowRuntime,
@@ -19,12 +20,16 @@ export type {
 } from "./generate-playlists-podcast07";
 
 /**
- * PLAYBACK-RESERVE-01 Gate 3 outer generation seam.
+ * PLAYBACK-RESERVE-01 Gate 7 outer generation seam.
  *
- * The existing generator remains authoritative. This wrapper only resolves the
- * effective reserve policy, exposes it to the read-only planner shadow and
- * appends diagnostics after the run. Failure to persist observability after a
- * successful real write never converts that write into a retry hazard.
+ * SHADOW preserves the previous behavior. Controlled ACTIVE may append RESERVE
+ * to the physical plan only after the runtime guards authorize a single
+ * allowlisted REBUILD_DAILY target. A real ACTIVE run also requires a previous
+ * successful ACTIVE simulation for the same effective reserve policy.
+ *
+ * Explicit RESERVE roles are persisted immediately after GenerationItem rows.
+ * Failure here never changes the canonical generation result into a retry
+ * trigger; it is recorded as FAILED and MUSIC-06/MUSIC-07 abstain from the run.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -32,9 +37,11 @@ export async function generatePlaylists(
   const targetPlaylistIds = opts.targetPlaylistIds
     ? [...new Set(opts.targetPlaylistIds.map((value) => value.trim()).filter(Boolean))]
     : undefined;
+  const simulate = opts.simulate ?? opts.trigger === "SIMULATION";
   const state = await preparePlaybackReserveShadowRuntime({
     userId: opts.userId,
     targetPlaylistIds,
+    simulate,
   });
 
   const result = await runWithPlaybackReserveShadowRuntimeState(
@@ -42,15 +49,42 @@ export async function generatePlaylists(
     () => baseGeneratePlaylists(opts),
   );
 
+  if (state.effectiveMode === "ACTIVE" && result.status !== "FAILED") {
+    try {
+      state.reserveRoleCount = await persistPlaybackReserveRolesAfterGeneration({
+        runId: result.runId,
+        state,
+      });
+      state.rolePersistenceStatus = "PERSISTED";
+    } catch (error) {
+      state.rolePersistenceStatus = "FAILED";
+      try {
+        await prisma.generationLog.create({
+          data: {
+            runId: result.runId,
+            level: "ERROR",
+            message: `PLAYBACK-RESERVE Gate 7 role persistence failed after generation; behavioral consumers will abstain from this run: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          },
+        });
+      } catch {
+        // Best-effort diagnostic only; never create a post-write retry hazard.
+      }
+    }
+  } else if (state.effectiveMode === "ACTIVE" && result.status === "FAILED") {
+    state.rolePersistenceStatus = "FAILED";
+  }
+
   try {
-    await appendPlaybackReserveShadowSummary(result.runId, state);
+    await appendPlaybackReserveRuntimeSummary(result.runId, state);
   } catch (error) {
     try {
       await prisma.generationLog.create({
         data: {
           runId: result.runId,
           level: "WARN",
-          message: `PLAYBACK-RESERVE Gate 3 shadow persistence failed after generation: ${
+          message: `PLAYBACK-RESERVE Gate 7 runtime summary persistence failed after generation: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },
@@ -63,7 +97,7 @@ export async function generatePlaylists(
   return result;
 }
 
-async function appendPlaybackReserveShadowSummary(
+async function appendPlaybackReserveRuntimeSummary(
   runId: string,
   state: Awaited<ReturnType<typeof preparePlaybackReserveShadowRuntime>>,
 ): Promise<void> {
@@ -76,7 +110,7 @@ async function appendPlaybackReserveShadowSummary(
       ? (row.summary as Prisma.JsonObject)
       : {};
 
-  const evidence = JSON.parse(
+  const runtime = JSON.parse(
     JSON.stringify(playbackReserveShadowRuntimeSummary(state)),
   ) as Prisma.InputJsonValue;
 
@@ -85,7 +119,12 @@ async function appendPlaybackReserveShadowSummary(
     data: {
       summary: {
         ...current,
-        playbackReserveShadow: evidence,
+        playbackReserveRuntime: runtime,
+        // Preserve the old diagnostic key while Gate 7 rolls out so existing
+        // observability consumers do not lose the shadow projection abruptly.
+        playbackReserveShadow: state.evidence
+          ? (JSON.parse(JSON.stringify(state.evidence)) as Prisma.InputJsonValue)
+          : null,
       } as Prisma.InputJsonValue,
     },
   });
