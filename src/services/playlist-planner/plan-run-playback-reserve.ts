@@ -29,7 +29,7 @@ import {
   cloneReservationMap,
   reservationsForTarget,
 } from "./target-sharing-runtime";
-import type { Candidate } from "./types";
+import type { Candidate, PlannedItem } from "./types";
 
 export type {
   PlanRunInput,
@@ -60,12 +60,12 @@ export type PlaybackReserveTargetShadowEvidence =
   | PlaybackReserveInactiveTargetShadow;
 
 export type PlaybackReserveRunShadowEvidence = Readonly<{
-  gate: 5;
-  mode: "SHADOW";
-  plannerInfluence: false;
-  spotifyWriteInfluence: false;
+  gate: 5 | 7;
+  mode: "SHADOW" | "ACTIVE";
+  plannerInfluence: boolean;
+  spotifyWriteInfluence: boolean;
   additionalProviderReads: false;
-  status: "READY_SHADOW";
+  status: "READY_SHADOW" | "READY_ACTIVE";
   targetCount: number;
   readyTargetCount: number;
   shortfallTargetCount: number;
@@ -78,18 +78,19 @@ export type PlanRunResult = BasePlanRunResult &
   }>;
 
 /**
- * PLAYBACK-RESERVE-01 Gate 5 outer planner seam.
+ * PLAYBACK-RESERVE-01 Gate 7 outer planner seam.
  *
- * PRIMARY is always planned first by the complete pre-existing stack. Only
- * after that immutable result exists do we project DURATION, MUSIC_TRACKS or
- * PODCAST_EPISODES reserve segments. DURATION/IF_FITS uses the shared
- * CALENDAR-03 whole-episode fit authority. The projection receives no authority
- * to modify PRIMARY, request more provider pages or influence Spotify writes.
+ * PRIMARY remains authoritative and is always planned first by the complete
+ * pre-existing stack. SHADOW projects the reserve exactly as Gates 3-5 did and
+ * returns PRIMARY unchanged. Controlled ACTIVE is authorized only by the Gate 7
+ * runtime and appends the already-projected RESERVE suffix to the physical plan.
+ * PRIMARY stats/quality remain untouched so RESERVE can never hide PRIMARY
+ * shortfall. No additional provider reads are introduced.
  */
 export function planRun(input: PlanRunInput): PlanRunResult {
   const primary = basePlanRun(input);
   const state = currentPlaybackReserveShadowRuntimeState();
-  if (!state) return primary;
+  if (!state || state.effectiveMode === "OFF") return primary;
 
   const orderedTargets = [...input.targets].sort((a, b) => a.priority - b.priority);
   const primaryByTargetId = new Map(
@@ -102,13 +103,14 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     applyPodcast07PlannerRuntimeToCandidates(input.pools.podcasts),
   );
 
-  // Shadow-only ownership is intentionally separate from the productive planner.
-  // Seed every PRIMARY first so no RESERVE can steal capacity/content from a
-  // later PRIMARY. Reserve selections are then added only to this shadow map.
-  const shadowReservationOwners = cloneReservationMap(
+  // Reserve ownership is intentionally separate while PRIMARY is being planned.
+  // Seed every PRIMARY first so RESERVE can never steal content from a later
+  // PRIMARY. In Gate 7 ACTIVE is single-target, but this invariant also keeps
+  // SHADOW multi-target diagnostics equivalent to the previous gates.
+  const reserveReservationOwners = cloneReservationMap(
     input.externalReservationsByUri,
   );
-  const shadowPodcastProgramCounts = new Map<string, number>();
+  const reservePodcastProgramCounts = new Map<string, number>();
 
   for (const target of orderedTargets) {
     const planned = primaryByTargetId.get(target.targetPlaylistId);
@@ -121,12 +123,15 @@ export function planRun(input: PlanRunInput): PlanRunResult {
       targetPlaylistId: target.targetPlaylistId,
       sharingPolicy,
       uris: planned.result.items.map((item) => item.uri),
-      reservationsByUri: shadowReservationOwners,
+      reservationsByUri: reserveReservationOwners,
     });
-    countPodcastPrograms(planned.result.items, shadowPodcastProgramCounts);
+    countPodcastPrograms(planned.result.items, reservePodcastProgramCounts);
   }
 
   const targets: PlaybackReserveTargetShadowEvidence[] = [];
+  const productiveResultByTargetId = new Map(
+    primary.targets.map((entry) => [entry.targetPlaylistId, entry] as const),
+  );
 
   for (const target of orderedTargets) {
     const planned = primaryByTargetId.get(target.targetPlaylistId);
@@ -167,13 +172,13 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     const sharingPolicy =
       input.sharingPolicyByTargetId?.get(target.targetPlaylistId) ??
       LEGACY_GLOBAL_SHARING_POLICY;
-    const shadowReservation = reservationsForTarget({
+    const reserveReservation = reservationsForTarget({
       targetPlaylistId: target.targetPlaylistId,
       effectiveSharingPolicy: sharingPolicy,
       legacyHardReserved: input.initialReserved,
-      reservationsByUri: shadowReservationOwners,
+      reservationsByUri: reserveReservationOwners,
     });
-    const reserved = new Set(shadowReservation.forbiddenUris);
+    const reserved = new Set(reserveReservation.forbiddenUris);
     for (const item of planned.result.items) reserved.add(item.uri);
 
     const commonInput = {
@@ -187,7 +192,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
         podcasts: targetPodcastPool,
       },
       reservedUris: reserved,
-      podcastProgramCounts: shadowPodcastProgramCounts,
+      podcastProgramCounts: reservePodcastProgramCounts,
     };
 
     const projection =
@@ -200,21 +205,60 @@ export function planRun(input: PlanRunInput): PlanRunResult {
       targetPlaylistId: target.targetPlaylistId,
       sharingPolicy,
       uris: projection.reserve.selectedItems.map((item) => item.uri),
-      reservationsByUri: shadowReservationOwners,
+      reservationsByUri: reserveReservationOwners,
     });
     countPodcastPrograms(
       projection.reserve.selectedItems,
-      shadowPodcastProgramCounts,
+      reservePodcastProgramCounts,
     );
+
+    if (state.effectiveMode === "ACTIVE") {
+      const candidateByUri = new Map<string, Candidate>();
+      for (const candidate of [...music, ...targetPodcastPool]) {
+        if (!candidateByUri.has(candidate.uri)) candidateByUri.set(candidate.uri, candidate);
+      }
+
+      const reserveItems: PlannedItem[] = projection.reserve.selectedItems.map(
+        (selected) => {
+          const candidate = candidateByUri.get(selected.uri);
+          if (!candidate) {
+            throw new Error(
+              `PLAYBACK-RESERVE Gate 7 could not reconstruct selected candidate ${selected.uri}`,
+            );
+          }
+          return {
+            ...candidate,
+            position: selected.position,
+          };
+        },
+      );
+
+      const usedUris = new Set(planned.result.usedUris);
+      for (const item of reserveItems) usedUris.add(item.uri);
+
+      productiveResultByTargetId.set(target.targetPlaylistId, {
+        ...planned,
+        result: {
+          ...planned.result,
+          items: [...planned.result.items, ...reserveItems],
+          usedUris,
+          // PRIMARY stats remain the only quality authority. RESERVE diagnostics
+          // live in playbackReserveShadow/runtime evidence and cannot make a
+          // short PRIMARY appear complete.
+          stats: planned.result.stats,
+        },
+      });
+    }
   }
 
+  const active = state.effectiveMode === "ACTIVE";
   const evidence: PlaybackReserveRunShadowEvidence = Object.freeze({
-    gate: 5,
-    mode: "SHADOW",
-    plannerInfluence: false,
-    spotifyWriteInfluence: false,
+    gate: active ? 7 : 5,
+    mode: active ? "ACTIVE" : "SHADOW",
+    plannerInfluence: active,
+    spotifyWriteInfluence: active && state.spotifyWriteInfluence,
     additionalProviderReads: false,
-    status: "READY_SHADOW",
+    status: active ? "READY_ACTIVE" : "READY_SHADOW",
     targetCount: targets.length,
     readyTargetCount: targets.filter(
       (target) => target.status === "READY_SHADOW",
@@ -226,8 +270,14 @@ export function planRun(input: PlanRunInput): PlanRunResult {
   });
 
   recordPlaybackReserveShadowEvidence(evidence);
+
   return {
     ...primary,
+    targets: active
+      ? primary.targets.map(
+          (entry) => productiveResultByTargetId.get(entry.targetPlaylistId) ?? entry,
+        )
+      : primary.targets,
     playbackReserveShadow: evidence,
   };
 }

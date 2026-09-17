@@ -29,6 +29,27 @@ export function generationPlanItemParticipatesInBehavioralEvidence(
   return normalizeGenerationPlanRole(role) === "PRIMARY";
 }
 
+/**
+ * Gate 7 closes the only dangerous persistence window: if an ACTIVE reserve
+ * run reached generation/publication but the explicit role sidecar could not be
+ * persisted, consumers must abstain from the whole run instead of falling back
+ * to the historical "missing role = PRIMARY" rule.
+ *
+ * Historical runs and SHADOW/OFF runs have no productive reserve suffix and
+ * remain backward-compatible. ACTIVE Gate 7 runs are behaviorally usable only
+ * after the runtime summary proves rolePersistenceStatus=PERSISTED.
+ */
+export function generationRunPlanRolesAreSafeForBehavioralEvidence(
+  summary: unknown,
+): boolean {
+  const root = asRecord(summary);
+  const runtime = asRecord(root?.playbackReserveRuntime);
+  if (!runtime || runtime.gate !== 7 || runtime.effectiveMode !== "ACTIVE") {
+    return true;
+  }
+  return runtime.rolePersistenceStatus === "PERSISTED";
+}
+
 export function generationPlanItemRoleCoordinateKey(
   coordinate: GenerationPlanItemRoleCoordinate,
 ): string {
@@ -70,4 +91,9 @@ function requiredId(value: string, label: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${label} is required.`);
   return normalized;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }

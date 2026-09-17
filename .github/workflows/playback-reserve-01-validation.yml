@@ -12,6 +12,9 @@ on:
       - "src/services/playback-reserve-gate2.test.ts"
       - "src/services/playback-reserve-gate6.ts"
       - "src/services/playback-reserve-gate6.test.ts"
+      - "src/services/playback-reserve-gate7.ts"
+      - "src/services/playback-reserve-gate7.test.ts"
+      - "src/services/playback-reserve-gate7-persistence.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
@@ -28,6 +31,7 @@ on:
       - "src/services/playlist-planner/plan-run-playback-reserve.ts"
       - "src/services/playlist-planner/plan-run-playback-reserve.test.ts"
       - "src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts"
+      - "src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts"
       - "src/services/playlist-planner/index.ts"
       - "src/jobs/generate-playlists-playback-reserve.ts"
       - "src/jobs/generate-playlists.ts"
@@ -45,6 +49,9 @@ on:
       - "src/services/playback-reserve-gate2.test.ts"
       - "src/services/playback-reserve-gate6.ts"
       - "src/services/playback-reserve-gate6.test.ts"
+      - "src/services/playback-reserve-gate7.ts"
+      - "src/services/playback-reserve-gate7.test.ts"
+      - "src/services/playback-reserve-gate7-persistence.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
@@ -61,6 +68,7 @@ on:
       - "src/services/playlist-planner/plan-run-playback-reserve.ts"
       - "src/services/playlist-planner/plan-run-playback-reserve.test.ts"
       - "src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts"
+      - "src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts"
       - "src/services/playlist-planner/index.ts"
       - "src/jobs/generate-playlists-playback-reserve.ts"
       - "src/jobs/generate-playlists.ts"
@@ -108,13 +116,15 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PLAYBACK-RESERVE-01 Gates 1-6 validation
+      - name: PLAYBACK-RESERVE-01 Gates 1-7 validation
         run: >-
           npx tsx --test
           src/services/playback-reserve-policy.test.ts
           src/services/playback-reserve-policy.integration.test.ts
           src/services/playback-reserve-gate2.test.ts
           src/services/playback-reserve-gate6.test.ts
+          src/services/playback-reserve-gate7.test.ts
+          src/services/playback-reserve-gate7-persistence.test.ts
           src/services/playlist-planner/podcast-fit.test.ts
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/playback-reserve-duration-shadow.test.ts
@@ -122,5 +132,6 @@ jobs:
           src/services/playlist-planner/playback-reserve-count-shadow.test.ts
           src/services/playlist-planner/plan-run-playback-reserve.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts
+          src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts
       - run: npm run typecheck
       - run: npm run build
