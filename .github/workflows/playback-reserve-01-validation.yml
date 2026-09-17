@@ -10,8 +10,12 @@ on:
       - "src/services/playback-reserve-policy.integration.test.ts"
       - "src/services/playback-reserve-gate2.ts"
       - "src/services/playback-reserve-gate2.test.ts"
+      - "src/services/playback-reserve-gate6.ts"
+      - "src/services/playback-reserve-gate6.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/configuration-readiness.ts"
+      - "src/services/music-preference/lastfm-coverage-prisma.ts"
+      - "src/services/music-exposure/read-model.ts"
       - "src/services/playlist-planner/podcast-fit.ts"
       - "src/services/playlist-planner/podcast-fit.test.ts"
       - "src/services/playlist-planner/calendar-event-composition-shadow.ts"
@@ -39,8 +43,12 @@ on:
       - "src/services/playback-reserve-policy.integration.test.ts"
       - "src/services/playback-reserve-gate2.ts"
       - "src/services/playback-reserve-gate2.test.ts"
+      - "src/services/playback-reserve-gate6.ts"
+      - "src/services/playback-reserve-gate6.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/configuration-readiness.ts"
+      - "src/services/music-preference/lastfm-coverage-prisma.ts"
+      - "src/services/music-exposure/read-model.ts"
       - "src/services/playlist-planner/podcast-fit.ts"
       - "src/services/playlist-planner/podcast-fit.test.ts"
       - "src/services/playlist-planner/calendar-event-composition-shadow.ts"
@@ -100,12 +108,13 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: PLAYBACK-RESERVE-01 Gates 1-5 validation
+      - name: PLAYBACK-RESERVE-01 Gates 1-6 validation
         run: >-
           npx tsx --test
           src/services/playback-reserve-policy.test.ts
           src/services/playback-reserve-policy.integration.test.ts
           src/services/playback-reserve-gate2.test.ts
+          src/services/playback-reserve-gate6.test.ts
           src/services/playlist-planner/podcast-fit.test.ts
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/playback-reserve-duration-shadow.test.ts

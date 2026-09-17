@@ -1,6 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 
 import { prisma as defaultPrisma } from "@/lib/prisma";
+import {
+  buildGenerationPlanItemRoleIndex,
+  generationPlanItemParticipatesInBehavioralEvidence,
+  generationPlanItemRoleCoordinateKey,
+} from "@/services/playback-reserve-gate6";
 
 import type { PublishedMusicOccurrence } from "./lastfm-coverage";
 
@@ -18,8 +23,14 @@ export type PublishedMusicRun = Readonly<{
 }>;
 
 /**
- * Loads the exact music order that Sonoriza persisted for a real applied run.
- * The order is first-party execution evidence; no provider read is performed.
+ * Loads the exact PRIMARY music order that Sonoriza persisted for a real applied
+ * run. The order is first-party execution evidence; no provider read is
+ * performed.
+ *
+ * PLAYBACK-RESERVE-01 Gate 6: an absent role sidecar is PRIMARY for historical
+ * compatibility. Explicit RESERVE items are not part of the MUSIC-06 published
+ * behavioral sequence, so an unreached reserve suffix cannot become a
+ * LASTFM_PLANNED_SEQUENCE_GAP merely because it was published.
  */
 export async function loadPublishedMusicRun(
   userId: string,
@@ -65,10 +76,30 @@ export async function loadPublishedMusicRun(
     );
   }
 
+  const roleRows = await client.generationPlanItemRole.findMany({
+    where: { runId: run.id },
+    select: {
+      runId: true,
+      targetPlaylistId: true,
+      position: true,
+      role: true,
+    },
+  });
+  const roleByCoordinate = buildGenerationPlanItemRoleIndex(roleRows);
+
   const publishedAt = run.finishedAt ?? run.startedAt;
   const byTarget = new Map<string, PublishedMusicOccurrence[]>();
 
   for (const item of run.items) {
+    const role = roleByCoordinate.get(
+      generationPlanItemRoleCoordinateKey({
+        runId: run.id,
+        targetPlaylistId: item.targetPlaylistId,
+        position: item.position,
+      }),
+    );
+    if (!generationPlanItemParticipatesInBehavioralEvidence(role)) continue;
+
     const occurrence: PublishedMusicOccurrence = {
       generationRunId: run.id,
       targetPlaylistId: item.targetPlaylistId,

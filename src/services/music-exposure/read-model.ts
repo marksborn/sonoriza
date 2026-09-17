@@ -1,6 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { LastFmClient } from "@/services/lastfm/client";
 import { readLastFmRecentObservation } from "@/services/music-preference/lastfm-coverage-reader";
+import {
+  buildGenerationPlanItemRoleIndex,
+  generationPlanItemParticipatesInBehavioralEvidence,
+  generationPlanItemRoleCoordinateKey,
+} from "@/services/playback-reserve-gate6";
 
 import {
   buildMusicExposureShadow,
@@ -33,6 +38,7 @@ export type MusicExposureReadModel = {
     transactionReadOnly: string;
     realRunCount: number;
     identityReadyItemCount: number;
+    reserveRoleExcludedItemCount: number;
     measurableTargetSnapshotCount: number;
     appliedTargetPublicationCount: number;
     keepFilledNoopBaselineCount: number;
@@ -53,8 +59,9 @@ export type MusicExposureReadModel = {
  * MUSIC-07 canonical read model.
  *
  * GenerationRun + GenerationItem + summary.targets[].applied are the canonical
- * Sonoriza-owned exposure ledger. Gate 3 intentionally does not create a second
- * TrackExposure table and therefore avoids two competing truths.
+ * Sonoriza-owned exposure ledger. PLAYBACK-RESERVE-01 Gate 6 narrows that
+ * ledger to PRIMARY items only: historical items without a role sidecar remain
+ * PRIMARY, while explicit RESERVE publication is not automatic exposure.
  *
  * Database reads are performed inside an explicit PostgreSQL READ ONLY snapshot.
  * Last.fm is read afterwards and is used only as independent consumption
@@ -142,10 +149,24 @@ export async function readMusicExposureModel(
         },
       });
 
+      const roleRows =
+        runs.length === 0
+          ? []
+          : await tx.generationPlanItemRole.findMany({
+              where: { runId: { in: runs.map((run) => run.id) } },
+              select: {
+                runId: true,
+                targetPlaylistId: true,
+                position: true,
+                role: true,
+              },
+            });
+
       return {
         user,
         policy,
         runs,
+        roleRows,
         transactionReadOnly: readOnly[0]?.read_only ?? "unknown",
       };
     },
@@ -156,14 +177,28 @@ export async function readMusicExposureModel(
     },
   );
 
+  const roleByCoordinate = buildGenerationPlanItemRoleIndex(snapshot.roleRows);
   const publications: MusicExposureShadowPublication[] = [];
   let missingApplyProofCount = 0;
   let identityReadyItemCount = 0;
+  let reserveRoleExcludedItemCount = 0;
   let keepFilledNoopBaselineCount = 0;
 
   for (const run of snapshot.runs) {
     const byTarget = new Map<string, typeof run.items>();
     for (const item of run.items) {
+      const role = roleByCoordinate.get(
+        generationPlanItemRoleCoordinateKey({
+          runId: run.id,
+          targetPlaylistId: item.targetPlaylistId,
+          position: item.position,
+        }),
+      );
+      if (!generationPlanItemParticipatesInBehavioralEvidence(role)) {
+        reserveRoleExcludedItemCount += 1;
+        continue;
+      }
+
       const current = byTarget.get(item.targetPlaylistId);
       if (current) current.push(item);
       else byTarget.set(item.targetPlaylistId, [item]);
@@ -267,6 +302,7 @@ export async function readMusicExposureModel(
       transactionReadOnly: snapshot.transactionReadOnly,
       realRunCount: snapshot.runs.length,
       identityReadyItemCount,
+      reserveRoleExcludedItemCount,
       measurableTargetSnapshotCount: publications.length,
       appliedTargetPublicationCount: publications.filter((row) => row.applied).length,
       keepFilledNoopBaselineCount,
