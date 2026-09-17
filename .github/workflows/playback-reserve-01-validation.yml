@@ -14,6 +14,7 @@ on:
       - "src/services/playback-reserve-gate6.test.ts"
       - "src/services/playback-reserve-gate7.ts"
       - "src/services/playback-reserve-gate7.test.ts"
+      - "src/services/playback-reserve-gate7-persistence.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
@@ -50,6 +51,7 @@ on:
       - "src/services/playback-reserve-gate6.test.ts"
       - "src/services/playback-reserve-gate7.ts"
       - "src/services/playback-reserve-gate7.test.ts"
+      - "src/services/playback-reserve-gate7-persistence.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
@@ -122,6 +124,7 @@ jobs:
           src/services/playback-reserve-gate2.test.ts
           src/services/playback-reserve-gate6.test.ts
           src/services/playback-reserve-gate7.test.ts
+          src/services/playback-reserve-gate7-persistence.test.ts
           src/services/playlist-planner/podcast-fit.test.ts
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/playback-reserve-duration-shadow.test.ts
