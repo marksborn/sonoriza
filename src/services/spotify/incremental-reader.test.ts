@@ -197,7 +197,7 @@ test("QUOTA_EXCEEDED opens the incremental read circuit without retry storm", as
 const integrationTest = process.env.DATABASE_URL ? test : test.skip;
 
 integrationTest(
-  "music cache is persisted only after full exhaustion and reused by snapshot on the next run",
+  "music cache keeps cache-miss and cache-hit candidate sets equivalent",
   async (t) => {
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const user = await prisma.user.create({
@@ -242,6 +242,18 @@ integrationTest(
                 artists: [{ name: "Artist" }],
               },
             },
+            {
+              item: {
+                id: null,
+                uri: "https://open.spotify.com/track/not-a-canonical-uri",
+                name: "Identity-less track",
+                duration_ms: 180_000,
+                is_local: false,
+                is_playable: true,
+                type: "track",
+                artists: [{ name: "Artist" }],
+              },
+            },
           ],
           next: null,
         });
@@ -257,6 +269,10 @@ integrationTest(
       const firstCursor = await firstReader.createSource(firstConfig);
       const firstBatch = await firstCursor.readNext();
       assert.equal(firstBatch.done, true);
+      assert.deepEqual(
+        firstBatch.candidates.map((candidate) => candidate.uri),
+        [`spotify:track:${snapshot}`],
+      );
       assert.equal(itemCalls, 1);
       assert.equal(metadataCalls, 2);
 
@@ -272,6 +288,10 @@ integrationTest(
       const secondCursor = await secondReader.createSource(cached);
       const secondBatch = await secondCursor.readNext();
       assert.equal(secondBatch.fromCache, true);
+      assert.deepEqual(
+        secondBatch.candidates.map((candidate) => candidate.uri),
+        firstBatch.candidates.map((candidate) => candidate.uri),
+      );
       assert.equal(itemCalls, 0);
       assert.equal(metadataCalls, 1);
 

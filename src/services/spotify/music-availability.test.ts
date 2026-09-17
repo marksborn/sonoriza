@@ -68,6 +68,18 @@ test("linked_from id wins over market-specific replacement id", () => {
   assert.equal(result.candidate?.spotifyTrackId, "original");
 });
 
+test("fresh music candidate without canonical Spotify identity is excluded to match cache semantics", () => {
+  const result = readPlayableMusicCandidate({
+    ...base,
+    id: null,
+    uri: "https://open.spotify.com/track/not-a-canonical-uri",
+    linked_from: null,
+    is_playable: true,
+  });
+  assert.equal(result.candidate, null);
+  assert.equal(result.unavailable, false);
+});
+
 test("is_playable=false is explicitly unavailable", () => {
   const result = readPlayableMusicCandidate({ ...base, is_playable: false });
   assert.equal(result.candidate, null);
