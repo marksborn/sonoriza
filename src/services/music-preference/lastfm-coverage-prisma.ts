@@ -5,6 +5,7 @@ import {
   buildGenerationPlanItemRoleIndex,
   generationPlanItemParticipatesInBehavioralEvidence,
   generationPlanItemRoleCoordinateKey,
+  generationRunPlanRolesAreSafeForBehavioralEvidence,
 } from "@/services/playback-reserve-gate6";
 
 import type { PublishedMusicOccurrence } from "./lastfm-coverage";
@@ -29,8 +30,8 @@ export type PublishedMusicRun = Readonly<{
  *
  * PLAYBACK-RESERVE-01 Gate 6: an absent role sidecar is PRIMARY for historical
  * compatibility. Explicit RESERVE items are not part of the MUSIC-06 published
- * behavioral sequence, so an unreached reserve suffix cannot become a
- * LASTFM_PLANNED_SEQUENCE_GAP merely because it was published.
+ * behavioral sequence. Gate 7 additionally abstains from an ACTIVE run if its
+ * runtime summary cannot prove that the explicit role sidecar was persisted.
  */
 export async function loadPublishedMusicRun(
   userId: string,
@@ -55,6 +56,7 @@ export async function loadPublishedMusicRun(
       id: true,
       startedAt: true,
       finishedAt: true,
+      summary: true,
       items: {
         where: { contentType: "MUSIC" },
         orderBy: { position: "asc" },
@@ -76,6 +78,17 @@ export async function loadPublishedMusicRun(
     );
   }
 
+  const publishedAt = run.finishedAt ?? run.startedAt;
+  if (!generationRunPlanRolesAreSafeForBehavioralEvidence(run.summary)) {
+    return {
+      generationRunId: run.id,
+      publishedAt,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      targets: [],
+    };
+  }
+
   const roleRows = await client.generationPlanItemRole.findMany({
     where: { runId: run.id },
     select: {
@@ -87,7 +100,6 @@ export async function loadPublishedMusicRun(
   });
   const roleByCoordinate = buildGenerationPlanItemRoleIndex(roleRows);
 
-  const publishedAt = run.finishedAt ?? run.startedAt;
   const byTarget = new Map<string, PublishedMusicOccurrence[]>();
 
   for (const item of run.items) {
