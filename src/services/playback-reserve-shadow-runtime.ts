@@ -6,9 +6,11 @@ import {
   loadEffectivePlaybackReservePolicy,
   type EffectivePlaybackReservePolicySnapshot,
 } from "@/services/playback-reserve-policy";
+import type { PlaybackReserveGate8KeepFilledContext } from "@/services/playback-reserve-gate8";
 import type { PlaybackReserveRunShadowEvidence } from "@/services/playlist-planner/plan-run-playback-reserve";
 
 export type PlaybackReserveRuntimeMode = "OFF" | "SHADOW" | "ACTIVE";
+export type PlaybackReserveMaintenanceMode = "REBUILD_DAILY" | "KEEP_FILLED";
 export type PlaybackReserveRuntimeStatus =
   | "OFF"
   | "READY_SHADOW"
@@ -16,7 +18,8 @@ export type PlaybackReserveRuntimeStatus =
   | "READY_ACTIVE_REAL"
   | "ABSTAIN_ACTIVE_SCOPE_REQUIRED"
   | "ABSTAIN_TARGET_NOT_ALLOWED"
-  | "ABSTAIN_REBUILD_DAILY_REQUIRED"
+  | "ABSTAIN_UPDATE_POLICY_UNSUPPORTED"
+  | "ABSTAIN_KEEP_FILLED_CONTEXT_REQUIRED"
   | "ABSTAIN_SIMULATION_REQUIRED";
 export type PlaybackReserveRolePersistenceStatus =
   | "NOT_APPLICABLE"
@@ -25,26 +28,32 @@ export type PlaybackReserveRolePersistenceStatus =
   | "FAILED";
 
 /**
- * Gate 7 extends the old Gate 5 SHADOW state. The Gate 7 fields remain optional
- * on this public type only so older unit callers that construct the historical
- * `{ gate: 5, mode: "SHADOW" }` fixture keep compiling. Runtime preparation
- * below always returns the complete Gate 7 shape.
+ * Gate 8 extends the Gate 7 runtime while retaining the historical Gate 5/7
+ * fixture surface for older tests/callers. Runtime preparation always returns
+ * the complete Gate 8 shape.
  */
 export type PlaybackReserveShadowRuntimeState = {
-  gate: 5 | 7;
+  gate: 5 | 7 | 8;
   mode?: "SHADOW";
   configuredMode?: PlaybackReserveRuntimeMode;
   effectiveMode?: PlaybackReserveRuntimeMode;
   simulate?: boolean;
   plannerInfluence: boolean;
   spotifyWriteInfluence: boolean;
-  additionalProviderReads: false;
+  additionalProviderReads: boolean;
   status?: PlaybackReserveRuntimeStatus;
   targetPlaylistIds?: readonly string[];
   allowedTargetIds?: ReadonlySet<string>;
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
+  maintenanceMode?: PlaybackReserveMaintenanceMode | null;
+  keepFilledSnapshotBefore?: string | null;
+  keepFilledPreviousRunId?: string | null;
+  keepFilledPreviousReserveCount?: number;
+  keepFilledPreviousReserveDurationMs?: number;
   simulationApprovalKey?: string | null;
   simulationApprovedRunId?: string | null;
+  inlineSimulationRunId?: string | null;
+  inlineSimulationStatus?: string | null;
   rolePersistenceStatus?: PlaybackReserveRolePersistenceStatus;
   reserveRoleCount?: number;
   evidence: PlaybackReserveRunShadowEvidence | null;
@@ -56,6 +65,12 @@ export async function preparePlaybackReserveShadowRuntime(input: {
   userId: string;
   targetPlaylistIds?: readonly string[];
   simulate?: boolean;
+  scheduledPolicyByTargetId?: Readonly<
+    Record<string, "KEEP_FILLED" | "REBUILD_DAILY">
+  >;
+  keepFilledContextByTargetId?: Readonly<
+    Record<string, PlaybackReserveGate8KeepFilledContext>
+  >;
 }): Promise<PlaybackReserveShadowRuntimeState> {
   const simulate = input.simulate ?? false;
   const configuredMode = parseRuntimeMode(process.env.PLAYBACK_RESERVE_RUNTIME_MODE);
@@ -84,16 +99,38 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     ] as const),
   );
   const policyMap = new Map(policies);
+  const singleTarget = targets.length === 1 ? targets[0]! : null;
+  const maintenanceMode = singleTarget
+    ? normalizeMaintenanceMode(singleTarget.updatePolicy)
+    : null;
+  const keepFilledContext = singleTarget
+    ? input.keepFilledContextByTargetId?.[singleTarget.id] ?? null
+    : null;
+  const key = approvalKey({
+    targetPlaylistIds,
+    policies: policyMap,
+    maintenanceMode,
+    keepFilledSnapshotBefore:
+      maintenanceMode === "KEEP_FILLED" ? keepFilledContext?.snapshotBefore ?? null : null,
+  });
 
   const base = {
-    gate: 7 as const,
+    gate: 8 as const,
     configuredMode,
     simulate,
-    additionalProviderReads: false as const,
+    additionalProviderReads: false,
     targetPlaylistIds,
     allowedTargetIds,
     policies: policyMap,
+    maintenanceMode,
+    keepFilledSnapshotBefore: keepFilledContext?.snapshotBefore ?? null,
+    keepFilledPreviousRunId: keepFilledContext?.previousRunId ?? null,
+    keepFilledPreviousReserveCount: keepFilledContext?.previousReserveCount ?? 0,
+    keepFilledPreviousReserveDurationMs:
+      keepFilledContext?.previousReserveDurationMs ?? 0,
     reserveRoleCount: 0,
+    inlineSimulationRunId: null,
+    inlineSimulationStatus: null,
     evidence: null,
   };
 
@@ -117,29 +154,26 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       plannerInfluence: false,
       spotifyWriteInfluence: false,
       status: "READY_SHADOW",
-      simulationApprovalKey: approvalKey(targetPlaylistIds, policyMap),
+      simulationApprovalKey: key,
       simulationApprovedRunId: null,
       rolePersistenceStatus: "NOT_APPLICABLE",
     };
   }
 
-  if (targetPlaylistIds.length !== 1) {
+  if (targetPlaylistIds.length !== 1 || !singleTarget) {
     return {
       ...base,
       effectiveMode: "SHADOW",
       plannerInfluence: false,
       spotifyWriteInfluence: false,
       status: "ABSTAIN_ACTIVE_SCOPE_REQUIRED",
-      simulationApprovalKey: approvalKey(targetPlaylistIds, policyMap),
+      simulationApprovalKey: key,
       simulationApprovedRunId: null,
       rolePersistenceStatus: "NOT_APPLICABLE",
     };
   }
 
-  const target = targets[0]!;
-  const key = approvalKey(targetPlaylistIds, policyMap);
-
-  if (!allowedTargetIds.has(target.id)) {
+  if (!allowedTargetIds.has(singleTarget.id)) {
     return {
       ...base,
       effectiveMode: "SHADOW",
@@ -152,17 +186,33 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     };
   }
 
-  if (target.updatePolicy !== "REBUILD_DAILY") {
+  if (!maintenanceMode) {
     return {
       ...base,
       effectiveMode: "SHADOW",
       plannerInfluence: false,
       spotifyWriteInfluence: false,
-      status: "ABSTAIN_REBUILD_DAILY_REQUIRED",
+      status: "ABSTAIN_UPDATE_POLICY_UNSUPPORTED",
       simulationApprovalKey: key,
       simulationApprovedRunId: null,
       rolePersistenceStatus: "NOT_APPLICABLE",
     };
+  }
+
+  if (maintenanceMode === "KEEP_FILLED") {
+    const scheduledPolicy = input.scheduledPolicyByTargetId?.[singleTarget.id];
+    if (scheduledPolicy !== "KEEP_FILLED" || !keepFilledContext?.snapshotBefore) {
+      return {
+        ...base,
+        effectiveMode: "SHADOW",
+        plannerInfluence: false,
+        spotifyWriteInfluence: false,
+        status: "ABSTAIN_KEEP_FILLED_CONTEXT_REQUIRED",
+        simulationApprovalKey: key,
+        simulationApprovedRunId: null,
+        rolePersistenceStatus: "NOT_APPLICABLE",
+      };
+    }
   }
 
   if (simulate) {
@@ -178,9 +228,9 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     };
   }
 
-  const approvedRunId = await findApprovedGate7Simulation({
+  const approvedRunId = await findApprovedGate8Simulation({
     userId: input.userId,
-    targetPlaylistId: target.id,
+    targetPlaylistId: singleTarget.id,
     approvalKey: key,
   });
   if (!approvedRunId) {
@@ -208,6 +258,18 @@ export async function preparePlaybackReserveShadowRuntime(input: {
   };
 }
 
+export function playbackReserveKeepFilledNeedsInlineSimulation(
+  state: PlaybackReserveShadowRuntimeState,
+): boolean {
+  return Boolean(
+    state.gate === 8 &&
+      state.configuredMode === "ACTIVE" &&
+      state.maintenanceMode === "KEEP_FILLED" &&
+      state.status === "ABSTAIN_SIMULATION_REQUIRED" &&
+      state.keepFilledSnapshotBefore,
+  );
+}
+
 export function runWithPlaybackReserveShadowRuntimeState<T>(
   state: PlaybackReserveShadowRuntimeState,
   fn: () => T,
@@ -233,18 +295,26 @@ export function playbackReserveShadowRuntimeSummary(
   state: PlaybackReserveShadowRuntimeState,
 ) {
   return {
-    gate: 7 as const,
+    gate: state.gate,
     configuredMode: state.configuredMode ?? state.mode ?? "SHADOW",
     effectiveMode: state.effectiveMode ?? "SHADOW",
     simulate: state.simulate ?? false,
     plannerInfluence: state.plannerInfluence,
     spotifyWriteInfluence: state.spotifyWriteInfluence,
-    additionalProviderReads: false as const,
+    additionalProviderReads: state.additionalProviderReads,
     status: state.status ?? "READY_SHADOW",
     targetPlaylistIds: [...(state.targetPlaylistIds ?? [])],
     allowedTargetIds: [...(state.allowedTargetIds ?? new Set<string>())].sort(),
+    maintenanceMode: state.maintenanceMode ?? null,
+    keepFilledSnapshotBefore: state.keepFilledSnapshotBefore ?? null,
+    keepFilledPreviousRunId: state.keepFilledPreviousRunId ?? null,
+    keepFilledPreviousReserveCount: state.keepFilledPreviousReserveCount ?? 0,
+    keepFilledPreviousReserveDurationMs:
+      state.keepFilledPreviousReserveDurationMs ?? 0,
     simulationApprovalKey: state.simulationApprovalKey ?? null,
     simulationApprovedRunId: state.simulationApprovedRunId ?? null,
+    inlineSimulationRunId: state.inlineSimulationRunId ?? null,
+    inlineSimulationStatus: state.inlineSimulationStatus ?? null,
     rolePersistenceStatus: state.rolePersistenceStatus ?? "NOT_APPLICABLE",
     reserveRoleCount: state.reserveRoleCount ?? 0,
     evidence: state.evidence,
@@ -254,8 +324,15 @@ export function playbackReserveShadowRuntimeSummary(
 export function playbackReserveRuntimeApprovalKey(input: {
   targetPlaylistIds: readonly string[];
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
+  maintenanceMode?: PlaybackReserveMaintenanceMode | null;
+  keepFilledSnapshotBefore?: string | null;
 }): string {
-  return approvalKey(input.targetPlaylistIds, input.policies);
+  return approvalKey({
+    targetPlaylistIds: input.targetPlaylistIds,
+    policies: input.policies,
+    maintenanceMode: input.maintenanceMode ?? null,
+    keepFilledSnapshotBefore: input.keepFilledSnapshotBefore ?? null,
+  });
 }
 
 function parseRuntimeMode(raw: string | undefined): PlaybackReserveRuntimeMode {
@@ -274,20 +351,34 @@ function parseIdSet(raw: string | undefined): ReadonlySet<string> {
   );
 }
 
-function approvalKey(
-  targetPlaylistIds: readonly string[],
-  policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>,
-): string {
-  const payload = [...targetPlaylistIds]
+function normalizeMaintenanceMode(
+  value: string,
+): PlaybackReserveMaintenanceMode | null {
+  if (value === "REBUILD_DAILY" || value === "KEEP_FILLED") return value;
+  return null;
+}
+
+function approvalKey(input: {
+  targetPlaylistIds: readonly string[];
+  policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
+  maintenanceMode: PlaybackReserveMaintenanceMode | null;
+  keepFilledSnapshotBefore: string | null;
+}): string {
+  const payload = [...input.targetPlaylistIds]
     .sort()
     .map((targetPlaylistId) => ({
       targetPlaylistId,
-      policy: policies.get(targetPlaylistId) ?? null,
+      policy: input.policies.get(targetPlaylistId) ?? null,
+      maintenanceMode: input.maintenanceMode,
+      keepFilledSnapshotBefore:
+        input.maintenanceMode === "KEEP_FILLED"
+          ? input.keepFilledSnapshotBefore
+          : null,
     }));
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
-async function findApprovedGate7Simulation(input: {
+async function findApprovedGate8Simulation(input: {
   userId: string;
   targetPlaylistId: string;
   approvalKey: string;
@@ -299,7 +390,7 @@ async function findApprovedGate7Simulation(input: {
       status: "SUCCESS",
     },
     orderBy: { startedAt: "desc" },
-    take: 20,
+    take: 30,
     select: { id: true, summary: true },
   });
 
@@ -307,14 +398,16 @@ async function findApprovedGate7Simulation(input: {
     const summary = asRecord(run.summary);
     const runtime = asRecord(summary?.playbackReserveRuntime);
     if (!runtime) continue;
-    if (runtime.gate !== 7) continue;
+    if (runtime.gate !== 8) continue;
     if (runtime.effectiveMode !== "ACTIVE") continue;
     if (runtime.simulate !== true) continue;
     if (runtime.status !== "READY_ACTIVE_SIMULATION") continue;
     if (runtime.rolePersistenceStatus !== "PERSISTED") continue;
     if (runtime.simulationApprovalKey !== input.approvalKey) continue;
     const ids = Array.isArray(runtime.targetPlaylistIds)
-      ? runtime.targetPlaylistIds.filter((value): value is string => typeof value === "string")
+      ? runtime.targetPlaylistIds.filter(
+          (value): value is string => typeof value === "string",
+        )
       : [];
     if (ids.length !== 1 || ids[0] !== input.targetPlaylistId) continue;
     return run.id;
