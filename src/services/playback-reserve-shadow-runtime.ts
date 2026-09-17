@@ -18,6 +18,11 @@ export type PlaybackReserveRuntimeStatus =
   | "ABSTAIN_TARGET_NOT_ALLOWED"
   | "ABSTAIN_REBUILD_DAILY_REQUIRED"
   | "ABSTAIN_SIMULATION_REQUIRED";
+export type PlaybackReserveRolePersistenceStatus =
+  | "NOT_APPLICABLE"
+  | "PENDING"
+  | "PERSISTED"
+  | "FAILED";
 
 export type PlaybackReserveShadowRuntimeState = {
   gate: 7;
@@ -33,6 +38,8 @@ export type PlaybackReserveShadowRuntimeState = {
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
   simulationApprovalKey: string | null;
   simulationApprovedRunId: string | null;
+  rolePersistenceStatus: PlaybackReserveRolePersistenceStatus;
+  reserveRoleCount: number;
   evidence: PlaybackReserveRunShadowEvidence | null;
 };
 
@@ -79,6 +86,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     targetPlaylistIds,
     allowedTargetIds,
     policies: policyMap,
+    reserveRoleCount: 0,
     evidence: null,
   };
 
@@ -91,6 +99,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       status: "OFF",
       simulationApprovalKey: null,
       simulationApprovedRunId: null,
+      rolePersistenceStatus: "NOT_APPLICABLE",
     };
   }
 
@@ -103,12 +112,10 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       status: "READY_SHADOW",
       simulationApprovalKey: approvalKey(targetPlaylistIds, policyMap),
       simulationApprovedRunId: null,
+      rolePersistenceStatus: "NOT_APPLICABLE",
     };
   }
 
-  // Gate 7 starts deliberately single-target. Multi-target ACTIVE would make a
-  // partial rollout indistinguishable from a global rollout and therefore
-  // fails closed to SHADOW.
   if (targetPlaylistIds.length !== 1) {
     return {
       ...base,
@@ -118,6 +125,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       status: "ABSTAIN_ACTIVE_SCOPE_REQUIRED",
       simulationApprovalKey: approvalKey(targetPlaylistIds, policyMap),
       simulationApprovedRunId: null,
+      rolePersistenceStatus: "NOT_APPLICABLE",
     };
   }
 
@@ -133,6 +141,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       status: "ABSTAIN_TARGET_NOT_ALLOWED",
       simulationApprovalKey: key,
       simulationApprovedRunId: null,
+      rolePersistenceStatus: "NOT_APPLICABLE",
     };
   }
 
@@ -145,6 +154,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       status: "ABSTAIN_REBUILD_DAILY_REQUIRED",
       simulationApprovalKey: key,
       simulationApprovedRunId: null,
+      rolePersistenceStatus: "NOT_APPLICABLE",
     };
   }
 
@@ -157,6 +167,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       status: "READY_ACTIVE_SIMULATION",
       simulationApprovalKey: key,
       simulationApprovedRunId: null,
+      rolePersistenceStatus: "PENDING",
     };
   }
 
@@ -174,6 +185,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       status: "ABSTAIN_SIMULATION_REQUIRED",
       simulationApprovalKey: key,
       simulationApprovedRunId: null,
+      rolePersistenceStatus: "NOT_APPLICABLE",
     };
   }
 
@@ -185,6 +197,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     status: "READY_ACTIVE_REAL",
     simulationApprovalKey: key,
     simulationApprovedRunId: approvedRunId,
+    rolePersistenceStatus: "PENDING",
   };
 }
 
@@ -209,6 +222,18 @@ export function recordPlaybackReserveShadowEvidence(
   state.evidence = evidence;
 }
 
+export function recordPlaybackReserveRolePersistence(input: {
+  status: "PERSISTED" | "FAILED";
+  reserveRoleCount?: number;
+}): void {
+  const state = storage.getStore();
+  if (!state) return;
+  state.rolePersistenceStatus = input.status;
+  if (typeof input.reserveRoleCount === "number") {
+    state.reserveRoleCount = input.reserveRoleCount;
+  }
+}
+
 export function playbackReserveShadowRuntimeSummary(
   state: PlaybackReserveShadowRuntimeState,
 ) {
@@ -225,6 +250,8 @@ export function playbackReserveShadowRuntimeSummary(
     allowedTargetIds: [...state.allowedTargetIds].sort(),
     simulationApprovalKey: state.simulationApprovalKey,
     simulationApprovedRunId: state.simulationApprovedRunId,
+    rolePersistenceStatus: state.rolePersistenceStatus,
+    reserveRoleCount: state.reserveRoleCount,
     evidence: state.evidence,
   };
 }
@@ -289,6 +316,7 @@ async function findApprovedGate7Simulation(input: {
     if (runtime.effectiveMode !== "ACTIVE") continue;
     if (runtime.simulate !== true) continue;
     if (runtime.status !== "READY_ACTIVE_SIMULATION") continue;
+    if (runtime.rolePersistenceStatus !== "PERSISTED") continue;
     if (runtime.simulationApprovalKey !== input.approvalKey) continue;
     const ids = Array.isArray(runtime.targetPlaylistIds)
       ? runtime.targetPlaylistIds.filter((value): value is string => typeof value === "string")
