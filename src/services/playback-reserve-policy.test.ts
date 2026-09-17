@@ -10,6 +10,12 @@ import {
   playbackReserveFingerprintFragment,
   resolveEffectivePlaybackReservePolicy,
 } from "./playback-reserve-policy";
+import {
+  formatPlaybackReservePolicyLabel,
+  parsePlaybackReservePolicyForm,
+  parseTargetPlaybackReservePolicyForm,
+  type PlaybackReserveFormReader,
+} from "./playback-reserve-ui";
 
 test("PLAYBACK-RESERVE-01 defaults are backward-compatible", () => {
   assert.deepEqual(defaultPlaybackReservePolicy(), {
@@ -240,5 +246,75 @@ test("generation plan role accepts only PRIMARY/RESERVE and defaults to PRIMARY"
   assert.throws(
     () => normalizeGenerationPlanRole("OTHER" as never),
     /must be PRIMARY or RESERVE/,
+  );
+});
+
+function form(values: Record<string, string>): PlaybackReserveFormReader {
+  return {
+    get(name: string) {
+      return values[name] ?? null;
+    },
+  };
+}
+
+test("Gate 9 UI maps global forms to the canonical policy contract", () => {
+  assert.deepEqual(
+    parsePlaybackReservePolicyForm(
+      form({
+        reserveMode: "DURATION",
+        durationMinutes: "15",
+        podcastInDurationReserve: "IF_FITS",
+      }),
+    ),
+    {
+      reserveMode: "DURATION",
+      durationSeconds: 900,
+      podcastInDurationReserve: "IF_FITS",
+    },
+  );
+  assert.deepEqual(
+    parsePlaybackReservePolicyForm(
+      form({ reserveMode: "MUSIC_TRACKS", musicTrackCount: "5" }),
+    ),
+    { reserveMode: "MUSIC_TRACKS", musicTrackCount: 5 },
+  );
+  assert.deepEqual(
+    parsePlaybackReservePolicyForm(
+      form({ reserveMode: "PODCAST_EPISODES", podcastEpisodeCount: "2" }),
+    ),
+    { reserveMode: "PODCAST_EPISODES", podcastEpisodeCount: 2 },
+  );
+});
+
+test("Gate 9 UI preserves inherit and explicit NONE override semantics", () => {
+  assert.deepEqual(
+    parseTargetPlaybackReservePolicyForm(
+      form({ policyMode: "INHERIT_GLOBAL", reserveMode: "DURATION" }),
+    ),
+    { policyMode: "INHERIT_GLOBAL" },
+  );
+  assert.deepEqual(
+    parseTargetPlaybackReservePolicyForm(
+      form({ policyMode: "OVERRIDE", reserveMode: "NONE" }),
+    ),
+    { policyMode: "OVERRIDE", reserveMode: "NONE" },
+  );
+});
+
+test("Gate 9 UI validates active values and exposes a compact effective label", () => {
+  assert.throws(() =>
+    parsePlaybackReservePolicyForm(
+      form({ reserveMode: "MUSIC_TRACKS", musicTrackCount: "1.5" }),
+    ),
+  );
+  assert.equal(
+    formatPlaybackReservePolicyLabel({
+      reserveMode: "DURATION",
+      durationSeconds: 900,
+      musicTrackCount: null,
+      podcastEpisodeCount: null,
+      podcastInDurationReserve: "IF_FITS",
+    }),
+    "+15 min · podcast se couber",
   );
 });
