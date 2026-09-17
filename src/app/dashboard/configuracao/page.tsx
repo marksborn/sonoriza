@@ -7,6 +7,8 @@ import { auth } from "@/lib/auth";
 import { isPrelaunchAdmin } from "@/lib/prelaunch-admin";
 import { prisma } from "@/lib/prisma";
 import { countActivePushSubscriptions } from "@/services/notifications";
+import { loadPlaybackReservePolicy } from "@/services/playback-reserve-policy";
+import { formatPlaybackReservePolicyLabel } from "@/services/playback-reserve-ui";
 
 type ConfigCardProps = {
   href: string;
@@ -57,6 +59,7 @@ export default async function ConfigurationHubPage() {
     sourceCount,
     targetCount,
     musicPolicy,
+    playbackReservePolicy,
     cleanupInboxCount,
     ingestionRuleCount,
     notificationDeviceCount,
@@ -75,6 +78,7 @@ export default async function ConfigurationHubPage() {
       where: { userId: session.user.id },
       select: { enabled: true, windowValue: true, windowUnit: true },
     }),
+    loadPlaybackReservePolicy(session.user.id),
     prisma.sourcePlaylist.count({
       where: {
         userId: session.user.id,
@@ -99,6 +103,9 @@ export default async function ConfigurationHubPage() {
             : "anos"
       }`
     : "Desativada";
+  const playbackReserveLabel = formatPlaybackReservePolicyLabel(
+    playbackReservePolicy,
+  );
 
   return (
     <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
@@ -184,6 +191,16 @@ export default async function ConfigurationHubPage() {
             title="Destinos e regras"
             description="Escolha as playlists gerenciadas, duração, mistura, sequência e ordem de geração."
             action="Configurar destinos"
+          />
+
+          <ConfigCard
+            href="/dashboard/configuracao/reserva"
+            icon="plus"
+            badge={playbackReserveLabel}
+            code="PLAYBACK-RESERVE-01"
+            title="Margem de reprodução"
+            description="Adicione uma reserva de tempo, músicas ou podcasts após o PRIMARY, com override por destino."
+            action="Configurar margem"
           />
 
           <ConfigCard
