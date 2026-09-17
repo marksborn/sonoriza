@@ -60,7 +60,7 @@ export type PlaybackReserveTargetShadowEvidence =
   | PlaybackReserveInactiveTargetShadow;
 
 export type PlaybackReserveRunShadowEvidence = Readonly<{
-  gate: 5 | 7;
+  gate: 5 | 7 | 8;
   mode: "SHADOW" | "ACTIVE";
   plannerInfluence: boolean;
   spotifyWriteInfluence: boolean;
@@ -78,14 +78,15 @@ export type PlanRunResult = BasePlanRunResult &
   }>;
 
 /**
- * PLAYBACK-RESERVE-01 Gate 7 outer planner seam.
+ * PLAYBACK-RESERVE-01 Gate 7/8 outer planner seam.
  *
  * PRIMARY remains authoritative and is always planned first by the complete
  * pre-existing stack. SHADOW projects the reserve exactly as Gates 3-5 did and
- * returns PRIMARY unchanged. Controlled ACTIVE is authorized only by the Gate 7
+ * returns PRIMARY unchanged. Controlled ACTIVE is authorized by the outer
  * runtime and appends the already-projected RESERVE suffix to the physical plan.
- * PRIMARY stats/quality remain untouched so RESERVE can never hide PRIMARY
- * shortfall. No additional provider reads are introduced.
+ * Gate 8 changes KEEP_FILLED preservation/authorization, not this selection
+ * algorithm. PRIMARY stats/quality remain untouched so RESERVE can never hide
+ * PRIMARY shortfall. No additional provider reads are introduced by the planner.
  */
 export function planRun(input: PlanRunInput): PlanRunResult {
   const primary = basePlanRun(input);
@@ -97,16 +98,10 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     primary.targets.map((entry) => [entry.targetPlaylistId, entry] as const),
   );
 
-  // Match the canonical podcast runtime order used by the nested planner stack:
-  // PODCAST-07 first, then PODCAST-06.
   const podcastRuntimePool = applyPodcast06PlannerRuntimeToCandidates(
     applyPodcast07PlannerRuntimeToCandidates(input.pools.podcasts),
   );
 
-  // Reserve ownership is intentionally separate while PRIMARY is being planned.
-  // Seed every PRIMARY first so RESERVE can never steal content from a later
-  // PRIMARY. In Gate 7 ACTIVE is single-target, but this invariant also keeps
-  // SHADOW multi-target diagnostics equivalent to the previous gates.
   const reserveReservationOwners = cloneReservationMap(
     input.externalReservationsByUri,
   );
@@ -223,7 +218,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
           const candidate = candidateByUri.get(selected.uri);
           if (!candidate) {
             throw new Error(
-              `PLAYBACK-RESERVE Gate 7 could not reconstruct selected candidate ${selected.uri}`,
+              `PLAYBACK-RESERVE Gate ${state.gate} could not reconstruct selected candidate ${selected.uri}`,
             );
           }
           return {
@@ -242,9 +237,6 @@ export function planRun(input: PlanRunInput): PlanRunResult {
           ...planned.result,
           items: [...planned.result.items, ...reserveItems],
           usedUris,
-          // PRIMARY stats remain the only quality authority. RESERVE diagnostics
-          // live in playbackReserveShadow/runtime evidence and cannot make a
-          // short PRIMARY appear complete.
           stats: planned.result.stats,
         },
       });
@@ -252,8 +244,9 @@ export function planRun(input: PlanRunInput): PlanRunResult {
   }
 
   const active = state.effectiveMode === "ACTIVE";
+  const activeGate: 7 | 8 = state.gate === 8 ? 8 : 7;
   const evidence: PlaybackReserveRunShadowEvidence = Object.freeze({
-    gate: active ? 7 : 5,
+    gate: active ? activeGate : 5,
     mode: active ? "ACTIVE" : "SHADOW",
     plannerInfluence: active,
     spotifyWriteInfluence: active && state.spotifyWriteInfluence,
