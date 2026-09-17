@@ -5,6 +5,7 @@ import {
   buildGenerationPlanItemRoleIndex,
   generationPlanItemParticipatesInBehavioralEvidence,
   generationPlanItemRoleCoordinateKey,
+  generationRunPlanRolesAreSafeForBehavioralEvidence,
 } from "@/services/playback-reserve-gate6";
 
 import {
@@ -39,6 +40,7 @@ export type MusicExposureReadModel = {
     realRunCount: number;
     identityReadyItemCount: number;
     reserveRoleExcludedItemCount: number;
+    reserveRoleUnsafeRunCount: number;
     measurableTargetSnapshotCount: number;
     appliedTargetPublicationCount: number;
     keepFilledNoopBaselineCount: number;
@@ -62,6 +64,8 @@ export type MusicExposureReadModel = {
  * Sonoriza-owned exposure ledger. PLAYBACK-RESERVE-01 Gate 6 narrows that
  * ledger to PRIMARY items only: historical items without a role sidecar remain
  * PRIMARY, while explicit RESERVE publication is not automatic exposure.
+ * Gate 7 additionally fails closed for an ACTIVE run whose runtime summary
+ * cannot prove that its role sidecar was persisted completely.
  *
  * Database reads are performed inside an explicit PostgreSQL READ ONLY snapshot.
  * Last.fm is read afterwards and is used only as independent consumption
@@ -182,9 +186,15 @@ export async function readMusicExposureModel(
   let missingApplyProofCount = 0;
   let identityReadyItemCount = 0;
   let reserveRoleExcludedItemCount = 0;
+  let reserveRoleUnsafeRunCount = 0;
   let keepFilledNoopBaselineCount = 0;
 
   for (const run of snapshot.runs) {
+    if (!generationRunPlanRolesAreSafeForBehavioralEvidence(run.summary)) {
+      reserveRoleUnsafeRunCount += 1;
+      continue;
+    }
+
     const byTarget = new Map<string, typeof run.items>();
     for (const item of run.items) {
       const role = roleByCoordinate.get(
@@ -303,6 +313,7 @@ export async function readMusicExposureModel(
       realRunCount: snapshot.runs.length,
       identityReadyItemCount,
       reserveRoleExcludedItemCount,
+      reserveRoleUnsafeRunCount,
       measurableTargetSnapshotCount: publications.length,
       appliedTargetPublicationCount: publications.filter((row) => row.applied).length,
       keepFilledNoopBaselineCount,
