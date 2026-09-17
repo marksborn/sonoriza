@@ -48,7 +48,7 @@ test("Gate 7 behavioral evidence fails closed only for unsafe ACTIVE runtime", (
   );
 });
 
-databaseTest("Gate 7 ACTIVE requires allowlisted single REBUILD_DAILY target and approved simulation", async () => {
+databaseTest("Gate 7 REBUILD_DAILY contract remains controlled after Gate 8 runtime promotion", async () => {
   const suffix = randomUUID();
   const userId = `reserve-gate7-user-${suffix}`;
   const targetId = `reserve-gate7-target-${suffix}`;
@@ -80,6 +80,8 @@ databaseTest("Gate 7 ACTIVE requires allowlisted single REBUILD_DAILY target and
       targetPlaylistIds: [targetId],
       simulate: true,
     });
+    assert.equal(simulation.gate, 8);
+    assert.equal(simulation.maintenanceMode, "REBUILD_DAILY");
     assert.equal(simulation.effectiveMode, "ACTIVE");
     assert.equal(simulation.status, "READY_ACTIVE_SIMULATION");
     assert.equal(simulation.plannerInfluence, true);
@@ -129,7 +131,7 @@ databaseTest("Gate 7 ACTIVE requires allowlisted single REBUILD_DAILY target and
       simulate: true,
     });
     assert.equal(keepFilled.effectiveMode, "SHADOW");
-    assert.equal(keepFilled.status, "ABSTAIN_REBUILD_DAILY_REQUIRED");
+    assert.equal(keepFilled.status, "ABSTAIN_KEEP_FILLED_CONTEXT_REQUIRED");
   } finally {
     if (oldMode === undefined) delete process.env.PLAYBACK_RESERVE_RUNTIME_MODE;
     else process.env.PLAYBACK_RESERVE_RUNTIME_MODE = oldMode;

@@ -30,13 +30,13 @@ export function generationPlanItemParticipatesInBehavioralEvidence(
 }
 
 /**
- * Gate 7 closes the only dangerous persistence window: if an ACTIVE reserve
- * run reached generation/publication but the explicit role sidecar could not be
+ * Gate 7/8 close the dangerous persistence window: if an ACTIVE reserve run
+ * reached generation/publication but the explicit role sidecar could not be
  * persisted, consumers must abstain from the whole run instead of falling back
  * to the historical "missing role = PRIMARY" rule.
  *
  * Historical runs and SHADOW/OFF runs have no productive reserve suffix and
- * remain backward-compatible. ACTIVE Gate 7 runs are behaviorally usable only
+ * remain backward-compatible. ACTIVE Gate 7/8 runs are behaviorally usable only
  * after the runtime summary proves rolePersistenceStatus=PERSISTED.
  */
 export function generationRunPlanRolesAreSafeForBehavioralEvidence(
@@ -44,7 +44,8 @@ export function generationRunPlanRolesAreSafeForBehavioralEvidence(
 ): boolean {
   const root = asRecord(summary);
   const runtime = asRecord(root?.playbackReserveRuntime);
-  if (!runtime || runtime.gate !== 7 || runtime.effectiveMode !== "ACTIVE") {
+  const gate = typeof runtime?.gate === "number" ? runtime.gate : null;
+  if (!runtime || gate === null || gate < 7 || runtime.effectiveMode !== "ACTIVE") {
     return true;
   }
   return runtime.rolePersistenceStatus === "PERSISTED";
