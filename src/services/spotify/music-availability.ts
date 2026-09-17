@@ -72,6 +72,15 @@ export function readPlayableMusicCandidate(
     return { candidate: null, unavailable: false, restrictionReason: null };
   }
 
+  // Keep a fresh provider read semantically equivalent to the persisted music
+  // source cache. The cache intentionally stores only candidates with a stable
+  // canonical Spotify track identity; allowing an identity-less candidate only
+  // on a cache miss makes the planner universe change when that cache is warmed.
+  const spotifyTrackId = canonicalSpotifyTrackId(track);
+  if (!spotifyTrackId) {
+    return { candidate: null, unavailable: false, restrictionReason: null };
+  }
+
   const artistNames = (track.artists ?? [])
     .flatMap((artist) => {
       const name = clean(artist.name);
@@ -83,7 +92,6 @@ export function readPlayableMusicCandidate(
   const primaryArtistName = clean(primaryArtist?.name);
   const albumId = clean(track.album?.id);
   const albumName = clean(track.album?.name);
-  const spotifyTrackId = canonicalSpotifyTrackId(track);
 
   return {
     candidate: {
@@ -91,7 +99,7 @@ export function readPlayableMusicCandidate(
       type: "MUSIC",
       title: track.name,
       ...(artistNames ? { subtitle: artistNames } : {}),
-      ...(spotifyTrackId ? { spotifyTrackId } : {}),
+      spotifyTrackId,
       ...(primaryArtistId ? { primaryArtistId } : {}),
       ...(primaryArtistName ? { primaryArtistName } : {}),
       ...(albumId ? { albumId } : {}),
