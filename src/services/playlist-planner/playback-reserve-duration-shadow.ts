@@ -11,10 +11,20 @@ export type PlaybackReserveShadowSelectedItem = Readonly<{
   role: "RESERVE";
   uri: string;
   type: Candidate["type"];
+  title: string | null;
+  subtitle: string | null;
   durationMs: number;
   spotifyTrackId: string | null;
   spotifyEpisodeId: string | null;
   programId: string | null;
+  primaryArtistId: string | null;
+  albumId: string | null;
+  originalDurationMs: number | null;
+  resumePositionMs: number | null;
+  sourcePlaylistId: string | null;
+  sourceSpotifyType: Candidate["sourceSpotifyType"] | null;
+  sourceSpotifyId: string | null;
+  sourceIncludePlayed: boolean | null;
 }>;
 
 export type PlaybackReserveDurationTargetShadow = Readonly<{
@@ -73,9 +83,10 @@ export type ProjectDurationReserveShadowInput = Readonly<{
  * IN_PROGRESS episode, the remaining duration supplied by ingestion/runtime).
  *
  * The projection remains deliberately pure: it never mutates PRIMARY, never
- * writes to Spotify and never asks the provider for more candidates. It can
- * only consume the candidate pool that PRIMARY collection already made
- * available.
+ * writes to Spotify and never asks the provider for more candidates. Gate 7
+ * retains the selected candidate provenance in this projection so an explicitly
+ * authorized productive seam can persist the exact audited RESERVE item without
+ * doing a second permissive catalog lookup.
  */
 export function projectDurationReserveShadow(
   input: ProjectDurationReserveShadowInput,
@@ -148,16 +159,9 @@ export function projectDurationReserveShadow(
     }
   }
 
-  const selectedItems = selected.map((item, index) => ({
-    position: primaryItems.length + index,
-    role: "RESERVE" as const,
-    uri: item.uri,
-    type: item.type,
-    durationMs: Math.max(0, item.durationMs),
-    spotifyTrackId: item.spotifyTrackId ?? null,
-    spotifyEpisodeId: item.spotifyEpisodeId ?? null,
-    programId: item.programId ?? null,
-  }));
+  const selectedItems = selected.map((item, index) =>
+    reserveSelectedItem(item, primaryItems.length + index),
+  );
   const plannedDurationMs = selectedItems.reduce(
     (sum, item) => sum + item.durationMs,
     0,
@@ -198,6 +202,32 @@ export function projectDurationReserveShadow(
       musicFillApplied: selectedItems.some((item) => item.type === "MUSIC"),
       selectedItems: Object.freeze(selectedItems),
     }),
+  });
+}
+
+export function reserveSelectedItem(
+  item: Candidate,
+  position: number,
+): PlaybackReserveShadowSelectedItem {
+  return Object.freeze({
+    position,
+    role: "RESERVE" as const,
+    uri: item.uri,
+    type: item.type,
+    title: item.title ?? null,
+    subtitle: item.subtitle ?? null,
+    durationMs: Math.max(0, item.durationMs),
+    spotifyTrackId: item.spotifyTrackId ?? null,
+    spotifyEpisodeId: item.spotifyEpisodeId ?? null,
+    programId: item.programId ?? null,
+    primaryArtistId: item.primaryArtistId ?? null,
+    albumId: item.albumId ?? null,
+    originalDurationMs: item.originalDurationMs ?? null,
+    resumePositionMs: item.resumePositionMs ?? null,
+    sourcePlaylistId: item.sourcePlaylistId ?? null,
+    sourceSpotifyType: item.sourceSpotifyType ?? null,
+    sourceSpotifyId: item.sourceSpotifyId ?? null,
+    sourceIncludePlayed: item.sourceIncludePlayed ?? null,
   });
 }
 
