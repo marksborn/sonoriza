@@ -24,22 +24,29 @@ export type PlaybackReserveRolePersistenceStatus =
   | "PERSISTED"
   | "FAILED";
 
+/**
+ * Gate 7 extends the old Gate 5 SHADOW state. The Gate 7 fields remain optional
+ * on this public type only so older unit callers that construct the historical
+ * `{ gate: 5, mode: "SHADOW" }` fixture keep compiling. Runtime preparation
+ * below always returns the complete Gate 7 shape.
+ */
 export type PlaybackReserveShadowRuntimeState = {
-  gate: 7;
-  configuredMode: PlaybackReserveRuntimeMode;
-  effectiveMode: PlaybackReserveRuntimeMode;
-  simulate: boolean;
+  gate: 5 | 7;
+  mode?: "SHADOW";
+  configuredMode?: PlaybackReserveRuntimeMode;
+  effectiveMode?: PlaybackReserveRuntimeMode;
+  simulate?: boolean;
   plannerInfluence: boolean;
   spotifyWriteInfluence: boolean;
   additionalProviderReads: false;
-  status: PlaybackReserveRuntimeStatus;
-  targetPlaylistIds: readonly string[];
-  allowedTargetIds: ReadonlySet<string>;
+  status?: PlaybackReserveRuntimeStatus;
+  targetPlaylistIds?: readonly string[];
+  allowedTargetIds?: ReadonlySet<string>;
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
-  simulationApprovalKey: string | null;
-  simulationApprovedRunId: string | null;
-  rolePersistenceStatus: PlaybackReserveRolePersistenceStatus;
-  reserveRoleCount: number;
+  simulationApprovalKey?: string | null;
+  simulationApprovedRunId?: string | null;
+  rolePersistenceStatus?: PlaybackReserveRolePersistenceStatus;
+  reserveRoleCount?: number;
   evidence: PlaybackReserveRunShadowEvidence | null;
 };
 
@@ -222,36 +229,24 @@ export function recordPlaybackReserveShadowEvidence(
   state.evidence = evidence;
 }
 
-export function recordPlaybackReserveRolePersistence(input: {
-  status: "PERSISTED" | "FAILED";
-  reserveRoleCount?: number;
-}): void {
-  const state = storage.getStore();
-  if (!state) return;
-  state.rolePersistenceStatus = input.status;
-  if (typeof input.reserveRoleCount === "number") {
-    state.reserveRoleCount = input.reserveRoleCount;
-  }
-}
-
 export function playbackReserveShadowRuntimeSummary(
   state: PlaybackReserveShadowRuntimeState,
 ) {
   return {
     gate: 7 as const,
-    configuredMode: state.configuredMode,
-    effectiveMode: state.effectiveMode,
-    simulate: state.simulate,
+    configuredMode: state.configuredMode ?? state.mode ?? "SHADOW",
+    effectiveMode: state.effectiveMode ?? "SHADOW",
+    simulate: state.simulate ?? false,
     plannerInfluence: state.plannerInfluence,
     spotifyWriteInfluence: state.spotifyWriteInfluence,
     additionalProviderReads: false as const,
-    status: state.status,
-    targetPlaylistIds: [...state.targetPlaylistIds],
-    allowedTargetIds: [...state.allowedTargetIds].sort(),
-    simulationApprovalKey: state.simulationApprovalKey,
-    simulationApprovedRunId: state.simulationApprovedRunId,
-    rolePersistenceStatus: state.rolePersistenceStatus,
-    reserveRoleCount: state.reserveRoleCount,
+    status: state.status ?? "READY_SHADOW",
+    targetPlaylistIds: [...(state.targetPlaylistIds ?? [])],
+    allowedTargetIds: [...(state.allowedTargetIds ?? new Set<string>())].sort(),
+    simulationApprovalKey: state.simulationApprovalKey ?? null,
+    simulationApprovedRunId: state.simulationApprovedRunId ?? null,
+    rolePersistenceStatus: state.rolePersistenceStatus ?? "NOT_APPLICABLE",
+    reserveRoleCount: state.reserveRoleCount ?? 0,
     evidence: state.evidence,
   };
 }
