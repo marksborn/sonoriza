@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { BrandLogo } from "@/components/BrandLogo";
+import { ReviewSimulationButton } from "@/components/ReviewSimulationButton";
 import { TargetRunButton } from "@/components/TargetRunButton";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
@@ -96,7 +97,15 @@ export default async function GeneratedPlaylistPage({
             </div>
 
             <div className="flex flex-col items-start gap-3 sm:items-end">
-              <TargetRunButton targetId={target.id} targetName={target.name} />
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                <ReviewSimulationButton
+                  label={`Simular somente ${target.name}`}
+                  runningLabel={`Simulando ${target.name}…`}
+                  targetPlaylistIds={[target.id]}
+                  variant="secondary"
+                />
+                <TargetRunButton targetId={target.id} targetName={target.name} />
+              </div>
               {spotifyUrl ? (
                 <a
                   href={spotifyUrl}
