@@ -10,6 +10,8 @@ type Props = {
   disabled?: boolean;
   label?: string;
   runningLabel?: string;
+  targetPlaylistIds?: readonly string[];
+  variant?: "primary" | "secondary";
 };
 
 type SpotifyBackoff = {
@@ -36,6 +38,8 @@ export function ReviewSimulationButton({
   disabled = false,
   label = "Simular configuração",
   runningLabel = "Simulando…",
+  targetPlaylistIds,
+  variant = "primary",
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -94,7 +98,12 @@ export function ReviewSimulationButton({
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ simulate: true }),
+        body: JSON.stringify({
+          simulate: true,
+          ...(targetPlaylistIds && targetPlaylistIds.length > 0
+            ? { targetPlaylistIds: [...targetPlaylistIds] }
+            : {}),
+        }),
       });
       const data = await readJsonApiResponse<ApiResult>(response, "a simulação");
 
@@ -136,7 +145,11 @@ export function ReviewSimulationButton({
         type="button"
         disabled={blocked}
         onClick={simulate}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3 font-black text-brand-900 shadow-action transition hover:-translate-y-0.5 hover:bg-accent-400 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0 sm:w-auto"
+        className={
+          variant === "secondary"
+            ? "inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-black text-ink-inverse backdrop-blur-sm transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
+            : "inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-accent px-5 py-3 font-black text-brand-900 shadow-action transition hover:-translate-y-0.5 hover:bg-accent-400 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0 sm:w-auto"
+        }
       >
         {running || checking ? (
           <span
