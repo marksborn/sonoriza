@@ -28,6 +28,7 @@
     "test:data-policy": "tsx --test src/services/data-policy/*.test.ts",
     "music-identity:backfill-shadow": "tsx scripts/backfill-music-identity-shadow.ts",
     "music-identity:bootstrap-cache-shadow": "tsx scripts/bootstrap-music-identity-cache-shadow.ts",
+    "music-identity:resolver-shadow": "tsx scripts/report-music-identity-resolver-shadow.ts",
     "history:lastfm": "tsx scripts/import-lastfm-history.ts",
     "history:spotify": "tsx scripts/import-spotify-extended-history.ts",
     "onboarding:pilot-report": "tsx scripts/report-onboarding-pilot.ts",
