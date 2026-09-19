@@ -68,7 +68,6 @@ CREATE TABLE "AlbumReleaseIdentity" (
   "userId" TEXT NOT NULL,
   "albumIdentityId" TEXT NOT NULL,
   "editionLabel" TEXT,
-  "releaseDate" TIMESTAMP(3),
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -89,6 +88,7 @@ CREATE TABLE "ArtistProviderRef" (
   "uri" TEXT,
   "matchReason" TEXT NOT NULL,
   "confidenceBasisPoints" INTEGER NOT NULL,
+  "resolutionLineage" JSONB NOT NULL,
   "observedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -103,6 +103,12 @@ CREATE TABLE "ArtistProviderRef" (
   CONSTRAINT "ArtistProviderRef_matchReason_check" CHECK (btrim("matchReason") <> ''),
   CONSTRAINT "ArtistProviderRef_confidence_check" CHECK (
     "confidenceBasisPoints" BETWEEN 0 AND 10000
+  ),
+  CONSTRAINT "ArtistProviderRef_resolutionLineage_check" CHECK (
+    jsonb_typeof("resolutionLineage") = 'object'
+    AND "resolutionLineage" ? 'origins'
+    AND jsonb_typeof("resolutionLineage" -> 'origins') = 'array'
+    AND jsonb_array_length("resolutionLineage" -> 'origins') > 0
   )
 );
 
@@ -119,6 +125,7 @@ CREATE TABLE "TrackProviderRef" (
   "executionStatus" "TrackProviderExecutionStatus" NOT NULL DEFAULT 'KNOWN',
   "matchReason" TEXT NOT NULL,
   "confidenceBasisPoints" INTEGER NOT NULL,
+  "resolutionLineage" JSONB NOT NULL,
   "observedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -137,6 +144,12 @@ CREATE TABLE "TrackProviderRef" (
   CONSTRAINT "TrackProviderRef_confidence_check" CHECK (
     "confidenceBasisPoints" BETWEEN 0 AND 10000
   ),
+  CONSTRAINT "TrackProviderRef_resolutionLineage_check" CHECK (
+    jsonb_typeof("resolutionLineage") = 'object'
+    AND "resolutionLineage" ? 'origins'
+    AND jsonb_typeof("resolutionLineage" -> 'origins') = 'array'
+    AND jsonb_array_length("resolutionLineage" -> 'origins') > 0
+  ),
   CONSTRAINT "TrackProviderRef_execution_shape_check" CHECK (
     "executionStatus" <> 'EXECUTABLE'
     OR ("uri" IS NOT NULL AND btrim("uri") <> '')
@@ -153,6 +166,7 @@ CREATE TABLE "AlbumReleaseProviderRef" (
   "market" TEXT,
   "matchReason" TEXT NOT NULL,
   "confidenceBasisPoints" INTEGER NOT NULL,
+  "resolutionLineage" JSONB NOT NULL,
   "observedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -168,6 +182,12 @@ CREATE TABLE "AlbumReleaseProviderRef" (
   CONSTRAINT "AlbumReleaseProviderRef_matchReason_check" CHECK (btrim("matchReason") <> ''),
   CONSTRAINT "AlbumReleaseProviderRef_confidence_check" CHECK (
     "confidenceBasisPoints" BETWEEN 0 AND 10000
+  ),
+  CONSTRAINT "AlbumReleaseProviderRef_resolutionLineage_check" CHECK (
+    jsonb_typeof("resolutionLineage") = 'object'
+    AND "resolutionLineage" ? 'origins'
+    AND jsonb_typeof("resolutionLineage" -> 'origins') = 'array'
+    AND jsonb_array_length("resolutionLineage" -> 'origins') > 0
   )
 );
 
