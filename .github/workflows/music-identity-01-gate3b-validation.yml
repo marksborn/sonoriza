@@ -51,14 +51,23 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: http://postgres:postgres@127.0.0.1:5432/sonoriza_music_identity_gate3b?schema=public
-      NEXTAUTH_SECRET: music-identity-gate3b-ci-secret
-      AUTH_SECRET: music-identity-gate3b-ci-secret
-      AUTH_TRUST_HOST: "true"
-      GOOGLE_CLIENT_ID: test
-      GOOGLE_CLIENT_SECRET: test
-      SPOTIFY_CLIENT_ID: test
-      SPOTIFY_CLIENT_SECRET: test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_music_identity_gate3b?schema=public
       MUSIC_IDENTITY_DB_TEST: "1"
     steps:
-      - uses: actions/checkout@1ØÐ(€€€€€€´ÕÍ•Ìè…Ñ¥½¹Ì½Í•ÑÕÀµ¹½‘•ØÐ(€€€€€€€Ý¥Ñ è(€€€€€€€€€¹½‘”µÙ•ÉÍ¥½¸è€ˆÈÐ¸Ää¸Àˆ(€€€€€€€€€…¡”è¹Á´(€€€€€€´ÉÕ¸è¹Á´¤(€€€€€€´ÉÕ¸è¹ÁàÁÉ¥Íµ„Ù…±¥‘…Ñ”(€€€€€€´ÉÕ¸è¹ÁàÁÉ¥Íµ„µ¥É…Ñ”‘•Á±½ä(€€€€€€´ÉÕ¸è¹ÁàÁÉ¥Íµ„•¹•É…Ñ”(€€€€€€´¹…µ”è5UM%µ%9Q%Qd´ÀÄ…Ñ”€ÍÍÑÉ½¹œ¥‘•¹Ñ¥™¥•ÈÍ¡…‘½Ü½¹ÑÉ…ÑÌ(€€€€€€€ÉÕ¸è€ø´(€€€€€€€€€¹ÁàÑÍà€´µÑ•ÍÐ(€€€€€€€€€ÍÉŒ½Í•ÉÙ¥•Ì½µÕÍ¥Œµ¥‘•¹Ñ¥Ñä½ÍÑÉ½¹œµ¥‘•¹Ñ¥™¥•Èµ•¹É¥¡µ•¹ÐµÍ¡…‘½Ü¹Ñ•ÍÐ¹ÑÌ(€€€€€€€€€ÍÉŒ½Í•ÉÙ¥•Ì½µÕÍ¥Œµ¥‘•¹Ñ¥Ñä½ÍÑÉ½¹œµ¥‘•¹Ñ¥™¥•Èµ•¹É¥¡µ•¹ÐµÍ¡…‘½Ü¹¥¹Ñ•É…Ñ¥½¸¹Ñ•ÍÐ¹ÑÌ(€€€€€€€€€ÍÉŒ½Í•ÉÙ¥•Ì½µÕÍ¥Œµ¥‘•¹Ñ¥Ñä½Í¡…‘½ÜµÉ•Í½±Ù•ÈµÉ•Á½ÉÐ¹Ñ•ÍÐ¹ÑÌ(€€€€€€€€€ÍÉŒ½Í•ÉÙ¥•Ì½µÕÍ¥Œµ¥‘•¹Ñ¥Ñä½Í¡…‘½ÜµÉ•Í½±Ù•ÈµÉ•Á½ÉÐ¹¥¹Ñ•É…Ñ¥½¸¹Ñ•ÍÐ¹ÑÌ(€€€€€€´ÉÕ¸è¹Á´ÉÕ¸ÑåÁ•¡•¬(€€€€€€´ÉÕ¸è¹Á´ÉÕ¸‰Õ¥±(
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - name: MUSIC-IDENTITY-01 Gate 3B strong identifier shadow contracts
+        run: >-
+          npx tsx --test
+          src/services/music-identity/strong-identifier-enrichment-shadow.test.ts
+          src/services/music-identity/strong-identifier-enrichment-shadow.integration.test.ts
+          src/services/music-identity/shadow-resolver-report.test.ts
+          src/services/music-identity/shadow-resolver-report.integration.test.ts
+      - run: npm run typecheck
