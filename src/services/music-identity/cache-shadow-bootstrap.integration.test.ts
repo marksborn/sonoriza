@@ -141,7 +141,11 @@ databaseTest("Gate 2D dry-run is read-only, reuses provider identities, writes K
       },
     });
     await prisma.targetPlaylist.create({
-      data: { userId, name: "Gate 2D Target" },
+      data: {
+        userId,
+        name: "Gate 2D Target",
+        sequencePattern: [] as Prisma.InputJsonValue,
+      },
     });
 
     const dryRun = await runMusicIdentityCacheShadowBootstrap({ userId });
@@ -274,7 +278,13 @@ databaseTest("Gate 2D write refuses partial persisted snapshots before creating 
         cacheUpdatedAt: new Date("2026-09-19T12:00:00.000Z"),
       },
     });
-    await prisma.targetPlaylist.create({ data: { userId, name: "Partial Target" } });
+    await prisma.targetPlaylist.create({
+      data: {
+        userId,
+        name: "Partial Target",
+        sequencePattern: [] as Prisma.InputJsonValue,
+      },
+    });
 
     const dryRun = await runMusicIdentityCacheShadowBootstrap({ userId });
     assert.equal(dryRun.selection.snapshotWriteAllowed, false);
