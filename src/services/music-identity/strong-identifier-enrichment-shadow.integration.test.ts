@@ -162,7 +162,6 @@ databaseTest("Gate 3B enriches strong IDs through an injected provider and leave
       provider,
     });
 
-    assert.equal(report.mode, "SHADOW_PROVIDER_ENRICHMENT_READ_ONLY");
     if (report.mode !== "SHADOW_PROVIDER_ENRICHMENT_READ_ONLY") {
       assert.fail(`unexpected abstention: ${report.abstentionReason}`);
     }
