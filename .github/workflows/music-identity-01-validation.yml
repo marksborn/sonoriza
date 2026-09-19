@@ -1,0 +1,63 @@
+name: MUSIC-IDENTITY-01 Gate 2A validation
+
+on:
+  pull_request:
+    paths:
+      - "prisma/music-identity.prisma"
+      - "prisma/migrations/20260919153000_music_identity_gate2a/**"
+      - "src/services/music-identity/**"
+      - ".github/workflows/music-identity-01-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "prisma/music-identity.prisma"
+      - "prisma/migrations/20260919153000_music_identity_gate2a/**"
+      - "src/services/music-identity/**"
+      - ".github/workflows/music-identity-01-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_music_identity
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_music_identity"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_music_identity?schema=public
+      NEXTAUTH_SECRET: music-identity-ci-secret
+      AUTH_SECRET: music-identity-ci-secret
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - name: MUSIC-IDENTITY-01 Gate 2A contracts
+        run: npx tsx --test src/services/music-identity/contracts.test.ts
+      - run: npm run typecheck
+      - run: npm run build
