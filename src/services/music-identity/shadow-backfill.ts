@@ -2,10 +2,10 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import type { DataLineage } from "@/services/data-policy/provenance";
-import { normalizeIsrc } from "./contracts";
+import { normalizeIsrcEvidence } from "./contracts";
 
 const SPOTIFY_PROVIDER = "spotify";
-const MATCH_REASON = "GATE2B_EXACT_SPOTIFY_PROVIDER_ID_SINGLETON";
+const MATCH_REASON = "SINGLETON_BOOTSTRAP";
 const CONFIDENCE_BASIS_POINTS = 10_000;
 
 export type ShadowBackfillObservationSource =
@@ -517,7 +517,7 @@ function hasStrongConflict(observations: ShadowBackfillObservation[]): boolean {
   }
   const normalizedIsrcs = unique(
     observations
-      .map((row) => normalizeIsrc(row.isrc))
+      .map((row) => normalizeIsrcEvidence(row.isrc))
       .filter((value): value is string => Boolean(value)),
   );
   if (normalizedIsrcs.length > 1) return true;
@@ -548,7 +548,7 @@ function singleNonEmptyValue(values: Array<string | null>): string | null {
 function singleNormalizedIsrc(values: Array<string | null>): string | null {
   const normalized = unique(
     values
-      .map((value) => normalizeIsrc(value))
+      .map((value) => normalizeIsrcEvidence(value))
       .filter((value): value is string => Boolean(value)),
   );
   return normalized.length === 1 ? normalized[0]! : null;
