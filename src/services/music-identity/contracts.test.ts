@@ -3,20 +3,25 @@ import test from "node:test";
 
 import { lineageFromOrigins } from "../data-policy/provenance";
 import {
+  GLOBAL_PROVIDER_SCOPE,
   assertConfidenceBasisPoints,
   assertProviderRefAssociationStable,
   isExecutableTrackProviderRef,
   normalizeIsrcEvidence,
   normalizeProviderEntityId,
   normalizeProviderKey,
+  normalizeProviderScope,
   providerRefNaturalKey,
   singletonBootstrapResolution,
 } from "./contracts";
 
-test("provider keys are canonicalized while external IDs preserve case", () => {
+test("provider and scope keys are canonicalized while external IDs preserve case", () => {
   assert.equal(normalizeProviderKey(" Spotify "), "spotify");
+  assert.equal(normalizeProviderScope(" GLOBAL "), GLOBAL_PROVIDER_SCOPE);
+  assert.equal(normalizeProviderScope(" Market:BR "), "market:br");
   assert.equal(normalizeProviderEntityId(" AbC123 "), "AbC123");
   assert.throws(() => normalizeProviderKey("   "), /must not be empty/);
+  assert.throws(() => normalizeProviderScope("   "), /must not be empty/);
   assert.throws(() => normalizeProviderEntityId("   "), /must not be empty/);
 });
 
@@ -35,25 +40,35 @@ test("confidence is constrained to integer basis points", () => {
   assert.throws(() => assertConfidenceBasisPoints(1.5), /integer/);
 });
 
-test("provider-ref natural keys are scoped by user", () => {
+test("provider-ref natural keys are scoped by user and provider namespace", () => {
   const first = providerRefNaturalKey({
     userId: "user-a",
     provider: "SPOTIFY",
+    providerScope: "GLOBAL",
     providerEntityId: "track-1",
   });
   const same = providerRefNaturalKey({
     userId: "user-a",
     provider: "spotify",
+    providerScope: "global",
     providerEntityId: "track-1",
   });
   const otherUser = providerRefNaturalKey({
     userId: "user-b",
     provider: "spotify",
+    providerScope: "global",
+    providerEntityId: "track-1",
+  });
+  const otherScope = providerRefNaturalKey({
+    userId: "user-a",
+    provider: "spotify",
+    providerScope: "market:br",
     providerEntityId: "track-1",
   });
 
   assert.equal(first, same);
   assert.notEqual(first, otherUser);
+  assert.notEqual(first, otherScope);
 });
 
 test("canonical identity alone never makes a track provider ref executable", () => {
@@ -94,10 +109,11 @@ test("canonical identity alone never makes a track provider ref executable", () 
   );
 });
 
-test("provider-ref association cannot be silently moved to another identity", () => {
+test("provider-ref association cannot be silently moved to another identity or scope", () => {
   const current = {
     userId: "user-a",
     provider: "spotify",
+    providerScope: "global",
     providerEntityId: "track-1",
     canonicalIdentityId: "recording-a",
   } as const;
@@ -106,6 +122,7 @@ test("provider-ref association cannot be silently moved to another identity", ()
     assertProviderRefAssociationStable(current, {
       ...current,
       provider: "SPOTIFY",
+      providerScope: "GLOBAL",
     }),
   );
 
@@ -123,6 +140,15 @@ test("provider-ref association cannot be silently moved to another identity", ()
       assertProviderRefAssociationStable(current, {
         ...current,
         providerEntityId: "track-2",
+      }),
+    /natural key is immutable/,
+  );
+
+  assert.throws(
+    () =>
+      assertProviderRefAssociationStable(current, {
+        ...current,
+        providerScope: "market:br",
       }),
     /natural key is immutable/,
   );
