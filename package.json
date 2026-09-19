@@ -53,7 +53,7 @@
     "discovery:planner-preview:gate5g": "tsx scripts/report-music-discovery-planner-preview-gate5g.ts",
     "discovery:conversion": "tsx scripts/report-music-discovery-conversion.ts",
     "album:profile": "tsx scripts/report-album-discovery-profile.ts",
-    "album:opportunity": "tsx scripts/report-album-discovery-profile.ts",
+    "album:opportunity": "tsx scripts/report-album-discovery-opportunity.ts",
     "album:queue-preview": "tsx scripts/report-album-queue-preview.ts",
     "album:queue-write": "tsx scripts/write-album-queue.ts",
     "album:queue-memory": "tsx scripts/record-album-queue-memory.ts",
