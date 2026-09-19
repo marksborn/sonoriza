@@ -1,0 +1,160 @@
+// ---------------------------------------------------------------------------
+// MUSIC-IDENTITY-01 Gate 2A — canonical identities + provider references.
+//
+// Additive persistence only. These models are intentionally not connected to
+// planner/history/preference/exposure consumers in this gate. Identity remains
+// per-user in v1 so evidence observed for one account cannot silently affect
+// another account's canonical graph.
+//
+// Provider IDs are references, never the domain identity. In particular,
+// TrackProviderRef.executionStatus is explicit: the existence of a canonical
+// RecordingIdentity does not make a provider item executable.
+// ---------------------------------------------------------------------------
+
+enum TrackProviderExecutionStatus {
+  KNOWN
+  EXECUTABLE
+  UNAVAILABLE
+}
+
+model ArtistIdentity {
+  id            String   @id @default(cuid())
+  userId        String
+  canonicalName String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  providerRefs ArtistProviderRef[]
+  songs        SongIdentity[]
+
+  @@unique([userId, id])
+  @@index([userId, canonicalName])
+}
+
+model SongIdentity {
+  id                      String   @id @default(cuid())
+  userId                  String
+  primaryArtistIdentityId String
+  canonicalTitle          String
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  primaryArtist ArtistIdentity    @relation(fields: [userId, primaryArtistIdentityId], references: [userId, id], onDelete: Restrict)
+  recordings   RecordingIdentity[]
+
+  @@unique([userId, id])
+  @@index([userId, primaryArtistIdentityId])
+  @@index([userId, canonicalTitle])
+}
+
+model RecordingIdentity {
+  id             String   @id @default(cuid())
+  userId         String
+  songIdentityId String
+  versionClass   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  song         SongIdentity      @relation(fields: [userId, songIdentityId], references: [userId, id], onDelete: Restrict)
+  providerRefs TrackProviderRef[]
+
+  @@unique([userId, id])
+  @@index([userId, songIdentityId])
+  @@index([userId, versionClass])
+}
+
+model AlbumIdentity {
+  id             String   @id @default(cuid())
+  userId         String
+  canonicalTitle String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  releases AlbumReleaseIdentity[]
+
+  @@unique([userId, id])
+  @@index([userId, canonicalTitle])
+}
+
+model AlbumReleaseIdentity {
+  id              String    @id @default(cuid())
+  userId          String
+  albumIdentityId String
+  editionLabel    String?
+  releaseDate     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  album        AlbumIdentity             @relation(fields: [userId, albumIdentityId], references: [userId, id], onDelete: Restrict)
+  providerRefs AlbumReleaseProviderRef[]
+
+  @@unique([userId, id])
+  @@index([userId, albumIdentityId])
+}
+
+model ArtistProviderRef {
+  id                    String   @id @default(cuid())
+  userId                String
+  artistIdentityId      String
+  provider              String
+  providerArtistId      String
+  uri                   String?
+  matchReason           String
+  confidenceBasisPoints Int
+  observedAt            DateTime @default(now())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  artist ArtistIdentity @relation(fields: [userId, artistIdentityId], references: [userId, id], onDelete: Restrict)
+
+  @@unique([userId, id])
+  @@unique([userId, provider, providerArtistId])
+  @@index([userId, artistIdentityId])
+}
+
+model TrackProviderRef {
+  id                    String                       @id @default(cuid())
+  userId                String
+  recordingIdentityId   String
+  provider              String
+  providerTrackId       String
+  uri                   String?
+  isrc                  String?
+  trackMbid             String?
+  market                String?
+  executionStatus       TrackProviderExecutionStatus @default(KNOWN)
+  matchReason           String
+  confidenceBasisPoints Int
+  observedAt            DateTime                     @default(now())
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+
+  recording RecordingIdentity @relation(fields: [userId, recordingIdentityId], references: [userId, id], onDelete: Restrict)
+
+  @@unique([userId, id])
+  @@unique([userId, provider, providerTrackId])
+  @@index([userId, recordingIdentityId])
+  @@index([userId, isrc])
+  @@index([userId, trackMbid])
+}
+
+model AlbumReleaseProviderRef {
+  id                     String   @id @default(cuid())
+  userId                 String
+  albumReleaseIdentityId String
+  provider               String
+  providerAlbumId        String
+  uri                    String?
+  market                 String?
+  matchReason            String
+  confidenceBasisPoints  Int
+  observedAt             DateTime @default(now())
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  albumRelease AlbumReleaseIdentity @relation(fields: [userId, albumReleaseIdentityId], references: [userId, id], onDelete: Restrict)
+
+  @@unique([userId, id])
+  @@unique([userId, provider, providerAlbumId])
+  @@index([userId, albumReleaseIdentityId])
+}
