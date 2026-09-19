@@ -1,0 +1,64 @@
+name: MUSIC-IDENTITY-01 Gate 3B validation
+
+on:
+  pull_request:
+    paths:
+      - "src/services/music-identity/strong-identifier-enrichment-shadow.ts"
+      - "src/services/music-identity/strong-identifier-enrichment-shadow.test.ts"
+      - "src/services/music-identity/strong-identifier-enrichment-shadow.integration.test.ts"
+      - "src/services/music-identity/shadow-resolver-report.ts"
+      - "src/services/music-identity/contracts.ts"
+      - "src/services/spotify/catalog-search.ts"
+      - "src/services/spotify/source-cache.ts"
+      - "src/services/target-source-scope.ts"
+      - "scripts/report-music-identity-strong-id-shadow.ts"
+      - ".github/workflows/music-identity-01-gate3b-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/services/music-identity/strong-identifier-enrichment-shadow.ts"
+      - "src/services/music-identity/strong-identifier-enrichment-shadow.test.ts"
+      - "src/services/music-identity/strong-identifier-enrichment-shadow.integration.test.ts"
+      - "src/services/music-identity/shadow-resolver-report.ts"
+      - "src/services/music-identity/contracts.ts"
+      - "src/services/spotify/catalog-search.ts"
+      - "src/services/spotify/source-cache.ts"
+      - "src/services/target-source-scope.ts"
+      - "scripts/report-music-identity-strong-id-shadow.ts"
+      - ".github/workflows/music-identity-01-gate3b-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_music_identity_gate3b
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_music_identity_gate3b"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: http://postgres:postgres@127.0.0.1:5432/sonoriza_music_identity_gate3b?schema=public
+      NEXTAUTH_SECRET: music-identity-gate3b-ci-secret
+      AUTH_SECRET: music-identity-gate3b-ci-secret
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+      MUSIC_IDENTITY_DB_TEST: "1"
+    steps:
+      - uses: actions/checkout@1ØÐ(€€€€€€´ÕÍ•Ìè…Ñ¥½¹Ì½Í•ÑÕÀµ¹½‘•ØÐ(€€€€€€€Ý¥Ñ è(€€€€€€€€€¹½‘”µÙ•ÉÍ¥½¸è€ˆÈÐ¸Ää¸Àˆ(€€€€€€€€€…¡”è¹Á´(€€€€€€´ÉÕ¸è¹Á´¤(€€€€€€´ÉÕ¸è¹ÁàÁÉ¥Íµ„Ù…±¥‘…Ñ”(€€€€€€´ÉÕ¸è¹ÁàÁÉ¥Íµ„µ¥É…Ñ”‘•Á±½ä(€€€€€€´ÉÕ¸è¹ÁàÁÉ¥Íµ„•¹•É…Ñ”(€€€€€€´¹…µ”è5UM%µ%9Q%Qd´ÀÄ…Ñ”€ÍÍÑÉ½¹œ¥‘•¹Ñ¥™¥•ÈÍ¡…‘½Ü½¹ÑÉ…ÑÌ(€€€€€€€ÉÕ¸è€ø´(€€€€€€€€€¹ÁàÑÍà€´µÑ•ÍÐ(€€€€€€€€€ÍÉŒ½Í•ÉÙ¥•Ì½µÕÍ¥Œµ¥‘•¹Ñ¥Ñä½ÍÑÉ½¹œµ¥‘•¹Ñ¥™¥•Èµ•¹É¥¡µ•¹ÐµÍ¡…‘½Ü¹Ñ•ÍÐ¹ÑÌ(€€€€€€€€€ÍÉŒ½Í•ÉÙ¥•Ì½µÕÍ¥Œµ¥‘•¹Ñ¥Ñä½ÍÑÉ½¹œµ¥‘•¹Ñ¥™¥•Èµ•¹É¥¡µ•¹ÐµÍ¡…‘½Ü¹¥¹Ñ•É…Ñ¥½¸¹Ñ•ÍÐ¹ÑÌ(€€€€€€€€€ÍÉŒ½Í•ÉÙ¥•Ì½µÕÍ¥Œµ¥‘•¹Ñ¥Ñä½Í¡…‘½ÜµÉ•Í½±Ù•ÈµÉ•Á½ÉÐ¹Ñ•ÍÐ¹ÑÌ(€€€€€€€€€ÍÉŒ½Í•ÉÙ¥•Ì½µÕÍ¥Œµ¥‘•¹Ñ¥Ñä½Í¡…‘½ÜµÉ•Í½±Ù•ÈµÉ•Á½ÉÐ¹¥¹Ñ•É…Ñ¥½¸¹Ñ•ÍÐ¹ÑÌ(€€€€€€´ÉÕ¸è¹Á´ÉÕ¸ÑåÁ•¡•¬(€€€€€€´ÉÕ¸è¹Á´ÉÕ¸‰Õ¥±(

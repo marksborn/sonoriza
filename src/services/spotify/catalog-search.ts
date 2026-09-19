@@ -10,6 +10,7 @@ const API = "https://api.spotify.com/v1";
 const MAX_RATE_LIMIT_RETRIES = 0;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
 const SPOTIFY_SEARCH_MAX_LIMIT = 10;
+const SPOTIFY_TRACK_LOOKUP_BATCH_SIZE = 50;
 
 export type SpotifyCatalogArtistSummary = {
   id: string;
@@ -28,6 +29,14 @@ export type SpotifyCatalogTrackSummary = {
   albumId: string | null;
   albumName: string | null;
   durationMs: number;
+  linkedFromTrackId?: string | null;
+  isPlayable?: boolean | null;
+  restrictionReason?: string | null;
+};
+
+export type SpotifyCatalogTrackLookup = {
+  requestedTrackId: string;
+  track: SpotifyCatalogTrackSummary | null;
 };
 
 export type SpotifyCatalogSearchMetrics = {
@@ -91,6 +100,36 @@ export class SpotifyCatalogSearchClient {
       .filter((row): row is SpotifyCatalogTrackSummary => Boolean(row));
   }
 
+  /**
+   * Gate 3B catalog lookup. Spotify currently documents GET /tracks with
+   * a maximum of 50 IDs, but marks the endpoint deprecated. Keep it isolated
+   * to shadow enrichment so it cannot become an implicit runtime dependency.
+   */
+  async lookupTracksByIds(
+    trackIds: readonly string[],
+  ): Promise<SpotifyCatalogTrackLookup[]> {
+    const ids = [...new Set(trackIds.map((value) => value.trim()).filter(Boolean))];
+    const lookups: SpotifyCatalogTrackLookup[] = [];
+
+    for (let offset = 0; offset < ids.length; offset += SPOTIFY_TRACK_LOOKUP_BATCH_SIZE) {
+      const batch = ids.slice(offset, offset + SPOTIFY_TRACK_LOOKUP_BATCH_SIZE);
+      const params = new URLSearchParams({ ids: batch.join(",") });
+      const path = `/tracks?${params.toString()}`;
+      const payload = await this.requestJson<SpotifyTracksResponse>(path);
+
+      for (let index = 0; index < batch.length; index += 1) {
+        const requestedTrackId = batch[index]!;
+        const row = payload.tracks?.[index] ?? null;
+        lookups.push({
+          requestedTrackId,
+          track: row ? readTrack(row) : null,
+        });
+      }
+    }
+
+    return lookups;
+  }
+
   private async getAccessToken(): Promise<string> {
     this.accessTokenPromise ??= getSpotifyAccessToken(this.userId);
     return this.accessTokenPromise;
@@ -117,6 +156,12 @@ export class SpotifyCatalogSearchClient {
       if (cached !== null) return cached;
     }
 
+    const payload = await this.requestJson<SpotifySearchResponse>(path);
+    await this.readSession?.writeCache(path, payload);
+    return payload;
+  }
+
+  private async requestJson<T>(path: string): Promise<T> {
     let retries = 0;
     while (true) {
       await assertSpotifyBackoffInactive();
@@ -132,9 +177,7 @@ export class SpotifyCatalogSearchClient {
       });
 
       if (response.ok) {
-        const payload = (await response.json()) as SpotifySearchResponse;
-        await this.readSession?.writeCache(path, payload);
-        return payload;
+        return (await response.json()) as T;
       }
 
       this.metrics.failures += 1;
@@ -166,6 +209,10 @@ type SpotifySearchResponse = {
   tracks?: { items?: SpotifyTrackResponse[] };
 };
 
+type SpotifyTracksResponse = {
+  tracks?: Array<SpotifyTrackResponse | null>;
+};
+
 type SpotifyArtistResponse = {
   id?: string | null;
   name?: string | null;
@@ -182,6 +229,9 @@ type SpotifyTrackResponse = {
   external_ids?: { isrc?: string | null } | null;
   artists?: SpotifyArtistResponse[] | null;
   album?: { id?: string | null; name?: string | null } | null;
+  linked_from?: { id?: string | null } | null;
+  is_playable?: boolean | null;
+  restrictions?: { reason?: string | null } | null;
   is_local?: boolean | null;
 };
 
@@ -212,6 +262,10 @@ function readTrack(row: SpotifyTrackResponse): SpotifyCatalogTrackSummary | null
     albumId: row.album?.id?.trim() || null,
     albumName: row.album?.name?.trim() || null,
     durationMs: Math.max(0, row.duration_ms ?? 0),
+    linkedFromTrackId: row.linked_from?.id?.trim() || null,
+    isPlayable:
+      typeof row.is_playable === "boolean" ? row.is_playable : null,
+    restrictionReason: row.restrictions?.reason?.trim() || null,
   };
 }
 
