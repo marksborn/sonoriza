@@ -1,12 +1,14 @@
 import type { DataLineage } from "../data-policy/provenance";
 
 /**
- * MUSIC-IDENTITY-01 Gate 2A.
+ * MUSIC-IDENTITY-01 Gate 2A/2E.
  *
  * Pure contracts only. Nothing in this module reads provider data, queries the
  * database or changes planner behavior. The resolver itself belongs to a later
  * gate.
  */
+
+export const GLOBAL_PROVIDER_SCOPE = "global" as const;
 
 export const IDENTITY_RESOLUTION_STATUSES = [
   "MATCH",
@@ -51,6 +53,7 @@ export type IdentityResolutionAudit = Readonly<{
 export type ProviderRefAssociation = Readonly<{
   userId: string;
   provider: string;
+  providerScope: string;
   providerEntityId: string;
   canonicalIdentityId: string;
 }>;
@@ -65,6 +68,17 @@ export type TrackProviderExecutionShape = Readonly<{
 export function normalizeProviderKey(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!normalized) throw new Error("Provider key must not be empty.");
+  return normalized;
+}
+
+/**
+ * Provider scope is a Sonoriza-owned namespace key, not an opaque provider ID.
+ * Current Spotify references use "global". Lower-casing here is therefore safe
+ * and keeps future namespace labels deterministic (for example market:br).
+ */
+export function normalizeProviderScope(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) throw new Error("Provider scope must not be empty.");
   return normalized;
 }
 
@@ -95,12 +109,14 @@ export function assertConfidenceBasisPoints(value: number): number {
 }
 
 /**
- * Natural keys are user-scoped in v1. The same provider identifier observed by
- * two Sonoriza users therefore does not create a shared canonical identity.
+ * Natural keys are user- and provider-scope-scoped in v1. The same provider
+ * identifier observed by two Sonoriza users, or under two explicit provider
+ * namespaces, therefore does not imply a shared canonical identity.
  */
 export function providerRefNaturalKey(input: {
   userId: string;
   provider: string;
+  providerScope: string;
   providerEntityId: string;
 }): string {
   const userId = input.userId.trim();
@@ -109,6 +125,7 @@ export function providerRefNaturalKey(input: {
   return JSON.stringify([
     userId,
     normalizeProviderKey(input.provider),
+    normalizeProviderScope(input.providerScope),
     normalizeProviderEntityId(input.providerEntityId),
   ]);
 }
@@ -132,9 +149,10 @@ export function isExecutableTrackProviderRef(
 }
 
 /**
- * Existing provider-ref associations are immutable in Gate 2A. Re-associating
- * a ref to another canonical entity must use a future explicit merge/split
- * operation with audit evidence; a normal update must not silently move it.
+ * Existing provider-ref associations are immutable. Re-associating a ref to
+ * another canonical entity, provider namespace or external ID must use a future
+ * explicit merge/split operation with audit evidence; a normal update must not
+ * silently move it.
  */
 export function assertProviderRefAssociationStable(
   current: ProviderRefAssociation,
@@ -143,11 +161,13 @@ export function assertProviderRefAssociationStable(
   const currentNaturalKey = providerRefNaturalKey({
     userId: current.userId,
     provider: current.provider,
+    providerScope: current.providerScope,
     providerEntityId: current.providerEntityId,
   });
   const nextNaturalKey = providerRefNaturalKey({
     userId: next.userId,
     provider: next.provider,
+    providerScope: next.providerScope,
     providerEntityId: next.providerEntityId,
   });
 
