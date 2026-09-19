@@ -308,7 +308,7 @@ async function dryRunSummary(
   const newAlbumIds = unique(
     pending
       .map((candidate) => candidate.albumId)
-      .filter((id): id is string => Boolean(id) && !existingAlbumIds.has(id)),
+      .filter((id): id is string => id !== null && !existingAlbumIds.has(id)),
   );
 
   return {
@@ -383,10 +383,7 @@ async function writeCandidates(
             providerArtistId: candidate.primaryArtistId,
             matchReason: MATCH_REASON,
             confidenceBasisPoints: CONFIDENCE_BASIS_POINTS,
-            resolutionLineage: spotifyLineage(
-              "artist",
-              candidate.primaryArtistId,
-            ) as Prisma.InputJsonValue,
+            resolutionLineage: spotifyLineage() as Prisma.InputJsonValue,
             observedAt: candidate.observedAt,
           },
           select: { artistIdentityId: true },
@@ -425,10 +422,7 @@ async function writeCandidates(
           executionStatus: "KNOWN",
           matchReason: MATCH_REASON,
           confidenceBasisPoints: CONFIDENCE_BASIS_POINTS,
-          resolutionLineage: spotifyLineage(
-            "track",
-            candidate.spotifyTrackId,
-          ) as Prisma.InputJsonValue,
+          resolutionLineage: spotifyLineage() as Prisma.InputJsonValue,
           observedAt: candidate.observedAt,
         },
       });
@@ -473,10 +467,7 @@ async function writeCandidates(
               providerAlbumId: candidate.albumId,
               matchReason: MATCH_REASON,
               confidenceBasisPoints: CONFIDENCE_BASIS_POINTS,
-              resolutionLineage: spotifyLineage(
-                "album",
-                candidate.albumId,
-              ) as Prisma.InputJsonValue,
+              resolutionLineage: spotifyLineage() as Prisma.InputJsonValue,
               observedAt: candidate.observedAt,
             },
           });
@@ -577,18 +568,8 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-function spotifyLineage(objectType: string, objectId: string): DataLineage {
-  return {
-    origins: ["SPOTIFY"],
-    providerRefs: [
-      {
-        provider: "SPOTIFY",
-        objectType,
-        objectId,
-      },
-    ],
-    notes: ["MUSIC-IDENTITY-01 Gate 2B singleton shadow bootstrap"],
-  };
+function spotifyLineage(): DataLineage {
+  return { origins: ["SPOTIFY"] };
 }
 
 function emptyCreatedCounts(): ShadowBackfillSummary["created"] {
