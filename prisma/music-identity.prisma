@@ -9,6 +9,11 @@
 // Provider IDs are references, never the domain identity. In particular,
 // TrackProviderRef.executionStatus is explicit: the existence of a canonical
 // RecordingIdentity does not make a provider item executable.
+//
+// Provider-ref resolution keeps the existing #278 DataLineage shape in
+// resolutionLineage. This does not create another provenance system; it records
+// which existing origins supported the association so later consumers can
+// continue to apply the established allowed-use policy without laundering.
 // ---------------------------------------------------------------------------
 
 enum TrackProviderExecutionStatus {
@@ -77,13 +82,12 @@ model AlbumIdentity {
 }
 
 model AlbumReleaseIdentity {
-  id              String    @id @default(cuid())
+  id              String   @id @default(cuid())
   userId          String
   albumIdentityId String
   editionLabel    String?
-  releaseDate     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   album        AlbumIdentity             @relation(fields: [userId, albumIdentityId], references: [userId, id], onDelete: Restrict)
   providerRefs AlbumReleaseProviderRef[]
@@ -101,6 +105,7 @@ model ArtistProviderRef {
   uri                   String?
   matchReason           String
   confidenceBasisPoints Int
+  resolutionLineage     Json
   observedAt            DateTime @default(now())
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -125,6 +130,7 @@ model TrackProviderRef {
   executionStatus       TrackProviderExecutionStatus @default(KNOWN)
   matchReason           String
   confidenceBasisPoints Int
+  resolutionLineage     Json
   observedAt            DateTime                     @default(now())
   createdAt             DateTime                     @default(now())
   updatedAt             DateTime                     @updatedAt
@@ -148,6 +154,7 @@ model AlbumReleaseProviderRef {
   market                 String?
   matchReason            String
   confidenceBasisPoints  Int
+  resolutionLineage      Json
   observedAt             DateTime @default(now())
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
