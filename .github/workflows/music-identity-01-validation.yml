@@ -47,6 +47,7 @@ jobs:
       GOOGLE_CLIENT_SECRET: test
       SPOTIFY_CLIENT_ID: test
       SPOTIFY_CLIENT_SECRET: test
+      MUSIC_IDENTITY_DB_TEST: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,6 +59,9 @@ jobs:
       - run: npx prisma migrate deploy
       - run: npx prisma generate
       - name: MUSIC-IDENTITY-01 Gate 2A contracts
-        run: npx tsx --test src/services/music-identity/contracts.test.ts
+        run: >-
+          npx tsx --test
+          src/services/music-identity/contracts.test.ts
+          src/services/music-identity/contracts.integration.test.ts
       - run: npm run typecheck
       - run: npm run build
