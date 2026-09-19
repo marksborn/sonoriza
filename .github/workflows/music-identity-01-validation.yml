@@ -1,4 +1,4 @@
-name: MUSIC-IDENTITY-01 Gate 2A validation
+name: MUSIC-IDENTITY-01 validation
 
 on:
   pull_request:
@@ -6,6 +6,8 @@ on:
       - "prisma/music-identity.prisma"
       - "prisma/migrations/20260919153000_music_identity_gate2a/**"
       - "src/services/music-identity/**"
+      - "scripts/backfill-music-identity-shadow.ts"
+      - "package.json"
       - ".github/workflows/music-identity-01-validation.yml"
   push:
     branches:
@@ -14,6 +16,8 @@ on:
       - "prisma/music-identity.prisma"
       - "prisma/migrations/20260919153000_music_identity_gate2a/**"
       - "src/services/music-identity/**"
+      - "scripts/backfill-music-identity-shadow.ts"
+      - "package.json"
       - ".github/workflows/music-identity-01-validation.yml"
   workflow_dispatch:
 
@@ -58,10 +62,12 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: MUSIC-IDENTITY-01 Gate 2A contracts
+      - name: MUSIC-IDENTITY-01 Gate 2A/2B contracts
         run: >-
           npx tsx --test
           src/services/music-identity/contracts.test.ts
           src/services/music-identity/contracts.integration.test.ts
+          src/services/music-identity/shadow-backfill.test.ts
+          src/services/music-identity/shadow-backfill.integration.test.ts
       - run: npm run typecheck
       - run: npm run build
