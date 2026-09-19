@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// MUSIC-IDENTITY-01 Gate 2A — canonical identities + provider references.
+// MUSIC-IDENTITY-01 Gate 2A/2E — canonical identities + provider references.
 //
 // Additive persistence only. These models are intentionally not connected to
 // planner/history/preference/exposure consumers in this gate. Identity remains
@@ -9,6 +9,11 @@
 // Provider IDs are references, never the domain identity. In particular,
 // TrackProviderRef.executionStatus is explicit: the existence of a canonical
 // RecordingIdentity does not make a provider item executable.
+//
+// Gate 2E makes the provider namespace explicit through providerScope. Current
+// Spotify refs use the Sonoriza-owned scope key "global". The legacy stricter
+// provider-ID uniqueness remains as a fail-closed compatibility guard until a
+// future provider rollout explicitly requires more than one scope.
 //
 // Provider-ref resolution keeps the existing #278 DataLineage shape in
 // resolutionLineage. This does not create another provenance system; it records
@@ -60,7 +65,7 @@ model RecordingIdentity {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  song         SongIdentity      @relation(fields: [userId, songIdentityId], references: [userId, id], onDelete: Restrict)
+  song         SongIdentity       @relation(fields: [userId, songIdentityId], references: [userId, id], onDelete: Restrict)
   providerRefs TrackProviderRef[]
 
   @@unique([userId, id])
@@ -101,6 +106,7 @@ model ArtistProviderRef {
   userId                String
   artistIdentityId      String
   provider              String
+  providerScope         String   @default("global")
   providerArtistId      String
   uri                   String?
   matchReason           String
@@ -113,15 +119,19 @@ model ArtistProviderRef {
   artist ArtistIdentity @relation(fields: [userId, artistIdentityId], references: [userId, id], onDelete: Restrict)
 
   @@unique([userId, id])
+  // Gate 2E keeps this legacy uniqueness as a stricter compatibility guard.
   @@unique([userId, provider, providerArtistId])
+  @@unique([userId, provider, providerScope, providerArtistId])
+  @@index([userId, provider, providerScope])
   @@index([userId, artistIdentityId])
 }
 
 model TrackProviderRef {
-  id                    String                       @id @default(cuid())
+  id                    String                        @id @default(cuid())
   userId                String
   recordingIdentityId   String
   provider              String
+  providerScope         String                        @default("global")
   providerTrackId       String
   uri                   String?
   isrc                  String?
@@ -131,14 +141,17 @@ model TrackProviderRef {
   matchReason           String
   confidenceBasisPoints Int
   resolutionLineage     Json
-  observedAt            DateTime                     @default(now())
-  createdAt             DateTime                     @default(now())
-  updatedAt             DateTime                     @updatedAt
+  observedAt            DateTime                      @default(now())
+  createdAt             DateTime                      @default(now())
+  updatedAt             DateTime                      @updatedAt
 
   recording RecordingIdentity @relation(fields: [userId, recordingIdentityId], references: [userId, id], onDelete: Restrict)
 
   @@unique([userId, id])
+  // Gate 2E keeps this legacy uniqueness as a stricter compatibility guard.
   @@unique([userId, provider, providerTrackId])
+  @@unique([userId, provider, providerScope, providerTrackId])
+  @@index([userId, provider, providerScope])
   @@index([userId, recordingIdentityId])
   @@index([userId, isrc])
   @@index([userId, trackMbid])
@@ -149,6 +162,7 @@ model AlbumReleaseProviderRef {
   userId                 String
   albumReleaseIdentityId String
   provider               String
+  providerScope          String   @default("global")
   providerAlbumId        String
   uri                    String?
   market                 String?
@@ -162,6 +176,9 @@ model AlbumReleaseProviderRef {
   albumRelease AlbumReleaseIdentity @relation(fields: [userId, albumReleaseIdentityId], references: [userId, id], onDelete: Restrict)
 
   @@unique([userId, id])
+  // Gate 2E keeps this legacy uniqueness as a stricter compatibility guard.
   @@unique([userId, provider, providerAlbumId])
+  @@unique([userId, provider, providerScope, providerAlbumId])
+  @@index([userId, provider, providerScope])
   @@index([userId, albumReleaseIdentityId])
 }
