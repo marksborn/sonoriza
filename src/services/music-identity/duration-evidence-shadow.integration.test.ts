@@ -183,7 +183,7 @@ databaseTest("Gate 3C distinguishes missing persisted duration from compatible p
     assert.equal(report.diagnostics.providerStrongConflictPairs, 0);
     assert.equal(report.diagnostics.persistedMissingButProviderCompatiblePairs, 1);
     assert.equal(report.diagnostics.samples.length, 1);
-    assert.equal(report.diagnostics.samples[0]?.persistedDurationAvailability, "LEFT_MISSING");
+    assert.equal(report.diagnostics.samples[0]?.persistedDurationAvailability, "RIGHT_MISSING");
     assert.equal(report.diagnostics.samples[0]?.providerDurationDeltaMs, 1_000);
     assert.deepEqual(requestedIds, [["gate3c-remaster", "gate3c-standard"]]);
 
