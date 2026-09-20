@@ -10,7 +10,6 @@ const API = "https://api.spotify.com/v1";
 const MAX_RATE_LIMIT_RETRIES = 0;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
 const SPOTIFY_SEARCH_MAX_LIMIT = 10;
-const SPOTIFY_TRACK_LOOKUP_BATCH_SIZE = 50;
 
 export type SpotifyCatalogArtistSummary = {
   id: string;
@@ -101,9 +100,10 @@ export class SpotifyCatalogSearchClient {
   }
 
   /**
-   * Gate 3B catalog lookup. Spotify currently documents GET /tracks with
-   * a maximum of 50 IDs, but marks the endpoint deprecated. Keep it isolated
-   * to shadow enrichment so it cannot become an implicit runtime dependency.
+   * Gate 3B catalog lookup. Spotify's February 2026 API migration removed
+   * the batch GET /tracks endpoint. Resolve the bounded shadow set through
+   * sequential GET /tracks/{id} calls so provider failures remain fail-closed
+   * and we do not create a burst of concurrent quota consumption.
    */
   async lookupTracksByIds(
     trackIds: readonly string[],
@@ -111,20 +111,13 @@ export class SpotifyCatalogSearchClient {
     const ids = [...new Set(trackIds.map((value) => value.trim()).filter(Boolean))];
     const lookups: SpotifyCatalogTrackLookup[] = [];
 
-    for (let offset = 0; offset < ids.length; offset += SPOTIFY_TRACK_LOOKUP_BATCH_SIZE) {
-      const batch = ids.slice(offset, offset + SPOTIFY_TRACK_LOOKUP_BATCH_SIZE);
-      const params = new URLSearchParams({ ids: batch.join(",") });
-      const path = `/tracks?${params.toString()}`;
-      const payload = await this.requestJson<SpotifyTracksResponse>(path);
-
-      for (let index = 0; index < batch.length; index += 1) {
-        const requestedTrackId = batch[index]!;
-        const row = payload.tracks?.[index] ?? null;
-        lookups.push({
-          requestedTrackId,
-          track: row ? readTrack(row) : null,
-        });
-      }
+    for (const requestedTrackId of ids) {
+      const path = `/tracks/${encodeURIComponent(requestedTrackId)}`;
+      const row = await this.requestJson<SpotifyTrackResponse>(path);
+      lookups.push({
+        requestedTrackId,
+        track: readTrack(row),
+      });
     }
 
     return lookups;
@@ -207,10 +200,6 @@ export class SpotifyCatalogSearchClient {
 type SpotifySearchResponse = {
   artists?: { items?: SpotifyArtistResponse[] };
   tracks?: { items?: SpotifyTrackResponse[] };
-};
-
-type SpotifyTracksResponse = {
-  tracks?: Array<SpotifyTrackResponse | null>;
 };
 
 type SpotifyArtistResponse = {
