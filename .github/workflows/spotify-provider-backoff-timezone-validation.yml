@@ -1,0 +1,111 @@
+name: Spotify ProviderBackoff timezone validation
+
+on:
+  pull_request:
+    paths:
+      - "prisma/migrations/20260920130000_spotify_provider_backoff_timestamptz/**"
+      - "src/services/spotify/backoff.ts"
+      - "src/services/spotify/backoff.test.ts"
+      - "src/services/spotify/backoff-timezone-migration.integration.test.ts"
+      - ".github/workflows/spotify-provider-backoff-timezone-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "prisma/migrations/20260920130000_spotify_provider_backoff_timestamptz/**"
+      - "src/services/spotify/backoff.ts"
+      - "src/services/spotify/backoff.test.ts"
+      - "src/services/spotify/backoff-timezone-migration.integration.test.ts"
+      - ".github/workflows/spotify-provider-backoff-timezone-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_provider_backoff_tz
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_provider_backoff_tz"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_provider_backoff_tz?schema=public
+      SPOTIFY_BACKOFF_DB_TEST: "1"
+      SPOTIFY_BACKOFF_MIGRATION_TEST: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma validate
+
+      - name: Apply schema up to the legacy ProviderBackoff representation
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOTFIX_DIR="prisma/migrations/20260920130000_spotify_provider_backoff_timestamptz"
+          mv "$HOTFIX_DIR" /tmp/spotify-provider-backoff-timestamptz
+          npx prisma migrate deploy
+
+      - name: Seed production-shaped legacy Sao Paulo wall-clock backoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat <<'SQL' | npx prisma db execute --stdin --schema prisma/schema.prisma
+          DELETE FROM "ProviderBackoff" WHERE "provider" = 'spotify';
+
+          INSERT INTO "ProviderBackoff" (
+            "provider",
+            "reason",
+            "operation",
+            "retryAfterSeconds",
+            "blockedUntil",
+            "observedAt",
+            "updatedAt"
+          ) VALUES (
+            'spotify',
+            'QUOTA_EXCEEDED',
+            'spotify-api',
+            73817,
+            TIMESTAMP '2026-09-21 09:07:49.022',
+            TIMESTAMP '2026-09-20 12:37:32.022',
+            TIMESTAMP '2026-09-20 12:37:32.024'
+          );
+          SQL
+
+      - name: Apply ProviderBackoff timestamptz hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          mv /tmp/spotify-provider-backoff-timestamptz \
+            prisma/migrations/20260920130000_spotify_provider_backoff_timestamptz
+          npx prisma migrate deploy
+          npx prisma generate
+
+      - name: Verify legacy row preserves the provider Retry-After instant
+        run: >-
+          npx tsx --test
+          src/services/spotify/backoff-timezone-migration.integration.test.ts
+
+      - name: Verify ProviderBackoff persistence contracts
+        run: >-
+          npx tsx --test
+          src/services/spotify/backoff.test.ts
+
+      - run: npm run typecheck
+      - run: npm run build
