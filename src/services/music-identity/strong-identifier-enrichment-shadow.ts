@@ -79,8 +79,8 @@ export type MusicIdentityStrongIdentifierShadowReport = {
   authority: {
     providerCalls: true;
     provider: "spotify";
-    endpoint: "GET /tracks";
-    endpointDeprecated: true;
+    endpoint: "GET /tracks/{id}";
+    endpointDeprecated: false;
     identityWrites: false;
     canonicalWrites: false;
     sourceCacheWrites: false;
@@ -249,8 +249,8 @@ export async function runMusicIdentityStrongIdentifierShadow(
     authority: {
       providerCalls: true,
       provider: "spotify",
-      endpoint: "GET /tracks",
-      endpointDeprecated: true,
+      endpoint: "GET /tracks/{id}",
+      endpointDeprecated: false,
       identityWrites: false,
       canonicalWrites: false,
       sourceCacheWrites: false,
