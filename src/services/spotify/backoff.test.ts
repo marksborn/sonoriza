@@ -61,6 +61,51 @@ test("backoff activity is decided by absolute Node timestamps", () => {
 
 const databaseTest = process.env.SPOTIFY_BACKOFF_DB_TEST === "1" ? test : test.skip;
 
+databaseTest(
+  "provider backoff timestamps are timestamptz and preserve absolute Retry-After instants",
+  async () => {
+    await clearBackoff();
+
+    const columnTypes = await prisma.$queryRawUnsafe<
+      Array<{ column_name: string; data_type: string }>
+    >(`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'ProviderBackoff'
+        AND column_name IN ('blockedUntil', 'observedAt', 'updatedAt')
+      ORDER BY column_name
+    `);
+
+    assert.deepEqual(columnTypes, [
+      { column_name: "blockedUntil", data_type: "timestamp with time zone" },
+      { column_name: "observedAt", data_type: "timestamp with time zone" },
+      { column_name: "updatedAt", data_type: "timestamp with time zone" },
+    ]);
+
+    const observedAt = new Date("2026-09-20T15:37:32.022Z");
+    const retryAfterSeconds = 73817;
+    const checkAt = new Date("2026-09-20T15:44:34.336Z");
+
+    try {
+      await recordSpotifyBackoff({
+        reason: "QUOTA_EXCEEDED",
+        operation: "spotify-api",
+        retryAfterSeconds,
+        observedAt,
+      });
+
+      const active = await getActiveSpotifyBackoff(checkAt);
+      assert.ok(active);
+      assert.equal(active.observedAt.toISOString(), "2026-09-20T15:37:32.022Z");
+      assert.equal(active.blockedUntil.toISOString(), "2026-09-21T12:07:49.022Z");
+      assert.equal(retryAfterSecondsRemaining(active, checkAt), 73395);
+    } finally {
+      await clearBackoff();
+    }
+  },
+);
+
 databaseTest("persisted provider backoff keeps the longest concurrent Retry-After", async () => {
   await clearBackoff();
 
