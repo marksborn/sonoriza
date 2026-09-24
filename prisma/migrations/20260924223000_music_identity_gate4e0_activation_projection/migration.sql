@@ -34,25 +34,25 @@ CREATE TABLE "CanonicalDedupeActivationComponent" (
   CONSTRAINT "CanonicalDedupeActivationComponent_pkey" PRIMARY KEY ("id")
 );
 
-CREATE UNIQUE INDEX "CanonicalDedupeActivationProjection_userId_targetPlaylistId_policy_version_key"
+CREATE UNIQUE INDEX "gate4e0_projection_version_uq"
   ON "CanonicalDedupeActivationProjection"("userId", "targetPlaylistId", "policy", "version");
 
-CREATE UNIQUE INDEX "CanonicalDedupeActivationProjection_userId_targetPlaylistId_policy_projectionFingerprint_key"
+CREATE UNIQUE INDEX "gate4e0_projection_fingerprint_uq"
   ON "CanonicalDedupeActivationProjection"("userId", "targetPlaylistId", "policy", "projectionFingerprint");
 
-CREATE INDEX "CanonicalDedupeActivationProjection_userId_targetPlaylistId_status_idx"
+CREATE INDEX "gate4e0_projection_target_status_idx"
   ON "CanonicalDedupeActivationProjection"("userId", "targetPlaylistId", "status");
 
-CREATE INDEX "CanonicalDedupeActivationProjection_userId_policy_status_idx"
+CREATE INDEX "gate4e0_projection_policy_status_idx"
   ON "CanonicalDedupeActivationProjection"("userId", "policy", "status");
 
-CREATE UNIQUE INDEX "CanonicalDedupeActivationComponent_projectionId_componentId_key"
+CREATE UNIQUE INDEX "gate4e0_component_component_uq"
   ON "CanonicalDedupeActivationComponent"("projectionId", "componentId");
 
-CREATE INDEX "CanonicalDedupeActivationComponent_projectionId_representativeProviderTrackId_idx"
+CREATE INDEX "gate4e0_component_rep_idx"
   ON "CanonicalDedupeActivationComponent"("projectionId", "representativeProviderTrackId");
 
 ALTER TABLE "CanonicalDedupeActivationComponent"
-  ADD CONSTRAINT "CanonicalDedupeActivationComponent_projectionId_fkey"
+  ADD CONSTRAINT "gate4e0_component_projection_fk"
   FOREIGN KEY ("projectionId") REFERENCES "CanonicalDedupeActivationProjection"("id")
   ON DELETE CASCADE ON UPDATE CASCADE;
