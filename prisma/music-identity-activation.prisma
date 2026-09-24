@@ -13,7 +13,7 @@ enum CanonicalDedupeProjectionStatus {
 }
 
 model CanonicalDedupeActivationProjection {
-  id                            String                          @id @default(cuid())
+  id                            String                           @id @default(cuid())
   userId                        String
   targetPlaylistId              String
   version                       Int
@@ -25,15 +25,15 @@ model CanonicalDedupeActivationProjection {
   effectiveSourceIds            Json
   projectionFingerprint         String
   validatedAt                   DateTime
-  createdAt                     DateTime                        @default(now())
-  updatedAt                     DateTime                        @updatedAt
+  createdAt                     DateTime                         @default(now())
+  updatedAt                     DateTime                         @updatedAt
 
   components CanonicalDedupeActivationComponent[]
 
-  @@unique([userId, targetPlaylistId, policy, version])
-  @@unique([userId, targetPlaylistId, policy, projectionFingerprint])
-  @@index([userId, targetPlaylistId, status])
-  @@index([userId, policy, status])
+  @@unique([userId, targetPlaylistId, policy, version], map: "gate4e0_projection_version_uq")
+  @@unique([userId, targetPlaylistId, policy, projectionFingerprint], map: "gate4e0_projection_fingerprint_uq")
+  @@index([userId, targetPlaylistId, status], map: "gate4e0_projection_target_status_idx")
+  @@index([userId, policy, status], map: "gate4e0_projection_policy_status_idx")
 }
 
 model CanonicalDedupeActivationComponent {
@@ -46,8 +46,8 @@ model CanonicalDedupeActivationComponent {
   containsExcludedPreference    Boolean  @default(false)
   createdAt                     DateTime @default(now())
 
-  projection CanonicalDedupeActivationProjection @relation(fields: [projectionId], references: [id], onDelete: Cascade)
+  projection CanonicalDedupeActivationProjection @relation(fields: [projectionId], references: [id], onDelete: Cascade, map: "gate4e0_component_projection_fk")
 
-  @@unique([projectionId, componentId])
-  @@index([projectionId, representativeProviderTrackId])
+  @@unique([projectionId, componentId], map: "gate4e0_component_component_uq")
+  @@index([projectionId, representativeProviderTrackId], map: "gate4e0_component_rep_idx")
 }
