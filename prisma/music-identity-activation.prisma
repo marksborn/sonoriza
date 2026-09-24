@@ -1,0 +1,53 @@
+// ---------------------------------------------------------------------------
+// MUSIC-IDENTITY-01 Gate 4E0 — durable canonical dedupe activation projection.
+//
+// This is additive persistence only. It materializes an already validated
+// Gate 4D same-recording representative decision outside the planner hot path.
+// Nothing in this file activates a consumer or changes planner behavior.
+// ---------------------------------------------------------------------------
+
+enum CanonicalDedupeProjectionStatus {
+  READY
+  STALE
+  REVOKED
+}
+
+model CanonicalDedupeActivationProjection {
+  id                            String                           @id @default(cuid())
+  userId                        String
+  targetPlaylistId              String
+  version                       Int
+  policy                        String
+  status                        CanonicalDedupeProjectionStatus @default(READY)
+  gate4cSnapshotFingerprint     String
+  gate4dOrderedInputFingerprint String
+  sourceScopeFingerprint        String
+  effectiveSourceIds            Json
+  projectionFingerprint         String
+  validatedAt                   DateTime
+  createdAt                     DateTime                         @default(now())
+  updatedAt                     DateTime                         @updatedAt
+
+  components CanonicalDedupeActivationComponent[]
+
+  @@unique([userId, targetPlaylistId, policy, version], map: "gate4e0_projection_version_uq")
+  @@unique([userId, targetPlaylistId, policy, projectionFingerprint], map: "gate4e0_projection_fingerprint_uq")
+  @@index([userId, targetPlaylistId, status], map: "gate4e0_projection_target_status_idx")
+  @@index([userId, policy, status], map: "gate4e0_projection_policy_status_idx")
+}
+
+model CanonicalDedupeActivationComponent {
+  id                            String   @id @default(cuid())
+  projectionId                  String
+  componentId                   String
+  memberProviderTrackIds        Json
+  representativeProviderTrackId String
+  preferenceState               String
+  containsExcludedPreference    Boolean  @default(false)
+  createdAt                     DateTime @default(now())
+
+  projection CanonicalDedupeActivationProjection @relation(fields: [projectionId], references: [id], onDelete: Cascade, map: "gate4e0_component_projection_fk")
+
+  @@unique([projectionId, componentId], map: "gate4e0_component_component_uq")
+  @@index([projectionId, representativeProviderTrackId], map: "gate4e0_component_rep_idx")
+}
