@@ -14,6 +14,14 @@ on:
       - "src/services/calendar-event-composition-generation.ts"
       - "src/services/playlist-planner/index.ts"
       - "src/services/playlist-planner/plan-run-podcast07.ts"
+      - "src/services/spotify/errors.ts"
+      - "src/services/spotify/errors.operation.test.ts"
+      - "src/services/spotify/podcast-authoritative-state.ts"
+      - "src/services/spotify/podcast-refresh-applicability.ts"
+      - "src/services/spotify/podcast-refresh-applicability.test.ts"
+      - "src/services/spotify/podcast07-playback-refresh.ts"
+      - "src/services/spotify/podcast07-playback-refresh.test.ts"
+      - "src/services/spotify/podcast07-playback-refresh-budget.test.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-store.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-store.integration.test.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-history.ts"
@@ -52,6 +60,14 @@ on:
       - "src/services/calendar-event-composition-generation.ts"
       - "src/services/playlist-planner/index.ts"
       - "src/services/playlist-planner/plan-run-podcast07.ts"
+      - "src/services/spotify/errors.ts"
+      - "src/services/spotify/errors.operation.test.ts"
+      - "src/services/spotify/podcast-authoritative-state.ts"
+      - "src/services/spotify/podcast-refresh-applicability.ts"
+      - "src/services/spotify/podcast-refresh-applicability.test.ts"
+      - "src/services/spotify/podcast07-playback-refresh.ts"
+      - "src/services/spotify/podcast07-playback-refresh.test.ts"
+      - "src/services/spotify/podcast07-playback-refresh-budget.test.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-store.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-store.integration.test.ts"
       - "src/services/spotify/podcast-saved-episodes-policy-history.ts"
@@ -121,6 +137,10 @@ jobs:
       - name: PODCAST-07 Gates 1-7 validation
         run: >-
           npx tsx --test --test-concurrency=1
+          src/services/spotify/errors.operation.test.ts
+          src/services/spotify/podcast-refresh-applicability.test.ts
+          src/services/spotify/podcast07-playback-refresh.test.ts
+          src/services/spotify/podcast07-playback-refresh-budget.test.ts
           src/services/spotify/podcast-saved-episodes-policy-store.integration.test.ts
           src/services/spotify/podcast-effective-policy-shadow.test.ts
           src/services/spotify/podcast-effective-policy-shadow.integration.test.ts

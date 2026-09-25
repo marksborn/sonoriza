@@ -17,6 +17,32 @@ export type Podcast07PlaybackRefreshPlan = Readonly<{
 }>;
 
 /**
+ * Remaining proactive provider-read budget for this user/window.
+ *
+ * The historical Gate 7 cap was per GenerationRun, which allowed isolated
+ * targets to rotate through different unresolved episodes inside the same
+ * hour. Count observations already made in the TTL window so subsequent runs
+ * share the same bounded budget instead of each receiving another eight reads.
+ * The caller passes only the published-episode universe governed by this
+ * policy, so normal observations from source collection also avoid redundant
+ * proactive re-reads.
+ */
+export function podcast07PlaybackRefreshBudgetRemaining(
+  listeningStates: readonly Podcast07RefreshListeningState[],
+  now: Date,
+): number {
+  const staleBeforeMs = now.getTime() - PODCAST07_PLAYBACK_REFRESH_TTL_MS;
+  const recentlyObservedCount = listeningStates.filter(
+    (entry) => entry.lastObservedAt.getTime() > staleBeforeMs,
+  ).length;
+
+  return Math.max(
+    0,
+    PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES - recentlyObservedCount,
+  );
+}
+
+/**
  * Builds the bounded provider-read set used by PODCAST-07 before cadence.
  *
  * Selection is show-oriented instead of publication-recency-oriented:
@@ -26,16 +52,25 @@ export type Podcast07PlaybackRefreshPlan = Readonly<{
  * - the first pass takes at most one oldest unresolved episode per show, so one
  *   large show cannot starve all others;
  * - any remaining budget is filled by the globally stalest unresolved rows;
- * - provider reads are still hard-capped per generation.
- *
- * Authoritative refresh updates lastObservedAt, so repeated generations rotate
- * through an unresolved backlog instead of repeatedly selecting the same rows.
+ * - provider reads are hard-capped by both the legacy per-run ceiling and the
+ *   caller-provided remaining user/window budget.
  */
 export function planPodcast07PlaybackRefresh(input: {
   publishedEpisodeIdsByShow: ReadonlyMap<string, readonly string[]>;
   listeningStates: readonly Podcast07RefreshListeningState[];
   now: Date;
+  maxEpisodeCount?: number;
 }): Podcast07PlaybackRefreshPlan {
+  const maxEpisodeCount = Math.min(
+    PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES,
+    Math.max(
+      0,
+      Math.trunc(
+        input.maxEpisodeCount ?? PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES,
+      ),
+    ),
+  );
+
   const showByEpisodeId = new Map<string, string>();
   for (const [showId, episodeIds] of input.publishedEpisodeIdsByShow.entries()) {
     for (const episodeId of episodeIds) {
@@ -76,12 +111,12 @@ export function planPodcast07PlaybackRefresh(input: {
   const selected: Array<(typeof eligible)[number]> = [];
   const selectedIds = new Set<string>();
   for (const candidate of firstPerShow) {
-    if (selected.length >= PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES) break;
+    if (selected.length >= maxEpisodeCount) break;
     selected.push(candidate.entry);
     selectedIds.add(candidate.entry.spotifyEpisodeId);
   }
 
-  if (selected.length < PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES) {
+  if (selected.length < maxEpisodeCount) {
     const remaining = eligible
       .filter((entry) => !selectedIds.has(entry.spotifyEpisodeId))
       .sort((a, b) => {
@@ -94,7 +129,7 @@ export function planPodcast07PlaybackRefresh(input: {
           : a.spotifyEpisodeId.localeCompare(b.spotifyEpisodeId);
       });
     for (const entry of remaining) {
-      if (selected.length >= PODCAST07_PLAYBACK_REFRESH_MAX_EPISODES) break;
+      if (selected.length >= maxEpisodeCount) break;
       selected.push(entry);
       selectedIds.add(entry.spotifyEpisodeId);
     }
