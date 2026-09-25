@@ -11,6 +11,7 @@ export type SpotifyOperation =
   | "playlist-metadata"
   | "show-episodes"
   | "saved-episodes"
+  | "episode-state"
   | "recently-played"
   | "user-playlists"
   | "saved-shows"
@@ -154,6 +155,7 @@ export function inferSpotifyOperation(
   if (/^\/playlists\/[^/?]+(?:\?|$)/.test(path)) return "playlist-metadata";
   if (/^\/shows\/[^/]+\/episodes(?:\?|$)/.test(path)) return "show-episodes";
   if (/^\/me\/episodes(?:\?|$)/.test(path)) return "saved-episodes";
+  if (/^\/episodes\/[^/?]+(?:\?|$)/.test(path)) return "episode-state";
   if (/^\/me\/player\/recently-played(?:\?|$)/.test(path)) return "recently-played";
   if (/^\/me\/shows(?:\?|$)/.test(path)) return "saved-shows";
   if (/^\/me\/playlists(?:\?|$)/.test(path)) {
