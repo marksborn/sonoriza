@@ -14,7 +14,10 @@ import { loadPodcastSavedEpisodesPolicy } from "@/services/spotify/podcast-saved
 import { scopedTargetsMaySelectPodcast } from "@/services/spotify/podcast-refresh-applicability";
 import { loadPodcastShowCadencePolicies } from "@/services/spotify/podcast-show-cadence-policy-store";
 import { loadPodcastShowPolicies } from "@/services/spotify/podcast-show-policy-store";
-import { planPodcast07PlaybackRefresh } from "@/services/spotify/podcast07-playback-refresh";
+import {
+  planPodcast07PlaybackRefresh,
+  podcast07PlaybackRefreshBudgetRemaining,
+} from "@/services/spotify/podcast07-playback-refresh";
 
 import {
   generatePlaylists as baseGeneratePlaylists,
@@ -139,9 +142,12 @@ export async function generatePlaylists(
   //
   // #397: this proactive provider work is useful only when at least one scoped
   // target can actually emit PODCAST. In particular, SEQUENCE ["MUSIC"] is
-  // authoritative even if a legacy podcastPercent remains non-zero. The final
-  // pre-write podcast revalidation remains unchanged for plans that do contain
-  // podcasts.
+  // authoritative even if a legacy podcastPercent remains non-zero. The
+  // historical per-run limit is also converted into a user/window budget by
+  // subtracting factual observations already made inside the one-hour TTL.
+  // This stops isolated targets from each rotating through another batch of
+  // unresolved episodes. The final pre-write podcast revalidation remains
+  // unchanged for plans that do contain podcasts.
   if (
     proactivePlaybackRefreshRelevant &&
     defaultPolicy?.enabled === true &&
@@ -171,6 +177,10 @@ export async function generatePlaylists(
         publishedEpisodeIdsByShow: defaultPublishedEpisodeIdsByShow,
         listeningStates: refreshStateRows,
         now,
+        maxEpisodeCount: podcast07PlaybackRefreshBudgetRemaining(
+          refreshStateRows,
+          now,
+        ),
       });
 
       let refreshedEpisodeCount = 0;
