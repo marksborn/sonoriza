@@ -222,7 +222,7 @@ async function getEpisodePlaybackState(
 
     const error = await spotifyApiErrorFromResponse(response, {
       method: "GET",
-      operation: "spotify-api",
+      operation: "episode-state",
     });
 
     if (error.kind === "RATE_LIMITED" && retries < MAX_RATE_LIMIT_RETRIES) {
