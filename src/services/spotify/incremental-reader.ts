@@ -19,6 +19,7 @@ import { asPodcastLocalProcessingError } from "./podcast-listening-state-diagnos
 import {
   prismaPodcastListeningStateStore,
   spotifyEpisodeIdFromUri,
+  type CanonicalPodcastListeningState,
   type PodcastListeningObservation,
   type PodcastListeningStateStore,
 } from "./podcast-listening-state";
@@ -31,6 +32,12 @@ import {
   loadPodcastShowPolicies,
   type PodcastShowPolicySnapshot,
 } from "./podcast-show-policy-store";
+import {
+  decodeShowCatalogCache,
+  encodeShowCatalogCache,
+  isShowCatalogCacheFresh,
+  type ShowCatalogEpisode,
+} from "./show-catalog-cache";
 import {
   decodeMusicSourceCache,
   decodeMusicSourceCacheUnavailableTrackCount,
@@ -57,11 +64,26 @@ export type IncrementalSpotifySourceConfig = Pick<
   | "episodeOrder"
   | "spotifySnapshotId"
   | "cachedCandidates"
->;
+> & {
+  cacheUpdatedAt?: Date | null;
+};
 
 export type SpotifyIncrementalCandidateSource = IncrementalCandidateSource & {
   spotifyType: string;
   spotifyId: string;
+};
+
+type IncrementalSpotifySourceReadMetrics = SpotifySourceReadMetrics & {
+  pagesAvoided: number;
+};
+
+export type SpotifyIncrementalRequestMetrics = SpotifyRequestMetrics & {
+  showCatalogCacheHits: number;
+  showCatalogCacheMisses: number;
+  showCatalogCacheWrites: number;
+  showCatalogCacheWriteFailures: number;
+  showCatalogPagesAvoided: number;
+  sourceReads: Record<string, IncrementalSpotifySourceReadMetrics>;
 };
 
 /**
@@ -72,7 +94,7 @@ export type SpotifyIncrementalCandidateSource = IncrementalCandidateSource & {
  */
 export class SpotifyIncrementalReader {
   private quotaExceeded = false;
-  private readonly requestMetrics: SpotifyRequestMetrics = {
+  private readonly requestMetrics: SpotifyIncrementalRequestMetrics = {
     totalCalls: 0,
     callsByOperation: {},
     rateLimitedCount: 0,
@@ -83,6 +105,11 @@ export class SpotifyIncrementalReader {
     cacheHits: 0,
     cacheMisses: 0,
     memoizedReadHits: 0,
+    showCatalogCacheHits: 0,
+    showCatalogCacheMisses: 0,
+    showCatalogCacheWrites: 0,
+    showCatalogCacheWriteFailures: 0,
+    showCatalogPagesAvoided: 0,
     sourceReads: {},
   };
 
@@ -118,7 +145,7 @@ export class SpotifyIncrementalReader {
     );
   }
 
-  getRequestMetrics(): SpotifyRequestMetrics {
+  getRequestMetrics(): SpotifyIncrementalRequestMetrics {
     return {
       ...this.requestMetrics,
       callsByOperation: { ...this.requestMetrics.callsByOperation },
@@ -179,9 +206,10 @@ export class SpotifyIncrementalReader {
     };
   }
 
-  private sourceMetrics(sourceKey: string): SpotifySourceReadMetrics {
+  private sourceMetrics(sourceKey: string): IncrementalSpotifySourceReadMetrics {
     return (this.requestMetrics.sourceReads[sourceKey] ??= {
       pagesRead: 0,
+      pagesAvoided: 0,
       cacheHits: 0,
       cacheMisses: 0,
       snapshotUnchanged: 0,
@@ -513,8 +541,51 @@ export class SpotifyIncrementalReader {
     const metrics = this.sourceMetrics(sourceKey);
     let nextUrl: string | null = `/shows/${source.spotifyId}/episodes?limit=50`;
     let done = false;
+    let cacheChecked = false;
     const policy =
       this.showPolicies.get(source.id) ?? legacyShowPolicy(source);
+
+    const finalize = (
+      result: Omit<IncrementalSourceBatch, "done">,
+      fromCache = false,
+    ): IncrementalSourceBatch => {
+      const applied = applyPodcastShowPolicy(result.candidates, policy);
+      const fullyPlayedSkippedCount =
+        policy.episodeEligibility === "UNPLAYED_ONLY"
+          ? (result.fullyPlayedSkippedCount ?? 0) + applied.stateFilteredCount
+          : result.fullyPlayedSkippedCount;
+
+      return {
+        ...result,
+        candidates: applied.candidates,
+        fullyPlayedSkippedCount,
+        done: true,
+        ...(fromCache ? { fromCache: true } : {}),
+      };
+    };
+
+    const persistCatalogCache = async (
+      episodes: readonly ShowCatalogEpisode[],
+      pageCount: number,
+    ): Promise<void> => {
+      try {
+        await prisma.sourcePlaylist.update({
+          where: { id: source.id },
+          data: {
+            cachedCandidates: encodeShowCatalogCache(
+              episodes,
+              pageCount,
+            ) as Prisma.InputJsonValue,
+            cacheUpdatedAt: new Date(),
+          },
+        });
+        metrics.cacheWrites += 1;
+        this.requestMetrics.showCatalogCacheWrites += 1;
+      } catch {
+        metrics.cacheWriteFailures += 1;
+        this.requestMetrics.showCatalogCacheWriteFailures += 1;
+      }
+    };
 
     return {
       id: source.id,
@@ -526,37 +597,78 @@ export class SpotifyIncrementalReader {
         return done;
       },
       readNext: async (): Promise<IncrementalSourceBatch> => {
-        if (done || !nextUrl) return { candidates: [], done: true };
+        if (done) return { candidates: [], done: true };
+
+        if (!cacheChecked) {
+          cacheChecked = true;
+          const cached = isShowCatalogCacheFresh(source.cacheUpdatedAt)
+            ? decodeShowCatalogCache(source.cachedCandidates)
+            : null;
+
+          if (cached) {
+            const canonicalStates = await loadCachedShowCanonicalStates(
+              source.userId,
+              cached.episodes,
+            );
+            if (canonicalStates) {
+              this.requestMetrics.cacheHits += 1;
+              this.requestMetrics.showCatalogCacheHits += 1;
+              this.requestMetrics.showCatalogPagesAvoided += cached.pageCount;
+              metrics.cacheHits += 1;
+              metrics.pagesAvoided += cached.pageCount;
+              nextUrl = null;
+              done = true;
+
+              const collector = createPodcastCollector(true, source.spotifyId, {
+                userId: source.userId,
+                stateStore: this.podcastListeningStateStore,
+                sourceSpotifyType: "SHOW",
+                sourceSpotifyId: source.spotifyId,
+                canonicalStates,
+              });
+              ingestPodcastPage(collector, cached.episodes);
+              return finalize(await collector.result(), true);
+            }
+          }
+
+          this.requestMetrics.cacheMisses += 1;
+          this.requestMetrics.showCatalogCacheMisses += 1;
+          metrics.cacheMisses += 1;
+        }
+
+        if (!nextUrl) {
+          done = true;
+          return { candidates: [], done: true };
+        }
 
         // SHOW policy is global across the show's catalog, so pagination order
-        // can never be used as a semantic shortcut. Read the complete catalog.
+        // can never be used as a semantic shortcut. On a cache miss we still
+        // read the complete catalog, then persist catalog-only metadata for the
+        // next run. Playback state remains canonical in EpisodeListeningState.
         const collector = createPodcastCollector(true, source.spotifyId, {
           userId: source.userId,
           stateStore: this.podcastListeningStateStore,
           sourceSpotifyType: "SHOW",
           sourceSpotifyId: source.spotifyId,
         });
+        const catalogEpisodes: ShowCatalogEpisode[] = [];
+        let pageCount = 0;
 
         while (nextUrl) {
           const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
           metrics.pagesRead += 1;
+          pageCount += 1;
           nextUrl = page.next ? stripBase(page.next) : null;
           ingestPodcastPage(collector, page.items);
+          for (const episode of page.items) {
+            const cachedEpisode = toShowCatalogEpisode(episode);
+            if (cachedEpisode) catalogEpisodes.push(cachedEpisode);
+          }
         }
         done = true;
         const result = await collector.result();
-        const applied = applyPodcastShowPolicy(result.candidates, policy);
-        const fullyPlayedSkippedCount =
-          policy.episodeEligibility === "UNPLAYED_ONLY"
-            ? (result.fullyPlayedSkippedCount ?? 0) + applied.stateFilteredCount
-            : result.fullyPlayedSkippedCount;
-
-        return {
-          ...result,
-          candidates: applied.candidates,
-          fullyPlayedSkippedCount,
-          done: true,
-        };
+        await persistCatalogCache(catalogEpisodes, pageCount);
+        return finalize(result);
       },
     };
   }
@@ -643,6 +755,7 @@ type PodcastCollectorOptions = {
   sourceSpotifyType?: "PLAYLIST" | "SHOW" | "SAVED_EPISODES";
   sourceSpotifyId?: string;
   suppressedProgramIds?: ReadonlySet<string>;
+  canonicalStates?: ReadonlyMap<string, CanonicalPodcastListeningState>;
 };
 
 function createPodcastCollector(
@@ -688,14 +801,18 @@ function createPodcastCollector(
         throw asPodcastLocalProcessingError("NORMALIZE_EPISODES", error);
       }
 
-      let canonicalStates: Awaited<ReturnType<PodcastListeningStateStore["observe"]>>;
-      try {
-        canonicalStates = await options.stateStore.observe(
-          options.userId,
-          observations,
-        );
-      } catch (error) {
-        throw asPodcastLocalProcessingError("OBSERVE_STATE", error);
+      let canonicalStates: Map<string, CanonicalPodcastListeningState>;
+      if (options.canonicalStates) {
+        canonicalStates = new Map(options.canonicalStates);
+      } else {
+        try {
+          canonicalStates = await options.stateStore.observe(
+            options.userId,
+            observations,
+          );
+        } catch (error) {
+          throw asPodcastLocalProcessingError("OBSERVE_STATE", error);
+        }
       }
 
       try {
@@ -794,6 +911,76 @@ function createPodcastCollector(
         throw asPodcastLocalProcessingError("BUILD_CANDIDATES", error);
       }
     },
+  };
+}
+
+async function loadCachedShowCanonicalStates(
+  userId: string,
+  episodes: readonly ShowCatalogEpisode[],
+): Promise<Map<string, CanonicalPodcastListeningState> | null> {
+  const episodeIds = [
+    ...new Set(
+      episodes
+        .map(
+          (episode) =>
+            normalizedOptionalText(episode.id) ??
+            spotifyEpisodeIdFromUri(episode.uri),
+        )
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  if (episodeIds.length === 0) return new Map();
+
+  const states = await prisma.episodeListeningState.findMany({
+    where: {
+      userId,
+      spotifyEpisodeId: { in: episodeIds },
+    },
+    select: {
+      spotifyEpisodeId: true,
+      spotifyShowId: true,
+      spotifyUri: true,
+      durationMs: true,
+      resumePositionMs: true,
+      fullyPlayed: true,
+      status: true,
+      firstProgressObservedAt: true,
+      lastObservedAt: true,
+    },
+  });
+  if (states.length !== episodeIds.length) return null;
+
+  return new Map(
+    states.map((state) => [state.spotifyEpisodeId, state]),
+  );
+}
+
+function toShowCatalogEpisode(
+  episode: unknown,
+): ShowCatalogEpisode | null {
+  if (!isEpisodeResponse(episode)) return null;
+  if (episode.is_local === true || episode.is_playable === false) return null;
+
+  return {
+    ...(normalizedOptionalText(episode.id)
+      ? { id: normalizedOptionalText(episode.id)! }
+      : {}),
+    uri: episode.uri,
+    name: episode.name,
+    duration_ms: episode.duration_ms,
+    type: "episode",
+    ...(typeof episode.is_local === "boolean"
+      ? { is_local: episode.is_local }
+      : {}),
+    ...(typeof episode.is_playable === "boolean"
+      ? { is_playable: episode.is_playable }
+      : {}),
+    ...(episode.restrictions ? { restrictions: episode.restrictions } : {}),
+    ...(episode.show ? { show: episode.show } : {}),
+    ...(episode.release_date ? { release_date: episode.release_date } : {}),
+    ...(episode.release_date_precision
+      ? { release_date_precision: episode.release_date_precision }
+      : {}),
   };
 }
 
