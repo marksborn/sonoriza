@@ -7,18 +7,21 @@ import {
   SpotifyIncrementalReader,
   type IncrementalSpotifySourceConfig,
 } from "./incremental-reader";
-import { createVolatilePodcastListeningStateStore } from "./podcast-listening-state";
+import {
+  prismaPodcastListeningStateStore,
+  type PodcastListeningStateStore,
+} from "./podcast-listening-state";
 
 function createReader(): SpotifyIncrementalReader {
   const Constructor = SpotifyIncrementalReader as unknown as new (
     accessToken: string,
     authoritativePodcastProgramIds?: ReadonlySet<string>,
-    stateStore?: ReturnType<typeof createVolatilePodcastListeningStateStore>,
+    stateStore?: PodcastListeningStateStore,
   ) => SpotifyIncrementalReader;
   return new Constructor(
     "test-token",
     new Set(),
-    createVolatilePodcastListeningStateStore(),
+    prismaPodcastListeningStateStore,
   );
 }
 
