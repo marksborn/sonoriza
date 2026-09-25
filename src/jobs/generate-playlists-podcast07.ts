@@ -11,6 +11,7 @@ import {
 import { refreshAuthoritativePodcastListeningStates } from "@/services/spotify/podcast-authoritative-state";
 import { loadPodcastSavedEpisodesPublishedHistory } from "@/services/spotify/podcast-saved-episodes-policy-history";
 import { loadPodcastSavedEpisodesPolicy } from "@/services/spotify/podcast-saved-episodes-policy-store";
+import { scopedTargetsMaySelectPodcast } from "@/services/spotify/podcast-refresh-applicability";
 import { loadPodcastShowCadencePolicies } from "@/services/spotify/podcast-show-cadence-policy-store";
 import { loadPodcastShowPolicies } from "@/services/spotify/podcast-show-policy-store";
 import { planPodcast07PlaybackRefresh } from "@/services/spotify/podcast07-playback-refresh";
@@ -59,7 +60,17 @@ const EMPTY_PLAYBACK_REFRESH_EVIDENCE: Podcast07PlaybackRefreshEvidence = {
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
 ): Promise<GeneratePlaylistsResult> {
-  const [user, podcastSources, cadencePolicies, showPolicies] = await Promise.all([
+  const targetScope = opts.targetPlaylistIds
+    ? [...new Set(opts.targetPlaylistIds.map((value) => value.trim()).filter(Boolean))]
+    : null;
+
+  const [
+    user,
+    podcastSources,
+    cadencePolicies,
+    showPolicies,
+    playbackRefreshTargets,
+  ] = await Promise.all([
     prisma.user.findUnique({
       where: { id: opts.userId },
       select: { email: true },
@@ -79,7 +90,22 @@ export async function generatePlaylists(
     }),
     loadPodcastShowCadencePolicies(opts.userId),
     loadPodcastShowPolicies(opts.userId),
+    prisma.targetPlaylist.findMany({
+      where: {
+        userId: opts.userId,
+        enabled: true,
+        ...(targetScope ? { id: { in: targetScope } } : {}),
+      },
+      select: {
+        compositionMode: true,
+        podcastPercent: true,
+        sequencePattern: true,
+      },
+    }),
   ]);
+
+  const proactivePlaybackRefreshRelevant =
+    scopedTargetsMaySelectPodcast(playbackRefreshTargets);
 
   const savedSourceRow = podcastSources.find(
     (source) => source.spotifyType === "SAVED_EPISODES",
@@ -110,7 +136,14 @@ export async function generatePlaylists(
   // may inspect the known history, while provider IO remains hard-capped by the
   // pure planner. Updating lastObservedAt rotates the bounded budget across the
   // backlog on later generations.
+  //
+  // #397: this proactive provider work is useful only when at least one scoped
+  // target can actually emit PODCAST. In particular, SEQUENCE ["MUSIC"] is
+  // authoritative even if a legacy podcastPercent remains non-zero. The final
+  // pre-write podcast revalidation remains unchanged for plans that do contain
+  // podcasts.
   if (
+    proactivePlaybackRefreshRelevant &&
     defaultPolicy?.enabled === true &&
     defaultPolicy.cadenceMaxEpisodes !== null &&
     defaultPolicy.cadenceUnit !== null
