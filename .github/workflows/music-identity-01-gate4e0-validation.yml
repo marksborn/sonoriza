@@ -9,6 +9,11 @@ on:
       - "src/services/music-identity/canonical-dedupe-activation-projection.test.ts"
       - "src/services/music-identity/canonical-dedupe-activation-projection.integration.test.ts"
       - "src/services/music-identity/canonical-representative-selection-shadow.ts"
+      - "src/services/spotify/catalog-read-session.ts"
+      - "src/services/spotify/catalog-read-session.test.ts"
+      - "src/services/spotify/catalog-search.ts"
+      - "src/services/spotify/catalog-search.track-lookup.test.ts"
+      - "scripts/report-music-identity-representative-selection-shadow.ts"
       - "scripts/report-music-identity-dedupe-activation-projection.ts"
       - "docs/MUSIC-IDENTITY-01-GATE4E0-ACTIVATION-PROJECTION.md"
       - ".github/workflows/music-identity-01-gate4e0-validation.yml"
@@ -22,6 +27,11 @@ on:
       - "src/services/music-identity/canonical-dedupe-activation-projection.test.ts"
       - "src/services/music-identity/canonical-dedupe-activation-projection.integration.test.ts"
       - "src/services/music-identity/canonical-representative-selection-shadow.ts"
+      - "src/services/spotify/catalog-read-session.ts"
+      - "src/services/spotify/catalog-read-session.test.ts"
+      - "src/services/spotify/catalog-search.ts"
+      - "src/services/spotify/catalog-search.track-lookup.test.ts"
+      - "scripts/report-music-identity-representative-selection-shadow.ts"
       - "scripts/report-music-identity-dedupe-activation-projection.ts"
       - "docs/MUSIC-IDENTITY-01-GATE4E0-ACTIVATION-PROJECTION.md"
       - ".github/workflows/music-identity-01-gate4e0-validation.yml"
@@ -68,5 +78,7 @@ jobs:
           src/services/music-identity/canonical-dedupe-activation-projection.integration.test.ts
           src/services/music-identity/canonical-representative-selection-shadow.test.ts
           src/services/music-identity/canonical-representative-selection-shadow.integration.test.ts
+          src/services/spotify/catalog-read-session.test.ts
+          src/services/spotify/catalog-search.track-lookup.test.ts
       - run: npm run typecheck
       - run: npm run build
