@@ -22,6 +22,8 @@ test(
     const targetPlaylistId = `gate4e0-target-${suffix}`;
     const sourceA = `gate4e0-source-a-${suffix}`;
     const sourceB = `gate4e0-source-b-${suffix}`;
+    const sourceC = `gate4e0-source-c-${suffix}`;
+    const podcastSource = `gate4e0-podcast-${suffix}`;
     const effectiveSourceIds = [sourceA, sourceB].sort();
 
     await prisma.user.create({ data: { id: userId } });
@@ -40,6 +42,13 @@ test(
           kind: "MUSIC",
           spotifyType: "PLAYLIST",
           spotifyId: `spotify-b-${suffix}`,
+        },
+        {
+          id: podcastSource,
+          userId,
+          kind: "PODCAST",
+          spotifyType: "SHOW",
+          spotifyId: `spotify-podcast-${suffix}`,
         },
       ],
     });
@@ -104,6 +113,25 @@ test(
       assert.equal(second.revalidated, true);
       assert.equal(second.version, 1);
       assert.equal(second.projectionId, first.projectionId);
+
+      // PODCAST habilitado não pertence ao domínio MUSIC da projection.
+      // Uma nova fonte MUSIC, porém, deve continuar invalidando o snapshot.
+      await prisma.sourcePlaylist.create({
+        data: {
+          id: sourceC,
+          userId,
+          kind: "MUSIC",
+          spotifyType: "PLAYLIST",
+          spotifyId: `spotify-c-${suffix}`,
+        },
+      });
+
+      await assert.rejects(
+        () => persistGate4E0ActivationProjection(base),
+        /target source scope changed before persistence/,
+      );
+
+      await prisma.sourcePlaylist.delete({ where: { id: sourceC } });
 
       const changed: Gate4E0ActivationProjection = {
         ...base,
