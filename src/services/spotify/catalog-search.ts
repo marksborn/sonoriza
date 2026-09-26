@@ -100,10 +100,11 @@ export class SpotifyCatalogSearchClient {
   }
 
   /**
-   * Gate 3B catalog lookup. Spotify's February 2026 API migration removed
-   * the batch GET /tracks endpoint. Resolve the bounded shadow set through
-   * sequential GET /tracks/{id} calls so provider failures remain fail-closed
-   * and we do not create a burst of concurrent quota consumption.
+   * Gate 3B / MUSIC-IDENTITY catalog lookup. Spotify's February 2026 API
+   * migration removed the batch GET /tracks endpoint. Resolve the bounded set
+   * through sequential GET /tracks/{id} calls. When a read session is supplied,
+   * each successful response is persisted so later explicit evidence refreshes
+   * can reuse it without repeating provider traffic.
    */
   async lookupTracksByIds(
     trackIds: readonly string[],
@@ -113,7 +114,16 @@ export class SpotifyCatalogSearchClient {
 
     for (const requestedTrackId of ids) {
       const path = `/tracks/${encodeURIComponent(requestedTrackId)}`;
-      const row = await this.requestJson<SpotifyTrackResponse>(path);
+      const cached = this.readSession
+        ? await this.readSession.readCache<SpotifyTrackResponse>(
+            path,
+            SPOTIFY_CATALOG_CACHE_TTL.track,
+          )
+        : null;
+      const row = cached ?? (await this.requestJson<SpotifyTrackResponse>(path));
+      if (cached === null) {
+        await this.readSession?.writeCache(path, row);
+      }
       lookups.push({
         requestedTrackId,
         track: readTrack(row),
@@ -176,7 +186,7 @@ export class SpotifyCatalogSearchClient {
       this.metrics.failures += 1;
       const error = await spotifyApiErrorFromResponse(response, {
         method: "GET",
-        operation: "spotify-api",
+        operation: spotifyCatalogOperationForPath(path),
       });
 
       if (error.kind === "RATE_LIMITED") {
@@ -265,6 +275,10 @@ export function spotifyCatalogSearchLimit(value: number): number {
     );
   }
   return value;
+}
+
+export function spotifyCatalogOperationForPath(path: string): string {
+  return /^\/tracks\/[^/?]+(?:\?.*)?$/.test(path) ? "catalog-track" : "spotify-api";
 }
 
 function searchValue(value: string): string {
