@@ -3,7 +3,10 @@ import {
   SPOTIFY_CATALOG_CACHE_TTL,
   type SpotifyCatalogReadSession,
 } from "./catalog-read-session";
-import { spotifyApiErrorFromResponse } from "./errors";
+import {
+  spotifyApiErrorFromResponse,
+  type SpotifyOperation,
+} from "./errors";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
@@ -277,7 +280,7 @@ export function spotifyCatalogSearchLimit(value: number): number {
   return value;
 }
 
-export function spotifyCatalogOperationForPath(path: string): string {
+export function spotifyCatalogOperationForPath(path: string): SpotifyOperation {
   return /^\/tracks\/[^/?]+(?:\?.*)?$/.test(path) ? "catalog-track" : "spotify-api";
 }
 
