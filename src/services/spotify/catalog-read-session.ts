@@ -12,6 +12,7 @@ export const SPOTIFY_CATALOG_CACHE_TTL = {
   search: 7 * DAY_MS,
   artistAlbums: 7 * DAY_MS,
   albumTracks: 30 * DAY_MS,
+  track: 30 * DAY_MS,
 } as const;
 
 export type SpotifyCatalogReadSessionMetrics = {

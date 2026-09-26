@@ -1,5 +1,7 @@
-import { prisma } from "@/lib/prisma";
-import { runMusicIdentityCanonicalRepresentativeSelectionShadow } from "@/services/music-identity/canonical-representative-selection-shadow";
+process.env.PRISMA_TRANSACTION_TIMEOUT_MS ??= "30000";
+
+const DEFAULT_PROVIDER_BUDGET = 25;
+let disconnectPrisma: (() => Promise<void>) | null = null;
 
 function argValue(name: string): string | null {
   const prefix = `--${name}=`;
@@ -9,6 +11,16 @@ function argValue(name: string): string | null {
 
 function hasArg(name: string): boolean {
   return process.argv.slice(2).includes(`--${name}`);
+}
+
+function providerBudget(): number {
+  const raw = argValue("provider-budget");
+  if (raw === null) return DEFAULT_PROVIDER_BUDGET;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 100) {
+    throw new Error("--provider-budget must be an integer between 0 and 100");
+  }
+  return parsed;
 }
 
 async function main() {
@@ -21,13 +33,41 @@ async function main() {
   const userId = argValue("user");
   if (!userId) {
     throw new Error(
-      "Uso: npx tsx scripts/report-music-identity-representative-selection-shadow.ts --user=<id> [--json]",
+      "Uso: npx tsx scripts/report-music-identity-representative-selection-shadow.ts --user=<id> [--provider-budget=25] [--json]",
     );
   }
 
-  const report = await runMusicIdentityCanonicalRepresentativeSelectionShadow(userId);
+  const [
+    { prisma },
+    { runMusicIdentityCanonicalRepresentativeSelectionShadow },
+    { runMusicIdentityCanonicalConsumerDedupeShadow },
+    { SpotifyCatalogReadSession },
+    { SpotifyCatalogSearchClient },
+  ] = await Promise.all([
+    import("@/lib/prisma"),
+    import("@/services/music-identity/canonical-representative-selection-shadow"),
+    import("@/services/music-identity/canonical-consumer-dedupe-shadow"),
+    import("@/services/spotify/catalog-read-session"),
+    import("@/services/spotify/catalog-search"),
+  ]);
+  disconnectPrisma = () => prisma.$disconnect();
+
+  const budget = providerBudget();
+  const readSession = new SpotifyCatalogReadSession(userId, {
+    requestBudget: budget,
+  });
+  const provider = await SpotifyCatalogSearchClient.forUser(userId, {
+    readSession,
+  });
+
+  const report = await runMusicIdentityCanonicalRepresentativeSelectionShadow(userId, {
+    gate4cRunner: (requestedUserId) =>
+      runMusicIdentityCanonicalConsumerDedupeShadow(requestedUserId, { provider }),
+  });
+  const providerReadSession = readSession.getMetrics();
+
   if (hasArg("json")) {
-    console.log(JSON.stringify(report, null, 2));
+    console.log(JSON.stringify({ report, providerReadSession }, null, 2));
     return;
   }
 
@@ -38,6 +78,11 @@ async function main() {
   p("Mode", report.mode);
   p("User", report.userId);
   p("Generated", report.generatedAt.toISOString());
+  p("Provider request budget", providerReadSession.requestBudget);
+  p("Provider network requests", providerReadSession.networkRequests);
+  p("Provider cache hits", providerReadSession.cacheHits);
+  p("Provider cache misses", providerReadSession.cacheMisses);
+  p("Provider cache writes", providerReadSession.cacheWrites);
 
   if (report.mode === "SHADOW_CANONICAL_REPRESENTATIVE_SELECTION_ABSTAINED") {
     p("Abstention", report.abstentionReason);
@@ -83,5 +128,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    await disconnectPrisma?.();
   });
