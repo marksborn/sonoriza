@@ -197,7 +197,7 @@ export async function persistGate4E0ActivationProjection(
       }
 
       const sources = await tx.sourcePlaylist.findMany({
-        where: { userId: projection.userId },
+        where: { userId: projection.userId, kind: "MUSIC" },
         select: { id: true, enabled: true },
       });
       const currentScope = resolveTargetSourceScope({
