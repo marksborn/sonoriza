@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
@@ -108,6 +109,28 @@ test(
       assert.equal(first.version, 1);
       assert.equal(first.status, CanonicalDedupeProjectionStatus.READY);
 
+      // O durable preview deve reutilizar a READY persistida sem provider
+      // e ignorar a fonte PODCAST habilitada no mesmo usuário.
+      const durable = runDurablePreview(userId, targetPlaylistId);
+      assert.equal(
+        durable.mode,
+        "CANONICAL_DEDUPE_ACTIVATION_PROJECTION_DURABLE_PREVIEW",
+      );
+      assert.equal(durable.evidenceSource, "PERSISTED_READY");
+      assert.equal(durable.providerReadSession, null);
+      assert.equal(durable.projection.componentCount, 1);
+      assert.equal(
+        durable.projection.projectionFingerprint,
+        base.projectionFingerprint,
+      );
+      assert.deepEqual(
+        durable.projection.effectiveSourceIds,
+        effectiveSourceIds,
+      );
+      assert.equal(durable.authority.plannerInfluence, false);
+      assert.equal(durable.authority.consumerActivation, false);
+      assert.equal(durable.authority.spotifyPlaylistWrites, false);
+
       const second = await persistGate4E0ActivationProjection(base);
       assert.equal(second.created, false);
       assert.equal(second.revalidated, true);
@@ -125,6 +148,15 @@ test(
           spotifyId: `spotify-c-${suffix}`,
         },
       });
+
+      const durableStaleError = runDurablePreviewFailure(
+        userId,
+        targetPlaylistId,
+      );
+      assert.match(
+        durableStaleError,
+        /durable READY projection is stale: target source scope changed/,
+      );
 
       await assert.rejects(
         () => persistGate4E0ActivationProjection(base),
@@ -165,6 +197,85 @@ test(
     }
   },
 );
+
+type DurablePreviewOutput = {
+  mode: string;
+  evidenceSource: string;
+  providerReadSession: unknown;
+  projection: {
+    componentCount: number;
+    projectionFingerprint: string;
+    effectiveSourceIds: string[];
+  };
+  authority: {
+    plannerInfluence: boolean;
+    consumerActivation: boolean;
+    spotifyPlaylistWrites: boolean;
+  };
+};
+
+function durablePreviewArgs(
+  userId: string,
+  targetPlaylistId: string,
+): string[] {
+  return [
+    "tsx",
+    "scripts/report-music-identity-dedupe-activation-projection.ts",
+    `--user=${userId}`,
+    `--target=${targetPlaylistId}`,
+    "--json",
+  ];
+}
+
+function runDurablePreview(
+  userId: string,
+  targetPlaylistId: string,
+): DurablePreviewOutput {
+  const stdout = execFileSync(
+    "npx",
+    durablePreviewArgs(userId, targetPlaylistId),
+    {
+      encoding: "utf8",
+      env: process.env,
+    },
+  );
+
+  return JSON.parse(stdout) as DurablePreviewOutput;
+}
+
+function runDurablePreviewFailure(
+  userId: string,
+  targetPlaylistId: string,
+): string {
+  try {
+    execFileSync(
+      "npx",
+      durablePreviewArgs(userId, targetPlaylistId),
+      {
+        encoding: "utf8",
+        env: process.env,
+      },
+    );
+  } catch (error) {
+    const failure = error as Error & {
+      stderr?: string | Buffer;
+    };
+
+    if (typeof failure.stderr === "string") {
+      return failure.stderr;
+    }
+
+    if (failure.stderr) {
+      return failure.stderr.toString("utf8");
+    }
+
+    return failure.message;
+  }
+
+  throw new Error(
+    "durable preview unexpectedly succeeded after MUSIC source-scope change",
+  );
+}
 
 function sha(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
