@@ -78,9 +78,13 @@ async function main() {
   ]);
   disconnectPrisma = () => prisma.$disconnect();
 
-  let projection: activation.Gate4E0ActivationProjection;
-  let persistence: activation.Gate4E0PersistResult | null = null;
-  let providerReadSession: ReturnType<InstanceType<typeof SpotifyCatalogReadSession>["getMetrics"]> | null = null;
+  let projection: ReturnType<typeof activation.buildGate4E0ActivationProjection>;
+  let persistence: Awaited<
+    ReturnType<typeof activation.persistGate4E0ActivationProjection>
+  > | null = null;
+  let providerReadSession: ReturnType<
+    InstanceType<typeof SpotifyCatalogReadSession>["getMetrics"]
+  > | null = null;
   let evidenceSource: "PERSISTED_READY" | "EXPLICIT_GATE4D_REFRESH";
 
   if (!refreshEvidence) {
