@@ -10,6 +10,13 @@ test("GET /episodes/{id} is classified as episode-state", () => {
   );
 });
 
+test("GET /tracks/{id} is classified as catalog-track", () => {
+  assert.equal(
+    inferSpotifyOperation("/tracks/track-123?market=from_token", "GET"),
+    "catalog-track",
+  );
+});
+
 test("show and saved episode endpoints keep their existing classifications", () => {
   assert.equal(
     inferSpotifyOperation("/shows/show-123/episodes?limit=50", "GET"),
