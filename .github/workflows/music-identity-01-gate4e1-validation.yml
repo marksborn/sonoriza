@@ -1,0 +1,72 @@
+name: MUSIC-IDENTITY-01 Gate 4E1 validation
+
+on:
+  pull_request:
+    paths:
+      - ".env.example"
+      - "src/jobs/generate-playlists.ts"
+      - "src/jobs/generate-playlists-music-identity.ts"
+      - "src/services/music-identity/canonical-dedupe-runtime.ts"
+      - "src/services/music-identity/canonical-dedupe-runtime-preparation.ts"
+      - "src/services/music-identity/canonical-dedupe-runtime.test.ts"
+      - "src/services/playlist-planner/plan-run-music-identity.ts"
+      - "src/services/playlist-planner/plan-run-podcast07.ts"
+      - ".github/workflows/music-identity-01-gate4e1-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".env.example"
+      - "src/jobs/generate-playlists.ts"
+      - "src/jobs/generate-playlists-music-identity.ts"
+      - "src/services/music-identity/canonical-dedupe-runtime.ts"
+      - "src/services/music-identity/canonical-dedupe-runtime-preparation.ts"
+      - "src/services/music-identity/canonical-dedupe-runtime.test.ts"
+      - "src/services/playlist-planner/plan-run-music-identity.ts"
+      - "src/services/playlist-planner/plan-run-podcast07.ts"
+      - ".github/workflows/music-identity-01-gate4e1-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_music_identity_gate4e1
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_music_identity_gate4e1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_music_identity_gate4e1?schema=public
+      MUSIC_IDENTITY_GATE4E1_MODE: "OFF"
+      MUSIC_IDENTITY_GATE4E1_ALLOWLIST: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - name: MUSIC-IDENTITY-01 Gate 4E1 runtime contracts
+        run: >-
+          npx tsx --test
+          src/services/music-identity/canonical-dedupe-runtime.test.ts
+          src/services/music-identity/canonical-dedupe-activation-projection.test.ts
+          src/services/music-identity/canonical-representative-selection-shadow.test.ts
+      - run: npm run typecheck
+      - run: npm run build
