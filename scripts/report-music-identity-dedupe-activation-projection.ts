@@ -116,7 +116,7 @@ async function main() {
         },
       }),
       prisma.sourcePlaylist.findMany({
-        where: { userId },
+        where: { userId, kind: "MUSIC" },
         select: { id: true, enabled: true },
       }),
     ]);
