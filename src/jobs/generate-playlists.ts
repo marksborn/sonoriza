@@ -2,4 +2,4 @@ export {
   generatePlaylists,
   type GeneratePlaylistsOptions,
   type GeneratePlaylistsResult,
-} from "./generate-playlists-playback-reserve";
+} from "./generate-playlists-music-identity";
