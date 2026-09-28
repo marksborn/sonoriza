@@ -216,7 +216,7 @@ export function filterMusicBatchForCurrentRun(candidates: Candidate[]): {
   );
 
   const firstParty = applyFirstPartyPlaybackPreferencesToMusicCandidates(
-    exposureEligible.candidates,
+    exposureEligible,
     state.firstPartyPlaybackPreferences,
   );
   state.firstPartyPreferenceEvidence = firstParty.evidence;
@@ -288,7 +288,10 @@ export async function revalidateMusicRepeatBeforeRealWrite(
     for (const target of plan.targets) {
       for (const item of target.result.items) {
         if (item.type !== "MUSIC") continue;
-        const key = lastFmMusicIdentityKey(item.title, item.subtitle);
+        const key = lastFmMusicIdentityKey(
+          item.title,
+          item.primaryArtistName ?? item.subtitle,
+        );
         if (key && refreshed.blockedIdentityKeys.has(key)) blockedCount += 1;
       }
     }
