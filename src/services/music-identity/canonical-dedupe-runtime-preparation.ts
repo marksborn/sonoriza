@@ -8,10 +8,12 @@ import { decodeMusicSourceCache } from "@/services/spotify/source-cache";
 import { resolveTargetSourceScope } from "@/services/target-source-scope";
 
 import {
+  applyGate4E1ActivationCompatibility,
   createGate4E1RuntimeState,
   GATE4E1_POLICY,
   resolveGate4E1Mode,
   type Gate4E1Component,
+  type Gate4E1OrderedOccurrence,
   type Gate4E1RuntimeState,
   type Gate4E1TargetActivation,
 } from "./canonical-dedupe-runtime";
@@ -178,18 +180,6 @@ export async function prepareGate4E1CanonicalDedupeRuntime(input: {
           }
 
           const projection = ready[0]!;
-          if (projection.gate4dOrderedInputFingerprint !== snapshot.fingerprint) {
-            targetActivation.set(
-              targetId,
-              fallbackTarget(
-                targetId,
-                "SNAPSHOT_MISMATCH",
-                "Gate 4D ordered-input fingerprint differs from the READY projection",
-              ),
-            );
-            continue;
-          }
-
           const currentTarget = currentTargetById.get(targetId);
           const persistedSourceIds = jsonStringArray(projection.effectiveSourceIds);
           if (
@@ -209,8 +199,11 @@ export async function prepareGate4E1CanonicalDedupeRuntime(input: {
             continue;
           }
 
-          const components = validateComponents(projection.components, preferenceByKey);
-          if (!components) {
+          const validatedComponents = validateComponents(
+            projection.components,
+            preferenceByKey,
+          );
+          if (!validatedComponents) {
             targetActivation.set(
               targetId,
               fallbackTarget(
@@ -221,6 +214,11 @@ export async function prepareGate4E1CanonicalDedupeRuntime(input: {
             );
             continue;
           }
+
+          const components = applyGate4E1ActivationCompatibility({
+            components: validatedComponents,
+            occurrences: buildTargetOccurrences(currentTarget, snapshot.sources),
+          });
 
           targetActivation.set(targetId, {
             targetPlaylistId: targetId,
@@ -277,9 +275,27 @@ type CurrentTarget = Readonly<{
   effectiveSourceIds: string[];
 }>;
 
+type CurrentSource = Readonly<{
+  id: string;
+  cacheUpdatedAt: Date;
+  candidates: Array<{ cachePosition: number; providerTrackId: string; uri: string }>;
+}>;
+
 type SnapshotResult =
-  | Readonly<{ valid: true; detail: null; targets: CurrentTarget[]; fingerprint: string }>
-  | Readonly<{ valid: false; detail: string; targets: CurrentTarget[]; fingerprint: "" }>;
+  | Readonly<{
+      valid: true;
+      detail: null;
+      targets: CurrentTarget[];
+      sources: CurrentSource[];
+      fingerprint: string;
+    }>
+  | Readonly<{
+      valid: false;
+      detail: string;
+      targets: CurrentTarget[];
+      sources: [];
+      fingerprint: "";
+    }>;
 
 function buildCurrentGate4DInputSnapshot(
   targets: readonly TargetRow[],
@@ -307,11 +323,7 @@ function buildCurrentGate4DInputSnapshot(
   }
   orderedTargets.sort((a, b) => a.id.localeCompare(b.id));
 
-  const orderedSources: Array<{
-    id: string;
-    cacheUpdatedAt: Date;
-    candidates: Array<{ cachePosition: number; providerTrackId: string; uri: string }>;
-  }> = [];
+  const orderedSources: CurrentSource[] = [];
   for (const source of sources
     .filter((row) => row.kind === "MUSIC" && reachableSourceIds.has(row.id))
     .sort((a, b) => a.id.localeCompare(b.id))) {
@@ -320,6 +332,7 @@ function buildCurrentGate4DInputSnapshot(
         valid: false,
         detail: `source ${source.id} has no cacheUpdatedAt`,
         targets: orderedTargets,
+        sources: [],
         fingerprint: "",
       };
     }
@@ -329,6 +342,7 @@ function buildCurrentGate4DInputSnapshot(
         valid: false,
         detail: `source ${source.id} is not FULL_VALID`,
         targets: orderedTargets,
+        sources: [],
         fingerprint: "",
       };
     }
@@ -344,6 +358,10 @@ function buildCurrentGate4DInputSnapshot(
     });
   }
 
+  // Keep the exact Gate 4D-style snapshot fingerprint for diagnostics, but do
+  // not use equality of this global value as an activation gate. In particular,
+  // cacheUpdatedAt renewal alone must not invalidate otherwise-compatible
+  // target/component projections.
   const fingerprint = createHash("sha256")
     .update(
       JSON.stringify({
@@ -365,7 +383,29 @@ function buildCurrentGate4DInputSnapshot(
     )
     .digest("hex");
 
-  return { valid: true, detail: null, targets: orderedTargets, fingerprint };
+  return {
+    valid: true,
+    detail: null,
+    targets: orderedTargets,
+    sources: orderedSources,
+    fingerprint,
+  };
+}
+
+function buildTargetOccurrences(
+  target: CurrentTarget,
+  sources: readonly CurrentSource[],
+): Gate4E1OrderedOccurrence[] {
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  return target.effectiveSourceIds.flatMap((sourceId, sourceOrder) => {
+    const source = sourceById.get(sourceId);
+    return (source?.candidates ?? []).map((candidate) => ({
+      sourcePlaylistId: sourceId,
+      sourceOrder,
+      cachePosition: candidate.cachePosition,
+      providerTrackId: candidate.providerTrackId,
+    }));
+  });
 }
 
 function validateComponents(
