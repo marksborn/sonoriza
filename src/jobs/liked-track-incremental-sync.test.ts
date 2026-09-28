@@ -3,18 +3,30 @@ import test from "node:test";
 
 import { resolveLikedTrackIncrementalSyncPolicy } from "./liked-track-incremental-sync";
 
-test("Gate 5C incremental cron is blocked by source capability before rollout controls", () => {
+test("operational incremental cron is enabled by the reviewed planner capability", () => {
   assert.deepEqual(
     resolveLikedTrackIncrementalSyncPolicy({
       userEmail: "pilot@example.com",
       masterEnabled: "true",
       allowlistedEmails: "pilot@example.com",
     }),
+    { enabled: true, reason: "ENABLED" },
+  );
+});
+
+test("operational incremental cron still fails closed when the source capability is blocked", () => {
+  assert.deepEqual(
+    resolveLikedTrackIncrementalSyncPolicy({
+      userEmail: "pilot@example.com",
+      masterEnabled: "true",
+      allowlistedEmails: "pilot@example.com",
+      sourceCapabilityAllowed: false,
+    }),
     { enabled: false, reason: "SOURCE_CAPABILITY_BLOCKED" },
   );
 });
 
-test("legacy incremental rollout controls remain fail-closed after source capability approval", () => {
+test("operational incremental rollout controls remain fail-closed", () => {
   assert.deepEqual(
     resolveLikedTrackIncrementalSyncPolicy({
       userEmail: "pilot@example.com",
