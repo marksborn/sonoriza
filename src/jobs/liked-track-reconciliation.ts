@@ -1,21 +1,24 @@
 import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
-import { spotifySavedTracksProfileMaterializationCapability } from "@/services/data-policy";
+import { spotifySavedTracksPlannerCapability } from "@/services/data-policy";
 import {
-  DEFAULT_LIKED_TRACK_RECONCILIATION_LIMITS,
-  reconcileLikedTracks,
-  type LikedTrackReconciliationSafetyStatus,
-} from "@/services/music-preference/liked-track-reconciliation";
+  DEFAULT_OPERATIONAL_LIKED_TRACK_RECONCILIATION_LIMITS,
+  reconcileLikedTracksOperationally,
+  type OperationalLikedTrackReconciliationSafetyStatus,
+} from "@/services/music-preference/liked-track-operational-sync";
 
 export const LIKED_TRACK_RECONCILIATION_POLICY = {
-  version: "source-liked-gate5c-v1",
-  activationRule: "SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
+  version: "source-liked-operational-sync-v1",
+  activationRule:
+    "OPERATIONAL_MODE_ACTIVE_AND_SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
   scan: "FULL_SAVED_TRACKS",
   providerWrite: false,
   plannerInfluence: false,
-  defaultMaxUnlikes: DEFAULT_LIKED_TRACK_RECONCILIATION_LIMITS.maxUnlikes,
+  affinityWrites: false,
+  defaultMaxUnlikes:
+    DEFAULT_OPERATIONAL_LIKED_TRACK_RECONCILIATION_LIMITS.maxUnlikes,
   defaultMaxUnlikePercent:
-    DEFAULT_LIKED_TRACK_RECONCILIATION_LIMITS.maxUnlikePercent,
+    DEFAULT_OPERATIONAL_LIKED_TRACK_RECONCILIATION_LIMITS.maxUnlikePercent,
 } as const;
 
 export type LikedTrackReconciliationPolicyReason =
@@ -35,15 +38,16 @@ export type LikedTrackReconciliationJobResult = {
     | "BASELINE_REQUIRED"
     | "BLOCKED"
     | "FAILED";
-  safetyStatus?: LikedTrackReconciliationSafetyStatus;
+  safetyStatus?: OperationalLikedTrackReconciliationSafetyStatus;
   providerCalls: number;
   pagesRead: number;
   providerRows: number;
   tracksCreated: number;
   tracksReactivated: number;
   tracksUnliked: number;
-  evidenceDeactivated: number;
-  artistStatesUpdated: number;
+  metadataUpdated: number;
+  affinityEvidenceWrites: 0;
+  affinityStateWrites: 0;
   error?: string;
 };
 
@@ -57,8 +61,7 @@ export function resolveLikedTrackReconciliationPolicy(input: {
   reason: LikedTrackReconciliationPolicyReason;
 } {
   const sourceCapabilityAllowed =
-    input.sourceCapabilityAllowed ??
-    spotifySavedTracksProfileMaterializationCapability().allowed;
+    input.sourceCapabilityAllowed ?? spotifySavedTracksPlannerCapability().allowed;
   if (!sourceCapabilityAllowed) {
     return { enabled: false, reason: "SOURCE_CAPABILITY_BLOCKED" };
   }
@@ -69,41 +72,40 @@ export function resolveLikedTrackReconciliationPolicy(input: {
   if (!email) {
     return { enabled: false, reason: "USER_EMAIL_MISSING" };
   }
-  const allowed = new Set(
-    String(input.allowlistedEmails ?? "")
-      .split(",")
-      .map(normalizeEmail)
-      .filter((value): value is string => Boolean(value)),
-  );
-  if (!allowed.has(email)) {
+  const allowed = parseEmailAllowlist(input.allowlistedEmails);
+  if (!allowed.includes(email)) {
     return { enabled: false, reason: "USER_NOT_ALLOWLISTED" };
   }
   return { enabled: true, reason: "ENABLED" };
 }
 
 /**
- * Gate 5C periodic reconciliation runner.
+ * Periodic operational Saved Tracks reconciliation.
  *
- * The Saved Tracks capability is evaluated before feature flags, local user
- * enumeration and the full provider scan. Under the current data-policy matrix
- * this job is inert because Saved Tracks is DENY for behavioral analytics and
- * user profiling. Existing rollout and circuit-breaker controls become relevant
- * only after the source capability itself is explicitly ALLOW.
+ * Deployment alone is inert: LIKED_TRACK_OPERATIONAL_SYNC_MODE must be ACTIVE.
+ * The provider library is compared with LikedTrackPreference only. Removal
+ * detection keeps the count/percentage circuit breaker, while ArtistAffinity*
+ * remains outside this path and under the blocked profile capability.
  */
 export async function runLikedTrackReconciliationJob(): Promise<
   LikedTrackReconciliationJobResult[]
 > {
-  const sourceCapability = spotifySavedTracksProfileMaterializationCapability();
-  if (!sourceCapability.allowed) {
-    return [];
-  }
-  if (!parseBoolean(process.env.LIKED_TRACK_RECONCILIATION_ENABLED)) {
+  if (!operationalApplyEnabled(process.env.LIKED_TRACK_OPERATIONAL_SYNC_MODE)) {
     return [];
   }
 
+  const sourceCapability = spotifySavedTracksPlannerCapability();
+  if (!sourceCapability.allowed) return [];
+  if (!parseBoolean(process.env.LIKED_TRACK_RECONCILIATION_ENABLED)) return [];
+
+  const rolloutEmails = parseEmailAllowlist(
+    process.env.LIKED_TRACK_RECONCILIATION_USER_EMAILS,
+  );
+  if (rolloutEmails.length === 0) return [];
+
   const users = (
     await prisma.user.findMany({
-      where: { likedTrackPreferences: { some: { isLiked: true } } },
+      where: { email: { in: rolloutEmails } },
       select: { id: true, email: true },
       orderBy: { id: "asc" },
     })
@@ -111,11 +113,11 @@ export async function runLikedTrackReconciliationJob(): Promise<
 
   const maxUnlikes = parsePositiveInteger(
     process.env.LIKED_TRACK_RECONCILIATION_MAX_UNLIKES,
-    DEFAULT_LIKED_TRACK_RECONCILIATION_LIMITS.maxUnlikes,
+    DEFAULT_OPERATIONAL_LIKED_TRACK_RECONCILIATION_LIMITS.maxUnlikes,
   );
   const maxUnlikePercent = parsePositiveNumber(
     process.env.LIKED_TRACK_RECONCILIATION_MAX_UNLIKE_PERCENT,
-    DEFAULT_LIKED_TRACK_RECONCILIATION_LIMITS.maxUnlikePercent,
+    DEFAULT_OPERATIONAL_LIKED_TRACK_RECONCILIATION_LIMITS.maxUnlikePercent,
   );
 
   const results: LikedTrackReconciliationJobResult[] = [];
@@ -129,7 +131,7 @@ export async function runLikedTrackReconciliationJob(): Promise<
     if (!policy.enabled || !user.email) continue;
 
     try {
-      const report = await reconcileLikedTracks(user.id, {
+      const report = await reconcileLikedTracksOperationally(user.id, {
         mode: "APPLY",
         limits: { maxUnlikes, maxUnlikePercent },
       });
@@ -137,14 +139,7 @@ export async function runLikedTrackReconciliationJob(): Promise<
         report.planned.tracksToCreate > 0 ||
         report.planned.tracksToReactivate > 0 ||
         report.planned.tracksToUnlike > 0 ||
-        report.planned.trackMetadataUpdates > 0 ||
-        report.planned.evidenceToCreate > 0 ||
-        report.planned.evidenceToReactivate > 0 ||
-        report.planned.evidenceToDeactivate > 0 ||
-        report.planned.evidenceMetadataUpdates > 0 ||
-        report.planned.affinityStatesToCreate > 0 ||
-        report.planned.affinityStatesToUpdate > 0;
-
+        report.planned.trackMetadataUpdates > 0;
       const status: LikedTrackReconciliationJobResult["status"] =
         report.status === "READY"
           ? changed
@@ -162,11 +157,15 @@ export async function runLikedTrackReconciliationJob(): Promise<
         tracksCreated: report.planned.tracksToCreate,
         tracksReactivated: report.planned.tracksToReactivate,
         tracksUnliked: report.planned.tracksToUnlike,
-        evidenceDeactivated: report.planned.evidenceToDeactivate,
-        artistStatesUpdated: report.planned.affinityStatesToUpdate,
+        metadataUpdated: report.planned.trackMetadataUpdates,
+        affinityEvidenceWrites: 0,
+        affinityStateWrites: 0,
       };
       results.push(result);
-      console.info("[SOURCE-LIKED-01][reconciliation]", JSON.stringify(result));
+      console.info(
+        "[SOURCE-LIKED-01][operational-reconciliation]",
+        JSON.stringify(result),
+      );
     } catch (error) {
       const result: LikedTrackReconciliationJobResult = {
         userId: user.id,
@@ -178,16 +177,24 @@ export async function runLikedTrackReconciliationJob(): Promise<
         tracksCreated: 0,
         tracksReactivated: 0,
         tracksUnliked: 0,
-        evidenceDeactivated: 0,
-        artistStatesUpdated: 0,
+        metadataUpdated: 0,
+        affinityEvidenceWrites: 0,
+        affinityStateWrites: 0,
         error: error instanceof Error ? error.message : String(error),
       };
       results.push(result);
-      console.error("[SOURCE-LIKED-01][reconciliation]", JSON.stringify(result));
+      console.error(
+        "[SOURCE-LIKED-01][operational-reconciliation]",
+        JSON.stringify(result),
+      );
     }
   }
 
   return results;
+}
+
+function operationalApplyEnabled(value: string | null | undefined): boolean {
+  return String(value ?? "").trim().toUpperCase() === "ACTIVE";
 }
 
 function parseBoolean(value: string | null | undefined): boolean {
@@ -198,6 +205,17 @@ function parseBoolean(value: string | null | undefined): boolean {
     normalized === "yes" ||
     normalized === "on"
   );
+}
+
+function parseEmailAllowlist(value: string | null | undefined): string[] {
+  return [
+    ...new Set(
+      String(value ?? "")
+        .split(",")
+        .map(normalizeEmail)
+        .filter((email): email is string => Boolean(email)),
+    ),
+  ];
 }
 
 function normalizeEmail(value: string | null | undefined): string | null {
