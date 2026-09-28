@@ -9,7 +9,8 @@ import {
 
 export const LIKED_TRACK_RECONCILIATION_POLICY = {
   version: "source-liked-operational-sync-v1",
-  activationRule: "SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
+  activationRule:
+    "OPERATIONAL_MODE_ACTIVE_AND_SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
   scan: "FULL_SAVED_TRACKS",
   providerWrite: false,
   plannerInfluence: false,
@@ -81,14 +82,18 @@ export function resolveLikedTrackReconciliationPolicy(input: {
 /**
  * Periodic operational Saved Tracks reconciliation.
  *
+ * Deployment alone is inert: LIKED_TRACK_OPERATIONAL_SYNC_MODE must be ACTIVE.
  * The provider library is compared with LikedTrackPreference only. Removal
- * detection keeps the existing count/percentage circuit breaker, while
- * ArtistAffinityEvidence and ArtistAffinityState remain outside this path and
- * continue to be governed by the blocked profile-materialization capability.
+ * detection keeps the count/percentage circuit breaker, while ArtistAffinity*
+ * remains outside this path and under the blocked profile capability.
  */
 export async function runLikedTrackReconciliationJob(): Promise<
   LikedTrackReconciliationJobResult[]
 > {
+  if (!operationalApplyEnabled(process.env.LIKED_TRACK_OPERATIONAL_SYNC_MODE)) {
+    return [];
+  }
+
   const sourceCapability = spotifySavedTracksPlannerCapability();
   if (!sourceCapability.allowed) return [];
   if (!parseBoolean(process.env.LIKED_TRACK_RECONCILIATION_ENABLED)) return [];
@@ -186,6 +191,10 @@ export async function runLikedTrackReconciliationJob(): Promise<
   }
 
   return results;
+}
+
+function operationalApplyEnabled(value: string | null | undefined): boolean {
+  return String(value ?? "").trim().toUpperCase() === "ACTIVE";
 }
 
 function parseBoolean(value: string | null | undefined): boolean {
