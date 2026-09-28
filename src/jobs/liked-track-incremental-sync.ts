@@ -1,14 +1,15 @@
 import { isEmailAllowed } from "@/lib/email-allowlist";
 import { prisma } from "@/lib/prisma";
-import { spotifySavedTracksProfileMaterializationCapability } from "@/services/data-policy";
-import { syncLikedTrackIncremental } from "@/services/music-preference/liked-track-incremental-sync";
+import { spotifySavedTracksPlannerCapability } from "@/services/data-policy";
+import { syncLikedTracksOperationally } from "@/services/music-preference/liked-track-operational-sync";
 
 export const LIKED_TRACK_INCREMENTAL_SYNC_POLICY = {
-  version: "source-liked-gate5c-v1",
+  version: "source-liked-operational-sync-v1",
   activationRule: "SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
-  mode: "LOCAL_CANONICAL_APPLY",
+  mode: "OPERATIONAL_TRACK_ONLY_APPLY",
   providerWrite: false,
   plannerInfluence: false,
+  affinityWrites: false,
 } as const;
 
 export type LikedTrackIncrementalSyncPolicyReason =
@@ -21,7 +22,8 @@ export type LikedTrackIncrementalSyncPolicyReason =
 export type LikedTrackIncrementalJobResult = {
   userId: string;
   email: string;
-  status: "SUCCESS" | "NOOP" | "BASELINE_REQUIRED" | "FAILED";
+  status: "SUCCESS" | "NOOP" | "FAILED";
+  strategy?: "BASELINE" | "INCREMENTAL";
   providerCalls: number;
   pagesRead: number;
   newRows: number;
@@ -29,6 +31,8 @@ export type LikedTrackIncrementalJobResult = {
   tracksCreated: number;
   tracksReactivated: number;
   metadataUpdated: number;
+  plannerReadyAvailable?: number;
+  blockedAvailableTracks?: number;
   error?: string;
 };
 
@@ -42,8 +46,7 @@ export function resolveLikedTrackIncrementalSyncPolicy(input: {
   reason: LikedTrackIncrementalSyncPolicyReason;
 } {
   const sourceCapabilityAllowed =
-    input.sourceCapabilityAllowed ??
-    spotifySavedTracksProfileMaterializationCapability().allowed;
+    input.sourceCapabilityAllowed ?? spotifySavedTracksPlannerCapability().allowed;
   if (!sourceCapabilityAllowed) {
     return { enabled: false, reason: "SOURCE_CAPABILITY_BLOCKED" };
   }
@@ -54,39 +57,37 @@ export function resolveLikedTrackIncrementalSyncPolicy(input: {
   if (!email) {
     return { enabled: false, reason: "USER_EMAIL_MISSING" };
   }
-  const allowed = new Set(
-    String(input.allowlistedEmails ?? "")
-      .split(",")
-      .map(normalizeEmail)
-      .filter((value): value is string => Boolean(value)),
-  );
-  if (!allowed.has(email)) {
+  const allowed = parseEmailAllowlist(input.allowlistedEmails);
+  if (!allowed.includes(email)) {
     return { enabled: false, reason: "USER_NOT_ALLOWLISTED" };
   }
   return { enabled: true, reason: "ENABLED" };
 }
 
 /**
- * Gate 5C cron runner. The Saved Tracks capability is evaluated before the
- * feature flag, user enumeration and provider access. Under the current matrix
- * this returns no work because Saved Tracks is DENY for behavioral analytics
- * and user profiling. The legacy rollout controls remain available only after
- * the source capability itself becomes explicitly ALLOW.
+ * Operational SOURCE-LIKED runner.
+ *
+ * #278 permits Spotify Saved Tracks as a direct OPERATIONAL_PLANNING /
+ * PLANNER_ELIGIBILITY candidate pool while behavioral analytics and user
+ * profiling remain blocked. This runner therefore uses the planner capability,
+ * can bootstrap a user with zero local liked rows after reconnect, and writes
+ * only LikedTrackPreference through the operational sync service.
  */
 export async function runLikedTrackIncrementalSyncJob(): Promise<
   LikedTrackIncrementalJobResult[]
 > {
-  const sourceCapability = spotifySavedTracksProfileMaterializationCapability();
-  if (!sourceCapability.allowed) {
-    return [];
-  }
-  if (!parseBoolean(process.env.LIKED_TRACK_INCREMENTAL_SYNC_ENABLED)) {
-    return [];
-  }
+  const sourceCapability = spotifySavedTracksPlannerCapability();
+  if (!sourceCapability.allowed) return [];
+  if (!parseBoolean(process.env.LIKED_TRACK_INCREMENTAL_SYNC_ENABLED)) return [];
+
+  const rolloutEmails = parseEmailAllowlist(
+    process.env.LIKED_TRACK_INCREMENTAL_SYNC_USER_EMAILS,
+  );
+  if (rolloutEmails.length === 0) return [];
 
   const users = (
     await prisma.user.findMany({
-      where: { likedTrackPreferences: { some: {} } },
+      where: { email: { in: rolloutEmails } },
       select: { id: true, email: true },
       orderBy: { id: "asc" },
     })
@@ -103,17 +104,16 @@ export async function runLikedTrackIncrementalSyncJob(): Promise<
     if (!policy.enabled || !user.email) continue;
 
     try {
-      const report = await syncLikedTrackIncremental(user.id, { mode: "APPLY" });
-      const status =
-        report.status === "BASELINE_REQUIRED"
-          ? "BASELINE_REQUIRED"
-          : report.provider.newRows > 0
-            ? "SUCCESS"
-            : "NOOP";
+      const report = await syncLikedTracksOperationally(user.id, { mode: "APPLY" });
+      const changed =
+        report.planned.tracksToCreate > 0 ||
+        report.planned.tracksToReactivate > 0 ||
+        report.planned.trackMetadataUpdates > 0;
       const result: LikedTrackIncrementalJobResult = {
         userId: user.id,
         email: user.email,
-        status,
+        status: changed ? "SUCCESS" : "NOOP",
+        strategy: report.strategy,
         providerCalls: report.provider.providerCalls,
         pagesRead: report.provider.pagesRead,
         newRows: report.provider.newRows,
@@ -121,9 +121,12 @@ export async function runLikedTrackIncrementalSyncJob(): Promise<
         tracksCreated: report.planned.tracksToCreate,
         tracksReactivated: report.planned.tracksToReactivate,
         metadataUpdated: report.planned.trackMetadataUpdates,
+        plannerReadyAvailable: report.sourceProjection.counts.plannerReadyAvailable,
+        blockedAvailableTracks:
+          report.sourceProjection.plannerMaterialization.blockedAvailableTracks,
       };
       results.push(result);
-      console.info("[SOURCE-LIKED-01][incremental-sync]", JSON.stringify(result));
+      console.info("[SOURCE-LIKED-01][operational-sync]", JSON.stringify(result));
     } catch (error) {
       const result: LikedTrackIncrementalJobResult = {
         userId: user.id,
@@ -139,7 +142,7 @@ export async function runLikedTrackIncrementalSyncJob(): Promise<
         error: error instanceof Error ? error.message : String(error),
       };
       results.push(result);
-      console.error("[SOURCE-LIKED-01][incremental-sync]", JSON.stringify(result));
+      console.error("[SOURCE-LIKED-01][operational-sync]", JSON.stringify(result));
     }
   }
 
@@ -149,6 +152,17 @@ export async function runLikedTrackIncrementalSyncJob(): Promise<
 function parseBoolean(value: string | null | undefined): boolean {
   const normalized = String(value ?? "").trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function parseEmailAllowlist(value: string | null | undefined): string[] {
+  return [
+    ...new Set(
+      String(value ?? "")
+        .split(",")
+        .map(normalizeEmail)
+        .filter((email): email is string => Boolean(email)),
+    ),
+  ];
 }
 
 function normalizeEmail(value: string | null | undefined): string | null {
