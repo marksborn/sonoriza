@@ -37,6 +37,19 @@ export type {
   RunTarget,
 } from "./plan-run-podcast07";
 
+/**
+ * Post-selection ordering fence for productive RESERVE items.
+ *
+ * ORDER-01 and MUSIC-06 already respect planningBlockIndex as a hard rerank
+ * boundary. RESERVE is not a calendar block, but it needs the same invariant:
+ * a MUSIC identity selected for RESERVE must never be moved into a PRIMARY
+ * music slot (or vice versa) by later ordering/rerank stages.
+ *
+ * Calendar block indices are zero-based and bounded by the number of events, so
+ * MAX_SAFE_INTEGER is deliberately outside their legitimate range.
+ */
+export const PLAYBACK_RESERVE_ORDERING_BLOCK_INDEX = Number.MAX_SAFE_INTEGER;
+
 export type PlaybackReserveInactiveTargetShadow = Readonly<{
   targetPlaylistId: string;
   targetName: string;
@@ -224,6 +237,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
           return {
             ...candidate,
             position: selected.position,
+            planningBlockIndex: PLAYBACK_RESERVE_ORDERING_BLOCK_INDEX,
           };
         },
       );
