@@ -5,7 +5,8 @@ import { syncLikedTracksOperationally } from "@/services/music-preference/liked-
 
 export const LIKED_TRACK_INCREMENTAL_SYNC_POLICY = {
   version: "source-liked-operational-sync-v1",
-  activationRule: "SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
+  activationRule:
+    "OPERATIONAL_MODE_ACTIVE_AND_SOURCE_CAPABILITY_AND_MASTER_FLAG_AND_USER_ALLOWLIST",
   mode: "OPERATIONAL_TRACK_ONLY_APPLY",
   providerWrite: false,
   plannerInfluence: false,
@@ -69,13 +70,17 @@ export function resolveLikedTrackIncrementalSyncPolicy(input: {
  *
  * #278 permits Spotify Saved Tracks as a direct OPERATIONAL_PLANNING /
  * PLANNER_ELIGIBILITY candidate pool while behavioral analytics and user
- * profiling remain blocked. This runner therefore uses the planner capability,
- * can bootstrap a user with zero local liked rows after reconnect, and writes
- * only LikedTrackPreference through the operational sync service.
+ * profiling remain blocked. The additional OPERATIONAL_SYNC_MODE gate defaults
+ * fail-closed so deploying this code cannot rehydrate provider data until the
+ * post-deploy PREVIEW has been reviewed explicitly.
  */
 export async function runLikedTrackIncrementalSyncJob(): Promise<
   LikedTrackIncrementalJobResult[]
 > {
+  if (!operationalApplyEnabled(process.env.LIKED_TRACK_OPERATIONAL_SYNC_MODE)) {
+    return [];
+  }
+
   const sourceCapability = spotifySavedTracksPlannerCapability();
   if (!sourceCapability.allowed) return [];
   if (!parseBoolean(process.env.LIKED_TRACK_INCREMENTAL_SYNC_ENABLED)) return [];
@@ -147,6 +152,10 @@ export async function runLikedTrackIncrementalSyncJob(): Promise<
   }
 
   return results;
+}
+
+function operationalApplyEnabled(value: string | null | undefined): boolean {
+  return String(value ?? "").trim().toUpperCase() === "ACTIVE";
 }
 
 function parseBoolean(value: string | null | undefined): boolean {
