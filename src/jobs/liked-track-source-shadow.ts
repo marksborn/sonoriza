@@ -57,11 +57,28 @@ export const LIKED_TRACK_SOURCE_PLANNER_PILOT_POLICY = {
 } as const;
 
 /**
- * A sub-second planner difference is operational noise, not a meaningful loss
- * of destination coverage. The productive guard therefore compares deficit to
- * the target budget and allows at most one second of additional deficit.
+ * SOURCE-LIKED productive guard calibration.
+ *
+ * Optional source arbitration may naturally produce small residual differences
+ * while preserving composition and sequence quality. Keep the guard bounded:
+ *
+ * - duration: 0.05% of the destination budget, minimum 1s, maximum 30s;
+ * - artist/album diversity: up to 3% of the baseline count, minimum 1,
+ *   maximum 3 identities.
+ *
+ * Explicit test/runtime overrides still take precedence.
  */
-export const LIKED_TRACK_SOURCE_DURATION_DEFICIT_TOLERANCE_MS = 1_000;
+export const LIKED_TRACK_SOURCE_DURATION_DEFICIT_MIN_TOLERANCE_MS = 1_000;
+export const LIKED_TRACK_SOURCE_DURATION_DEFICIT_MAX_TOLERANCE_MS = 30_000;
+export const LIKED_TRACK_SOURCE_DURATION_DEFICIT_TOLERANCE_RATIO = 0.0005;
+
+/** Backward-compatible name: now represents the minimum duration tolerance. */
+export const LIKED_TRACK_SOURCE_DURATION_DEFICIT_TOLERANCE_MS =
+  LIKED_TRACK_SOURCE_DURATION_DEFICIT_MIN_TOLERANCE_MS;
+
+export const LIKED_TRACK_SOURCE_DIVERSITY_LOSS_RATIO = 0.03;
+export const LIKED_TRACK_SOURCE_DIVERSITY_MIN_ALLOWED_LOSS = 1;
+export const LIKED_TRACK_SOURCE_DIVERSITY_MAX_ALLOWED_LOSS = 3;
 
 export type LikedTrackSourceShadowPolicyReason =
   | "MASTER_DISABLED"
@@ -845,6 +862,14 @@ export function buildLikedTrackProductivePilotPlan(input: {
       currentDeficitMs: currentTarget.result.stats.segmentation?.deficitMs,
       variantDeficitMs: variantTarget.result.stats.segmentation?.deficitMs,
     });
+    const artistDiversityGuard = evaluateLikedTrackDiversityGuard({
+      currentCount: currentTarget.result.stats.distinctArtistCount,
+      variantCount: variantTarget.result.stats.distinctArtistCount,
+    });
+    const albumDiversityGuard = evaluateLikedTrackDiversityGuard({
+      currentCount: currentTarget.result.stats.distinctAlbumCount,
+      variantCount: variantTarget.result.stats.distinctAlbumCount,
+    });
 
     if (!allowlisted && currentFingerprint !== variantFingerprint) {
       guardFailures.push({
@@ -885,24 +910,26 @@ export function buildLikedTrackProductivePilotPlan(input: {
           durationDeficitToleranceMs: durationGuard.toleranceMs,
         });
       }
-      if (
-        variantTarget.result.stats.distinctArtistCount <
-        currentTarget.result.stats.distinctArtistCount
-      ) {
+      if (artistDiversityGuard.regressed) {
         guardFailures.push({
           targetPlaylistId: currentTarget.targetPlaylistId,
           targetName: currentTarget.name,
           reason: "ARTIST_DIVERSITY_REGRESSION",
+          currentDistinctArtistCount: artistDiversityGuard.currentCount,
+          variantDistinctArtistCount: artistDiversityGuard.variantCount,
+          distinctArtistLoss: artistDiversityGuard.loss,
+          distinctArtistAllowedLoss: artistDiversityGuard.allowedLoss,
         });
       }
-      if (
-        variantTarget.result.stats.distinctAlbumCount <
-        currentTarget.result.stats.distinctAlbumCount
-      ) {
+      if (albumDiversityGuard.regressed) {
         guardFailures.push({
           targetPlaylistId: currentTarget.targetPlaylistId,
           targetName: currentTarget.name,
           reason: "ALBUM_DIVERSITY_REGRESSION",
+          currentDistinctAlbumCount: albumDiversityGuard.currentCount,
+          variantDistinctAlbumCount: albumDiversityGuard.variantCount,
+          distinctAlbumLoss: albumDiversityGuard.loss,
+          distinctAlbumAllowedLoss: albumDiversityGuard.allowedLoss,
         });
       }
       if (
@@ -946,9 +973,13 @@ export function buildLikedTrackProductivePilotPlan(input: {
       distinctArtistDelta:
         variantTarget.result.stats.distinctArtistCount -
         currentTarget.result.stats.distinctArtistCount,
+      distinctArtistLoss: artistDiversityGuard.loss,
+      distinctArtistAllowedLoss: artistDiversityGuard.allowedLoss,
       distinctAlbumDelta:
         variantTarget.result.stats.distinctAlbumCount -
         currentTarget.result.stats.distinctAlbumCount,
+      distinctAlbumLoss: albumDiversityGuard.loss,
+      distinctAlbumAllowedLoss: albumDiversityGuard.allowedLoss,
     };
   });
 
@@ -988,10 +1019,10 @@ export function evaluateLikedTrackDurationGuard(input: {
     targetDurationMs,
     input.variantDurationMs,
   );
-  const toleranceMs = Math.max(
-    0,
-    input.toleranceMs ?? LIKED_TRACK_SOURCE_DURATION_DEFICIT_TOLERANCE_MS,
-  );
+  const toleranceMs =
+    input.toleranceMs === undefined
+      ? resolveLikedTrackDurationToleranceMs(targetDurationMs)
+      : Math.max(0, input.toleranceMs);
   const deficitDeltaMs = variantDeficitMs - currentDeficitMs;
 
   return {
@@ -1001,6 +1032,67 @@ export function evaluateLikedTrackDurationGuard(input: {
     variantDeficitMs,
     deficitDeltaMs,
     toleranceMs,
+  };
+}
+
+export function resolveLikedTrackDurationToleranceMs(
+  targetDurationMs: number,
+): number {
+  const proportional = Math.floor(
+    Math.max(0, targetDurationMs) *
+      LIKED_TRACK_SOURCE_DURATION_DEFICIT_TOLERANCE_RATIO,
+  );
+
+  return Math.min(
+    LIKED_TRACK_SOURCE_DURATION_DEFICIT_MAX_TOLERANCE_MS,
+    Math.max(
+      LIKED_TRACK_SOURCE_DURATION_DEFICIT_MIN_TOLERANCE_MS,
+      proportional,
+    ),
+  );
+}
+
+export function evaluateLikedTrackDiversityGuard(input: {
+  currentCount: number;
+  variantCount: number;
+  allowedLoss?: number;
+}): {
+  regressed: boolean;
+  currentCount: number;
+  variantCount: number;
+  loss: number;
+  allowedLoss: number;
+} {
+  const currentCount = Math.max(0, Math.floor(input.currentCount));
+  const variantCount = Math.max(0, Math.floor(input.variantCount));
+
+  const defaultAllowedLoss =
+    currentCount <= 0
+      ? 0
+      : Math.min(
+          LIKED_TRACK_SOURCE_DIVERSITY_MAX_ALLOWED_LOSS,
+          Math.max(
+            LIKED_TRACK_SOURCE_DIVERSITY_MIN_ALLOWED_LOSS,
+            Math.floor(
+              currentCount *
+                LIKED_TRACK_SOURCE_DIVERSITY_LOSS_RATIO,
+            ),
+          ),
+        );
+
+  const allowedLoss =
+    input.allowedLoss === undefined
+      ? defaultAllowedLoss
+      : Math.max(0, Math.floor(input.allowedLoss));
+
+  const loss = Math.max(0, currentCount - variantCount);
+
+  return {
+    regressed: loss > allowedLoss,
+    currentCount,
+    variantCount,
+    loss,
+    allowedLoss,
   };
 }
 
