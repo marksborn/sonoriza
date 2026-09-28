@@ -39,18 +39,20 @@ export const LIKED_TRACK_SOURCE_SHADOW_POLICY = {
 } as const;
 
 /**
- * SOURCE-LIKED-01 Gate 5A + Gate 5B2.
+ * SOURCE-LIKED-01 Gate 5A + Gate 5B2 + Gate 5B4.
  *
- * Productive exposure stays fixed at the proven 5% Gate 5A arbitration, but it
- * now requires both the operational rollout gate and the user's persisted
- * product preference. Missing, disabled or unreadable consent always abstains.
+ * Productive exposure stays fixed at the proven 5% Gate 5A arbitration and
+ * requires both the operational rollout gate and the user's persisted product
+ * preference. When factual Last.fm is configured ACTIVE, the optional Saved
+ * Tracks postprocessor additionally fails closed unless that cooldown is fully
+ * READY_ACTIVE for productive influence.
  */
 export const LIKED_TRACK_SOURCE_PLANNER_PILOT_POLICY = {
-  version: "source-liked-gate5b2-v3",
+  version: "source-liked-gate5b4-v4",
   mode: "PILOT_PRODUCTIVE",
   exposurePercent: 5,
   activationRule:
-    "MASTER_FLAG_AND_USER_ALLOWLIST_AND_TARGET_ID_ALLOWLIST_AND_USER_SOURCE_PREFERENCE",
+    "MASTER_FLAG_AND_USER_ALLOWLIST_AND_TARGET_ID_ALLOWLIST_AND_USER_SOURCE_PREFERENCE_AND_ACTIVE_LASTFM_READY_WHEN_CONFIGURED",
   strategy: "ORDER_PRESERVING_INTERLEAVE_EXCLUSIVE_LIKED",
   fallbackRule: "ABSTAIN_AND_KEEP_READY_BASELINE_PLAN",
   providerReads: false,
@@ -608,6 +610,60 @@ function applyProductivePilot(
     return;
   }
 
+  /*
+   * SOURCE-LIKED-01 Gate 5B4.
+   *
+   * Saved Tracks is an optional productive postprocessor. If factual Last.fm
+   * is configured ACTIVE, a degraded/incomplete provider snapshot must never
+   * let Saved Tracks bypass anti-repeat eligibility. Keep the already-ready
+   * baseline authoritative and abstain instead.
+   */
+  const lastFm = runState.lastFmFactualCooldown;
+
+  const lastFmConfiguredActive =
+    lastFm?.configuredMode === "ACTIVE" ||
+    process.env.MUSIC_REPEAT_LASTFM_MODE
+      ?.trim()
+      .toUpperCase() === "ACTIVE";
+
+  const lastFmReadyForProductive =
+    !lastFmConfiguredActive ||
+    (
+      lastFm?.status === "READY_ACTIVE" &&
+      lastFm.effectiveMode === "ACTIVE" &&
+      lastFm.productiveInfluenceAllowed === true &&
+      lastFm.providerComplete === true
+    );
+
+  if (!lastFmReadyForProductive) {
+    setProductivePilotSummary({
+      ...currentSummary,
+      status: "ABSTAINED",
+      reason: "LASTFM_FACTUAL_ACTIVE_NOT_READY",
+      attempted: false,
+      plannerInfluence: false,
+      appliedToAuthoritativePlan: false,
+
+      canonicalEligibilityApplied: false,
+
+      lastFmProductiveGateRequired: true,
+      lastFmProductiveGatePassed: false,
+      lastFmConfiguredMode:
+        lastFm?.configuredMode ?? null,
+      lastFmEffectiveMode:
+        lastFm?.effectiveMode ?? null,
+      lastFmStatus:
+        lastFm?.status ?? null,
+      lastFmProductiveInfluenceAllowed:
+        lastFm?.productiveInfluenceAllowed ?? false,
+      lastFmProviderComplete:
+        lastFm?.providerComplete ?? null,
+      lastFmFailure:
+        lastFm?.failure ?? "LASTFM_STATE_MISSING",
+    });
+    return;
+  }
+
   try {
     // collectIncrementally has already established the authoritative eligibility
     // snapshot for this run. Re-apply the same canonical MUSIC eligibility
@@ -674,6 +730,23 @@ function applyProductivePilot(
       exposurePercent: LIKED_TRACK_SOURCE_PLANNER_PILOT_POLICY.exposurePercent,
 
       canonicalEligibilityApplied: true,
+
+      lastFmProductiveGateRequired:
+        lastFmConfiguredActive,
+      lastFmProductiveGatePassed: true,
+      lastFmConfiguredMode:
+        lastFm?.configuredMode ?? null,
+      lastFmEffectiveMode:
+        lastFm?.effectiveMode ?? null,
+      lastFmStatus:
+        lastFm?.status ?? null,
+      lastFmProductiveInfluenceAllowed:
+        lastFm?.productiveInfluenceAllowed ?? false,
+      lastFmProviderComplete:
+        lastFm?.providerComplete ?? null,
+      lastFmFailure:
+        lastFm?.failure ?? null,
+
       eligibilityInputCandidates:
         prepared.candidates.length,
       eligibilityEligibleCandidates:
