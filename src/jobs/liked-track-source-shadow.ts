@@ -24,7 +24,10 @@ import {
   buildLikedTrackArbitrationShadowEvidence,
   interleaveExclusiveLiked,
 } from "./liked-track-source-arbitration-shadow";
-import { currentMusicRepeatState } from "./music-repeat-runtime";
+import {
+  currentMusicRepeatState,
+  filterMusicBatchForCurrentRun,
+} from "./music-repeat-runtime";
 
 export const LIKED_TRACK_SOURCE_SHADOW_POLICY = {
   version: "source-liked-gate3b-v1",
@@ -589,21 +592,49 @@ function applyProductivePilot(
   }
 
   try {
-    // collectIncrementally has just run MUSIC-01 pre-write revalidation for real
-    // runs. Re-filter against that exact refreshed context before any mutation,
-    // so injected liked tracks cannot bypass the same cooldown snapshot.
-    const refreshedRepeat = filterMusicCandidatesForRepeat(
-      prepared.candidates,
-      runState.context,
+    // collectIncrementally has already established the authoritative eligibility
+    // snapshot for this run. Re-apply the same canonical MUSIC eligibility
+    // pipeline used by normal source batches before this optional productive
+    // postprocessor may mutate the plan.
+    //
+    // This covers:
+    // - Spotify Recently Played when policy-authorized;
+    // - factual Last.fm cooldown;
+    // - MUSIC-07 eligibility;
+    // - first-party playback preferences.
+    //
+    // Saved Tracks must never reintroduce a candidate that the canonical
+    // pipeline has already declared ineligible.
+    const lastFmSkippedBefore =
+      runState.lastFmFactualCooldown?.skippedCandidateCount ?? 0;
+
+    const refreshedEligibility =
+      filterMusicBatchForCurrentRun(prepared.candidates);
+
+    const lastFmSkippedAfter =
+      runState.lastFmFactualCooldown?.skippedCandidateCount ??
+      lastFmSkippedBefore;
+
+    const lastFmFactualBlockedCandidates = Math.max(
+      0,
+      lastFmSkippedAfter - lastFmSkippedBefore,
     );
+
+    const eligibilityBlockedCandidates = Math.max(
+      0,
+      prepared.candidates.length -
+        refreshedEligibility.candidates.length,
+    );
+
     const proposal = buildLikedTrackProductivePilotPlan({
-      candidates: refreshedRepeat.candidates,
+      candidates: refreshedEligibility.candidates,
       targetIds,
       context,
     });
 
     const changed = proposal.changed;
     const applied = proposal.safe && changed;
+
     if (applied) {
       context.plan.targets.splice(
         0,
@@ -624,10 +655,22 @@ function applyProductivePilot(
       plannerInfluence: applied,
       appliedToAuthoritativePlan: applied,
       exposurePercent: LIKED_TRACK_SOURCE_PLANNER_PILOT_POLICY.exposurePercent,
-      repeatEligibleCandidates: refreshedRepeat.candidates.length,
-      repeatBlockedCandidates: refreshedRepeat.recentlyPlayedSkippedCount,
+
+      canonicalEligibilityApplied: true,
+      eligibilityInputCandidates:
+        prepared.candidates.length,
+      eligibilityEligibleCandidates:
+        refreshedEligibility.candidates.length,
+      eligibilityBlockedCandidates,
+      lastFmFactualBlockedCandidates,
+
+      repeatEligibleCandidates:
+        refreshedEligibility.candidates.length,
+      repeatBlockedCandidates:
+        refreshedEligibility.recentlyPlayedSkippedCount,
       missingTrackIdentityCandidates:
-        refreshedRepeat.missingTrackIdentitySkippedCount,
+        refreshedEligibility.missingTrackIdentitySkippedCount,
+
       guardFailures: proposal.guardFailures,
       targetInputs: proposal.targetInputs,
       targets: proposal.targets,
