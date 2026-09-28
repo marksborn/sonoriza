@@ -191,8 +191,10 @@ export function filterMusicBatchForCurrentRun(candidates: Candidate[]): {
 
   // #278 PERSONAL profile: factual Last.fm scrobbles are an explicitly reviewed
   // source for operational planning / planner eligibility. This filter is not a
-  // skip inference, preference, or MUSIC-07 exposure signal. Exact normalized
-  // artist + track identity is used conservatively; SHADOW only measures.
+  // skip inference, preference, or MUSIC-07 exposure signal. Artist identity is
+  // exact after normalization; track identity additionally ignores whitespace
+  // so harmless catalogue differences such as "Dragon Fly" vs "Dragonfly"
+  // resolve without fuzzy matching. SHADOW only measures.
   const lastFmFiltered = filterMusicCandidatesForLastFmFactualCooldown(
     repeatFiltered.candidates,
     state.lastFmFactualCooldown,
@@ -360,7 +362,14 @@ export function lastFmMusicIdentityKey(
 ): string | null {
   const track = normalizeMusicIdentityText(trackName);
   const artist = normalizeMusicIdentityText(artistName);
-  return track && artist ? `${artist}\u0000${track}` : null;
+  if (!track || !artist) return null;
+
+  // Last.fm and Spotify occasionally differ only in whether a compound title
+  // is written with a space (e.g. "Dragon Fly" vs "Dragonfly"). Keep artist
+  // matching exact after normalization and compact only the track title. This
+  // deliberately does not strip words, suffixes, versions or other metadata.
+  const compactTrack = track.replace(/\s+/g, "");
+  return `${artist}\u0000${compactTrack}`;
 }
 
 export async function prepareLastFmFactualCooldown(
@@ -645,7 +654,7 @@ function lastFmFactualCooldownSummary(
     skippedCandidateCount: state.skippedCandidateCount,
     preWriteRevalidated: state.preWriteRevalidated,
     preWriteBlockedCount: state.preWriteBlockedCount,
-    identityMethod: "TRACK_ARTIST_NORMALIZED_EXACT",
+    identityMethod: "TRACK_COMPACT_WHITESPACE_ARTIST_NORMALIZED_EXACT",
     failure: state.failure,
   };
 }

@@ -56,7 +56,7 @@ const fresh = {
   durationMs: 190000,
 };
 
-test("normaliza artista+faixa de forma exata e estável", () => {
+test("normaliza artista+faixa de forma conservadora e estável", () => {
   assert.equal(
     lastFmMusicIdentityKey("A Ele", "Oficina G3"),
     lastFmMusicIdentityKey("A Éle", "OFICINA   G3"),
@@ -64,6 +64,21 @@ test("normaliza artista+faixa de forma exata e estável", () => {
   assert.notEqual(
     lastFmMusicIdentityKey("A Ele - Live", "Oficina G3"),
     lastFmMusicIdentityKey("A Ele", "Oficina G3"),
+  );
+});
+
+test("aceita diferença apenas de espaço no título com artista exato", () => {
+  assert.equal(
+    lastFmMusicIdentityKey("Dragon Fly", "Atomship"),
+    lastFmMusicIdentityKey("Dragonfly", "Atomship"),
+  );
+  assert.notEqual(
+    lastFmMusicIdentityKey("Dragon Fly", "Atomship"),
+    lastFmMusicIdentityKey("Dragonfly", "Another Artist"),
+  );
+  assert.notEqual(
+    lastFmMusicIdentityKey("Dragon Fly - Live", "Atomship"),
+    lastFmMusicIdentityKey("Dragonfly", "Atomship"),
   );
 });
 
