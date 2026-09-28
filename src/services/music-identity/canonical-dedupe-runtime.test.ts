@@ -5,10 +5,12 @@ import { planRun } from "@/services/playlist-planner/plan-run-music-identity";
 import type { Candidate } from "@/services/playlist-planner/types";
 
 import {
+  applyGate4E1ActivationCompatibility,
   createGate4E1RuntimeState,
   projectGate4E1Candidates,
   resolveGate4E1Mode,
   runWithGate4E1RuntimeState,
+  type Gate4E1OrderedOccurrence,
 } from "./canonical-dedupe-runtime";
 
 const USER = "user-pilot";
@@ -22,6 +24,20 @@ function music(id: string, sourcePlaylistId = "source-a"): Candidate {
     spotifyTrackId: id,
     durationMs: 60_000,
     sourcePlaylistId,
+  };
+}
+
+function occurrence(
+  providerTrackId: string,
+  sourceOrder: number,
+  cachePosition: number,
+  sourcePlaylistId = `source-${sourceOrder}`,
+): Gate4E1OrderedOccurrence {
+  return {
+    sourcePlaylistId,
+    sourceOrder,
+    cachePosition,
+    providerTrackId,
   };
 }
 
@@ -79,6 +95,56 @@ test("Gate 4E1 ACTIVE requires the exact user + target pair", () => {
   assert.equal(wrongTarget.effectiveMode, "OFF");
   assert.equal(exact.effectiveMode, "ACTIVE");
   assert.deepEqual([...exact.allowlistedTargetIds], [TARGET]);
+});
+
+test("cache refresh and unrelated tracks do not invalidate a stable representative", () => {
+  const compatible = applyGate4E1ActivationCompatibility({
+    components: [component],
+    occurrences: [
+      occurrence("unrelated-before", 0, 0),
+      occurrence("track-a", 0, 3),
+      occurrence("unrelated-middle", 0, 4),
+      occurrence("track-b", 0, 8),
+      occurrence("unrelated-other-source", 1, 0),
+    ],
+  });
+
+  assert.equal(compatible[0]?.activationCompatible, true);
+  assert.equal(compatible[0]?.activationAbstentionReason, null);
+});
+
+test("relative alias order change fails closed for only that component", () => {
+  const components = applyGate4E1ActivationCompatibility({
+    components: [component],
+    occurrences: [
+      occurrence("track-b", 0, 1),
+      occurrence("track-a", 0, 2),
+    ],
+  });
+
+  assert.equal(components[0]?.activationCompatible, false);
+  assert.equal(components[0]?.activationAbstentionReason, "REPRESENTATIVE_ORDER_CHANGED");
+
+  const candidates = [music("track-b"), music("track-a"), music("legacy")];
+  const projected = projectGate4E1Candidates({ candidates, components });
+  assert.deepEqual(projected.candidates, candidates);
+  assert.equal(projected.aliasesCollapsed, 0);
+  assert.deepEqual(projected.componentAbstentions, [
+    { componentId: "component-a", reason: "REPRESENTATIVE_ORDER_CHANGED" },
+  ]);
+});
+
+test("missing projected member is an explicit fail-closed abstention", () => {
+  const components = applyGate4E1ActivationCompatibility({
+    components: [component],
+    occurrences: [occurrence("track-a", 0, 1)],
+  });
+
+  assert.equal(components[0]?.activationCompatible, false);
+  assert.equal(
+    components[0]?.activationAbstentionReason,
+    "MEMBER_NOT_PRESENT_IN_CURRENT_SOURCE_SCOPE",
+  );
 });
 
 test("READY component keeps the persisted representative and preserves candidate order", () => {
