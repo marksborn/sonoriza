@@ -13,13 +13,12 @@ import {
 } from "./liked-track-source-shadow";
 
 import {
-  lastFmMusicIdentityKey,
   runWithMusicRepeatState,
   type MusicRepeatRunState,
 } from "./music-repeat-runtime";
 
 test(
-  "productive liked pilot cannot reintroduce factual Last.fm cooldown candidate",
+  "Gate 5B4 abstains and preserves baseline when ACTIVE Last.fm is unavailable",
   async () => {
     const target = targetRule(
       "target-1",
@@ -35,23 +34,10 @@ test(
         ),
     );
 
-    const blocked = candidate(
-      "liked-blocked",
+    const liked = candidate(
+      "liked-exclusive",
       60_000,
     );
-
-    const allowed = candidate(
-      "liked-allowed",
-      60_000,
-    );
-
-    const blockedKey =
-      lastFmMusicIdentityKey(
-        blocked.title,
-        blocked.primaryArtistName,
-      );
-
-    assert.ok(blockedKey);
 
     const pools = {
       music: [...current],
@@ -68,6 +54,11 @@ test(
       targets: [target],
       musicPoolByTargetId,
     });
+
+    const baselineUris =
+      plan.targets[0]!.result.items.map(
+        (item) => item.uri,
+      );
 
     const state = {
       userId: "user-1",
@@ -109,9 +100,9 @@ test(
 
       lastFmFactualCooldown: {
         configuredMode: "ACTIVE",
-        effectiveMode: "ACTIVE",
-        status: "READY_ACTIVE",
-        productiveInfluenceAllowed: true,
+        effectiveMode: "SHADOW",
+        status: "PROVIDER_UNAVAILABLE",
+        productiveInfluenceAllowed: false,
 
         windowValue: 6,
         windowUnit: "MONTHS",
@@ -127,25 +118,33 @@ test(
           ),
 
         blockedIdentityKeys:
-          new Set([blockedKey]),
+          new Set<string>(),
 
-        localScrobbleCount: 1,
+        localScrobbleCount: 1572,
         providerScrobbleCount: 0,
 
-        providerRequestedFrom: null,
-        providerRequestedTo: null,
+        providerRequestedFrom:
+          new Date(
+            "2026-08-14T00:00:00.000Z",
+          ),
+
+        providerRequestedTo:
+          new Date(
+            "2026-09-28T00:00:00.000Z",
+          ),
 
         providerPagesFetched: 0,
         providerTotalPages: 0,
-        providerComplete: true,
+        providerComplete: false,
 
         matchedCandidateCount: 0,
         skippedCandidateCount: 0,
 
-        preWriteRevalidated: true,
+        preWriteRevalidated: false,
         preWriteBlockedCount: 0,
 
-        failure: null,
+        failure:
+          "Last.fm returned invalid JSON (500)",
       },
 
       music07Eligibility: undefined,
@@ -163,10 +162,7 @@ test(
         enabled: false,
         targetIds: new Set(),
 
-        candidates: [
-          blocked,
-          allowed,
-        ],
+        candidates: [liked],
 
         plannerPilotEnabled: true,
 
@@ -205,8 +201,33 @@ test(
       summary?.productivePilot ?? {};
 
     assert.equal(
+      pilot.status,
+      "ABSTAINED",
+    );
+
+    assert.equal(
+      pilot.reason,
+      "LASTFM_FACTUAL_ACTIVE_NOT_READY",
+    );
+
+    assert.equal(
+      pilot.attempted,
+      false,
+    );
+
+    assert.equal(
+      pilot.plannerInfluence,
+      false,
+    );
+
+    assert.equal(
+      pilot.appliedToAuthoritativePlan,
+      false,
+    );
+
+    assert.equal(
       pilot.canonicalEligibilityApplied,
-      true,
+      false,
     );
 
     assert.equal(
@@ -216,72 +237,48 @@ test(
 
     assert.equal(
       pilot.lastFmProductiveGatePassed,
-      true,
-    );
-
-    assert.equal(
-      pilot.lastFmStatus,
-      "READY_ACTIVE",
-    );
-
-    assert.equal(
-      pilot.eligibilityInputCandidates,
-      2,
-    );
-
-    assert.equal(
-      pilot.eligibilityEligibleCandidates,
-      1,
-    );
-
-    assert.equal(
-      pilot.eligibilityBlockedCandidates,
-      1,
-    );
-
-    assert.equal(
-      pilot.lastFmFactualBlockedCandidates,
-      1,
-    );
-
-    assert.equal(
-      state.lastFmFactualCooldown
-        ?.matchedCandidateCount,
-      1,
-    );
-
-    assert.equal(
-      state.lastFmFactualCooldown
-        ?.skippedCandidateCount,
-      1,
-    );
-
-    assert.equal(
-      plan.targets[0]!.result.items.some(
-        (item) =>
-          item.spotifyTrackId ===
-          blocked.spotifyTrackId,
-      ),
       false,
     );
 
     assert.equal(
+      pilot.lastFmStatus,
+      "PROVIDER_UNAVAILABLE",
+    );
+
+    assert.equal(
+      pilot.lastFmEffectiveMode,
+      "SHADOW",
+    );
+
+    assert.equal(
+      pilot.lastFmProviderComplete,
+      false,
+    );
+
+    assert.equal(
+      pilot.lastFmProductiveInfluenceAllowed,
+      false,
+    );
+
+    assert.equal(
+      pilot.lastFmFailure,
+      "Last.fm returned invalid JSON (500)",
+    );
+
+    assert.deepEqual(
+      plan.targets[0]!.result.items.map(
+        (item) => item.uri,
+      ),
+      baselineUris,
+    );
+
+    assert.equal(
       plan.targets[0]!.result.items.some(
         (item) =>
           item.spotifyTrackId ===
-          allowed.spotifyTrackId,
+          liked.spotifyTrackId,
       ),
-      true,
-    );
-
-    assert.equal(
-      pilot.status,
-      "APPLIED",
-    );
-
-    assert.equal(
-      pilot.plannerInfluence,
-      true,
+      false,
     );
   },
 );
