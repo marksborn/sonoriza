@@ -26,6 +26,10 @@ export type Gate4E1TargetStatus =
   | "PROJECTION_INVALID"
   | "READY";
 
+export type Gate4E1ComponentActivationAbstentionReason =
+  | "MEMBER_NOT_PRESENT_IN_CURRENT_SOURCE_SCOPE"
+  | "REPRESENTATIVE_ORDER_CHANGED";
+
 export type Gate4E1Component = Readonly<{
   componentId: string;
   memberProviderTrackIds: readonly string[];
@@ -33,6 +37,15 @@ export type Gate4E1Component = Readonly<{
   preferenceState: string;
   preferenceCompatible: boolean;
   containsExcludedPreference: boolean;
+  activationCompatible?: boolean;
+  activationAbstentionReason?: Gate4E1ComponentActivationAbstentionReason | null;
+}>;
+
+export type Gate4E1OrderedOccurrence = Readonly<{
+  sourcePlaylistId: string;
+  sourceOrder: number;
+  cachePosition: number;
+  providerTrackId: string;
 }>;
 
 export type Gate4E1TargetActivation = Readonly<{
@@ -189,6 +202,57 @@ export function currentGate4E1RuntimeState(): Gate4E1RuntimeState | undefined {
 }
 
 /**
+ * Applies the persisted representative policy to the current DB-only ordering
+ * evidence. Operational cache refreshes do not participate in this check; only
+ * the first ordered occurrence of each projected member matters.
+ */
+export function applyGate4E1ActivationCompatibility(input: {
+  components: readonly Gate4E1Component[];
+  occurrences: readonly Gate4E1OrderedOccurrence[];
+}): Gate4E1Component[] {
+  return input.components.map((component) => {
+    const members = [...new Set(component.memberProviderTrackIds.map(clean).filter(
+      (value): value is string => Boolean(value),
+    ))].sort();
+    const representative = clean(component.representativeProviderTrackId);
+
+    if (members.length < 2 || !representative || !members.includes(representative)) {
+      return { ...component, activationCompatible: false, activationAbstentionReason: "MEMBER_NOT_PRESENT_IN_CURRENT_SOURCE_SCOPE" };
+    }
+
+    const firstOccurrences: Gate4E1OrderedOccurrence[] = [];
+    for (const member of members) {
+      const first = input.occurrences
+        .filter((occurrence) => occurrence.providerTrackId === member)
+        .sort(compareOccurrence)[0];
+      if (!first) {
+        return {
+          ...component,
+          activationCompatible: false,
+          activationAbstentionReason: "MEMBER_NOT_PRESENT_IN_CURRENT_SOURCE_SCOPE",
+        };
+      }
+      firstOccurrences.push(first);
+    }
+
+    firstOccurrences.sort(compareOccurrence);
+    if (firstOccurrences[0]!.providerTrackId !== representative) {
+      return {
+        ...component,
+        activationCompatible: false,
+        activationAbstentionReason: "REPRESENTATIVE_ORDER_CHANGED",
+      };
+    }
+
+    return {
+      ...component,
+      activationCompatible: true,
+      activationAbstentionReason: null,
+    };
+  });
+}
+
+/**
  * Productive seam for Gate 4E1. It is deliberately pure/in-memory: no Prisma,
  * provider client, resolver or projection builder is reachable from this file.
  * OFF/abstention returns the exact candidate sequence it received.
@@ -332,13 +396,26 @@ export function projectGate4E1Candidates(input: {
       componentAbstentions.push({ componentId: component.componentId, reason: "INVALID_COMPONENT" });
       continue;
     }
+    if (component.activationCompatible === false) {
+      componentAbstentions.push({
+        componentId: component.componentId,
+        reason: component.activationAbstentionReason ?? "ACTIVATION_COMPATIBILITY_CHANGED",
+      });
+      continue;
+    }
     if (!component.preferenceCompatible || component.containsExcludedPreference) {
       componentAbstentions.push({ componentId: component.componentId, reason: "PREFERENCE_INCOMPATIBLE" });
       continue;
     }
 
     const presentMembers = members.filter((member) => (candidatesByTrackId.get(member)?.length ?? 0) > 0);
-    if (presentMembers.length < 2) continue;
+    if (presentMembers.length !== members.length) {
+      componentAbstentions.push({
+        componentId: component.componentId,
+        reason: "INPUT_CARDINALITY_OR_MEMBERSHIP_CHANGED",
+      });
+      continue;
+    }
 
     const cardinalityValid = members.every(
       (member) => (candidatesByTrackId.get(member)?.length ?? 0) === 1,
@@ -372,6 +449,14 @@ export function projectGate4E1Candidates(input: {
     droppedAliases: [...new Set(droppedAliases)].sort(),
     componentAbstentions,
   };
+}
+
+function compareOccurrence(a: Gate4E1OrderedOccurrence, b: Gate4E1OrderedOccurrence): number {
+  return (
+    a.sourceOrder - b.sourceOrder ||
+    a.cachePosition - b.cachePosition ||
+    a.providerTrackId.localeCompare(b.providerTrackId)
+  );
 }
 
 function parseAllowlist(value: string | null | undefined): Array<{
