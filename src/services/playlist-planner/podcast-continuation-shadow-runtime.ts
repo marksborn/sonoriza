@@ -7,7 +7,9 @@ export type Podcast09PlannerActivationReason =
   | "MODE_OFF"
   | "MODE_SHADOW"
   | "ACTIVE_ALLOWED"
+  | "ACTIVE_REAL_ALLOWED"
   | "ACTIVE_SIMULATION_ONLY"
+  | "ACTIVE_MANUAL_ONLY"
   | "ACTIVE_SINGLE_TARGET_REQUIRED"
   | "ACTIVE_TARGET_NOT_ALLOWED"
   | "ACTIVE_PAIR_NOT_ALLOWED"
@@ -41,14 +43,17 @@ export type Podcast09ShadowTargetEvidence = Readonly<{
 }>;
 
 export type Podcast09ShadowEvidence = Readonly<{
-  runtimeVersion: "podcast09-gate4-runtime-v1";
+  runtimeVersion: "podcast09-gate5-runtime-v1";
   requestedMode: Podcast09PlannerMode;
   effectiveMode: Podcast09PlannerMode;
   activationReason: Podcast09PlannerActivationReason;
   plannerInfluence: boolean;
-  providerCalls: false;
-  databaseWrites: false;
-  spotifyWrites: false;
+  simulation: boolean;
+  trigger: string | null;
+  addedProviderCalls: false;
+  behavioralDatabaseWrites: false;
+  observabilitySummaryWrite: true;
+  continuationInfluencedSpotifyWritePossible: boolean;
   targetAllowlist: string[];
   targets: Podcast09ShadowTargetEvidence[];
 }>;
@@ -67,10 +72,12 @@ const storage = new AsyncLocalStorage<Podcast09ShadowRuntimeState>();
 export function resolvePodcast09PlannerMode(input: {
   requestedMode?: string | null;
   simulate: boolean;
+  trigger?: string | null;
   userId: string;
   targetScope?: readonly string[] | null;
   targetAllowlist?: string | null;
   activeAllowlist?: string | null;
+  realActiveAllowlist?: string | null;
 }): {
   requestedMode: Podcast09PlannerMode;
   effectiveMode: Podcast09PlannerMode;
@@ -97,14 +104,6 @@ export function resolvePodcast09PlannerMode(input: {
     };
   }
 
-  if (!input.simulate) {
-    return {
-      requestedMode,
-      effectiveMode: "SHADOW",
-      activationReason: "ACTIVE_SIMULATION_ONLY",
-    };
-  }
-
   const targetScope = [
     ...new Set((input.targetScope ?? []).map((value) => value.trim()).filter(Boolean)),
   ];
@@ -126,8 +125,9 @@ export function resolvePodcast09PlannerMode(input: {
     };
   }
 
+  const activePair = `${input.userId}:${targetId}`;
   const activePairs = parseTokenSet(input.activeAllowlist);
-  if (!activePairs.has(`${input.userId}:${targetId}`)) {
+  if (!activePairs.has(activePair)) {
     return {
       requestedMode,
       effectiveMode: "SHADOW",
@@ -135,10 +135,35 @@ export function resolvePodcast09PlannerMode(input: {
     };
   }
 
+  if (input.simulate) {
+    return {
+      requestedMode,
+      effectiveMode: "ACTIVE",
+      activationReason: "ACTIVE_ALLOWED",
+    };
+  }
+
+  const realActivePairs = parseTokenSet(input.realActiveAllowlist);
+  if (!realActivePairs.has(activePair)) {
+    return {
+      requestedMode,
+      effectiveMode: "SHADOW",
+      activationReason: "ACTIVE_SIMULATION_ONLY",
+    };
+  }
+
+  if (input.trigger !== "MANUAL") {
+    return {
+      requestedMode,
+      effectiveMode: "SHADOW",
+      activationReason: "ACTIVE_MANUAL_ONLY",
+    };
+  }
+
   return {
     requestedMode,
     effectiveMode: "ACTIVE",
-    activationReason: "ACTIVE_ALLOWED",
+    activationReason: "ACTIVE_REAL_ALLOWED",
   };
 }
 
@@ -149,9 +174,11 @@ export function createPodcast09ShadowRuntimeState(input: {
   >;
   requestedMode?: string | null;
   simulate?: boolean;
+  trigger?: string | null;
   userId?: string;
   targetScope?: readonly string[] | null;
   activeAllowlist?: string | null;
+  realActiveAllowlist?: string | null;
 }): Podcast09ShadowRuntimeState {
   const allowedTargetIds = parseTokenSet(input.targetAllowlist);
   const targetAllowlist = [...allowedTargetIds].sort();
@@ -167,13 +194,17 @@ export function createPodcast09ShadowRuntimeState(input: {
     );
   }
 
+  const simulation = input.simulate ?? false;
+  const trigger = input.trigger?.trim() || null;
   const mode = resolvePodcast09PlannerMode({
     requestedMode: input.requestedMode,
-    simulate: input.simulate ?? false,
+    simulate: simulation,
+    trigger,
     userId: input.userId ?? "",
     targetScope: input.targetScope,
     targetAllowlist: input.targetAllowlist,
     activeAllowlist: input.activeAllowlist,
+    realActiveAllowlist: input.realActiveAllowlist,
   });
 
   return {
@@ -181,12 +212,16 @@ export function createPodcast09ShadowRuntimeState(input: {
     currentDestinationEpisodeIdsByTargetId,
     ...mode,
     evidence: {
-      runtimeVersion: "podcast09-gate4-runtime-v1",
+      runtimeVersion: "podcast09-gate5-runtime-v1",
       ...mode,
       plannerInfluence: false,
-      providerCalls: false,
-      databaseWrites: false,
-      spotifyWrites: false,
+      simulation,
+      trigger,
+      addedProviderCalls: false,
+      behavioralDatabaseWrites: false,
+      observabilitySummaryWrite: true,
+      continuationInfluencedSpotifyWritePossible:
+        mode.effectiveMode === "ACTIVE" && !simulation,
       targetAllowlist,
       targets: [],
     },

@@ -77,10 +77,98 @@ function plannedPodcastIds(result: ReturnType<typeof planRun>): string[] {
   );
 }
 
-test("Gate 4 resolves ACTIVE only for an exact allowlisted single-target simulation", () => {
+test("Gate 5 allows ACTIVE real only for an exact double-allowlisted MANUAL single-target run", () => {
+  const mode = resolvePodcast09PlannerMode({
+    requestedMode: "ACTIVE",
+    simulate: false,
+    trigger: "MANUAL",
+    userId: USER_ID,
+    targetScope: [TARGET_ID],
+    targetAllowlist: TARGET_ID,
+    activeAllowlist: ACTIVE_PAIR,
+    realActiveAllowlist: ACTIVE_PAIR,
+  });
+
+  assert.deepEqual(mode, {
+    requestedMode: "ACTIVE",
+    effectiveMode: "ACTIVE",
+    activationReason: "ACTIVE_REAL_ALLOWED",
+  });
+});
+
+test("Gate 5 keeps real ACTIVE fail-closed when the second real allowlist is absent", () => {
+  const mode = resolvePodcast09PlannerMode({
+    requestedMode: "ACTIVE",
+    simulate: false,
+    trigger: "MANUAL",
+    userId: USER_ID,
+    targetScope: [TARGET_ID],
+    targetAllowlist: TARGET_ID,
+    activeAllowlist: ACTIVE_PAIR,
+  });
+
+  assert.equal(mode.effectiveMode, "SHADOW");
+  assert.equal(mode.activationReason, "ACTIVE_SIMULATION_ONLY");
+});
+
+test("Gate 5 never activates a SCHEDULED real run even with both exact allowlists", () => {
+  const mode = resolvePodcast09PlannerMode({
+    requestedMode: "ACTIVE",
+    simulate: false,
+    trigger: "SCHEDULED",
+    userId: USER_ID,
+    targetScope: [TARGET_ID],
+    targetAllowlist: TARGET_ID,
+    activeAllowlist: ACTIVE_PAIR,
+    realActiveAllowlist: ACTIVE_PAIR,
+  });
+
+  assert.equal(mode.effectiveMode, "SHADOW");
+  assert.equal(mode.activationReason, "ACTIVE_MANUAL_ONLY");
+});
+
+test("Gate 5 exact MANUAL real activation returns the continuation plan", () => {
+  const state = createPodcast09ShadowRuntimeState({
+    targetAllowlist: TARGET_ID,
+    currentDestinationEpisodeIdsByTargetId: {
+      [TARGET_ID]: ["resume"],
+    },
+    requestedMode: "ACTIVE",
+    simulate: false,
+    trigger: "MANUAL",
+    userId: USER_ID,
+    targetScope: [TARGET_ID],
+    activeAllowlist: ACTIVE_PAIR,
+    realActiveAllowlist: ACTIVE_PAIR,
+  });
+
+  const result = runWithPodcast09ShadowRuntimeState(state, () => planRun(input()));
+
+  assert.deepEqual(plannedPodcastIds(result), ["resume"]);
+  const summary = podcast09ShadowRuntimeSummary(state);
+  assert.equal(summary.runtimeVersion, "podcast09-gate5-runtime-v1");
+  assert.equal(summary.requestedMode, "ACTIVE");
+  assert.equal(summary.effectiveMode, "ACTIVE");
+  assert.equal(summary.activationReason, "ACTIVE_REAL_ALLOWED");
+  assert.equal(summary.plannerInfluence, true);
+  assert.equal(summary.simulation, false);
+  assert.equal(summary.trigger, "MANUAL");
+  assert.equal(summary.addedProviderCalls, false);
+  assert.equal(summary.behavioralDatabaseWrites, false);
+  assert.equal(summary.observabilitySummaryWrite, true);
+  assert.equal(summary.continuationInfluencedSpotifyWritePossible, true);
+
+  const evidence = summary.targets[0]!;
+  assert.equal(evidence.plannerInfluence, true);
+  assert.equal(evidence.selectedEpisodeId, "resume");
+  assert.equal(evidence.projectedFirstPodcastEpisodeId, "resume");
+});
+
+test("Gate 5 simulation contract stays ACTIVE without the real allowlist", () => {
   const mode = resolvePodcast09PlannerMode({
     requestedMode: "ACTIVE",
     simulate: true,
+    trigger: "SIMULATION",
     userId: USER_ID,
     targetScope: [TARGET_ID],
     targetAllowlist: TARGET_ID,
@@ -94,99 +182,13 @@ test("Gate 4 resolves ACTIVE only for an exact allowlisted single-target simulat
   });
 });
 
-test("Gate 4 downgrades ACTIVE real runs to SHADOW without the Gate 5 real allowlist", () => {
-  const mode = resolvePodcast09PlannerMode({
-    requestedMode: "ACTIVE",
-    simulate: false,
-    userId: USER_ID,
-    targetScope: [TARGET_ID],
-    targetAllowlist: TARGET_ID,
-    activeAllowlist: ACTIVE_PAIR,
-  });
-
-  assert.equal(mode.requestedMode, "ACTIVE");
-  assert.equal(mode.effectiveMode, "SHADOW");
-  assert.equal(mode.activationReason, "ACTIVE_SIMULATION_ONLY");
-});
-
-test("Gate 4 downgrades ACTIVE when the exact user-target pair is absent", () => {
-  const mode = resolvePodcast09PlannerMode({
-    requestedMode: "ACTIVE",
-    simulate: true,
-    userId: USER_ID,
-    targetScope: [TARGET_ID],
-    targetAllowlist: TARGET_ID,
-    activeAllowlist: `other-user:${TARGET_ID}`,
-  });
-
-  assert.equal(mode.effectiveMode, "SHADOW");
-  assert.equal(mode.activationReason, "ACTIVE_PAIR_NOT_ALLOWED");
-});
-
-test("Gate 4 ACTIVE simulation returns the destination-local continuation plan", () => {
-  const state = createPodcast09ShadowRuntimeState({
-    targetAllowlist: TARGET_ID,
-    currentDestinationEpisodeIdsByTargetId: {
-      [TARGET_ID]: ["resume"],
-    },
-    requestedMode: "ACTIVE",
-    simulate: true,
-    trigger: "SIMULATION",
-    userId: USER_ID,
-    targetScope: [TARGET_ID],
-    activeAllowlist: ACTIVE_PAIR,
-  });
-
-  const result = runWithPodcast09ShadowRuntimeState(state, () => planRun(input()));
-
-  assert.deepEqual(plannedPodcastIds(result), ["resume"]);
-  const summary = podcast09ShadowRuntimeSummary(state);
-  assert.equal(summary.requestedMode, "ACTIVE");
-  assert.equal(summary.effectiveMode, "ACTIVE");
-  assert.equal(summary.activationReason, "ACTIVE_ALLOWED");
-  assert.equal(summary.plannerInfluence, true);
-  assert.equal(summary.simulation, true);
-  assert.equal(summary.continuationInfluencedSpotifyWritePossible, false);
-
-  const evidence = summary.targets[0]!;
-  assert.equal(evidence.status, "SHADOW_READY");
-  assert.equal(evidence.plannerInfluence, true);
-  assert.equal(evidence.selectedEpisodeId, "resume");
-  assert.equal(evidence.currentFirstPodcastEpisodeId, "new");
-  assert.equal(evidence.projectedFirstPodcastEpisodeId, "resume");
-  assert.equal(evidence.planChanged, true);
-});
-
-test("Gate 4 downgraded real run keeps the existing authoritative plan", () => {
-  const state = createPodcast09ShadowRuntimeState({
-    targetAllowlist: TARGET_ID,
-    currentDestinationEpisodeIdsByTargetId: {
-      [TARGET_ID]: ["resume"],
-    },
-    requestedMode: "ACTIVE",
-    simulate: false,
-    trigger: "MANUAL",
-    userId: USER_ID,
-    targetScope: [TARGET_ID],
-    activeAllowlist: ACTIVE_PAIR,
-  });
-
-  const result = runWithPodcast09ShadowRuntimeState(state, () => planRun(input()));
-
-  assert.deepEqual(plannedPodcastIds(result), ["new"]);
-  const summary = podcast09ShadowRuntimeSummary(state);
-  assert.equal(summary.effectiveMode, "SHADOW");
-  assert.equal(summary.activationReason, "ACTIVE_SIMULATION_ONLY");
-  assert.equal(summary.plannerInfluence, false);
-  assert.equal(summary.targets[0]!.plannerInfluence, false);
-});
-
-test("Gate 4 generation wrapper wires explicit mode and exact ACTIVE allowlist", () => {
+test("Gate 5 generation wrapper requires a separate real ACTIVE allowlist and forwards trigger", () => {
   const source = readFileSync("src/jobs/generate-playlists-podcast09.ts", "utf8");
 
-  assert.match(source, /PODCAST_09_PLANNER_MODE/);
-  assert.match(source, /PODCAST_09_SHADOW_TARGET_ALLOWLIST/);
-  assert.match(source, /PODCAST_09_ACTIVE_ALLOWLIST/);
-  assert.match(source, /simulate = opts\.simulate \?\? opts\.trigger === "SIMULATION"/);
-  assert.match(source, /activeAllowlist: process\.env\.PODCAST_09_ACTIVE_ALLOWLIST/);
+  assert.match(source, /PODCAST_09_REAL_ACTIVE_ALLOWLIST/);
+  assert.match(source, /trigger: opts\.trigger/);
+  assert.match(
+    source,
+    /realActiveAllowlist: process\.env\.PODCAST_09_REAL_ACTIVE_ALLOWLIST/,
+  );
 });

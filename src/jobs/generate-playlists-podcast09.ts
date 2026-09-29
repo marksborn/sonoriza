@@ -20,14 +20,16 @@ export type GeneratePlaylistsOptions = BaseGeneratePlaylistsOptions & {
 export type { GeneratePlaylistsResult } from "./generate-playlists-music-identity";
 
 /**
- * PODCAST-09 Gate 4 controlled generation boundary.
+ * PODCAST-09 Gate 5 controlled generation boundary.
  *
  * With no explicit PODCAST-09 configuration this is strict delegation. SHADOW
  * records the destination-local continuation projection without planner
- * influence. ACTIVE is simulation-only and additionally requires an exact
- * userId:targetPlaylistId allowlist pair plus the existing target allowlist.
- * Any real run requesting ACTIVE is downgraded to SHADOW, so this gate cannot
- * write a continuation-influenced plan to Spotify.
+ * influence. ACTIVE simulation keeps the Gate 4 exact pair + target guards.
+ *
+ * Gate 5 permits a continuation-influenced real run only when all Gate 4 guards
+ * pass, the trigger is MANUAL and the exact userId:targetPlaylistId pair is also
+ * present in PODCAST_09_REAL_ACTIVE_ALLOWLIST. SCHEDULED real runs therefore
+ * remain SHADOW even if the real allowlist is accidentally populated.
  *
  * Current target episode order must be supplied by an upstream factual target
  * state read; PODCAST-09 performs no provider read of its own.
@@ -51,9 +53,11 @@ export async function generatePlaylists(
       opts.currentDestinationEpisodeIdsByTargetId,
     requestedMode,
     simulate,
+    trigger: opts.trigger,
     userId: opts.userId,
     targetScope,
     activeAllowlist: process.env.PODCAST_09_ACTIVE_ALLOWLIST ?? null,
+    realActiveAllowlist: process.env.PODCAST_09_REAL_ACTIVE_ALLOWLIST ?? null,
   });
 
   const result = await runWithPodcast09ShadowRuntimeState(state, () =>
@@ -89,7 +93,7 @@ export async function generatePlaylists(
         data: {
           runId: result.runId,
           level: "WARN",
-          message: `PODCAST-09 Gate 4 runtime metrics persistence failed after generation: ${
+          message: `PODCAST-09 Gate 5 runtime metrics persistence failed after generation: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },
