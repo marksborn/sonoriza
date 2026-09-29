@@ -18,17 +18,21 @@ export type PodcastContinuationProjection = Readonly<{
 /**
  * PODCAST-09 Gate 2 pure projection.
  *
- * This helper has no runtime wiring. It only projects how the already-eligible
- * podcast pool would be ordered if IN_PROGRESS continuation were promoted.
- * Eligibility, cadence, expiry, source scope and duration fitting remain owned
- * by the existing upstream/downstream seams.
+ * This helper has no runtime wiring. It only projects how already-eligible
+ * PODCAST candidates would be ordered if IN_PROGRESS continuation were
+ * promoted. Eligibility, cadence, expiry, source scope and duration fitting
+ * remain owned by the existing upstream/downstream seams.
  *
- * Ordering contract:
+ * Ordering contract inside the PODCAST subsequence:
  * 1. promotable IN_PROGRESS episodes first;
  * 2. most recently observed continuation first;
  * 3. most recent first progress as fallback;
  * 4. stable original order as final tie-break;
- * 5. every non-continuation candidate keeps its original relative order.
+ * 5. every non-continuation podcast keeps its original relative order.
+ *
+ * Non-PODCAST candidates keep their exact positions, so this projection cannot
+ * change a MUSIC/PODCAST composition pattern even if it is accidentally given
+ * a mixed pool.
  *
  * Missing episode identity is fail-closed: such a candidate is never promoted.
  */
@@ -41,9 +45,9 @@ export function projectPodcastContinuationPriority(input: {
   );
 
   const original = [...input.candidates];
-  const continuation = original.flatMap((candidate, index) => {
+  const podcastCandidates = original.filter((candidate) => candidate.type === "PODCAST");
+  const continuation = podcastCandidates.flatMap((candidate, podcastIndex) => {
     if (
-      candidate.type !== "PODCAST" ||
       candidate.podcastListeningStatus !== "IN_PROGRESS" ||
       !candidate.spotifyEpisodeId
     ) {
@@ -54,7 +58,7 @@ export function projectPodcastContinuationPriority(input: {
     return [
       {
         candidate,
-        index,
+        podcastIndex,
         episodeId: candidate.spotifyEpisodeId,
         lastObservedAt: state?.lastObservedAt ?? null,
         firstProgressObservedAt:
@@ -83,14 +87,20 @@ export function projectPodcastContinuationPriority(input: {
     );
     if (firstProgress !== 0) return firstProgress;
 
-    return left.index - right.index;
+    return left.podcastIndex - right.podcastIndex;
   });
 
   const continuationCandidates = new Set(continuation.map((entry) => entry.candidate));
-  const projected = [
+  const projectedPodcasts = [
     ...continuation.map((entry) => entry.candidate),
-    ...original.filter((candidate) => !continuationCandidates.has(candidate)),
+    ...podcastCandidates.filter((candidate) => !continuationCandidates.has(candidate)),
   ];
+  let nextPodcastIndex = 0;
+  const projected = original.map((candidate) =>
+    candidate.type === "PODCAST"
+      ? projectedPodcasts[nextPodcastIndex++]!
+      : candidate,
+  );
   const movedCount = projected.reduce(
     (count, candidate, index) => count + (original[index] === candidate ? 0 : 1),
     0,
