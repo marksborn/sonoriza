@@ -2,6 +2,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { PlanResult } from "./types";
 
+export type Podcast09PlannerMode = "OFF" | "SHADOW" | "ACTIVE";
+export type Podcast09PlannerActivationReason =
+  | "MODE_OFF"
+  | "MODE_SHADOW"
+  | "ACTIVE_ALLOWED"
+  | "ACTIVE_SIMULATION_ONLY"
+  | "ACTIVE_SINGLE_TARGET_REQUIRED"
+  | "ACTIVE_TARGET_NOT_ALLOWED"
+  | "ACTIVE_PAIR_NOT_ALLOWED"
+  | "INVALID_MODE";
+
 export type Podcast09ShadowTargetStatus =
   | "SHADOW_READY"
   | "NO_CONTINUATION"
@@ -12,7 +23,7 @@ export type Podcast09ShadowTargetEvidence = Readonly<{
   targetPlaylistId: string;
   targetName: string;
   status: Podcast09ShadowTargetStatus;
-  plannerInfluence: false;
+  plannerInfluence: boolean;
   currentDestinationEpisodeIds: string[];
   continuationCandidateCount: number;
   promotedEpisodeIds: string[];
@@ -30,8 +41,11 @@ export type Podcast09ShadowTargetEvidence = Readonly<{
 }>;
 
 export type Podcast09ShadowEvidence = Readonly<{
-  runtimeVersion: "podcast09-gate31-shadow-v1";
-  plannerInfluence: false;
+  runtimeVersion: "podcast09-gate4-runtime-v1";
+  requestedMode: Podcast09PlannerMode;
+  effectiveMode: Podcast09PlannerMode;
+  activationReason: Podcast09PlannerActivationReason;
+  plannerInfluence: boolean;
   providerCalls: false;
   databaseWrites: false;
   spotifyWrites: false;
@@ -42,23 +56,104 @@ export type Podcast09ShadowEvidence = Readonly<{
 export type Podcast09ShadowRuntimeState = {
   allowedTargetIds: ReadonlySet<string>;
   currentDestinationEpisodeIdsByTargetId: ReadonlyMap<string, readonly string[]>;
+  requestedMode: Podcast09PlannerMode;
+  effectiveMode: Podcast09PlannerMode;
+  activationReason: Podcast09PlannerActivationReason;
   evidence: Podcast09ShadowEvidence;
 };
 
 const storage = new AsyncLocalStorage<Podcast09ShadowRuntimeState>();
+
+export function resolvePodcast09PlannerMode(input: {
+  requestedMode?: string | null;
+  simulate: boolean;
+  userId: string;
+  targetScope?: readonly string[] | null;
+  targetAllowlist?: string | null;
+  activeAllowlist?: string | null;
+}): {
+  requestedMode: Podcast09PlannerMode;
+  effectiveMode: Podcast09PlannerMode;
+  activationReason: Podcast09PlannerActivationReason;
+} {
+  const rawMode = input.requestedMode?.trim().toUpperCase() || "SHADOW";
+  if (!["OFF", "SHADOW", "ACTIVE"].includes(rawMode)) {
+    return {
+      requestedMode: "OFF",
+      effectiveMode: "OFF",
+      activationReason: "INVALID_MODE",
+    };
+  }
+
+  const requestedMode = rawMode as Podcast09PlannerMode;
+  if (requestedMode === "OFF") {
+    return { requestedMode, effectiveMode: "OFF", activationReason: "MODE_OFF" };
+  }
+  if (requestedMode === "SHADOW") {
+    return {
+      requestedMode,
+      effectiveMode: "SHADOW",
+      activationReason: "MODE_SHADOW",
+    };
+  }
+
+  if (!input.simulate) {
+    return {
+      requestedMode,
+      effectiveMode: "SHADOW",
+      activationReason: "ACTIVE_SIMULATION_ONLY",
+    };
+  }
+
+  const targetScope = [
+    ...new Set((input.targetScope ?? []).map((value) => value.trim()).filter(Boolean)),
+  ];
+  if (targetScope.length !== 1) {
+    return {
+      requestedMode,
+      effectiveMode: "SHADOW",
+      activationReason: "ACTIVE_SINGLE_TARGET_REQUIRED",
+    };
+  }
+
+  const targetId = targetScope[0]!;
+  const targetAllowlist = parseTokenSet(input.targetAllowlist);
+  if (!targetAllowlist.has(targetId)) {
+    return {
+      requestedMode,
+      effectiveMode: "SHADOW",
+      activationReason: "ACTIVE_TARGET_NOT_ALLOWED",
+    };
+  }
+
+  const activePairs = parseTokenSet(input.activeAllowlist);
+  if (!activePairs.has(`${input.userId}:${targetId}`)) {
+    return {
+      requestedMode,
+      effectiveMode: "SHADOW",
+      activationReason: "ACTIVE_PAIR_NOT_ALLOWED",
+    };
+  }
+
+  return {
+    requestedMode,
+    effectiveMode: "ACTIVE",
+    activationReason: "ACTIVE_ALLOWED",
+  };
+}
 
 export function createPodcast09ShadowRuntimeState(input: {
   targetAllowlist?: string | null;
   currentDestinationEpisodeIdsByTargetId?: Readonly<
     Record<string, readonly string[] | undefined>
   >;
+  requestedMode?: string | null;
+  simulate?: boolean;
+  userId?: string;
+  targetScope?: readonly string[] | null;
+  activeAllowlist?: string | null;
 }): Podcast09ShadowRuntimeState {
-  const allowedTargetIds = new Set(
-    (input.targetAllowlist ?? "")
-      .split(/[,;\s]+/)
-      .map((entry) => entry.trim())
-      .filter(Boolean),
-  );
+  const allowedTargetIds = parseTokenSet(input.targetAllowlist);
   const targetAllowlist = [...allowedTargetIds].sort();
   const currentDestinationEpisodeIdsByTargetId = new Map<string, readonly string[]>();
 
@@ -72,11 +167,22 @@ export function createPodcast09ShadowRuntimeState(input: {
     );
   }
 
+  const mode = resolvePodcast09PlannerMode({
+    requestedMode: input.requestedMode,
+    simulate: input.simulate ?? false,
+    userId: input.userId ?? "",
+    targetScope: input.targetScope,
+    targetAllowlist: input.targetAllowlist,
+    activeAllowlist: input.activeAllowlist,
+  });
+
   return {
     allowedTargetIds,
     currentDestinationEpisodeIdsByTargetId,
+    ...mode,
     evidence: {
-      runtimeVersion: "podcast09-gate31-shadow-v1",
+      runtimeVersion: "podcast09-gate4-runtime-v1",
+      ...mode,
       plannerInfluence: false,
       providerCalls: false,
       databaseWrites: false,
@@ -163,6 +269,7 @@ export function recordPodcast09ShadowComparison(input: {
   projectedPoolEpisodeIds: readonly string[];
   currentPlan: PlanResult;
   projectedPlan: PlanResult;
+  plannerInfluence?: boolean;
 }): void {
   const state = currentPodcast09ShadowRuntimeState();
   if (!state) return;
@@ -176,13 +283,19 @@ export function recordPodcast09ShadowComparison(input: {
   const projectedSelectedPlanPosition = selectedEpisodeId
     ? planEpisodePosition(input.projectedPlan, selectedEpisodeId)
     : null;
+  const planChanged =
+    currentPlannedPodcastEpisodeIds.join("\n") !==
+    projectedPlannedPodcastEpisodeIds.join("\n");
+  const plannerInfluence = Boolean(
+    input.plannerInfluence && input.continuationCandidateCount > 0 && planChanged,
+  );
 
   upsertTarget(state, {
     targetPlaylistId: input.targetPlaylistId,
     targetName: input.targetName,
     status:
       input.continuationCandidateCount > 0 ? "SHADOW_READY" : "NO_CONTINUATION",
-    plannerInfluence: false,
+    plannerInfluence,
     currentDestinationEpisodeIds: [...input.currentDestinationEpisodeIds],
     continuationCandidateCount: input.continuationCandidateCount,
     promotedEpisodeIds: [...input.promotedEpisodeIds],
@@ -196,9 +309,7 @@ export function recordPodcast09ShadowComparison(input: {
     projectedSelectedPlanPosition,
     currentFirstPodcastEpisodeId: currentPlannedPodcastEpisodeIds[0] ?? null,
     projectedFirstPodcastEpisodeId: projectedPlannedPodcastEpisodeIds[0] ?? null,
-    planChanged:
-      currentPlannedPodcastEpisodeIds.join("\n") !==
-      projectedPlannedPodcastEpisodeIds.join("\n"),
+    planChanged,
   });
 }
 
@@ -212,6 +323,7 @@ function upsertTarget(
   targets.push(evidence);
   state.evidence = {
     ...state.evidence,
+    plannerInfluence: targets.some((entry) => entry.plannerInfluence),
     targets,
   };
 }
@@ -228,4 +340,13 @@ function planEpisodePosition(plan: PlanResult, episodeId: string): number | null
       candidate.type === "PODCAST" && candidate.spotifyEpisodeId === episodeId,
   );
   return item ? item.position : null;
+}
+
+function parseTokenSet(value?: string | null): Set<string> {
+  return new Set(
+    (value ?? "")
+      .split(/[,;\s]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  );
 }
