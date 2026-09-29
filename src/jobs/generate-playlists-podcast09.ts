@@ -9,23 +9,25 @@ import {
 
 import {
   generatePlaylists as baseGeneratePlaylists,
-  type GeneratePlaylistsOptions,
+  type GeneratePlaylistsOptions as BaseGeneratePlaylistsOptions,
   type GeneratePlaylistsResult,
 } from "./generate-playlists-music-identity";
 
-export type {
-  GeneratePlaylistsOptions,
-  GeneratePlaylistsResult,
-} from "./generate-playlists-music-identity";
+export type GeneratePlaylistsOptions = BaseGeneratePlaylistsOptions & {
+  /** PODCAST-09 Gate 3.1: factual episode order already present in each target. */
+  currentDestinationEpisodeIdsByTargetId?: Record<string, string[]>;
+};
+export type { GeneratePlaylistsResult } from "./generate-playlists-music-identity";
 
 /**
- * PODCAST-09 Gate 3 outer shadow boundary.
+ * PODCAST-09 Gate 3.1 outer shadow boundary.
  *
  * With no explicit target allowlist this is a strict delegation: no additional
- * DB read, planner shadow pass or summary write occurs. When allowlisted, the
- * wrapper reads only already-persisted EpisodeListeningState timestamps and
- * exposes them to the in-memory shadow planner. The authoritative generation
- * result always comes from the existing chain.
+ * shadow planner pass or summary write occurs. When allowlisted, current target
+ * episode order must be supplied by an upstream factual target-state read; the
+ * shadow never invents destination membership and performs no provider read of
+ * its own. The authoritative generation result always comes from the existing
+ * chain.
  */
 export async function generatePlaylists(
   opts: GeneratePlaylistsOptions,
@@ -33,23 +35,10 @@ export async function generatePlaylists(
   const targetAllowlist = process.env.PODCAST_09_SHADOW_TARGET_ALLOWLIST ?? "";
   if (!targetAllowlist.trim()) return baseGeneratePlaylists(opts);
 
-  const listeningStates = await prisma.episodeListeningState.findMany({
-    where: { userId: opts.userId },
-    select: {
-      spotifyEpisodeId: true,
-      status: true,
-      lastObservedAt: true,
-      firstProgressObservedAt: true,
-    },
-  });
   const state = createPodcast09ShadowRuntimeState({
     targetAllowlist,
-    listeningStates: listeningStates.map((entry) => ({
-      spotifyEpisodeId: entry.spotifyEpisodeId,
-      status: entry.status,
-      lastObservedAt: entry.lastObservedAt,
-      firstProgressObservedAt: entry.firstProgressObservedAt,
-    })),
+    currentDestinationEpisodeIdsByTargetId:
+      opts.currentDestinationEpisodeIdsByTargetId,
   });
 
   const result = await runWithPodcast09ShadowRuntimeState(state, () =>
@@ -57,7 +46,7 @@ export async function generatePlaylists(
   );
 
   // Best-effort observability only. A successful real Spotify write must never
-  // become retryable because Gate 3 summary persistence failed afterwards.
+  // become retryable because Gate 3.1 summary persistence failed afterwards.
   try {
     const row = await prisma.generationRun.findUnique({
       where: { id: result.runId },
@@ -85,7 +74,7 @@ export async function generatePlaylists(
         data: {
           runId: result.runId,
           level: "WARN",
-          message: `PODCAST-09 Gate 3 shadow metrics persistence failed after generation: ${
+          message: `PODCAST-09 Gate 3.1 shadow metrics persistence failed after generation: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },

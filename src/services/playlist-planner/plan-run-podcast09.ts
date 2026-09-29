@@ -6,7 +6,7 @@ import {
 import { projectPodcastContinuationPriority } from "./podcast-continuation-priority";
 import {
   currentPodcast09ShadowRuntimeState,
-  podcast09ShadowListeningStates,
+  podcast09ShadowCurrentDestinationEpisodeIds,
   podcast09ShadowTargetIsAllowed,
   recordPodcast09ShadowAbstention,
   recordPodcast09ShadowComparison,
@@ -26,17 +26,17 @@ export type {
 } from "./plan-run-music-identity";
 
 /**
- * PODCAST-09 Gate 3 shadow-only seam.
+ * PODCAST-09 Gate 3.1 shadow-only seam.
  *
  * The authoritative plan is always produced from the untouched input. For one
- * explicitly allowlisted target, the seam reconstructs the current effective
- * PODCAST-06 order, projects IN_PROGRESS continuation on top of that order and
- * runs a second in-memory plan with PODCAST-06 disabled so the projected order
- * is not re-ranked a second time. The projected plan is discarded and only
- * comparison evidence is retained.
+ * explicitly allowlisted target with factual current-destination evidence, the
+ * seam reconstructs the current effective PODCAST-06 order and promotes only
+ * the first destination episode that remains eligible + IN_PROGRESS. A second
+ * in-memory plan is discarded after comparison; the real planner runs last.
  *
- * No provider/database access or Spotify writes occur here, and the returned
- * plan remains byte-for-byte owned by the existing planner chain.
+ * Missing destination evidence abstains instead of falling back to global
+ * IN_PROGRESS ordering. No provider/database access or Spotify writes occur in
+ * this planner seam.
  */
 export function planRun(input: PlanRunInput): PlanRunResult {
   const shadowState = currentPodcast09ShadowRuntimeState();
@@ -61,6 +61,17 @@ export function planRun(input: PlanRunInput): PlanRunResult {
   }
 
   const target = allowlistedTargets[0]!;
+  const currentDestinationEpisodeIds =
+    podcast09ShadowCurrentDestinationEpisodeIds(target.targetPlaylistId);
+  if (!currentDestinationEpisodeIds) {
+    recordPodcast09ShadowAbstention({
+      targetPlaylistId: target.targetPlaylistId,
+      targetName: target.name,
+      status: "ABSTAIN_NO_DESTINATION_EVIDENCE",
+    });
+    return basePlanRun(input);
+  }
+
   const currentPodcastPool = applyPodcast06PlannerRuntimeToCandidates(
     input.pools.podcasts,
   );
@@ -70,7 +81,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
   );
   const projection = projectPodcastContinuationPriority({
     candidates: scopedCurrentPool,
-    listeningStates: podcast09ShadowListeningStates(),
+    currentDestinationEpisodeIds,
   });
 
   const shadowInput: PlanRunInput = {
@@ -111,6 +122,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     recordPodcast09ShadowComparison({
       targetPlaylistId: target.targetPlaylistId,
       targetName: target.name,
+      currentDestinationEpisodeIds,
       continuationCandidateCount: projection.continuationCandidateCount,
       promotedEpisodeIds: projection.promotedEpisodeIds,
       selectedEpisodeId: projection.selectedEpisodeId,

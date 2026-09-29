@@ -50,17 +50,12 @@ function rules(): PlaylistRules {
   };
 }
 
-test("Gate 3 records projected continuation but returns the existing authoritative plan", () => {
+test("Gate 3.1 records one destination-local continuation but returns the existing authoritative plan", () => {
   const state = createPodcast09ShadowRuntimeState({
     targetAllowlist: TARGET_ID,
-    listeningStates: [
-      {
-        spotifyEpisodeId: "resume",
-        status: "IN_PROGRESS",
-        lastObservedAt: new Date("2026-09-29T10:00:00Z"),
-        firstProgressObservedAt: new Date("2026-09-28T10:00:00Z"),
-      },
-    ],
+    currentDestinationEpisodeIdsByTargetId: {
+      [TARGET_ID]: ["resume"],
+    },
   });
 
   const result = runWithPodcast09ShadowRuntimeState(state, () =>
@@ -88,6 +83,9 @@ test("Gate 3 records projected continuation but returns the existing authoritati
   const evidence = podcast09ShadowRuntimeSummary(state).targets[0]!;
   assert.equal(evidence.status, "SHADOW_READY");
   assert.equal(evidence.plannerInfluence, false);
+  assert.deepEqual(evidence.currentDestinationEpisodeIds, ["resume"]);
+  assert.equal(evidence.continuationCandidateCount, 1);
+  assert.deepEqual(evidence.promotedEpisodeIds, ["resume"]);
   assert.equal(evidence.selectedEpisodeId, "resume");
   assert.equal(evidence.currentFirstPodcastEpisodeId, "new");
   assert.equal(evidence.projectedFirstPodcastEpisodeId, "resume");
@@ -96,17 +94,47 @@ test("Gate 3 records projected continuation but returns the existing authoritati
   assert.equal(evidence.planChanged, true);
 });
 
-test("Gate 3 abstains from multi-target runs instead of projecting cross-target side effects", () => {
+test("Gate 3.1 abstains when current destination membership is unavailable", () => {
   const state = createPodcast09ShadowRuntimeState({
     targetAllowlist: TARGET_ID,
-    listeningStates: [],
+  });
+
+  runWithPodcast09ShadowRuntimeState(state, () =>
+    planRun({
+      pools: {
+        music: [music("song")],
+        podcasts: [podcast("resume", "IN_PROGRESS")],
+      },
+      targets: [
+        {
+          targetPlaylistId: TARGET_ID,
+          name: "Trabalho",
+          priority: 0,
+          rules: rules(),
+        },
+      ],
+    }),
+  );
+
+  const evidence = podcast09ShadowRuntimeSummary(state).targets[0]!;
+  assert.equal(evidence.status, "ABSTAIN_NO_DESTINATION_EVIDENCE");
+  assert.equal(evidence.plannerInfluence, false);
+  assert.equal(evidence.selectedEpisodeId, null);
+});
+
+test("Gate 3.1 abstains from multi-target runs instead of projecting cross-target side effects", () => {
+  const state = createPodcast09ShadowRuntimeState({
+    targetAllowlist: TARGET_ID,
+    currentDestinationEpisodeIdsByTargetId: {
+      [TARGET_ID]: ["resume"],
+    },
   });
 
   runWithPodcast09ShadowRuntimeState(state, () =>
     planRun({
       pools: {
         music: [music("song-a"), music("song-b")],
-        podcasts: [podcast("new")],
+        podcasts: [podcast("resume", "IN_PROGRESS")],
       },
       targets: [
         {

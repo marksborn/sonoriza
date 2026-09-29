@@ -1,12 +1,5 @@
 import type { Candidate } from "./types";
 
-export type PodcastContinuationListeningState = Readonly<{
-  spotifyEpisodeId: string;
-  status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
-  lastObservedAt: Date | null;
-  firstProgressObservedAt: Date | null;
-}>;
-
 export type PodcastContinuationProjection = Readonly<{
   candidates: Candidate[];
   continuationCandidateCount: number;
@@ -16,84 +9,60 @@ export type PodcastContinuationProjection = Readonly<{
 }>;
 
 /**
- * PODCAST-09 Gate 2 pure projection.
+ * PODCAST-09 Gate 3.1 pure projection.
  *
- * This helper has no runtime wiring. It only projects how already-eligible
- * PODCAST candidates would be ordered if IN_PROGRESS continuation were
- * promoted. Eligibility, cadence, expiry, source scope and duration fitting
- * remain owned by the existing upstream/downstream seams.
+ * Continuation is destination-local: an episode may be promoted only when it
+ * is already present in the current destination playlist, is still an eligible
+ * PODCAST candidate and is canonically IN_PROGRESS. Presence in the destination
+ * alone never creates eligibility and IN_PROGRESS outside the destination never
+ * competes for continuation priority.
  *
- * Ordering contract inside the PODCAST subsequence:
- * 1. promotable IN_PROGRESS episodes first;
- * 2. most recently observed continuation first;
- * 3. most recent first progress as fallback;
- * 4. stable original order as final tie-break;
- * 5. every non-continuation podcast keeps its original relative order.
- *
- * Non-PODCAST candidates keep their exact positions, so this projection cannot
- * change a MUSIC/PODCAST composition pattern even if it is accidentally given
- * a mixed pool.
- *
- * Missing episode identity is fail-closed: such a candidate is never promoted.
+ * If more than one current-destination episode is still IN_PROGRESS, V1 picks
+ * exactly one: the first such episode in the previous destination order. Only
+ * that episode is moved to the first PODCAST position; every other podcast keeps
+ * its existing relative order. Non-PODCAST positions are preserved exactly, so
+ * MUSIC/PODCAST sequence composition cannot be changed by this projection.
  */
 export function projectPodcastContinuationPriority(input: {
   candidates: readonly Candidate[];
-  listeningStates?: readonly PodcastContinuationListeningState[];
+  currentDestinationEpisodeIds?: readonly string[];
 }): PodcastContinuationProjection {
-  const listeningStateByEpisodeId = new Map(
-    (input.listeningStates ?? []).map((state) => [state.spotifyEpisodeId, state] as const),
-  );
-
   const original = [...input.candidates];
+  const destinationEpisodeIds = input.currentDestinationEpisodeIds;
+
+  if (!destinationEpisodeIds) return noChange(original);
+
   const podcastCandidates = original.filter((candidate) => candidate.type === "PODCAST");
-  const continuation = podcastCandidates.flatMap((candidate, podcastIndex) => {
+  const eligibleByEpisodeId = new Map<string, Candidate>();
+
+  for (const candidate of podcastCandidates) {
     if (
       candidate.podcastListeningStatus !== "IN_PROGRESS" ||
-      !candidate.spotifyEpisodeId
+      !candidate.spotifyEpisodeId ||
+      eligibleByEpisodeId.has(candidate.spotifyEpisodeId)
     ) {
-      return [];
+      continue;
     }
-
-    const state = listeningStateByEpisodeId.get(candidate.spotifyEpisodeId) ?? null;
-    return [
-      {
-        candidate,
-        podcastIndex,
-        episodeId: candidate.spotifyEpisodeId,
-        lastObservedAt: state?.lastObservedAt ?? null,
-        firstProgressObservedAt:
-          state?.firstProgressObservedAt ?? candidate.podcastFirstProgressObservedAt ?? null,
-      },
-    ];
-  });
-
-  if (continuation.length === 0) {
-    return {
-      candidates: original,
-      continuationCandidateCount: 0,
-      promotedEpisodeIds: [],
-      selectedEpisodeId: null,
-      movedCount: 0,
-    };
+    eligibleByEpisodeId.set(candidate.spotifyEpisodeId, candidate);
   }
 
-  continuation.sort((left, right) => {
-    const lastObserved = compareDateDesc(left.lastObservedAt, right.lastObservedAt);
-    if (lastObserved !== 0) return lastObserved;
+  const destinationContinuations: Array<{ episodeId: string; candidate: Candidate }> = [];
+  const seenDestinationIds = new Set<string>();
+  for (const rawEpisodeId of destinationEpisodeIds) {
+    const episodeId = rawEpisodeId.trim();
+    if (!episodeId || seenDestinationIds.has(episodeId)) continue;
+    seenDestinationIds.add(episodeId);
+    const candidate = eligibleByEpisodeId.get(episodeId);
+    if (!candidate) continue;
+    destinationContinuations.push({ episodeId, candidate });
+  }
 
-    const firstProgress = compareDateDesc(
-      left.firstProgressObservedAt,
-      right.firstProgressObservedAt,
-    );
-    if (firstProgress !== 0) return firstProgress;
+  const selected = destinationContinuations[0] ?? null;
+  if (!selected) return noChange(original);
 
-    return left.podcastIndex - right.podcastIndex;
-  });
-
-  const continuationCandidates = new Set(continuation.map((entry) => entry.candidate));
   const projectedPodcasts = [
-    ...continuation.map((entry) => entry.candidate),
-    ...podcastCandidates.filter((candidate) => !continuationCandidates.has(candidate)),
+    selected.candidate,
+    ...podcastCandidates.filter((candidate) => candidate !== selected.candidate),
   ];
   let nextPodcastIndex = 0;
   const projected = original.map((candidate) =>
@@ -105,20 +74,22 @@ export function projectPodcastContinuationPriority(input: {
     (count, candidate, index) => count + (original[index] === candidate ? 0 : 1),
     0,
   );
-  const promotedEpisodeIds = continuation.map((entry) => entry.episodeId);
 
   return {
     candidates: projected,
-    continuationCandidateCount: continuation.length,
-    promotedEpisodeIds,
-    selectedEpisodeId: promotedEpisodeIds[0] ?? null,
+    continuationCandidateCount: destinationContinuations.length,
+    promotedEpisodeIds: [selected.episodeId],
+    selectedEpisodeId: selected.episodeId,
     movedCount,
   };
 }
 
-function compareDateDesc(left: Date | null, right: Date | null): number {
-  if (left === null && right === null) return 0;
-  if (left === null) return 1;
-  if (right === null) return -1;
-  return right.getTime() - left.getTime();
+function noChange(candidates: Candidate[]): PodcastContinuationProjection {
+  return {
+    candidates,
+    continuationCandidateCount: 0,
+    promotedEpisodeIds: [],
+    selectedEpisodeId: null,
+    movedCount: 0,
+  };
 }
