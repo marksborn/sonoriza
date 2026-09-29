@@ -40,6 +40,7 @@ import {
 
 import { generatePlaylists } from "./generate-playlists";
 import { runIsolated } from "./isolated-execution";
+import { podcast09DestinationEpisodeIds } from "./podcast09-destination-evidence";
 
 const RETRY_AFTER_MS = 30 * 60 * 1000;
 const MAX_SCHEDULE_ATTEMPTS = 3;
@@ -152,6 +153,7 @@ export async function runScheduledGeneration(
         string,
         { snapshotBefore: string; currentCount: number; currentDurationMs: number }
       > = {};
+      const currentDestinationEpisodeIdsByTargetId: Record<string, string[]> = {};
       let maintenanceSpotify: SpotifyClient | null = null;
 
       for (const entry of claimed) {
@@ -175,6 +177,8 @@ export async function runScheduledGeneration(
                 0,
               ),
             };
+            currentDestinationEpisodeIdsByTargetId[entry.target.id] =
+              podcast09DestinationEpisodeIds(before.items);
             executable.push(entry);
           } catch (error) {
             const reason = errorMessage(error);
@@ -327,6 +331,13 @@ export async function runScheduledGeneration(
                 rebuildByTargetId: rebuildByTargetId[targetId]
                   ? { [targetId]: rebuildByTargetId[targetId] }
                   : {},
+                ...(currentDestinationEpisodeIdsByTargetId[targetId] !== undefined
+                  ? {
+                      currentDestinationEpisodeIdsByTargetId: {
+                        [targetId]: currentDestinationEpisodeIdsByTargetId[targetId]!,
+                      },
+                    }
+                  : {}),
               }),
           );
 
