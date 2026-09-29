@@ -112,3 +112,20 @@ test("#324 active Spotify backoff stops remaining isolated targets locally", () 
     /sem novas chamadas ao provedor/,
   );
 });
+
+test("PODCAST-09 Gate 3.2 reuses the existing REBUILD_DAILY target-state read", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+
+  assert.match(
+    source,
+    /const before = await maintenanceSpotify\.getTargetPlaylistState\([\s\S]*?podcast09DestinationEpisodeIds\(before\.items\)/,
+  );
+  assert.match(
+    source,
+    /currentDestinationEpisodeIdsByTargetId\[targetId\] !== undefined[\s\S]*?currentDestinationEpisodeIdsByTargetId:/,
+  );
+  assert.doesNotMatch(
+    source,
+    /PODCAST_09[\s\S]*?getTargetPlaylistState/,
+  );
+});
