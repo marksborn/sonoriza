@@ -94,7 +94,7 @@ test("Gate 4 resolves ACTIVE only for an exact allowlisted single-target simulat
   });
 });
 
-test("Gate 4 downgrades ACTIVE real runs to SHADOW", () => {
+test("Gate 4 downgrades ACTIVE real runs to SHADOW without the Gate 5 real allowlist", () => {
   const mode = resolvePodcast09PlannerMode({
     requestedMode: "ACTIVE",
     simulate: false,
@@ -131,6 +131,7 @@ test("Gate 4 ACTIVE simulation returns the destination-local continuation plan",
     },
     requestedMode: "ACTIVE",
     simulate: true,
+    trigger: "SIMULATION",
     userId: USER_ID,
     targetScope: [TARGET_ID],
     activeAllowlist: ACTIVE_PAIR,
@@ -144,7 +145,8 @@ test("Gate 4 ACTIVE simulation returns the destination-local continuation plan",
   assert.equal(summary.effectiveMode, "ACTIVE");
   assert.equal(summary.activationReason, "ACTIVE_ALLOWED");
   assert.equal(summary.plannerInfluence, true);
-  assert.equal(summary.spotifyWrites, false);
+  assert.equal(summary.simulation, true);
+  assert.equal(summary.continuationInfluencedSpotifyWritePossible, false);
 
   const evidence = summary.targets[0]!;
   assert.equal(evidence.status, "SHADOW_READY");
@@ -163,6 +165,7 @@ test("Gate 4 downgraded real run keeps the existing authoritative plan", () => {
     },
     requestedMode: "ACTIVE",
     simulate: false,
+    trigger: "MANUAL",
     userId: USER_ID,
     targetScope: [TARGET_ID],
     activeAllowlist: ACTIVE_PAIR,
