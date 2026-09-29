@@ -1,11 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { PlanResult } from "./types";
-import type { PodcastContinuationListeningState } from "./podcast-continuation-priority";
 
 export type Podcast09ShadowTargetStatus =
   | "SHADOW_READY"
   | "NO_CONTINUATION"
+  | "ABSTAIN_NO_DESTINATION_EVIDENCE"
   | "ABSTAIN_MULTI_TARGET_SCOPE";
 
 export type Podcast09ShadowTargetEvidence = Readonly<{
@@ -13,6 +13,7 @@ export type Podcast09ShadowTargetEvidence = Readonly<{
   targetName: string;
   status: Podcast09ShadowTargetStatus;
   plannerInfluence: false;
+  currentDestinationEpisodeIds: string[];
   continuationCandidateCount: number;
   promotedEpisodeIds: string[];
   selectedEpisodeId: string | null;
@@ -29,7 +30,7 @@ export type Podcast09ShadowTargetEvidence = Readonly<{
 }>;
 
 export type Podcast09ShadowEvidence = Readonly<{
-  runtimeVersion: "podcast09-gate3-shadow-v1";
+  runtimeVersion: "podcast09-gate31-shadow-v1";
   plannerInfluence: false;
   providerCalls: false;
   databaseWrites: false;
@@ -40,7 +41,7 @@ export type Podcast09ShadowEvidence = Readonly<{
 
 export type Podcast09ShadowRuntimeState = {
   allowedTargetIds: ReadonlySet<string>;
-  listeningStates: readonly PodcastContinuationListeningState[];
+  currentDestinationEpisodeIdsByTargetId: ReadonlyMap<string, readonly string[]>;
   evidence: Podcast09ShadowEvidence;
 };
 
@@ -48,7 +49,9 @@ const storage = new AsyncLocalStorage<Podcast09ShadowRuntimeState>();
 
 export function createPodcast09ShadowRuntimeState(input: {
   targetAllowlist?: string | null;
-  listeningStates: readonly PodcastContinuationListeningState[];
+  currentDestinationEpisodeIdsByTargetId?: Readonly<
+    Record<string, readonly string[] | undefined>
+  >;
 }): Podcast09ShadowRuntimeState {
   const allowedTargetIds = new Set(
     (input.targetAllowlist ?? "")
@@ -57,12 +60,23 @@ export function createPodcast09ShadowRuntimeState(input: {
       .filter(Boolean),
   );
   const targetAllowlist = [...allowedTargetIds].sort();
+  const currentDestinationEpisodeIdsByTargetId = new Map<string, readonly string[]>();
+
+  for (const [targetPlaylistId, episodeIds] of Object.entries(
+    input.currentDestinationEpisodeIdsByTargetId ?? {},
+  )) {
+    if (!episodeIds) continue;
+    currentDestinationEpisodeIdsByTargetId.set(
+      targetPlaylistId,
+      episodeIds.map((episodeId) => episodeId.trim()).filter(Boolean),
+    );
+  }
 
   return {
     allowedTargetIds,
-    listeningStates: [...input.listeningStates],
+    currentDestinationEpisodeIdsByTargetId,
     evidence: {
-      runtimeVersion: "podcast09-gate3-shadow-v1",
+      runtimeVersion: "podcast09-gate31-shadow-v1",
       plannerInfluence: false,
       providerCalls: false,
       databaseWrites: false,
@@ -97,14 +111,21 @@ export function podcast09ShadowTargetIsAllowed(targetPlaylistId: string): boolea
   return Boolean(state?.allowedTargetIds.has(targetPlaylistId));
 }
 
-export function podcast09ShadowListeningStates(): readonly PodcastContinuationListeningState[] {
-  return currentPodcast09ShadowRuntimeState()?.listeningStates ?? [];
+export function podcast09ShadowCurrentDestinationEpisodeIds(
+  targetPlaylistId: string,
+): readonly string[] | undefined {
+  return currentPodcast09ShadowRuntimeState()?.currentDestinationEpisodeIdsByTargetId.get(
+    targetPlaylistId,
+  );
 }
 
 export function recordPodcast09ShadowAbstention(input: {
   targetPlaylistId: string;
   targetName: string;
-  status: Extract<Podcast09ShadowTargetStatus, "ABSTAIN_MULTI_TARGET_SCOPE">;
+  status: Extract<
+    Podcast09ShadowTargetStatus,
+    "ABSTAIN_NO_DESTINATION_EVIDENCE" | "ABSTAIN_MULTI_TARGET_SCOPE"
+  >;
 }): void {
   const state = currentPodcast09ShadowRuntimeState();
   if (!state) return;
@@ -113,6 +134,7 @@ export function recordPodcast09ShadowAbstention(input: {
     targetName: input.targetName,
     status: input.status,
     plannerInfluence: false,
+    currentDestinationEpisodeIds: [],
     continuationCandidateCount: 0,
     promotedEpisodeIds: [],
     selectedEpisodeId: null,
@@ -132,6 +154,7 @@ export function recordPodcast09ShadowAbstention(input: {
 export function recordPodcast09ShadowComparison(input: {
   targetPlaylistId: string;
   targetName: string;
+  currentDestinationEpisodeIds: readonly string[];
   continuationCandidateCount: number;
   promotedEpisodeIds: readonly string[];
   selectedEpisodeId: string | null;
@@ -160,6 +183,7 @@ export function recordPodcast09ShadowComparison(input: {
     status:
       input.continuationCandidateCount > 0 ? "SHADOW_READY" : "NO_CONTINUATION",
     plannerInfluence: false,
+    currentDestinationEpisodeIds: [...input.currentDestinationEpisodeIds],
     continuationCandidateCount: input.continuationCandidateCount,
     promotedEpisodeIds: [...input.promotedEpisodeIds],
     selectedEpisodeId,
