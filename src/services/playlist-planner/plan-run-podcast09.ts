@@ -1,5 +1,6 @@
 import {
   applyPodcast06PlannerRuntimeToCandidates,
+  capturePodcast06PlannerShadow,
   currentPodcast06PlannerShadowRuntimeState,
   runWithPodcast06PlannerShadowRuntimeState,
 } from "./podcast-cadence-shadow-runtime";
@@ -26,21 +27,22 @@ export type {
 } from "./plan-run-music-identity";
 
 /**
- * PODCAST-09 Gate 3.1 shadow-only seam.
+ * PODCAST-09 Gate 4 controlled continuation seam.
  *
- * The authoritative plan is always produced from the untouched input. For one
- * explicitly allowlisted target with factual current-destination evidence, the
- * seam reconstructs the current effective PODCAST-06 order and promotes only
- * the first destination episode that remains eligible + IN_PROGRESS. A second
- * in-memory plan is discarded after comparison; the real planner runs last.
+ * OFF delegates exactly. SHADOW preserves the Gate 3 behavior: compare the
+ * destination-local continuation projection and return the existing authoritative
+ * plan. ACTIVE is prepared upstream only for an exact allowlisted single-target
+ * simulation; in that mode the projected plan becomes authoritative for the
+ * simulation while Spotify writes remain impossible by the generation contract.
  *
- * Missing destination evidence abstains instead of falling back to global
- * IN_PROGRESS ordering. No provider/database access or Spotify writes occur in
- * this planner seam.
+ * Missing destination evidence and multi-target scope still abstain. PODCAST-06
+ * remains the cadence/priority authority: its effective projection is applied
+ * before continuation, then disabled only inside the projected planner pass so
+ * the already-resolved order is not applied twice.
  */
 export function planRun(input: PlanRunInput): PlanRunResult {
   const shadowState = currentPodcast09ShadowRuntimeState();
-  if (!shadowState || shadowState.allowedTargetIds.size === 0) {
+  if (!shadowState || shadowState.effectiveMode === "OFF") {
     return basePlanRun(input);
   }
 
@@ -92,25 +94,42 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     },
   };
 
-  // The shadow input already contains the effective PODCAST-06 cadence/priority
-  // order. Disable only the nested shadow call so that order is not applied a
-  // second time. The authoritative call below still uses the real runtime state.
   const podcast06State = currentPodcast06PlannerShadowRuntimeState();
-  const projected = podcast06State
-    ? runWithPodcast06PlannerShadowRuntimeState(
-        {
-          ...podcast06State,
-          requestedMode: "OFF",
-          effectiveMode: "OFF",
-          activationReason: "MODE_OFF",
-        },
-        () => basePlanRun(shadowInput),
-      )
-    : basePlanRun(shadowInput);
+  const runProjected = () =>
+    podcast06State
+      ? runWithPodcast06PlannerShadowRuntimeState(
+          {
+            ...podcast06State,
+            requestedMode: "OFF",
+            effectiveMode: "OFF",
+            activationReason: "MODE_OFF",
+          },
+          () => basePlanRun(shadowInput),
+        )
+      : basePlanRun(shadowInput);
 
-  // Run the authoritative path last so any best-effort evidence owned by lower
-  // seams reflects the plan that is actually returned/applied.
-  const actual = basePlanRun(input);
+  let actual: PlanRunResult;
+  let projected: PlanRunResult;
+
+  if (shadowState.effectiveMode === "ACTIVE") {
+    // Baseline first for comparison. The projected call runs last so lower
+    // planner seams reflect the plan actually returned by this ACTIVE simulation.
+    actual = basePlanRun(input);
+    projected = runProjected();
+
+    if (podcast06State) {
+      capturePodcast06PlannerShadow({
+        candidates: input.pools.podcasts,
+        plannedItems: projected.targets.flatMap((entry) => entry.result.items),
+      });
+    }
+  } else {
+    // SHADOW keeps legacy behavior authoritative and runs it last so lower seam
+    // evidence matches the plan that is actually returned/applied.
+    projected = runProjected();
+    actual = basePlanRun(input);
+  }
+
   const currentTarget = actual.targets.find(
     (entry) => entry.targetPlaylistId === target.targetPlaylistId,
   );
@@ -131,10 +150,11 @@ export function planRun(input: PlanRunInput): PlanRunResult {
       projectedPoolEpisodeIds: episodeIds(projection.candidates),
       currentPlan: currentTarget.result,
       projectedPlan: projectedTarget.result,
+      plannerInfluence: shadowState.effectiveMode === "ACTIVE",
     });
   }
 
-  return actual;
+  return shadowState.effectiveMode === "ACTIVE" ? projected : actual;
 }
 
 function filterConfiguredSourceCandidates(
