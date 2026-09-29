@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  projectPodcastContinuationPriority,
-  type PodcastContinuationListeningState,
-} from "./podcast-continuation-priority";
+import { projectPodcastContinuationPriority } from "./podcast-continuation-priority";
 import type { Candidate } from "./types";
 
 function podcast(
@@ -33,32 +30,36 @@ function music(id: string): Candidate {
   };
 }
 
-function state(
-  episodeId: string,
-  options: Partial<PodcastContinuationListeningState> = {},
-): PodcastContinuationListeningState {
-  return {
-    spotifyEpisodeId: episodeId,
-    status: "IN_PROGRESS",
-    lastObservedAt: null,
-    firstProgressObservedAt: null,
-    ...options,
-  };
-}
-
-test("Gate 2 is a strict no-op when there is no IN_PROGRESS candidate", () => {
-  const candidates = [podcast("priority"), podcast("normal"), music("song")];
+test("Gate 3.1 fails closed without current destination evidence", () => {
+  const candidates = [
+    podcast("new"),
+    podcast("resume", { podcastListeningStatus: "IN_PROGRESS" }),
+  ];
 
   const result = projectPodcastContinuationPriority({ candidates });
 
   assert.deepEqual(result.candidates, candidates);
   assert.equal(result.continuationCandidateCount, 0);
-  assert.deepEqual(result.promotedEpisodeIds, []);
   assert.equal(result.selectedEpisodeId, null);
-  assert.equal(result.movedCount, 0);
 });
 
-test("Gate 2 promotes one IN_PROGRESS episode ahead of already ordered new episodes", () => {
+test("Gate 3.1 ignores IN_PROGRESS episodes that are not already in the destination", () => {
+  const candidates = [
+    podcast("new"),
+    podcast("resume", { podcastListeningStatus: "IN_PROGRESS" }),
+  ];
+
+  const result = projectPodcastContinuationPriority({
+    candidates,
+    currentDestinationEpisodeIds: ["old-other"],
+  });
+
+  assert.deepEqual(result.candidates, candidates);
+  assert.equal(result.continuationCandidateCount, 0);
+  assert.equal(result.selectedEpisodeId, null);
+});
+
+test("Gate 3.1 promotes one destination-local IN_PROGRESS episode", () => {
   const candidates = [
     podcast("priority-new"),
     podcast("resume", { podcastListeningStatus: "IN_PROGRESS" }),
@@ -67,9 +68,7 @@ test("Gate 2 promotes one IN_PROGRESS episode ahead of already ordered new episo
 
   const result = projectPodcastContinuationPriority({
     candidates,
-    listeningStates: [
-      state("resume", { lastObservedAt: new Date("2026-09-29T10:00:00Z") }),
-    ],
+    currentDestinationEpisodeIds: ["resume"],
   });
 
   assert.deepEqual(result.candidates.map((candidate) => candidate.spotifyEpisodeId), [
@@ -82,100 +81,75 @@ test("Gate 2 promotes one IN_PROGRESS episode ahead of already ordered new episo
   assert.equal(result.selectedEpisodeId, "resume");
 });
 
-test("Gate 2 orders multiple IN_PROGRESS episodes by lastObservedAt descending", () => {
+test("Gate 3.1 selects only the first eligible IN_PROGRESS episode in previous destination order", () => {
   const candidates = [
-    podcast("older", { podcastListeningStatus: "IN_PROGRESS" }),
-    podcast("new", { podcastListeningStatus: "NOT_STARTED" }),
-    podcast("newer", { podcastListeningStatus: "IN_PROGRESS" }),
+    podcast("new-a"),
+    podcast("later-in-destination", { podcastListeningStatus: "IN_PROGRESS" }),
+    podcast("earlier-in-destination", { podcastListeningStatus: "IN_PROGRESS" }),
+    podcast("new-b"),
   ];
 
   const result = projectPodcastContinuationPriority({
     candidates,
-    listeningStates: [
-      state("older", { lastObservedAt: new Date("2026-09-28T20:00:00Z") }),
-      state("newer", { lastObservedAt: new Date("2026-09-29T09:00:00Z") }),
+    currentDestinationEpisodeIds: [
+      "earlier-in-destination",
+      "later-in-destination",
     ],
   });
 
-  assert.deepEqual(result.promotedEpisodeIds, ["newer", "older"]);
+  assert.equal(result.continuationCandidateCount, 2);
+  assert.deepEqual(result.promotedEpisodeIds, ["earlier-in-destination"]);
+  assert.equal(result.selectedEpisodeId, "earlier-in-destination");
   assert.deepEqual(result.candidates.map((candidate) => candidate.spotifyEpisodeId), [
-    "newer",
-    "older",
-    "new",
+    "earlier-in-destination",
+    "new-a",
+    "later-in-destination",
+    "new-b",
   ]);
-  assert.equal(result.selectedEpisodeId, "newer");
 });
 
-test("Gate 2 uses firstProgressObservedAt as deterministic fallback", () => {
-  const candidates = [
-    podcast("earlier-progress", {
-      podcastListeningStatus: "IN_PROGRESS",
-      podcastFirstProgressObservedAt: new Date("2026-09-27T08:00:00Z"),
-    }),
-    podcast("later-progress", {
-      podcastListeningStatus: "IN_PROGRESS",
-      podcastFirstProgressObservedAt: new Date("2026-09-28T08:00:00Z"),
-    }),
-  ];
+test("Gate 3.1 does not promote a destination episode that is no longer IN_PROGRESS", () => {
+  const candidates = [podcast("candidate"), podcast("other")];
 
-  const result = projectPodcastContinuationPriority({ candidates });
-
-  assert.deepEqual(result.promotedEpisodeIds, ["later-progress", "earlier-progress"]);
-});
-
-test("Gate 2 preserves original order when continuation recency is tied or absent", () => {
-  const candidates = [
-    podcast("first", { podcastListeningStatus: "IN_PROGRESS" }),
-    podcast("second", { podcastListeningStatus: "IN_PROGRESS" }),
-    podcast("third"),
-  ];
-
-  const result = projectPodcastContinuationPriority({ candidates });
+  const result = projectPodcastContinuationPriority({
+    candidates,
+    currentDestinationEpisodeIds: ["candidate"],
+  });
 
   assert.deepEqual(result.candidates, candidates);
-  assert.deepEqual(result.promotedEpisodeIds, ["first", "second"]);
-  assert.equal(result.movedCount, 0);
+  assert.equal(result.continuationCandidateCount, 0);
 });
 
-test("Gate 2 fails closed for IN_PROGRESS candidate without episode identity", () => {
+test("Gate 3.1 fails closed for IN_PROGRESS candidate without episode identity", () => {
   const unidentified = podcast("missing-id", {
     spotifyEpisodeId: undefined,
     podcastListeningStatus: "IN_PROGRESS",
   });
   const candidates = [podcast("new"), unidentified, podcast("later")];
 
-  const result = projectPodcastContinuationPriority({ candidates });
-
-  assert.deepEqual(result.candidates, candidates);
-  assert.equal(result.continuationCandidateCount, 0);
-  assert.deepEqual(result.promotedEpisodeIds, []);
-});
-
-test("Gate 2 does not use external state to resurrect a non-IN_PROGRESS candidate", () => {
-  const candidates = [podcast("candidate"), podcast("other")];
-
   const result = projectPodcastContinuationPriority({
     candidates,
-    listeningStates: [
-      state("candidate", { lastObservedAt: new Date("2026-09-29T10:00:00Z") }),
-    ],
+    currentDestinationEpisodeIds: ["missing-id"],
   });
 
   assert.deepEqual(result.candidates, candidates);
   assert.equal(result.continuationCandidateCount, 0);
 });
 
-test("Gate 2 preserves non-podcast positions while promoting only the podcast subsequence", () => {
+test("Gate 3.1 preserves non-podcast positions while moving only the selected continuation", () => {
   const candidates = [
     podcast("priority-a"),
     music("song-a"),
     podcast("resume", { podcastListeningStatus: "IN_PROGRESS" }),
     podcast("priority-b"),
     music("song-b"),
-    podcast("normal"),
+    podcast("other-progress", { podcastListeningStatus: "IN_PROGRESS" }),
   ];
 
-  const result = projectPodcastContinuationPriority({ candidates });
+  const result = projectPodcastContinuationPriority({
+    candidates,
+    currentDestinationEpisodeIds: ["resume", "other-progress"],
+  });
 
   assert.deepEqual(result.candidates.map((candidate) => candidate.uri), [
     "spotify:episode:resume",
@@ -183,8 +157,9 @@ test("Gate 2 preserves non-podcast positions while promoting only the podcast su
     "spotify:episode:priority-a",
     "spotify:episode:priority-b",
     "spotify:track:song-b",
-    "spotify:episode:normal",
+    "spotify:episode:other-progress",
   ]);
+  assert.deepEqual(result.promotedEpisodeIds, ["resume"]);
   assert.equal(result.candidates[1], candidates[1]);
   assert.equal(result.candidates[4], candidates[4]);
 });
