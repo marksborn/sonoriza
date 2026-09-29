@@ -7,23 +7,23 @@ import {
   planRun as basePlanRun,
   type PlanRunInput,
   type PlanRunResult,
-} from "./plan-run-music-identity";
+} from "./plan-run-podcast09";
 
 export type {
   PlanRunInput,
   PlanRunResult,
   PlanRunTargetResult,
   RunTarget,
-} from "./plan-run-music-identity";
+} from "./plan-run-podcast09";
 
 /**
- * PODCAST-07 Gate 7 is intentionally the outermost podcast policy seam.
+ * PODCAST-07 Gate 7 remains the outermost podcast policy seam.
  *
  * Effective SAVED_EPISODES default cadence is projected/applied first. The
- * existing PODCAST-06 seam then remains authoritative for explicit per-show
- * cadence and priority, followed by MUSIC-IDENTITY-01 Gate 4E1, CALENDAR-03 and
- * every pre-existing planner rule. OFF/SHADOW/abstention preserve the incoming
- * pool byte-for-byte.
+ * PODCAST-09 Gate 3 wrapper then observes the already-resolved pool in shadow,
+ * while PODCAST-06 remains authoritative for explicit per-show cadence and
+ * priority inside the existing planner chain. PODCAST-09 never changes the
+ * returned plan in Gate 3.
  */
 export function planRun(input: PlanRunInput): PlanRunResult {
   const podcasts = applyPodcast07PlannerRuntimeToCandidates(input.pools.podcasts);
