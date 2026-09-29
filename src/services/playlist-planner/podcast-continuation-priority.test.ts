@@ -165,7 +165,7 @@ test("Gate 2 does not use external state to resurrect a non-IN_PROGRESS candidat
   assert.equal(result.continuationCandidateCount, 0);
 });
 
-test("Gate 2 keeps all non-continuation candidates in their existing relative order", () => {
+test("Gate 2 preserves non-podcast positions while promoting only the podcast subsequence", () => {
   const candidates = [
     podcast("priority-a"),
     music("song-a"),
@@ -179,10 +179,12 @@ test("Gate 2 keeps all non-continuation candidates in their existing relative or
 
   assert.deepEqual(result.candidates.map((candidate) => candidate.uri), [
     "spotify:episode:resume",
-    "spotify:episode:priority-a",
     "spotify:track:song-a",
+    "spotify:episode:priority-a",
     "spotify:episode:priority-b",
     "spotify:track:song-b",
     "spotify:episode:normal",
   ]);
+  assert.equal(result.candidates[1], candidates[1]);
+  assert.equal(result.candidates[4], candidates[4]);
 });
