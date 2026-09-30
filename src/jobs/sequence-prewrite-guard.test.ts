@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  runWithPlaybackReserveShadowRuntimeState,
+  type PlaybackReserveShadowRuntimeState,
+} from "@/services/playback-reserve-shadow-runtime";
+import {
   createCalendar03PlannerRuntimeState,
   recordCalendar03RuntimeTargets,
   runWithCalendar03PlannerRuntimeState,
@@ -29,9 +33,9 @@ const divergentPlan = [
     targetPlaylistId: TARGET_ID,
     result: {
       items: [
-        { type: "PODCAST" as const, position: 0 },
-        { type: "MUSIC" as const, position: 1 },
-        { type: "MUSIC" as const, position: 2 },
+        { type: "PODCAST" as const, position: 0, uri: "spotify:episode:p0" },
+        { type: "MUSIC" as const, position: 1, uri: "spotify:track:m1" },
+        { type: "MUSIC" as const, position: 2, uri: "spotify:track:m2" },
       ],
     },
   },
@@ -78,6 +82,62 @@ function record(
       blockDiagnostics: [],
     },
   ]);
+}
+
+function playbackReserveState(input: {
+  primaryItemCount: number;
+  selectedItems: Array<{
+    uri: string;
+    type: "MUSIC" | "PODCAST";
+    position: number;
+  }>;
+}): PlaybackReserveShadowRuntimeState {
+  return {
+    gate: 8,
+    configuredMode: "ACTIVE",
+    effectiveMode: "ACTIVE",
+    simulate: false,
+    plannerInfluence: true,
+    spotifyWriteInfluence: true,
+    additionalProviderReads: false,
+    status: "READY_ACTIVE_REAL",
+    targetPlaylistIds: [TARGET_ID],
+    allowedTargetIds: new Set([TARGET_ID]),
+    policies: new Map(),
+    maintenanceMode: "KEEP_FILLED",
+    rolePersistenceStatus: "PENDING",
+    evidence: {
+      gate: 8,
+      mode: "ACTIVE",
+      plannerInfluence: true,
+      spotifyWriteInfluence: true,
+      additionalProviderReads: false,
+      status: "READY_ACTIVE",
+      targetCount: 1,
+      readyTargetCount: 1,
+      shortfallTargetCount: 0,
+      targets: [
+        {
+          targetPlaylistId: TARGET_ID,
+          targetName: "Carro",
+          status: "READY_SHADOW",
+          plannerInfluence: false,
+          spotifyWriteInfluence: false,
+          additionalProviderReads: false,
+          candidateCoverage: "PRIMARY_COLLECTION_ONLY",
+          policy: null,
+          primary: {
+            itemCount: input.primaryItemCount,
+            totalDurationMs: 1,
+            compositionQualityPassed: true,
+          },
+          reserve: {
+            selectedItems: input.selectedItems,
+          },
+        },
+      ],
+    },
+  } as unknown as PlaybackReserveShadowRuntimeState;
 }
 
 test("legacy SEQUENCE divergence remains blocked without CALENDAR-03 runtime", () => {
@@ -130,4 +190,142 @@ test("ACTIVE READY_SHADOW with planner influence is owned by CALENDAR-03", () =>
   );
 
   assert.deepEqual(violations, []);
+});
+
+test("ACTIVE PLAYBACK-RESERVE excludes an exactly proven RESERVE suffix from legacy sequence validation", () => {
+  const plan = [
+    {
+      targetPlaylistId: TARGET_ID,
+      result: {
+        items: [
+          {
+            type: "PODCAST" as const,
+            position: 0,
+            uri: "spotify:episode:primary",
+          },
+          {
+            type: "PODCAST" as const,
+            position: 1,
+            uri: "spotify:episode:reserve",
+          },
+          {
+            type: "MUSIC" as const,
+            position: 2,
+            uri: "spotify:track:reserve",
+          },
+        ],
+      },
+    },
+  ];
+  const runtime = playbackReserveState({
+    primaryItemCount: 1,
+    selectedItems: [
+      {
+        uri: "spotify:episode:reserve",
+        type: "PODCAST",
+        position: 1,
+      },
+      {
+        uri: "spotify:track:reserve",
+        type: "MUSIC",
+        position: 2,
+      },
+    ],
+  });
+
+  const violations = runWithPlaybackReserveShadowRuntimeState(runtime, () =>
+    sequencePrewriteViolations(plan, targetByPlanId),
+  );
+
+  assert.deepEqual(violations, []);
+});
+
+test("ACTIVE PLAYBACK-RESERVE never hides a sequence mismatch inside PRIMARY", () => {
+  const plan = [
+    {
+      targetPlaylistId: TARGET_ID,
+      result: {
+        items: [
+          {
+            type: "MUSIC" as const,
+            position: 0,
+            uri: "spotify:track:invalid-primary",
+          },
+          {
+            type: "PODCAST" as const,
+            position: 1,
+            uri: "spotify:episode:reserve",
+          },
+        ],
+      },
+    },
+  ];
+  const runtime = playbackReserveState({
+    primaryItemCount: 1,
+    selectedItems: [
+      {
+        uri: "spotify:episode:reserve",
+        type: "PODCAST",
+        position: 1,
+      },
+    ],
+  });
+
+  const violations = runWithPlaybackReserveShadowRuntimeState(runtime, () =>
+    sequencePrewriteViolations(plan, targetByPlanId),
+  );
+
+  assert.deepEqual(violations, [
+    {
+      targetPlaylistId: TARGET_ID,
+      targetName: "Carro",
+      reason: "TYPE_MISMATCH",
+      position: 0,
+    },
+  ]);
+});
+
+test("PLAYBACK-RESERVE evidence mismatch fails closed and keeps validating the full plan", () => {
+  const plan = [
+    {
+      targetPlaylistId: TARGET_ID,
+      result: {
+        items: [
+          {
+            type: "PODCAST" as const,
+            position: 0,
+            uri: "spotify:episode:primary",
+          },
+          {
+            type: "PODCAST" as const,
+            position: 1,
+            uri: "spotify:episode:physical-reserve",
+          },
+        ],
+      },
+    },
+  ];
+  const runtime = playbackReserveState({
+    primaryItemCount: 1,
+    selectedItems: [
+      {
+        uri: "spotify:episode:stale-evidence",
+        type: "PODCAST",
+        position: 1,
+      },
+    ],
+  });
+
+  const violations = runWithPlaybackReserveShadowRuntimeState(runtime, () =>
+    sequencePrewriteViolations(plan, targetByPlanId),
+  );
+
+  assert.deepEqual(violations, [
+    {
+      targetPlaylistId: TARGET_ID,
+      targetName: "Carro",
+      reason: "TYPE_MISMATCH",
+      position: 1,
+    },
+  ]);
 });
