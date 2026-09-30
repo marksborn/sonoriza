@@ -16,7 +16,8 @@ export type Calendar03ShadowStatus =
 export type Calendar03EventDiagnosticCode =
   | "EVENT_PODCAST_SELECTED"
   | "EVENT_PODCAST_NO_FITTING_CANDIDATE"
-  | "EVENT_PODCAST_DISTRIBUTION_SKIPPED";
+  | "EVENT_PODCAST_DISTRIBUTION_SKIPPED"
+  | "EVENT_PODCAST_PRESERVED_PREFIX";
 
 export type Calendar03ProjectedBlock = Readonly<{
   index: number;
@@ -52,6 +53,12 @@ export type ProjectCalendar03EventCompositionInput = Readonly<{
   rules: PlaylistRules;
   pools: PlannerPools;
   reserved?: Iterable<string>;
+  /**
+   * KEEP_FILLED: canonical valid remote prefix. Preserved items remain before
+   * every fresh item and are reconciled against current event windows before
+   * CALENDAR-03 is allowed to fill the remaining budget.
+   */
+  preserved?: Candidate[];
 }>;
 
 /**
@@ -67,6 +74,12 @@ export type ProjectCalendar03EventCompositionInput = Readonly<{
  * planner. For IN_PROGRESS episodes ingestion already supplies the remaining
  * duration, so CALENDAR-03 compares that remaining duration against the current
  * event window. No item may cross the block boundary.
+ *
+ * KEEP_FILLED preserved content is a stable physical prefix. We may keep an
+ * item only inside a current block that can prove the same composition rules.
+ * While a preserved item is waiting for a later block, no fresh item is allowed
+ * to jump ahead of it. If that makes a block underfilled, quality fails closed
+ * instead of silently reverting to the legacy continuous sequence planner.
  */
 export function projectCalendar03EventComposition(
   input: ProjectCalendar03EventCompositionInput,
@@ -84,6 +97,7 @@ export function projectCalendar03EventComposition(
   const selected: PlannedItem[] = [];
   const programCounts = new Map<string, number>();
   const projectedBlocks: Calendar03ProjectedBlock[] = [];
+  const preservedQueue = [...(input.preserved ?? [])];
   const safetyMarginMs = Math.max(
     0,
     input.policy.podcastEventSafetyMarginSeconds * 1000,
@@ -94,22 +108,118 @@ export function projectCalendar03EventComposition(
     const targetDurationMs = Math.max(0, block.targetDurationMs);
     const podcastUsableDurationMs = Math.max(0, targetDurationMs - safetyMarginMs);
     const podcastAttempted = eventReceivesPodcast(input.policy, blockIndex);
+    const preservedForBlock: Candidate[] = [];
+    let preservedDurationMs = 0;
+    let preservedPodcastDurationMs = 0;
+    let preservedMusicDurationMs = 0;
+    let preservedPodcastCount = 0;
+    let preservedMusicStarted = false;
 
-    const podcastFit =
-      podcastAttempted && podcastUsableDurationMs > 0
-        ? selectFittingPodcastsInCanonicalOrder({
-            candidates: input.pools.podcasts,
-            reservedUris: localReserved,
-            budgetMs: podcastUsableDurationMs,
-            maxCount: input.policy.maxPodcastsPerEvent,
-            programCounts,
-            rules: input.rules,
-          })
-        : { selected: [] as readonly Candidate[], selectedDurationMs: 0 };
+    while (preservedQueue.length > 0) {
+      const candidate = preservedQueue[0]!;
+      const durationMs = Math.max(0, candidate.durationMs);
+      if (durationMs <= 0) {
+        preservedQueue.shift();
+        continue;
+      }
+
+      if (candidate.type === "PODCAST") {
+        const programId = candidate.programId?.trim();
+        const programCap = effectiveProgramCap(candidate, input.rules);
+        if (programId && (programCounts.get(programId) ?? 0) >= programCap) {
+          preservedQueue.shift();
+          continue;
+        }
+
+        const fitsCurrent =
+          podcastAttempted &&
+          !preservedMusicStarted &&
+          preservedPodcastCount < input.policy.maxPodcastsPerEvent &&
+          preservedDurationMs + durationMs <= targetDurationMs &&
+          preservedPodcastDurationMs + durationMs <= podcastUsableDurationMs;
+
+        if (!fitsCurrent) {
+          if (
+            preservedPodcastCanFitFutureBlock({
+              input,
+              blockIndex,
+              candidate,
+              programCounts,
+              safetyMarginMs,
+            })
+          ) {
+            break;
+          }
+          preservedQueue.shift();
+          continue;
+        }
+
+        preservedForBlock.push(candidate);
+        preservedQueue.shift();
+        preservedDurationMs += durationMs;
+        preservedPodcastDurationMs += durationMs;
+        preservedPodcastCount += 1;
+        if (programId) {
+          programCounts.set(programId, (programCounts.get(programId) ?? 0) + 1);
+        }
+        continue;
+      }
+
+      if (preservedDurationMs + durationMs > targetDurationMs) {
+        const fitsLaterBlock = input.blocks
+          .slice(blockIndex + 1)
+          .some((future) => durationMs <= Math.max(0, future.targetDurationMs));
+        if (fitsLaterBlock) break;
+        preservedQueue.shift();
+        continue;
+      }
+
+      preservedForBlock.push(candidate);
+      preservedQueue.shift();
+      preservedDurationMs += durationMs;
+      preservedMusicDurationMs += durationMs;
+      preservedMusicStarted = true;
+    }
+
+    const blockStartPosition = selected.length;
+    for (const item of preservedForBlock) {
+      selected.push({
+        ...item,
+        position: selected.length,
+        planningBlockIndex: blockIndex,
+      });
+      localReserved.add(item.uri);
+      usedUris.add(item.uri);
+    }
+
+    // If any preserved item still belongs to a later block, inserting fresh
+    // content here would move that preserved item in the physical prefix.
+    const preservingFuturePrefix = preservedQueue.length > 0;
+    const canAppendFreshPodcast =
+      !preservingFuturePrefix &&
+      podcastAttempted &&
+      !preservedMusicStarted &&
+      preservedPodcastCount < input.policy.maxPodcastsPerEvent &&
+      podcastUsableDurationMs > preservedPodcastDurationMs;
+
+    const podcastFit = canAppendFreshPodcast
+      ? selectFittingPodcastsInCanonicalOrder({
+          candidates: input.pools.podcasts,
+          reservedUris: localReserved,
+          budgetMs: Math.max(
+            0,
+            podcastUsableDurationMs - preservedPodcastDurationMs,
+          ),
+          maxCount: Math.max(
+            0,
+            input.policy.maxPodcastsPerEvent - preservedPodcastCount,
+          ),
+          programCounts,
+          rules: input.rules,
+        })
+      : { selected: [] as readonly Candidate[], selectedDurationMs: 0 };
 
     const selectedPodcasts = [...podcastFit.selected];
-    const podcastDurationMs = podcastFit.selectedDurationMs;
-
     for (const podcast of selectedPodcasts) {
       const programId = podcast.programId?.trim();
       if (programId) {
@@ -117,10 +227,6 @@ export function projectCalendar03EventComposition(
       }
       localReserved.add(podcast.uri);
       usedUris.add(podcast.uri);
-    }
-
-    const blockStartPosition = selected.length;
-    for (const podcast of selectedPodcasts) {
       selected.push({
         ...podcast,
         position: selected.length,
@@ -128,48 +234,69 @@ export function projectCalendar03EventComposition(
       });
     }
 
-    const musicTargetDurationMs = Math.max(0, targetDurationMs - podcastDurationMs);
-    const musicResult = planPlaylist({
-      rules: {
-        ...input.rules,
-        targetDurationMs: musicTargetDurationMs,
-        compositionMode: "PROPORTION",
-        podcastPercent: 0,
-      },
-      pools: {
-        music: input.pools.music,
-        podcasts: [],
-      },
-      reserved: localReserved,
-      constraintSeed: selected,
-      strictDurationBoundary: true,
-    });
+    const freshPodcastDurationMs = podcastFit.selectedDurationMs;
+    const remainingMusicDurationMs = Math.max(
+      0,
+      targetDurationMs - preservedDurationMs - freshPodcastDurationMs,
+    );
+    const musicResult = preservingFuturePrefix
+      ? null
+      : planPlaylist({
+          rules: {
+            ...input.rules,
+            targetDurationMs: remainingMusicDurationMs,
+            compositionMode: "PROPORTION",
+            podcastPercent: 0,
+          },
+          pools: {
+            music: input.pools.music,
+            podcasts: [],
+          },
+          reserved: localReserved,
+          constraintSeed: selected,
+          strictDurationBoundary: true,
+        });
 
-    const selectedMusicUris: string[] = [];
-    for (const item of musicResult.items) {
-      const planned: PlannedItem = {
-        ...item,
-        position: selected.length,
-        planningBlockIndex: blockIndex,
-      };
-      selected.push(planned);
-      selectedMusicUris.push(item.uri);
-    }
-    for (const uri of musicResult.usedUris) {
-      localReserved.add(uri);
-      usedUris.add(uri);
+    const selectedMusicUris = preservedForBlock
+      .filter((item) => item.type === "MUSIC")
+      .map((item) => item.uri);
+    if (musicResult) {
+      for (const item of musicResult.items) {
+        const planned: PlannedItem = {
+          ...item,
+          position: selected.length,
+          planningBlockIndex: blockIndex,
+        };
+        selected.push(planned);
+        selectedMusicUris.push(item.uri);
+      }
+      for (const uri of musicResult.usedUris) {
+        localReserved.add(uri);
+        usedUris.add(uri);
+      }
     }
 
-    const musicDurationMs = musicResult.stats.musicDurationMs;
+    const podcastDurationMs = preservedPodcastDurationMs + freshPodcastDurationMs;
+    const musicDurationMs =
+      preservedMusicDurationMs + (musicResult?.stats.musicDurationMs ?? 0);
     const filledDurationMs = podcastDurationMs + musicDurationMs;
+    const deficitMs = Math.max(0, targetDurationMs - filledDurationMs);
+    const selectedPodcastUris = [
+      ...preservedForBlock
+        .filter((item) => item.type === "PODCAST")
+        .map((item) => item.uri),
+      ...selectedPodcasts.map((candidate) => candidate.uri),
+    ];
     const diagnosticCodes: Calendar03EventDiagnosticCode[] = [];
 
     if (!podcastAttempted) {
       diagnosticCodes.push("EVENT_PODCAST_DISTRIBUTION_SKIPPED");
-    } else if (selectedPodcasts.length === 0) {
-      diagnosticCodes.push("EVENT_PODCAST_NO_FITTING_CANDIDATE");
-    } else {
+    } else if (selectedPodcastUris.length > 0) {
       diagnosticCodes.push("EVENT_PODCAST_SELECTED");
+    } else if (preservedMusicStarted) {
+      diagnosticCodes.push("EVENT_PODCAST_PRESERVED_PREFIX");
+    } else {
+      diagnosticCodes.push("EVENT_PODCAST_NO_FITTING_CANDIDATE");
     }
 
     projectedBlocks.push({
@@ -178,14 +305,17 @@ export function projectCalendar03EventComposition(
       targetDurationMs,
       podcastUsableDurationMs,
       podcastAttempted,
-      selectedPodcastUris: selectedPodcasts.map((candidate) => candidate.uri),
+      selectedPodcastUris,
       selectedMusicUris,
       podcastDurationMs,
       musicDurationMs,
       filledDurationMs,
-      deficitMs: Math.max(0, targetDurationMs - filledDurationMs),
-      musicCompositionQualityPassed: musicResult.stats.compositionQualityPassed,
-      musicPoolExhausted: musicResult.stats.poolExhausted,
+      deficitMs,
+      musicCompositionQualityPassed:
+        !preservingFuturePrefix &&
+        (remainingMusicDurationMs === 0 ||
+          Boolean(musicResult?.stats.compositionQualityPassed)),
+      musicPoolExhausted: musicResult?.stats.poolExhausted ?? preservingFuturePrefix,
       diagnosticCodes,
     });
 
@@ -215,6 +345,41 @@ function eventReceivesPodcast(
 ): boolean {
   if (policy.podcastEventDistribution === "EVERY_EVENT") return true;
   return blockIndex % policy.podcastEveryNEvents === policy.podcastEventOffset;
+}
+
+function effectiveProgramCap(candidate: Candidate, rules: PlaylistRules): number {
+  const targetCap = Math.max(1, Math.trunc(rules.maxEpisodesPerProgram || 1));
+  const showCap = candidate.podcastMaxEpisodesPerCycle;
+  if (!Number.isInteger(showCap) || Number(showCap) < 1) return targetCap;
+  return Math.min(targetCap, Number(showCap));
+}
+
+function preservedPodcastCanFitFutureBlock(input: {
+  input: ProjectCalendar03EventCompositionInput;
+  blockIndex: number;
+  candidate: Candidate;
+  programCounts: ReadonlyMap<string, number>;
+  safetyMarginMs: number;
+}): boolean {
+  const programId = input.candidate.programId?.trim();
+  if (
+    programId &&
+    (input.programCounts.get(programId) ?? 0) >=
+      effectiveProgramCap(input.candidate, input.input.rules)
+  ) {
+    return false;
+  }
+
+  const durationMs = Math.max(0, input.candidate.durationMs);
+  return input.input.blocks.some((future, futureIndex) => {
+    if (futureIndex <= input.blockIndex) return false;
+    if (!eventReceivesPodcast(input.input.policy, futureIndex)) return false;
+    const usable = Math.max(
+      0,
+      Math.max(0, future.targetDurationMs) - input.safetyMarginMs,
+    );
+    return durationMs <= usable && input.input.policy.maxPodcastsPerEvent > 0;
+  });
 }
 
 function emptyProjection(status: Exclude<Calendar03ShadowStatus, "READY_SHADOW">) {
