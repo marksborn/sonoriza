@@ -66,6 +66,28 @@ function target(id = TARGET): RunTarget {
   };
 }
 
+function carTarget(): RunTarget {
+  return {
+    ...target(),
+    durationBlocks: [
+      { key: "IDA", targetDurationMs: 30 * MINUTE },
+      { key: "VOLTA", targetDurationMs: 30 * MINUTE },
+    ],
+    rules: {
+      ...target().rules,
+      targetDurationMs: 60 * MINUTE,
+      sequencePattern: [
+        "PODCAST",
+        "MUSIC",
+        "MUSIC",
+        "MUSIC",
+        "MUSIC",
+        "MUSIC",
+      ],
+    },
+  };
+}
+
 function calendar03State(options: {
   mode?: string;
   targets?: string;
@@ -89,6 +111,29 @@ function calendar03State(options: {
     userEmail: EMAIL,
     activeEmailAllowlist: EMAIL,
     activeTargetIds: options.targets ?? TARGET,
+  });
+}
+
+function carCalendar03State() {
+  return createCalendar03PlannerRuntimeState({
+    policies: new Map([
+      [
+        TARGET,
+        {
+          targetPlaylistId: TARGET,
+          eventCompositionPolicy: "PODCAST_THEN_MUSIC" as const,
+          maxPodcastsPerEvent: 1,
+          podcastEventSafetyMarginSeconds: 120,
+          podcastEventDistribution: "EVERY_N_EVENTS" as const,
+          podcastEveryNEvents: 2,
+          podcastEventOffset: 0,
+        },
+      ],
+    ]),
+    requestedMode: "ACTIVE",
+    userEmail: EMAIL,
+    activeEmailAllowlist: EMAIL,
+    activeTargetIds: TARGET,
   });
 }
 
@@ -223,23 +268,70 @@ test("ACTIVE multi-target fails closed to the legacy planner", () => {
   assert.equal(result.targets.length, 2);
 });
 
-test("ACTIVE with preserved items fails closed instead of reinterpreting KEEP_FILLED", () => {
-  const state = calendar03State();
-  runWithCalendar03PlannerRuntimeState(state, () =>
+test("ACTIVE KEEP_FILLED preserves E1 podcast and keeps the return block music-only", () => {
+  const state = carCalendar03State();
+  const preservedNews = podcast("preserved-news", "show-news", 10);
+  const result = runWithCalendar03PlannerRuntimeState(state, () =>
     planRun({
       pools: {
-        podcasts: [podcast("p20", "show-a", 20)],
-        music: [music("m10", 10)],
+        podcasts: [podcast("fresh-news", "show-fresh", 10)],
+        music: [
+          music("m1", 10),
+          music("m2", 10),
+          music("m3", 10),
+          music("m4", 10),
+          music("m5", 10),
+        ],
       },
-      targets: [target()],
-      preservedByTargetId: new Map([
-        [TARGET, [music("preserved", 5)]],
-      ]),
+      targets: [carTarget()],
+      preservedByTargetId: new Map([[TARGET, [preservedNews]]]),
     }),
   );
 
-  assert.equal(state.evidence.plannerInfluence, false);
-  assert.equal(state.evidence.targets[0]?.status, "ABSTAIN_PRESERVED_ITEMS");
+  const planned = result.targets[0]!.result;
+  const blocks = planned.stats.segmentation?.blocks ?? [];
+
+  assert.equal(state.evidence.plannerInfluence, true);
+  assert.equal(state.evidence.targets[0]?.status, "READY_SHADOW");
+  assert.equal(planned.items[0]?.uri, preservedNews.uri);
+  assert.deepEqual(
+    blocks.map((block) => block.podcastDurationMs),
+    [10 * MINUTE, 0],
+  );
+  assert.equal(
+    planned.items.some(
+      (item) => item.planningBlockIndex === 1 && item.type === "PODCAST",
+    ),
+    false,
+  );
+  assert.equal(planned.stats.compositionQualityPassed, true);
+  assert.ok(
+    blocks.every((block) => block.filledDurationMs <= block.targetDurationMs),
+  );
+});
+
+test("ACTIVE KEEP_FILLED never inserts a fresh podcast before preserved music", () => {
+  const state = calendar03State();
+  const preservedMusic = music("preserved", 5);
+  const result = runWithCalendar03PlannerRuntimeState(state, () =>
+    planRun({
+      pools: {
+        podcasts: [podcast("p20", "show-a", 20)],
+        music: [music("m10", 10), music("m15", 15)],
+      },
+      targets: [target()],
+      preservedByTargetId: new Map([[TARGET, [preservedMusic]]]),
+    }),
+  );
+
+  const planned = result.targets[0]!.result;
+  assert.equal(planned.items[0]?.uri, preservedMusic.uri);
+  assert.equal(planned.items.some((item) => item.type === "PODCAST"), false);
+  assert.deepEqual(
+    state.evidence.targets[0]?.blockDiagnostics[0]?.diagnosticCodes,
+    ["EVENT_PODCAST_PRESERVED_PREFIX"],
+  );
+  assert.equal(state.evidence.plannerInfluence, true);
 });
 
 test("CALENDAR-03 consumes the PODCAST-06 priority projection before duration fit", () => {
