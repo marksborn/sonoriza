@@ -8,6 +8,7 @@ export type Podcast09PlannerActivationReason =
   | "MODE_SHADOW"
   | "ACTIVE_ALLOWED"
   | "ACTIVE_REAL_ALLOWED"
+  | "ACTIVE_SCHEDULED_ALLOWED"
   | "ACTIVE_SIMULATION_ONLY"
   | "ACTIVE_MANUAL_ONLY"
   | "ACTIVE_SINGLE_TARGET_REQUIRED"
@@ -78,6 +79,7 @@ export function resolvePodcast09PlannerMode(input: {
   targetAllowlist?: string | null;
   activeAllowlist?: string | null;
   realActiveAllowlist?: string | null;
+  scheduledActiveAllowlist?: string | null;
 }): {
   requestedMode: Podcast09PlannerMode;
   effectiveMode: Podcast09PlannerMode;
@@ -152,18 +154,29 @@ export function resolvePodcast09PlannerMode(input: {
     };
   }
 
-  if (input.trigger !== "MANUAL") {
+  if (input.trigger === "MANUAL") {
     return {
       requestedMode,
-      effectiveMode: "SHADOW",
-      activationReason: "ACTIVE_MANUAL_ONLY",
+      effectiveMode: "ACTIVE",
+      activationReason: "ACTIVE_REAL_ALLOWED",
     };
+  }
+
+  if (input.trigger === "SCHEDULED") {
+    const scheduledActivePairs = parseTokenSet(input.scheduledActiveAllowlist);
+    if (scheduledActivePairs.has(activePair)) {
+      return {
+        requestedMode,
+        effectiveMode: "ACTIVE",
+        activationReason: "ACTIVE_SCHEDULED_ALLOWED",
+      };
+    }
   }
 
   return {
     requestedMode,
-    effectiveMode: "ACTIVE",
-    activationReason: "ACTIVE_REAL_ALLOWED",
+    effectiveMode: "SHADOW",
+    activationReason: "ACTIVE_MANUAL_ONLY",
   };
 }
 
@@ -179,6 +192,7 @@ export function createPodcast09ShadowRuntimeState(input: {
   targetScope?: readonly string[] | null;
   activeAllowlist?: string | null;
   realActiveAllowlist?: string | null;
+  scheduledActiveAllowlist?: string | null;
 }): Podcast09ShadowRuntimeState {
   const allowedTargetIds = parseTokenSet(input.targetAllowlist);
   const targetAllowlist = [...allowedTargetIds].sort();
@@ -205,6 +219,7 @@ export function createPodcast09ShadowRuntimeState(input: {
     targetAllowlist: input.targetAllowlist,
     activeAllowlist: input.activeAllowlist,
     realActiveAllowlist: input.realActiveAllowlist,
+    scheduledActiveAllowlist: input.scheduledActiveAllowlist,
   });
 
   return {
