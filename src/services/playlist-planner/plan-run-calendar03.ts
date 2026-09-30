@@ -51,6 +51,11 @@ export type {
  * for a single-target run whose target is explicitly allowlisted and has a
  * persisted PODCAST_THEN_MUSIC policy. Multi-target ACTIVE runs fail closed to
  * the legacy planner until cross-target rollout is validated separately.
+ *
+ * KEEP_FILLED preserved items remain an immutable physical prefix, but no
+ * longer force CALENDAR-03 to abandon event-window authority. The projection
+ * reconciles that prefix against current blocks before any fresh content can be
+ * appended.
  */
 export function planRun(input: PlanRunInput): PlanRunResult {
   const state = currentCalendar03PlannerRuntimeState();
@@ -81,7 +86,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     const policy = state.policies.get(target.targetPlaylistId)!;
     const preserved = input.preservedByTargetId?.get(target.targetPlaylistId) ?? [];
 
-    if (preserved.length === 0 && target.durationBlocks?.length) {
+    if (target.durationBlocks?.length) {
       const targetPools = poolsForTarget(input, target, podcastRuntimePool);
       const reservationOwners = cloneReservationMap(input.externalReservationsByUri);
       const effectiveSharingPolicy =
@@ -103,6 +108,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
         reserved:
           sharingReservation?.forbiddenUris ??
           new Set(input.initialReserved ?? []),
+        preserved,
       });
 
       if (projection.status === "READY_SHADOW") {
@@ -158,15 +164,12 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     }
 
     const fallback = basePlanRun(input);
-    const status = preserved.length > 0
-      ? "ABSTAIN_PRESERVED_ITEMS"
-      : "ABSTAIN_NO_PER_EVENT_BLOCKS";
     recordCalendar03RuntimeTargets(state, [
       {
         targetPlaylistId: target.targetPlaylistId,
         targetName: target.name,
         policy,
-        status,
+        status: "ABSTAIN_NO_PER_EVENT_BLOCKS",
         plannerInfluence: false,
         selectedPodcastUris: [],
         blockDiagnostics: [],
@@ -216,33 +219,22 @@ export function planRun(input: PlanRunInput): PlanRunResult {
       });
     } else if (policy.eventCompositionPolicy === "PODCAST_THEN_MUSIC") {
       const preserved = input.preservedByTargetId?.get(target.targetPlaylistId) ?? [];
-      if (preserved.length > 0) {
-        evidence.push({
-          targetPlaylistId: target.targetPlaylistId,
-          targetName: target.name,
-          policy,
-          status: "ABSTAIN_PRESERVED_ITEMS",
-          plannerInfluence: false,
-          selectedPodcastUris: [],
-          blockDiagnostics: [],
-        });
-      } else {
-        const filteredPodcasts = filterPodcastPoolForGlobalCounts({
-          candidates: podcastRuntimePool,
-          reserved: globalReserved,
-          globalProgramCounts,
-          target,
-        });
-        const targetPools = poolsForTarget(input, target, filteredPodcasts);
-        const projection = projectCalendar03EventComposition({
-          policy,
-          blocks: target.durationBlocks ?? [],
-          rules: target.rules,
-          pools: targetPools,
-          reserved: globalReserved,
-        });
-        evidence.push(evidenceFromProjection(target, policy, projection, false));
-      }
+      const filteredPodcasts = filterPodcastPoolForGlobalCounts({
+        candidates: podcastRuntimePool,
+        reserved: globalReserved,
+        globalProgramCounts,
+        target,
+      });
+      const targetPools = poolsForTarget(input, target, filteredPodcasts);
+      const projection = projectCalendar03EventComposition({
+        policy,
+        blocks: target.durationBlocks ?? [],
+        rules: target.rules,
+        pools: targetPools,
+        reserved: globalReserved,
+        preserved,
+      });
+      evidence.push(evidenceFromProjection(target, policy, projection, false));
     } else {
       evidence.push({
         targetPlaylistId: target.targetPlaylistId,
