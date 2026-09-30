@@ -37,6 +37,8 @@ on:
       - "src/services/playlist-planner/index.ts"
       - "src/jobs/generate-playlists-playback-reserve.ts"
       - "src/jobs/generate-playlists.ts"
+      - "src/jobs/sequence-prewrite-guard.ts"
+      - "src/jobs/sequence-prewrite-guard.test.ts"
       - ".github/workflows/playback-reserve-01-validation.yml"
   push:
     branches:
@@ -76,6 +78,8 @@ on:
       - "src/services/playlist-planner/index.ts"
       - "src/jobs/generate-playlists-playback-reserve.ts"
       - "src/jobs/generate-playlists.ts"
+      - "src/jobs/sequence-prewrite-guard.ts"
+      - "src/jobs/sequence-prewrite-guard.test.ts"
       - ".github/workflows/playback-reserve-01-validation.yml"
   workflow_dispatch:
 
@@ -138,5 +142,6 @@ jobs:
           src/services/playlist-planner/plan-run-playback-reserve.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts
+          src/jobs/sequence-prewrite-guard.test.ts
       - run: npm run typecheck
       - run: npm run build
