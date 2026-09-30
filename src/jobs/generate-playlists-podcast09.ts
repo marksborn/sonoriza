@@ -20,16 +20,19 @@ export type GeneratePlaylistsOptions = BaseGeneratePlaylistsOptions & {
 export type { GeneratePlaylistsResult } from "./generate-playlists-music-identity";
 
 /**
- * PODCAST-09 Gate 5 controlled generation boundary.
+ * PODCAST-09 Gate 6 controlled generation boundary.
  *
  * With no explicit PODCAST-09 configuration this is strict delegation. SHADOW
  * records the destination-local continuation projection without planner
  * influence. ACTIVE simulation keeps the Gate 4 exact pair + target guards.
  *
- * Gate 5 permits a continuation-influenced real run only when all Gate 4 guards
- * pass, the trigger is MANUAL and the exact userId:targetPlaylistId pair is also
- * present in PODCAST_09_REAL_ACTIVE_ALLOWLIST. SCHEDULED real runs therefore
- * remain SHADOW even if the real allowlist is accidentally populated.
+ * Gate 5 permits a continuation-influenced MANUAL real run only when all Gate 4
+ * guards pass and the exact userId:targetPlaylistId pair is also present in
+ * PODCAST_09_REAL_ACTIVE_ALLOWLIST.
+ *
+ * Gate 6 extends real ACTIVE to SCHEDULED only when that same exact pair is also
+ * present in PODCAST_09_SCHEDULED_ACTIVE_ALLOWLIST. Without this third explicit
+ * authorization, scheduled runs remain fail-closed in SHADOW.
  *
  * Current target episode order must be supplied by an upstream factual target
  * state read; PODCAST-09 performs no provider read of its own.
@@ -58,6 +61,8 @@ export async function generatePlaylists(
     targetScope,
     activeAllowlist: process.env.PODCAST_09_ACTIVE_ALLOWLIST ?? null,
     realActiveAllowlist: process.env.PODCAST_09_REAL_ACTIVE_ALLOWLIST ?? null,
+    scheduledActiveAllowlist:
+      process.env.PODCAST_09_SCHEDULED_ACTIVE_ALLOWLIST ?? null,
   });
 
   const result = await runWithPodcast09ShadowRuntimeState(state, () =>
@@ -93,7 +98,7 @@ export async function generatePlaylists(
         data: {
           runId: result.runId,
           level: "WARN",
-          message: `PODCAST-09 Gate 5 runtime metrics persistence failed after generation: ${
+          message: `PODCAST-09 Gate 6 runtime metrics persistence failed after generation: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },
