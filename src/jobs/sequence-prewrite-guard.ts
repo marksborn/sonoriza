@@ -119,6 +119,8 @@ function primaryItemsForLegacySequenceGuard(
     !Number.isInteger(primaryItemCount) ||
     primaryItemCount < 0 ||
     primaryItemCount > planned.result.items.length ||
+    evidence.reserve.startsAtPosition !== primaryItemCount ||
+    evidence.reserve.itemCount !== selectedReserveItems.length ||
     selectedReserveItems.length === 0 ||
     primaryItemCount + selectedReserveItems.length !== planned.result.items.length
   ) {
