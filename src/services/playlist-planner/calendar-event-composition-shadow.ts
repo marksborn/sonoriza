@@ -17,7 +17,8 @@ export type Calendar03EventDiagnosticCode =
   | "EVENT_PODCAST_SELECTED"
   | "EVENT_PODCAST_NO_FITTING_CANDIDATE"
   | "EVENT_PODCAST_DISTRIBUTION_SKIPPED"
-  | "EVENT_PODCAST_PRESERVED_PREFIX";
+  | "EVENT_PODCAST_PRESERVED_PREFIX"
+  | "EVENT_PRESERVED_SUFFIX_TRUNCATED";
 
 export type Calendar03ProjectedBlock = Readonly<{
   index: number;
@@ -75,11 +76,14 @@ export type ProjectCalendar03EventCompositionInput = Readonly<{
  * duration, so CALENDAR-03 compares that remaining duration against the current
  * event window. No item may cross the block boundary.
  *
- * KEEP_FILLED preserved content is a stable physical prefix. We may keep an
- * item only inside a current block that can prove the same composition rules.
- * While a preserved item is waiting for a later block, no fresh item is allowed
- * to jump ahead of it. If that makes a block underfilled, quality fails closed
- * instead of silently reverting to the legacy continuous sequence planner.
+ * KEEP_FILLED preserved content is a stable physical prefix. CALENDAR-03 keeps
+ * the largest contiguous prefix that can still be reconciled with the current
+ * event windows. A valid preserved suffix may cross to the next event only when
+ * the current event is already exactly full, so no fresh item needs to jump in
+ * front of it. At the first preserved item that cannot continue that contiguous
+ * prefix, that item and the whole remaining suffix are dropped for this run and
+ * reserved from fresh reselection. The writer can then remove those dropped
+ * preserved URIs while CALENDAR-03 fills the newly released budget normally.
  */
 export function projectCalendar03EventComposition(
   input: ProjectCalendar03EventCompositionInput,
@@ -114,23 +118,51 @@ export function projectCalendar03EventComposition(
     let preservedMusicDurationMs = 0;
     let preservedPodcastCount = 0;
     let preservedMusicStarted = false;
+    let truncatedPreservedSuffixCount = 0;
+
+    const truncatePreservedSuffix = () => {
+      const truncated = preservedQueue.splice(0);
+      truncatedPreservedSuffixCount += truncated.length;
+      for (const item of truncated) {
+        // A URI that lost preserved status must not be selected again as fresh
+        // content in the same run. Otherwise the maintenance writer could
+        // mistake it for an unchanged preserved item and fail to move/remove it.
+        localReserved.add(item.uri);
+      }
+    };
 
     while (preservedQueue.length > 0) {
       const candidate = preservedQueue[0]!;
       const durationMs = Math.max(0, candidate.durationMs);
+
       if (durationMs <= 0) {
-        preservedQueue.shift();
-        continue;
+        truncatePreservedSuffix();
+        break;
       }
 
       if (candidate.type === "PODCAST") {
         const programId = candidate.programId?.trim();
         const programCap = effectiveProgramCap(candidate, input.rules);
         if (programId && (programCounts.get(programId) ?? 0) >= programCap) {
-          preservedQueue.shift();
-          continue;
+          truncatePreservedSuffix();
+          break;
         }
+      }
 
+      if (preservedDurationMs >= targetDurationMs) {
+        if (blockIndex < input.blocks.length - 1) {
+          // Exact boundary: the next preserved item can remain the first item
+          // of the next event without any fresh content overtaking it.
+          break;
+        }
+        // The final event is already full; anything after it is outside the
+        // current target and therefore no longer belongs to the preserved prefix.
+        truncatePreservedSuffix();
+        break;
+      }
+
+      if (candidate.type === "PODCAST") {
+        const programId = candidate.programId?.trim();
         const fitsCurrent =
           podcastAttempted &&
           !preservedMusicStarted &&
@@ -139,19 +171,8 @@ export function projectCalendar03EventComposition(
           preservedPodcastDurationMs + durationMs <= podcastUsableDurationMs;
 
         if (!fitsCurrent) {
-          if (
-            preservedPodcastCanFitFutureBlock({
-              input,
-              blockIndex,
-              candidate,
-              programCounts,
-              safetyMarginMs,
-            })
-          ) {
-            break;
-          }
-          preservedQueue.shift();
-          continue;
+          truncatePreservedSuffix();
+          break;
         }
 
         preservedForBlock.push(candidate);
@@ -166,12 +187,8 @@ export function projectCalendar03EventComposition(
       }
 
       if (preservedDurationMs + durationMs > targetDurationMs) {
-        const fitsLaterBlock = input.blocks
-          .slice(blockIndex + 1)
-          .some((future) => durationMs <= Math.max(0, future.targetDurationMs));
-        if (fitsLaterBlock) break;
-        preservedQueue.shift();
-        continue;
+        truncatePreservedSuffix();
+        break;
       }
 
       preservedForBlock.push(candidate);
@@ -192,8 +209,9 @@ export function projectCalendar03EventComposition(
       usedUris.add(item.uri);
     }
 
-    // If any preserved item still belongs to a later block, inserting fresh
-    // content here would move that preserved item in the physical prefix.
+    // A preserved suffix may remain only across an exact event boundary. In
+    // that case the current block has no remaining budget, so no fresh content
+    // needs to be inserted in front of that suffix.
     const preservingFuturePrefix = preservedQueue.length > 0;
     const canAppendFreshPodcast =
       !preservingFuturePrefix &&
@@ -298,6 +316,9 @@ export function projectCalendar03EventComposition(
     } else {
       diagnosticCodes.push("EVENT_PODCAST_NO_FITTING_CANDIDATE");
     }
+    if (truncatedPreservedSuffixCount > 0) {
+      diagnosticCodes.push("EVENT_PRESERVED_SUFFIX_TRUNCATED");
+    }
 
     projectedBlocks.push({
       index: blockIndex,
@@ -312,10 +333,12 @@ export function projectCalendar03EventComposition(
       filledDurationMs,
       deficitMs,
       musicCompositionQualityPassed:
-        !preservingFuturePrefix &&
-        (remainingMusicDurationMs === 0 ||
-          Boolean(musicResult?.stats.compositionQualityPassed)),
-      musicPoolExhausted: musicResult?.stats.poolExhausted ?? preservingFuturePrefix,
+        remainingMusicDurationMs === 0 ||
+        (!preservingFuturePrefix && Boolean(musicResult?.stats.compositionQualityPassed)),
+      musicPoolExhausted:
+        remainingMusicDurationMs === 0
+          ? false
+          : musicResult?.stats.poolExhausted ?? preservingFuturePrefix,
       diagnosticCodes,
     });
 
@@ -352,34 +375,6 @@ function effectiveProgramCap(candidate: Candidate, rules: PlaylistRules): number
   const showCap = candidate.podcastMaxEpisodesPerCycle;
   if (!Number.isInteger(showCap) || Number(showCap) < 1) return targetCap;
   return Math.min(targetCap, Number(showCap));
-}
-
-function preservedPodcastCanFitFutureBlock(input: {
-  input: ProjectCalendar03EventCompositionInput;
-  blockIndex: number;
-  candidate: Candidate;
-  programCounts: ReadonlyMap<string, number>;
-  safetyMarginMs: number;
-}): boolean {
-  const programId = input.candidate.programId?.trim();
-  if (
-    programId &&
-    (input.programCounts.get(programId) ?? 0) >=
-      effectiveProgramCap(input.candidate, input.input.rules)
-  ) {
-    return false;
-  }
-
-  const durationMs = Math.max(0, input.candidate.durationMs);
-  return input.input.blocks.some((future, futureIndex) => {
-    if (futureIndex <= input.blockIndex) return false;
-    if (!eventReceivesPodcast(input.input.policy, futureIndex)) return false;
-    const usable = Math.max(
-      0,
-      Math.max(0, future.targetDurationMs) - input.safetyMarginMs,
-    );
-    return durationMs <= usable && input.input.policy.maxPodcastsPerEvent > 0;
-  });
 }
 
 function emptyProjection(status: Exclude<Calendar03ShadowStatus, "READY_SHADOW">) {

@@ -334,6 +334,114 @@ test("ACTIVE KEEP_FILLED never inserts a fresh podcast before preserved music", 
   assert.equal(state.evidence.plannerInfluence, true);
 });
 
+test("ACTIVE KEEP_FILLED truncates the preserved suffix when the next item crosses a partially filled event", () => {
+  const state = carCalendar03State();
+  const preservedNews = podcast("preserved-news", "show-news", 10);
+  const preservedMusic = music("preserved-18", 18);
+  const crossing = music("crossing-10", 10);
+  const laterPreserved = music("later-preserved-5", 5);
+  const fill2 = music("fill-2", 2);
+  const return10a = music("return-10-a", 10);
+  const return10b = music("return-10-b", 10);
+  const return10c = music("return-10-c", 10);
+
+  const result = runWithCalendar03PlannerRuntimeState(state, () =>
+    planRun({
+      pools: {
+        podcasts: [],
+        // Include the truncated suffix in the fresh pool on purpose. It must
+        // remain blocked for this run so the maintenance writer can truly drop it.
+        music: [
+          crossing,
+          laterPreserved,
+          fill2,
+          return10a,
+          return10b,
+          return10c,
+        ],
+      },
+      targets: [carTarget()],
+      preservedByTargetId: new Map([
+        [TARGET, [preservedNews, preservedMusic, crossing, laterPreserved]],
+      ]),
+    }),
+  );
+
+  const planned = result.targets[0]!.result;
+  const blocks = planned.stats.segmentation?.blocks ?? [];
+  const uris = planned.items.map((item) => item.uri);
+
+  assert.deepEqual(uris.slice(0, 3), [
+    preservedNews.uri,
+    preservedMusic.uri,
+    fill2.uri,
+  ]);
+  assert.equal(uris.includes(crossing.uri), false);
+  assert.equal(uris.includes(laterPreserved.uri), false);
+  assert.deepEqual(
+    blocks.map((block) => block.filledDurationMs),
+    [30 * MINUTE, 30 * MINUTE],
+  );
+  assert.deepEqual(
+    blocks.map((block) => block.podcastDurationMs),
+    [10 * MINUTE, 0],
+  );
+  assert.ok(
+    state.evidence.targets[0]?.blockDiagnostics[0]?.diagnosticCodes.includes(
+      "EVENT_PRESERVED_SUFFIX_TRUNCATED",
+    ),
+  );
+  assert.equal(planned.stats.compositionQualityPassed, true);
+  assert.ok(
+    blocks.every((block) => block.filledDurationMs <= block.targetDurationMs),
+  );
+});
+
+test("ACTIVE KEEP_FILLED may carry a preserved suffix across an exact event boundary", () => {
+  const state = carCalendar03State();
+  const preservedNews = podcast("preserved-news", "show-news", 10);
+  const outboundMusic = music("outbound-20", 20);
+  const returnMusic = music("return-30", 30);
+
+  const result = runWithCalendar03PlannerRuntimeState(state, () =>
+    planRun({
+      pools: {
+        podcasts: [],
+        music: [],
+      },
+      targets: [carTarget()],
+      preservedByTargetId: new Map([
+        [TARGET, [preservedNews, outboundMusic, returnMusic]],
+      ]),
+    }),
+  );
+
+  const planned = result.targets[0]!.result;
+  const blocks = planned.stats.segmentation?.blocks ?? [];
+
+  assert.deepEqual(
+    planned.items.map((item) => item.uri),
+    [preservedNews.uri, outboundMusic.uri, returnMusic.uri],
+  );
+  assert.deepEqual(
+    blocks.map((block) => block.filledDurationMs),
+    [30 * MINUTE, 30 * MINUTE],
+  );
+  assert.deepEqual(
+    blocks.map((block) => block.podcastDurationMs),
+    [10 * MINUTE, 0],
+  );
+  assert.equal(
+    state.evidence.targets.some((entry) =>
+      entry.blockDiagnostics.some((block) =>
+        block.diagnosticCodes.includes("EVENT_PRESERVED_SUFFIX_TRUNCATED"),
+      ),
+    ),
+    false,
+  );
+  assert.equal(planned.stats.compositionQualityPassed, true);
+});
+
 test("CALENDAR-03 consumes the PODCAST-06 priority projection before duration fit", () => {
   const calendarState = calendar03State();
   const podcast06State = createPodcast06PlannerShadowRuntimeState({
