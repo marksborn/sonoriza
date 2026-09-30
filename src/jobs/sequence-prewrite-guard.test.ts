@@ -132,6 +132,8 @@ function playbackReserveState(input: {
             compositionQualityPassed: true,
           },
           reserve: {
+            startsAtPosition: input.primaryItemCount,
+            itemCount: input.selectedItems.length,
             selectedItems: input.selectedItems,
           },
         },
