@@ -316,6 +316,8 @@ export async function runScheduledGeneration(
                 userId: user.id,
                 trigger: "SCHEDULED",
                 targetPlaylistIds: [targetId],
+                onGenerationRunCreated: (generationRunId) =>
+                  linkGenerationRun(entry.audit, generationRunId),
                 preservedByTargetId: preservedByTargetId[targetId]
                   ? { [targetId]: preservedByTargetId[targetId] }
                   : {},
@@ -340,12 +342,6 @@ export async function runScheduledGeneration(
                   : {}),
               }),
           );
-
-          // Persist the GenerationRun link as soon as it exists. The attempt row
-          // may already have been marked stale by a newer retry; in that case we
-          // still retain the late GenerationRun link, but never mutate the newer
-          // aggregate attempt.
-          await linkGenerationRun(entry.audit, generated.runId);
 
           const generation = await prisma.generationRun.findUnique({
             where: { id: generated.runId },
