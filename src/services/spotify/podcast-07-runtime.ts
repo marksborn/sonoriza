@@ -459,6 +459,12 @@ export function applyPodcast07SavedEpisodesCandidates(input: {
   const candidates = input.candidates.map((candidate) => ({
     ...candidate,
     sourcePlaylistId: candidate.sourcePlaylistId ?? input.source.id,
+    // PODCAST-07 intentionally reads the complete SAVED_EPISODES universe with
+    // includePlayed=true so policy resolution can see completed episodes. That
+    // collection detail is not replay authority: provenance must reflect the
+    // persisted SAVED_EPISODES source policy. Explicit SHOW overrides may
+    // replace this later through applyPodcastShowPolicy().
+    sourceIncludePlayed: input.source.includePlayed,
   }));
   const byShow = new Map<string, Candidate[]>();
   const showOrder: string[] = [];
