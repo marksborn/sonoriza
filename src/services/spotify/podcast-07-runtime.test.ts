@@ -322,6 +322,85 @@ test("SAVED_ONLY uses the saved subset, ALL_EPISODES is suppressed, default orde
   assert.ok(!output.some((entry) => entry.programId === "show-y"));
 });
 
+test("ACTIVE restores persisted SAVED_EPISODES replay provenance after full-universe collection", () => {
+  const runtime = state();
+  const collectedWithInternalReplay = {
+    ...candidate({ id: "saved-a", showId: "show-a" }),
+    sourceIncludePlayed: true,
+  };
+
+  const output = runWithPodcast07RuntimeState(runtime, () =>
+    applyPodcast07SavedEpisodesCandidates({
+      candidates: [collectedWithInternalReplay],
+      source: savedSource(),
+      showPolicies: new Map(),
+    }),
+  );
+
+  assert.equal(output.length, 1);
+  assert.equal(output[0]?.sourceSpotifyType, "SAVED_EPISODES");
+  assert.equal(output[0]?.sourceIncludePlayed, false);
+});
+
+test("SAVED_ONLY SHOW override may replace SAVED_EPISODES replay provenance", () => {
+  const runtime = createPodcast07RuntimeState({
+    requestedMode: "ACTIVE",
+    userEmail: "pilot@example.com",
+    activeEmailAllowlist: "pilot@example.com",
+    timeZone: TIME_ZONE,
+    savedSource: savedSource(),
+    defaultPolicy: defaultPolicy(),
+    showOverrides: [
+      {
+        sourcePlaylistId: "show-a-source",
+        spotifyShowId: "show-a",
+        showEpisodeScope: "SAVED_ONLY",
+      },
+    ],
+    specificCadencePolicies: new Map(),
+    listeningStates: [],
+  });
+  runtime.activeOverridesByShowId = new Map(runtime.overridesByShowId);
+
+  const showPolicy: PodcastShowPolicyRuntimeSnapshot = {
+    sourcePlaylistId: "show-a-source",
+    episodeEligibility: "ALL",
+    episodeOrder: "OLDEST_FIRST",
+    randomPolicy: "WITHOUT_REPLACEMENT",
+    showEpisodeScope: "SAVED_ONLY",
+    startEpisodeId: null,
+    strictSequence: true,
+    maxReleaseAgeDays: null,
+    expiryPolicy: "STRICT_EXPIRY",
+    maxEpisodesPerCycle: null,
+    randomRound: 0,
+    publishedEpisodeIds: [],
+  };
+
+  const output = runWithPodcast07RuntimeState(runtime, () =>
+    applyPodcast07SavedEpisodesCandidates({
+      candidates: [
+        {
+          ...candidate({
+            id: "show-a-episode",
+            showId: "show-a",
+            releaseDate: "2026-09-01",
+          }),
+          sourceIncludePlayed: true,
+        },
+      ],
+      source: savedSource(),
+      showPolicies: new Map([["show-a-source", showPolicy]]),
+    }),
+  );
+
+  assert.equal(output.length, 1);
+  assert.equal(output[0]?.sourcePlaylistId, "show-a-source");
+  assert.equal(output[0]?.sourceSpotifyType, "SHOW");
+  assert.equal(output[0]?.sourceSpotifyId, "show-a");
+  assert.equal(output[0]?.sourceIncludePlayed, true);
+});
+
 test("default RANDOM without replacement skips already published saved episodes", () => {
   const runtime = createPodcast07RuntimeState({
     requestedMode: "ACTIVE",
