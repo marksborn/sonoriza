@@ -48,7 +48,10 @@ test("#226 terminal writes are fenced to the exact claimed attempt", () => {
     source,
     /targetScheduleRun\.updateMany\([\s\S]*?status: "RUNNING",[\s\S]*?attempt: audit\.attempt/,
   );
-  assert.match(source, /linkGenerationRun\(entry\.audit, generated\.runId\)/);
+  assert.match(
+    source,
+    /onGenerationRunCreated:\s*\(generationRunId\)\s*=>\s*linkGenerationRun\(entry\.audit, generationRunId\)/,
+  );
   assert.match(source, /Missing TargetScheduleAttempt .* while finishing/);
 });
 
