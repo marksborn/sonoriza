@@ -90,6 +90,8 @@ export interface GeneratePlaylistsOptions {
   musicOrderSimulationEvidence?: Record<string, ReusableMusicOrderEvidence>;
   /** SCHEDULE-01: optional subset; omitted keeps manual generation behavior unchanged. */
   targetPlaylistIds?: string[];
+  /** #435: invoked immediately after the GenerationRun exists, before long-running work. */
+  onGenerationRunCreated?: (runId: string) => void | Promise<void>;
 
   /**
    * ONBOARDING-01 Gate 6:
@@ -254,6 +256,8 @@ export async function generatePlaylists(
   let reader: SpotifyIncrementalReader | null = null;
 
   try {
+    await opts.onGenerationRunCreated?.(run.id);
+
     const sharingPreferenceUser = await prisma.user.findUnique({
       where: { id: userId },
       select: { defaultTargetSharingPolicy: true },
