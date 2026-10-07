@@ -10,7 +10,6 @@ import type { Candidate } from "@/services/playlist-planner";
 import {
   inferSpotifyOperation,
   SpotifyApiError,
-  spotifyApiErrorFromResponse,
   type SpotifyRequestMetrics,
   type SpotifySourceReadMetrics,
 } from "./errors";
@@ -45,6 +44,7 @@ import {
   encodeMusicSourceCache,
   encodePartialMusicSourceCache,
 } from "./source-cache";
+import { spotifyRequestAttempt } from "./request";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
@@ -243,24 +243,19 @@ export class SpotifyIncrementalReader {
       this.requestMetrics.callsByOperation[operation] =
         (this.requestMetrics.callsByOperation[operation] ?? 0) + 1;
 
-      const response = await fetch(`${API}${path}`, {
-        ...init,
-        headers: {
-          Authorization: `Bearer ${this.accessToken}`,
-          "Content-Type": "application/json",
-          ...(init?.headers ?? {}),
-        },
-      });
-
-      if (response.ok) {
-        if (response.status === 204) return undefined as T;
-        return (await response.json()) as T;
+      let error: SpotifyApiError;
+      try {
+        return await spotifyRequestAttempt<T>({
+          accessToken: this.accessToken,
+          path,
+          method,
+          operation,
+          init,
+        });
+      } catch (requestError) {
+        if (!(requestError instanceof SpotifyApiError)) throw requestError;
+        error = requestError;
       }
-
-      const error = await spotifyApiErrorFromResponse(response, {
-        method,
-        operation,
-      });
 
       if (error.kind === "QUOTA_EXCEEDED") {
         this.requestMetrics.quotaExceededCount += 1;
