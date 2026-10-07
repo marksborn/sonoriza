@@ -197,3 +197,40 @@ test("identical source reads are memoized once per SpotifyClient run", async () 
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("#435 Gate 3D Spotify GET timeout is classified and audit-friendly", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = process.env.SPOTIFY_READ_TIMEOUT_MS;
+  process.env.SPOTIFY_READ_TIMEOUT_MS = "20";
+
+  globalThis.fetch = (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(signal);
+    return await new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener(
+        "abort",
+        () => reject(signal.reason ?? new Error("aborted")),
+        { once: true },
+      );
+    });
+  }) as typeof fetch;
+
+  try {
+    const client = createClient();
+    await assert.rejects(client.getCurrentUserId(), (error: unknown) => {
+      assert.ok(error instanceof SpotifyApiError);
+      assert.equal(error.kind, "READ_TIMEOUT");
+      assert.equal(error.status, 0);
+      assert.equal(error.operation, "current-user");
+      assert.equal(error.reason, "READ_TIMEOUT");
+      assert.equal(error.retryable, true);
+      assert.match(error.message, /timed out after 20ms/);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTimeout === undefined) delete process.env.SPOTIFY_READ_TIMEOUT_MS;
+    else process.env.SPOTIFY_READ_TIMEOUT_MS = originalTimeout;
+  }
+});
