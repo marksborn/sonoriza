@@ -3,7 +3,8 @@ import {
   SPOTIFY_CATALOG_CACHE_TTL,
   type SpotifyCatalogReadSession,
 } from "./catalog-read-session";
-import { spotifyApiErrorFromResponse } from "./errors";
+import { SpotifyApiError } from "./errors";
+import { spotifyRequestAttempt } from "./request";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
@@ -144,24 +145,21 @@ export class SpotifyAlbumCatalogClient {
       const accessToken = await this.getAccessToken();
       this.metrics.totalCalls += 1;
 
-      const response = await fetch(`${API}${path}`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-      });
-
-      if (response.ok) {
-        const payload = (await response.json()) as T;
+      let error: SpotifyApiError;
+      try {
+        const payload = await spotifyRequestAttempt<T>({
+          accessToken,
+          path,
+          method: "GET",
+          operation: "spotify-api",
+        });
         await this.readSession?.writeCache(path, payload);
         return payload;
+      } catch (requestError) {
+        this.metrics.failures += 1;
+        if (!(requestError instanceof SpotifyApiError)) throw requestError;
+        error = requestError;
       }
-
-      this.metrics.failures += 1;
-      const error = await spotifyApiErrorFromResponse(response, {
-        method: "GET",
-        operation: "spotify-api",
-      });
       if (error.kind === "RATE_LIMITED") {
         this.metrics.rateLimitedCount += 1;
         if (retries < MAX_RATE_LIMIT_RETRIES) {
