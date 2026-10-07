@@ -67,6 +67,22 @@ integrationTest(
         where: { runId: result.runId },
       });
       assert.equal(itemCount, 0);
+
+      const checkpoints = await prisma.generationLog.findMany({
+        where: {
+          runId: result.runId,
+          message: { startsWith: "Checkpoint " },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { message: true, data: true },
+      });
+      assert.ok(checkpoints.length >= 1);
+      assert.equal(checkpoints[0]?.message, "Checkpoint RUN_CREATED");
+      assert.deepEqual(checkpoints[0]?.data, {
+        checkpoint: "RUN_CREATED",
+        trigger: "SIMULATION",
+        simulate: true,
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

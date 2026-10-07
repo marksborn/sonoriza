@@ -1,4 +1,4 @@
-import type { RunStatus, RunTrigger, TargetPlaylist } from "@prisma/client";
+import type { Prisma, RunStatus, RunTrigger, TargetPlaylist } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
@@ -92,6 +92,8 @@ export interface GeneratePlaylistsOptions {
   targetPlaylistIds?: string[];
   /** #435: invoked immediately after the GenerationRun exists, before long-running work. */
   onGenerationRunCreated?: (runId: string) => void | Promise<void>;
+  /** #435 Gate 3C: scheduled callers fence every provider write to the owning attempt. */
+  assertGenerationRunStillActive?: (runId: string) => void | Promise<void>;
 
   /**
    * ONBOARDING-01 Gate 6:
@@ -188,6 +190,61 @@ type LogLine = {
   data?: unknown;
 };
 
+type GenerationCheckpoint =
+  | "RUN_CREATED"
+  | "CALENDAR_READ_START"
+  | "CALENDAR_READ_DONE"
+  | "SOURCE_READ_START"
+  | "SOURCE_READ_DONE"
+  | "PLAN_READY"
+  | "PREWRITE_START"
+  | "PREWRITE_DONE"
+  | "PROVIDER_WRITE_START"
+  | "PROVIDER_WRITE_DONE"
+  | "PERSIST_ITEMS_START"
+  | "PERSIST_ITEMS_DONE";
+
+type CheckpointData = Record<string, string | number | boolean | null>;
+
+async function persistGenerationCheckpoint(
+  runId: string,
+  checkpoint: GenerationCheckpoint,
+  data: CheckpointData = {},
+): Promise<void> {
+  const current = await prisma.generationRun.findUnique({
+    where: { id: runId },
+    select: { status: true },
+  });
+  if (!current || current.status !== "RUNNING") {
+    throw new Error(
+      `GenerationRun ${runId} is no longer RUNNING while entering checkpoint ${checkpoint}`,
+    );
+  }
+
+  await prisma.generationLog.create({
+    data: {
+      runId,
+      level: "INFO",
+      message: `Checkpoint ${checkpoint}`,
+      data: { checkpoint, ...data } as Prisma.InputJsonValue,
+    },
+  });
+}
+
+async function assertGenerationRunWritable(
+  runId: string,
+  guard?: (runId: string) => void | Promise<void>,
+): Promise<void> {
+  const current = await prisma.generationRun.findUnique({
+    where: { id: runId },
+    select: { status: true },
+  });
+  if (!current || current.status !== "RUNNING") {
+    throw new Error(`GenerationRun ${runId} is no longer RUNNING before provider write`);
+  }
+  await guard?.(runId);
+}
+
 export type ResolvedTargetDuration = {
   durationMs: number;
   calendar: CalendarDurationResult | null;
@@ -256,6 +313,10 @@ export async function generatePlaylists(
   let reader: SpotifyIncrementalReader | null = null;
 
   try {
+    await persistGenerationCheckpoint(run.id, "RUN_CREATED", {
+      trigger,
+      simulate,
+    });
     await opts.onGenerationRunCreated?.(run.id);
 
     const sharingPreferenceUser = await prisma.user.findUnique({
@@ -337,6 +398,10 @@ export async function generatePlaylists(
       string,
       ReturnType<typeof resolveTargetCalendarScope>
     >();
+
+    await persistGenerationCheckpoint(run.id, "CALENDAR_READ_START", {
+      targetCount: targets.length,
+    });
 
     for (const target of targets) {
       let targetCalendarIds = legacyDurationCalendarIds;
@@ -428,6 +493,12 @@ export async function generatePlaylists(
         ),
       );
     }
+
+    await persistGenerationCheckpoint(run.id, "CALENDAR_READ_DONE", {
+      targetCount: targets.length,
+      activeTargetCount: runTargets.length,
+      skippedTargetCount: skipped.length,
+    });
 
     summary.calendarScopes = Object.fromEntries(
       [...calendarScopeByTargetId.entries()].map(([targetId, scope]) => [
@@ -565,6 +636,10 @@ export async function generatePlaylists(
         .map((source) => source.spotifyId),
     );
 
+    await persistGenerationCheckpoint(run.id, "SOURCE_READ_START", {
+      sourceCount: sources.length,
+    });
+
     reader = await SpotifyIncrementalReader.forUser(userId, {
       authoritativePodcastProgramIds,
     });
@@ -675,6 +750,11 @@ export async function generatePlaylists(
       onRound(round) {
         logIncrementalRound(round, log);
       },
+    });
+
+    await persistGenerationCheckpoint(run.id, "SOURCE_READ_DONE", {
+      sourceCount: sources.length,
+      planningRounds: incremental.rounds,
     });
 
     summary.targetSharingRuntime = {
@@ -1207,6 +1287,13 @@ export async function generatePlaylists(
       }
     }
 
+    await persistGenerationCheckpoint(run.id, "PLAN_READY", {
+      targetCount: plan.targets.length,
+    });
+    await persistGenerationCheckpoint(run.id, "PREWRITE_START", {
+      targetCount: plan.targets.length,
+    });
+
     if (!simulate) writer = await SpotifyClient.forUser(userId);
 
     if (!simulate && writer) {
@@ -1341,6 +1428,10 @@ export async function generatePlaylists(
       }
     }
 
+    await persistGenerationCheckpoint(run.id, "PREWRITE_DONE", {
+      targetCount: plan.targets.length,
+    });
+
     const targetById = new Map(targets.map((target) => [target.id, target]));
     let anyFailed = false;
     const inferredSkipSignalIdsToConsume: string[] = [];
@@ -1405,6 +1496,14 @@ export async function generatePlaylists(
 
       try {
         if (!simulate) {
+          await assertGenerationRunWritable(
+            run.id,
+            opts.assertGenerationRunStillActive,
+          );
+          await persistGenerationCheckpoint(run.id, "PROVIDER_WRITE_START", {
+            targetPlaylistId: target.id,
+          });
+
           const playlistId = await ensureSpotifyPlaylist(writer!, target);
           const patch = opts.keepFilledByTargetId?.[target.id] ?? null;
           if (!patch) {
@@ -1417,6 +1516,10 @@ export async function generatePlaylists(
                 );
               }
             }
+            await assertGenerationRunWritable(
+              run.id,
+              opts.assertGenerationRunStillActive,
+            );
             const snapshotAfter = await writer!.replacePlaylistItems(
               playlistId,
               items.map((item) => item.uri),
@@ -1480,16 +1583,28 @@ export async function generatePlaylists(
             let snapshotAfter: string | null = currentSnapshot;
             let applied = false;
             if (forceReplace) {
+              await assertGenerationRunWritable(
+                run.id,
+                opts.assertGenerationRunStillActive,
+              );
               snapshotAfter = await writer!.replacePlaylistItems(playlistId, finalUris);
               applied = true;
             } else {
               if (addedUris.length > 0) {
+                await assertGenerationRunWritable(
+                  run.id,
+                  opts.assertGenerationRunStillActive,
+                );
                 snapshotAfter =
                   (await writer!.appendPlaylistItems(playlistId, addedUris)) ??
                   snapshotAfter;
                 applied = true;
               }
               if (effectiveRemoveUris.length > 0) {
+                await assertGenerationRunWritable(
+                  run.id,
+                  opts.assertGenerationRunStillActive,
+                );
                 snapshotAfter =
                   (await writer!.removePlaylistItems(
                     playlistId,
@@ -1529,9 +1644,19 @@ export async function generatePlaylists(
             targetSummary.minimalPatch = !forceReplace;
             targetSummary.droppedPreservedCount = droppedPreservedUris.length;
           }
+
+          await persistGenerationCheckpoint(run.id, "PROVIDER_WRITE_DONE", {
+            targetPlaylistId: target.id,
+            applied: targetSummary.applied === true,
+          });
         } else {
           targetSummary.applied = false;
         }
+
+        await persistGenerationCheckpoint(run.id, "PERSIST_ITEMS_START", {
+          targetPlaylistId: target.id,
+          itemCount: items.length,
+        });
 
         await prisma.generationItem.createMany({
           data: items.map((item) => ({
@@ -1553,6 +1678,11 @@ export async function generatePlaylists(
             sourceSpotifyId: item.sourceSpotifyId,
             sourceIncludePlayed: item.sourceIncludePlayed,
           })),
+        });
+
+        await persistGenerationCheckpoint(run.id, "PERSIST_ITEMS_DONE", {
+          targetPlaylistId: target.id,
+          itemCount: items.length,
         });
 
         log({
@@ -1954,25 +2084,35 @@ async function finalizeRun(
   summary: Record<string, unknown>,
   error?: string,
 ): Promise<void> {
-  await prisma.$transaction([
-    prisma.generationLog.createMany({
-      data: logs.map((line) => ({
-        runId,
-        level: line.level,
-        message: line.message,
-        data: line.data === undefined ? undefined : (line.data as object),
-      })),
-    }),
-    prisma.generationRun.update({
-      where: { id: runId },
+  await prisma.$transaction(async (tx) => {
+    const terminalized = await tx.generationRun.updateMany({
+      where: {
+        id: runId,
+        status: "RUNNING",
+      },
       data: {
         status,
         finishedAt: new Date(),
         error: error ?? null,
         summary: summary as object,
       },
-    }),
-  ]);
+    });
+
+    // #435 Gate 3C: a stale scheduler attempt may already have terminalized this
+    // GenerationRun. Never let a late promise overwrite that historical result.
+    if (terminalized.count !== 1) return;
+
+    if (logs.length > 0) {
+      await tx.generationLog.createMany({
+        data: logs.map((line) => ({
+          runId,
+          level: line.level,
+          message: line.message,
+          data: line.data === undefined ? undefined : (line.data as object),
+        })),
+      });
+    }
+  });
 }
 
 function collectionFailureReason(

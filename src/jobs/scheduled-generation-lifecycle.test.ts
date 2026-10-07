@@ -44,3 +44,45 @@ test("#435 lifecycle hook is protected by the generation try/catch before long-r
   assert.ok(tryIndex < hookIndex);
   assert.ok(hookIndex < firstLongWorkIndex);
 });
+
+
+test("#435 Gate 3C stale retry terminalizes the linked GenerationRun and records evidence", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+
+  assert.match(
+    source,
+    /staleAttempt\?\.generationRunId[\s\S]*?generationRun\.updateMany\([\s\S]*?status: "RUNNING"[\s\S]*?status: "FAILED"[\s\S]*?STALE_RUNNING_ATTEMPT_REASON/,
+  );
+  assert.match(source, /Checkpoint STALE_TERMINALIZED/);
+  assert.match(source, /checkpoint: "STALE_TERMINALIZED"/);
+});
+
+test("#435 Gate 3C scheduled writes are fenced to the still-owning attempt", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+
+  assert.match(
+    source,
+    /assertGenerationRunStillActive:\s*\(generationRunId\)\s*=>\s*assertAttemptOwnsGenerationRun\(entry\.audit, generationRunId\)/,
+  );
+  assert.match(
+    source,
+    /aggregate\?\.status === "RUNNING"[\s\S]*?aggregate\.attempt === audit\.attempt[\s\S]*?aggregate\.generationRunId === generationRunId/,
+  );
+  assert.match(
+    source,
+    /attempt\?\.status === "RUNNING"[\s\S]*?attempt\.generationRunId === generationRunId/,
+  );
+  assert.match(source, /provider write fenced/);
+});
+
+
+test("#435 Gate 3C checkpoints KEEP_FILLED preparation before the GenerationRun exists", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+
+  assert.match(source, /recordAttemptCheckpoint\(entry\.audit, "KEEP_FILLED_PREP_START"\)/);
+  assert.match(source, /prepareKeepFilledTarget\([\s\S]*?recordAttemptCheckpoint\(entry\.audit, "KEEP_FILLED_PREP_DONE"\)/);
+  assert.match(
+    source,
+    /targetScheduleAttempt\.updateMany\([\s\S]*?status: "RUNNING"[\s\S]*?details:[\s\S]*?checkpoint/,
+  );
+});

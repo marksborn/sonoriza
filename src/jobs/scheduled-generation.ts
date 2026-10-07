@@ -162,6 +162,7 @@ export async function runScheduledGeneration(
           | "REBUILD_DAILY";
         if (entry.target.updatePolicy !== "KEEP_FILLED") {
           try {
+            await recordAttemptCheckpoint(entry.audit, "REBUILD_PREP_START");
             if (!entry.target.spotifyPlaylistId) {
               throw new Error(`Target "${entry.target.name}" has no Spotify playlist`);
             }
@@ -179,6 +180,7 @@ export async function runScheduledGeneration(
             };
             currentDestinationEpisodeIdsByTargetId[entry.target.id] =
               podcast09DestinationEpisodeIds(before.items);
+            await recordAttemptCheckpoint(entry.audit, "REBUILD_PREP_DONE");
             executable.push(entry);
           } catch (error) {
             const reason = errorMessage(error);
@@ -188,7 +190,9 @@ export async function runScheduledGeneration(
           continue;
         }
         try {
+          await recordAttemptCheckpoint(entry.audit, "KEEP_FILLED_PREP_START");
           const prepared = await prepareKeepFilledTarget(user.id, entry.target, now);
+          await recordAttemptCheckpoint(entry.audit, "KEEP_FILLED_PREP_DONE");
           if (prepared.skipReason) {
             await finishOne(entry.audit, "NOOP", prepared.skipReason, now, {
               targetDurationMs: 0,
@@ -318,6 +322,8 @@ export async function runScheduledGeneration(
                 targetPlaylistIds: [targetId],
                 onGenerationRunCreated: (generationRunId) =>
                   linkGenerationRun(entry.audit, generationRunId),
+                assertGenerationRunStillActive: (generationRunId) =>
+                  assertAttemptOwnsGenerationRun(entry.audit, generationRunId),
                 preservedByTargetId: preservedByTargetId[targetId]
                   ? { [targetId]: preservedByTargetId[targetId] }
                   : {},
@@ -471,6 +477,16 @@ async function claimScheduleSlot(
       if (claimed.count !== 1) return null;
 
       if (existing.status === "RUNNING") {
+        const staleAttempt = await tx.targetScheduleAttempt.findUnique({
+          where: {
+            targetScheduleRunId_attempt: {
+              targetScheduleRunId: existing.id,
+              attempt: existing.attempt,
+            },
+          },
+          select: { generationRunId: true },
+        });
+
         const stale = await tx.targetScheduleAttempt.updateMany({
           where: {
             targetScheduleRunId: existing.id,
@@ -487,6 +503,35 @@ async function claimScheduleSlot(
           throw new Error(
             `Missing TargetScheduleAttempt ${existing.id}#${existing.attempt} while expiring stale retry`,
           );
+        }
+
+        if (staleAttempt?.generationRunId) {
+          const terminalizedRun = await tx.generationRun.updateMany({
+            where: {
+              id: staleAttempt.generationRunId,
+              status: "RUNNING",
+            },
+            data: {
+              status: "FAILED",
+              finishedAt: now,
+              error: STALE_RUNNING_ATTEMPT_REASON,
+            },
+          });
+
+          if (terminalizedRun.count === 1) {
+            await tx.generationLog.create({
+              data: {
+                runId: staleAttempt.generationRunId,
+                level: "ERROR",
+                message: "Checkpoint STALE_TERMINALIZED",
+                data: {
+                  checkpoint: "STALE_TERMINALIZED",
+                  targetScheduleRunId: existing.id,
+                  attempt: existing.attempt,
+                },
+              },
+            });
+          }
         }
       }
 
@@ -613,6 +658,35 @@ async function finishMany(
   );
 }
 
+async function recordAttemptCheckpoint(
+  audit: ScheduleAttemptRef,
+  checkpoint:
+    | "KEEP_FILLED_PREP_START"
+    | "KEEP_FILLED_PREP_DONE"
+    | "REBUILD_PREP_START"
+    | "REBUILD_PREP_DONE",
+): Promise<void> {
+  const updated = await prisma.targetScheduleAttempt.updateMany({
+    where: {
+      targetScheduleRunId: audit.id,
+      attempt: audit.attempt,
+      status: "RUNNING",
+    },
+    data: {
+      details: {
+        checkpoint,
+        observedAt: new Date().toISOString(),
+      } as Prisma.InputJsonValue,
+    },
+  });
+
+  if (updated.count !== 1) {
+    throw new Error(
+      `Scheduled attempt ${audit.id}#${audit.attempt} is no longer RUNNING while entering ${checkpoint}`,
+    );
+  }
+}
+
 async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: string) {
   await prisma.$transaction(async (tx) => {
     const attempt = await tx.targetScheduleAttempt.updateMany({
@@ -640,6 +714,46 @@ async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: str
       data: { generationRunId },
     });
   });
+}
+
+async function assertAttemptOwnsGenerationRun(
+  audit: ScheduleAttemptRef,
+  generationRunId: string,
+): Promise<void> {
+  const [aggregate, attempt, generationRun] = await prisma.$transaction([
+    prisma.targetScheduleRun.findUnique({
+      where: { id: audit.id },
+      select: { status: true, attempt: true, generationRunId: true },
+    }),
+    prisma.targetScheduleAttempt.findUnique({
+      where: {
+        targetScheduleRunId_attempt: {
+          targetScheduleRunId: audit.id,
+          attempt: audit.attempt,
+        },
+      },
+      select: { status: true, generationRunId: true },
+    }),
+    prisma.generationRun.findUnique({
+      where: { id: generationRunId },
+      select: { status: true },
+    }),
+  ]);
+
+  const ownsAggregate =
+    aggregate?.status === "RUNNING" &&
+    aggregate.attempt === audit.attempt &&
+    aggregate.generationRunId === generationRunId;
+  const ownsAttempt =
+    attempt?.status === "RUNNING" &&
+    attempt.generationRunId === generationRunId;
+  const runIsActive = generationRun?.status === "RUNNING";
+
+  if (ownsAggregate && ownsAttempt && runIsActive) return;
+
+  throw new Error(
+    `GenerationRun ${generationRunId} lost ownership of scheduled attempt ${audit.id}#${audit.attempt}; provider write fenced`,
+  );
 }
 
 async function finishOne(
