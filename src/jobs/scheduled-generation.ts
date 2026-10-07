@@ -162,6 +162,7 @@ export async function runScheduledGeneration(
           | "REBUILD_DAILY";
         if (entry.target.updatePolicy !== "KEEP_FILLED") {
           try {
+            await recordAttemptCheckpoint(entry.audit, "REBUILD_PREP_START");
             if (!entry.target.spotifyPlaylistId) {
               throw new Error(`Target "${entry.target.name}" has no Spotify playlist`);
             }
@@ -179,6 +180,7 @@ export async function runScheduledGeneration(
             };
             currentDestinationEpisodeIdsByTargetId[entry.target.id] =
               podcast09DestinationEpisodeIds(before.items);
+            await recordAttemptCheckpoint(entry.audit, "REBUILD_PREP_DONE");
             executable.push(entry);
           } catch (error) {
             const reason = errorMessage(error);
@@ -188,7 +190,9 @@ export async function runScheduledGeneration(
           continue;
         }
         try {
+          await recordAttemptCheckpoint(entry.audit, "KEEP_FILLED_PREP_START");
           const prepared = await prepareKeepFilledTarget(user.id, entry.target, now);
+          await recordAttemptCheckpoint(entry.audit, "KEEP_FILLED_PREP_DONE");
           if (prepared.skipReason) {
             await finishOne(entry.audit, "NOOP", prepared.skipReason, now, {
               targetDurationMs: 0,
@@ -652,6 +656,35 @@ async function finishMany(
   await Promise.all(
     completedIds.map((id) => dispatchTargetScheduleRunNotificationSafely(id)),
   );
+}
+
+async function recordAttemptCheckpoint(
+  audit: ScheduleAttemptRef,
+  checkpoint:
+    | "KEEP_FILLED_PREP_START"
+    | "KEEP_FILLED_PREP_DONE"
+    | "REBUILD_PREP_START"
+    | "REBUILD_PREP_DONE",
+): Promise<void> {
+  const updated = await prisma.targetScheduleAttempt.updateMany({
+    where: {
+      targetScheduleRunId: audit.id,
+      attempt: audit.attempt,
+      status: "RUNNING",
+    },
+    data: {
+      details: {
+        checkpoint,
+        observedAt: new Date().toISOString(),
+      } as Prisma.InputJsonValue,
+    },
+  });
+
+  if (updated.count !== 1) {
+    throw new Error(
+      `Scheduled attempt ${audit.id}#${audit.attempt} is no longer RUNNING while entering ${checkpoint}`,
+    );
+  }
 }
 
 async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: string) {
