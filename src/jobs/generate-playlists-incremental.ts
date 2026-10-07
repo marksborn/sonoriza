@@ -2117,12 +2117,15 @@ async function finalizeRun(
 
 function collectionFailureReason(
   failures: SourceCollectionFailureRecord[],
-): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "SOURCE_UNAVAILABLE" {
+): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "PROVIDER_TIMEOUT" | "SOURCE_UNAVAILABLE" {
   if (failures.some((failure) => failure.errorKind === "QUOTA_EXCEEDED")) {
     return "QUOTA_EXCEEDED";
   }
   if (failures.some((failure) => failure.errorKind === "RATE_LIMITED")) {
     return "RATE_LIMITED";
+  }
+  if (failures.some((failure) => failure.errorKind === "READ_TIMEOUT")) {
+    return "PROVIDER_TIMEOUT";
   }
   return "SOURCE_UNAVAILABLE";
 }
@@ -2140,7 +2143,9 @@ function collectionFailureMessage(
       ? "o Spotify atingiu a quota disponível durante a leitura das fontes"
       : reason === "RATE_LIMITED"
         ? "o Spotify limitou temporariamente a leitura de algumas fontes mesmo após a tentativa controlada de retry"
-        : "uma ou mais fontes do Spotify não puderam ser lidas até o ponto necessário para validar o plano";
+        : reason === "PROVIDER_TIMEOUT"
+          ? "uma leitura do Spotify excedeu o deadline configurado e foi cancelada"
+          : "uma ou mais fontes do Spotify não puderam ser lidas até o ponto necessário para validar o plano";
 
   return `${prefix}: ${cause}. Nenhuma configuração foi considerada incorreta e nenhuma playlist do Spotify foi alterada.`;
 }
