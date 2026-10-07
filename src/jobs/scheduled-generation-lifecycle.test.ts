@@ -74,3 +74,15 @@ test("#435 Gate 3C scheduled writes are fenced to the still-owning attempt", () 
   );
   assert.match(source, /provider write fenced/);
 });
+
+
+test("#435 Gate 3C checkpoints KEEP_FILLED preparation before the GenerationRun exists", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+
+  assert.match(source, /recordAttemptCheckpoint\(entry\.audit, "KEEP_FILLED_PREP_START"\)/);
+  assert.match(source, /prepareKeepFilledTarget\([\s\S]*?recordAttemptCheckpoint\(entry\.audit, "KEEP_FILLED_PREP_DONE"\)/);
+  assert.match(
+    source,
+    /targetScheduleAttempt\.updateMany\([\s\S]*?status: "RUNNING"[\s\S]*?details:[\s\S]*?checkpoint/,
+  );
+});
