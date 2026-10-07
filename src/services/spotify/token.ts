@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { withProviderReadDeadline } from "@/services/provider-read-deadline";
 
 import { assertSpotifyBackoffInactive } from "./backoff";
 
@@ -41,29 +42,38 @@ export async function getSpotifyAccessToken(userId: string): Promise<string> {
   const clientSecret = process.env.AUTH_SPOTIFY_SECRET ?? "";
   const basic = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
 
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${basic}`,
+  const data = await withProviderReadDeadline(
+    {
+      provider: "spotify",
+      operation: "oauth-token-refresh",
     },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: account.refresh_token,
-    }),
-  });
+    async (signal) => {
+      const res = await fetch(TOKEN_URL, {
+        method: "POST",
+        signal,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Basic ${basic}`,
+        },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: account.refresh_token!,
+        }),
+      });
 
-  if (!res.ok) {
-    throw new Error(
-      `Spotify token refresh failed (${res.status}): ${await res.text()}`,
-    );
-  }
+      if (!res.ok) {
+        throw new Error(
+          `Spotify token refresh failed (${res.status}): ${await res.text()}`,
+        );
+      }
 
-  const data = (await res.json()) as {
-    access_token: string;
-    expires_in: number;
-    refresh_token?: string;
-  };
+      return (await res.json()) as {
+        access_token: string;
+        expires_in: number;
+        refresh_token?: string;
+      };
+    },
+  );
 
   await prisma.account.update({
     where: { id: account.id },
