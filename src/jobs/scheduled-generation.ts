@@ -483,7 +483,12 @@ async function claimScheduleSlot(
     const processRestartTakeover =
       existing.status === "RUNNING" &&
       currentAttempt?.status === "RUNNING" &&
-      attemptOwnedByPreviousProcess(currentAttempt.details);
+      attemptOwnedByPreviousProcess(currentAttempt.details) &&
+      // A linked real RUNNING GenerationRun may have died during an ambiguous
+      // Spotify write. Gate 3E does not retry that case early; it preserves the
+      // existing stale window until write reconciliation is implemented.
+      (!currentAttempt.generationRun ||
+        currentAttempt.generationRun.simulation === true);
 
     if (
       !processRestartTakeover &&
