@@ -2,6 +2,7 @@ import type { Prisma, RunStatus, RunTrigger, TargetPlaylist } from "@prisma/clie
 
 import { prisma } from "@/lib/prisma";
 import { isProviderReadTimeout } from "@/jobs/schedule-retry-policy";
+import { processMemorySnapshot } from "@/services/process-memory";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
 import {
   resolveTargetCalendarScope,
@@ -227,7 +228,11 @@ async function persistGenerationCheckpoint(
       runId,
       level: "INFO",
       message: `Checkpoint ${checkpoint}`,
-      data: { checkpoint, ...data } as Prisma.InputJsonValue,
+      data: {
+        checkpoint,
+        ...data,
+        memory: processMemorySnapshot(),
+      } as Prisma.InputJsonValue,
     },
   });
 }
