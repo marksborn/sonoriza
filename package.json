@@ -64,6 +64,7 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "generate:run": "tsx scripts/run-generation.ts",
+    "runs:orphans": "tsx scripts/terminalize-orphan-generation-runs.ts",
     "plan:example": "tsx scripts/plan-example.ts"
   },
   "prisma": {
