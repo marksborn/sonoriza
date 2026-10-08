@@ -42,6 +42,7 @@ import {
 
 import { generatePlaylists } from "./generate-playlists";
 import { runIsolated } from "./isolated-execution";
+import { failedRetryAfterMs, scheduleStatus } from "./schedule-retry-policy";
 import { podcast09DestinationEpisodeIds } from "./podcast09-destination-evidence";
 
 const RETRY_AFTER_MS = 30 * 60 * 1000;
@@ -67,6 +68,14 @@ const SCHEDULER_INSTANCE_ID =
   process.env.NODE_APP_INSTANCE?.trim() || "standalone";
 const SCHEDULER_OWNER_ID =
   `${SCHEDULER_INSTANCE_ID}:${process.pid}:${randomUUID()}`;
+
+// #435 Gate 3F: a RUNNING attempt may still be mid-write, so it keeps the
+// conservative stale window. A FAILED attempt has already returned; only
+// failures recorded before any provider write (or outside generation) reach
+// this status, so the slot can be retried on the next cron tick.
+function retryAfterMsFor(status: TargetScheduleRunStatus): number {
+  return status === "FAILED" ? failedRetryAfterMs() : RETRY_AFTER_MS;
+}
 
 type ScheduledResult = {
   userId: string;
@@ -389,7 +398,11 @@ export async function runScheduledGeneration(
 
           const targetSummary =
             readTargetSummaries(generation?.summary).get(targetId) ?? null;
-          const status = scheduleStatus(generated.status, targetSummary);
+          const status = scheduleStatus(
+            generated.status,
+            targetSummary,
+            generation?.summary,
+          );
           const reason =
             typeof targetSummary?.error === "string"
               ? targetSummary.error
@@ -492,9 +505,8 @@ async function claimScheduleSlot(
 
     if (
       !processRestartTakeover &&
-      now.getTime() -
-        existing.startedAt.getTime() <
-        RETRY_AFTER_MS
+      now.getTime() - existing.startedAt.getTime() <
+        retryAfterMsFor(existing.status)
     ) {
       return null;
     }
@@ -713,7 +725,11 @@ async function reconcileCompletedScheduledAttempt(
 ): Promise<void> {
   const targetSummary =
     readTargetSummaries(generation.summary).get(existing.targetPlaylistId) ?? null;
-  const status = scheduleStatus(generation.status, targetSummary);
+  const status = scheduleStatus(
+    generation.status,
+    targetSummary,
+    generation.summary,
+  );
   const reason =
     typeof targetSummary?.error === "string"
       ? targetSummary.error
@@ -740,18 +756,6 @@ async function reconcileCompletedScheduledAttempt(
         : undefined,
     },
   );
-}
-
-function scheduleStatus(
-  generationStatus: string,
-  targetSummary: Record<string, unknown> | null,
-): TargetScheduleRunStatus {
-  if (generationStatus === "SUCCESS") {
-    if (targetSummary?.maintenanceNoop === true) return "NOOP";
-    return "SUCCESS";
-  }
-  if (generationStatus === "PARTIAL") return "PARTIAL";
-  return "BLOCKED";
 }
 
 function readTargetSummaries(summary: unknown): Map<string, Record<string, unknown>> {
