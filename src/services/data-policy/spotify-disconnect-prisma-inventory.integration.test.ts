@@ -6,8 +6,9 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaSpotifyDisconnectInventoryStore } from "./spotify-disconnect-prisma-inventory";
 
 const prisma = new PrismaClient();
+const integrationTest = process.env.DATABASE_URL ? test : test.skip;
 
-test("Gate 6A inventory separates Spotify, mixed Last.fm and unrelated provider state", async (t) => {
+integrationTest("Gate 6A inventory separates Spotify, mixed Last.fm and unrelated provider state", async (t) => {
   const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const user = await prisma.user.create({
     data: {
