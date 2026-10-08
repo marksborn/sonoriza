@@ -12,7 +12,10 @@ module.exports = {
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
-      max_memory_restart: "512M",
+      // #435 Gate 3E: observed scheduled generation peaks ~541 MiB RSS.
+      // Keep enough headroom to avoid killing the process between inline preflight
+      // and the authoritative scheduled run.
+      max_memory_restart: "768M",
       env: {
         NODE_ENV: "production",
         PORT: process.env.PORT || "3005",

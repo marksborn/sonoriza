@@ -32,8 +32,8 @@ integrationTest(
     try {
       const result = await generatePlaylists({
         userId: user.id,
-        trigger: "SIMULATION",
-        simulate: true,
+        trigger: "SCHEDULED",
+        simulate: false,
         onGenerationRunCreated: async (runId) => {
           observedRunId = runId;
           const running = await prisma.generationRun.findUniqueOrThrow({
@@ -80,8 +80,8 @@ integrationTest(
       assert.equal(checkpoints[0]?.message, "Checkpoint RUN_CREATED");
       assert.deepEqual(checkpoints[0]?.data, {
         checkpoint: "RUN_CREATED",
-        trigger: "SIMULATION",
-        simulate: true,
+        trigger: "SCHEDULED",
+        simulate: false,
       });
     } finally {
       globalThis.fetch = originalFetch;

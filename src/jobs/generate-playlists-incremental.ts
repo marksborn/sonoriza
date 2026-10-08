@@ -317,7 +317,11 @@ export async function generatePlaylists(
       trigger,
       simulate,
     });
-    await opts.onGenerationRunCreated?.(run.id);
+    // #435 Gate 3E: scheduler lifecycle hooks belong only to the real
+    // GenerationRun. Internal simulations must never claim a scheduled attempt.
+    if (!simulate) {
+      await opts.onGenerationRunCreated?.(run.id);
+    }
 
     const sharingPreferenceUser = await prisma.user.findUnique({
       where: { id: userId },
