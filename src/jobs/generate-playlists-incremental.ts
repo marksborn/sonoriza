@@ -1,7 +1,10 @@
 import type { Prisma, RunStatus, RunTrigger, TargetPlaylist } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { isProviderReadTimeout } from "@/jobs/schedule-retry-policy";
+import {
+  isProviderReadTimeout,
+  isSpotifyWriteTimeout,
+} from "@/jobs/schedule-retry-policy";
 import { processMemorySnapshot } from "@/services/process-memory";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
 import {
@@ -1718,6 +1721,12 @@ export async function generatePlaylists(
       } catch (error) {
         anyFailed = true;
         targetSummary.error = errorMessage(error);
+        if (isSpotifyWriteTimeout(error)) {
+          // #435 Gate 3H: never retry blindly in-process; the scheduler retries
+          // the slot later from a fresh read of the live playlist.
+          targetSummary.ambiguousWriteTimeout = true;
+          targetSummary.writeOutcome = "UNKNOWN_TIMEOUT";
+        }
         log({
           level: "ERROR",
           message: `Failed to apply target "${target.name}": ${errorMessage(error)}`,

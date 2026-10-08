@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { ProviderReadTimeoutError } from "@/services/provider-read-deadline";
+import {
+  DEFAULT_SPOTIFY_WRITE_TIMEOUT_MS,
+  ProviderReadTimeoutError,
+  spotifyWriteTimeoutMs,
+} from "@/services/provider-read-deadline";
 import { SpotifyApiError } from "@/services/spotify/errors";
 
 import {
   DEFAULT_FAILED_RETRY_AFTER_MS,
   failedRetryAfterMs,
   isProviderReadTimeout,
+  isSpotifyWriteTimeout,
   scheduleStatus,
 } from "./schedule-retry-policy";
 
@@ -139,4 +144,52 @@ test("#435 Gate 3F scheduler keeps the 30 min stale window for RUNNING attempts"
     source,
     /TERMINAL_SCHEDULE_STATUSES =[^;]*"FAILED"/,
   );
+});
+
+test("#435 Gate 3H ambiguous write timeout keeps the slot retryable", () => {
+  const ambiguous = { ambiguousWriteTimeout: true, writeOutcome: "UNKNOWN_TIMEOUT" };
+  assert.equal(scheduleStatus("PARTIAL", ambiguous), "FAILED");
+  assert.equal(scheduleStatus("FAILED", ambiguous), "FAILED");
+  // Without the flag a failed apply stays terminal, as before.
+  assert.equal(scheduleStatus("PARTIAL", { error: "HTTP 400" }), "PARTIAL");
+  assert.equal(scheduleStatus("FAILED", { error: "HTTP 400" }), "BLOCKED");
+  // A successful run is never downgraded.
+  assert.equal(scheduleStatus("SUCCESS", ambiguous), "SUCCESS");
+});
+
+test("#435 Gate 3H recognizes only Spotify write timeouts as ambiguous", () => {
+  const writeTimeout = new SpotifyApiError({
+    kind: "WRITE_TIMEOUT",
+    status: 0,
+    method: "POST",
+    operation: "playlist-write",
+    reason: "WRITE_TIMEOUT",
+    retryable: false,
+    message: "timeout",
+  });
+  assert.equal(isSpotifyWriteTimeout(writeTimeout), true);
+  assert.equal(isProviderReadTimeout(writeTimeout), false);
+  assert.equal(
+    isSpotifyWriteTimeout(
+      new SpotifyApiError({
+        kind: "READ_TIMEOUT",
+        status: 0,
+        method: "GET",
+        operation: "playlist-items",
+        retryable: true,
+        message: "timeout",
+      }),
+    ),
+    false,
+  );
+  assert.equal(isSpotifyWriteTimeout(new Error("timeout")), false);
+});
+
+test("#435 Gate 3H write deadline defaults to 30 s and is bounded", () => {
+  assert.equal(DEFAULT_SPOTIFY_WRITE_TIMEOUT_MS, 30_000);
+  assert.equal(spotifyWriteTimeoutMs(undefined), 30_000);
+  assert.equal(spotifyWriteTimeoutMs("45000"), 45_000);
+  assert.equal(spotifyWriteTimeoutMs("0"), 30_000);
+  assert.equal(spotifyWriteTimeoutMs("999999"), 30_000);
+  assert.equal(spotifyWriteTimeoutMs("abc"), 30_000);
 });

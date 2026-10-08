@@ -26,6 +26,11 @@ export function failedRetryAfterMs(
   return DEFAULT_FAILED_RETRY_AFTER_MS;
 }
 
+/** #435 Gate 3H: a Spotify mutation that hit its deadline; outcome unknown. */
+export function isSpotifyWriteTimeout(error: unknown): boolean {
+  return error instanceof SpotifyApiError && error.kind === "WRITE_TIMEOUT";
+}
+
 export function isProviderReadTimeout(error: unknown): boolean {
   if (error instanceof ProviderReadTimeoutError) return true;
   return error instanceof SpotifyApiError && error.kind === "READ_TIMEOUT";
@@ -48,6 +53,16 @@ export function scheduleStatus(
   if (generationStatus === "SUCCESS") {
     if (targetSummary?.maintenanceNoop === true) return "NOOP";
     return "SUCCESS";
+  }
+  // #435 Gate 3H: a write that timed out left the playlist in an unknown
+  // state. The slot stays retryable; the next attempt starts after the FAILED
+  // delay (so a late write can land) and re-reads the live playlist before
+  // planning (KEEP_FILLED snapshot guard / REBUILD full replace).
+  if (
+    (generationStatus === "PARTIAL" || generationStatus === "FAILED") &&
+    targetSummary?.ambiguousWriteTimeout === true
+  ) {
+    return "FAILED";
   }
   if (generationStatus === "PARTIAL") return "PARTIAL";
   if (generationStatus === "FAILED" && retryableBeforeWrite(runSummary)) {

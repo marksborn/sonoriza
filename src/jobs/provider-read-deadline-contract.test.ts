@@ -54,9 +54,15 @@ test("#435 Gate 3D bounds generation-path Spotify and Google provider reads", ()
   const catalog = readFileSync("src/services/spotify/catalog-search.ts", "utf8");
   const generation = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
 
+  // #435 Gate 3H: writes now carry their own (longer) deadline and surface
+  // WRITE_TIMEOUT instead of READ_TIMEOUT; reads keep the read deadline.
   assert.match(
     spotifyRequest,
-    /if \(input\.method !== "GET"\)[\s\S]*?return execute\([\s\S]*?withProviderReadDeadline/,
+    /if \(input\.method !== "GET"\)[\s\S]*?spotifyWriteTimeoutMs\(\)[\s\S]*?kind: "WRITE_TIMEOUT"[\s\S]*?retryable: false/,
+  );
+  assert.match(
+    spotifyRequest,
+    /kind: "READ_TIMEOUT"[\s\S]*?retryable: true/,
   );
   assert.match(spotifyRequest, /kind: "READ_TIMEOUT"/);
   assert.match(spotifyRequest, /reason: "READ_TIMEOUT"/);

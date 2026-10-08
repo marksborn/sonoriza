@@ -87,8 +87,11 @@ exceeds its deadline (`SPOTIFY_READ_TIMEOUT_MS` / `GOOGLE_CALENDAR_READ_TIMEOUT_
 default 10 s) before any Spotify write ends the attempt as `FAILED`, and the slot
 is retried after `SCHEDULE_FAILED_RETRY_AFTER_MS` (default 5 min, i.e. the next
 dispatcher tick). Other generation failures end as `BLOCKED` and are not retried
-the same day. An attempt still `RUNNING` is only taken over after 30 minutes,
-since Spotify writes are not deadline-bounded yet. After a PM2 restart (for
+the same day. Spotify playlist writes have their own deadline
+(`SPOTIFY_WRITE_TIMEOUT_MS`, default 30 s); a write that times out has an
+unknown outcome, is never retried in-process, and leaves the slot `FAILED` so
+the next attempt (after the same retry delay) re-reads the live playlist before
+planning. An attempt still `RUNNING` is only taken over after 30 minutes. After a PM2 restart (for
 example `max_memory_restart`), the next dispatcher tick takes over immediately
 when the dead run's persisted checkpoints show it never reached
 `PROVIDER_WRITE_START`; otherwise the 30 minute window still applies. Each

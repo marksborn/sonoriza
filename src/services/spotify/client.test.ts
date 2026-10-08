@@ -234,3 +234,48 @@ test("#435 Gate 3D Spotify GET timeout is classified and audit-friendly", async 
     else process.env.SPOTIFY_READ_TIMEOUT_MS = originalTimeout;
   }
 });
+
+test("#435 Gate 3H Spotify write timeout is classified as ambiguous and never retried", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = process.env.SPOTIFY_WRITE_TIMEOUT_MS;
+  process.env.SPOTIFY_WRITE_TIMEOUT_MS = "20";
+  // AbortSignal.timeout() is unref'd; keep the loop alive while the mocked
+  // write hangs (production has the open socket doing this).
+  const keepAlive = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(keepAlive));
+
+  let calls = 0;
+  globalThis.fetch = (async (_input, init) => {
+    calls += 1;
+    assert.equal(init?.method, "POST");
+    const signal = init?.signal;
+    assert.ok(signal, "writes must carry an abort signal");
+    return await new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener(
+        "abort",
+        () => reject(signal.reason ?? new Error("aborted")),
+        { once: true },
+      );
+    });
+  }) as typeof fetch;
+
+  try {
+    const client = createClient();
+    await assert.rejects(
+      client.appendPlaylistItems("playlist-a", ["spotify:track:a"]),
+      (error: unknown) => {
+        assert.ok(error instanceof SpotifyApiError);
+        assert.equal(error.kind, "WRITE_TIMEOUT");
+        assert.equal(error.reason, "WRITE_TIMEOUT");
+        assert.equal(error.retryable, false);
+        assert.match(error.message, /timed out after 20ms; the write outcome is unknown/);
+        return true;
+      },
+    );
+    assert.equal(calls, 1, "an ambiguous write must not be retried in-process");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTimeout === undefined) delete process.env.SPOTIFY_WRITE_TIMEOUT_MS;
+    else process.env.SPOTIFY_WRITE_TIMEOUT_MS = originalTimeout;
+  }
+});
