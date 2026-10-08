@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type {
   Prisma,
   TargetPlaylist,
@@ -55,6 +57,16 @@ const TERMINAL_SCHEDULE_STATUSES =
 
 const STALE_RUNNING_ATTEMPT_REASON =
   "Tentativa expirada após 30 minutos sem conclusão; um novo retry assumiu o slot.";
+const PROCESS_RESTARTED_ATTEMPT_REASON =
+  "Tentativa abandonada após reinício do processo; um novo retry assumiu o slot.";
+
+// #435 Gate 3E: PM2 runs a single scheduler instance. The logical PM2
+// instance id survives a process restart while this owner id does not, letting
+// the next process distinguish a dead predecessor from another live instance.
+const SCHEDULER_INSTANCE_ID =
+  process.env.NODE_APP_INSTANCE?.trim() || "standalone";
+const SCHEDULER_OWNER_ID =
+  `${SCHEDULER_INSTANCE_ID}:${process.pid}:${randomUUID()}`;
 
 type ScheduledResult = {
   userId: string;
@@ -442,6 +454,25 @@ async function claimScheduleSlot(
       return null;
     }
 
+    const currentAttempt =
+      existing.status === "RUNNING"
+        ? await readCurrentAttemptForRecovery(existing)
+        : null;
+
+    if (
+      currentAttempt?.generationRun &&
+      currentAttempt.generationRun.trigger === "SCHEDULED" &&
+      currentAttempt.generationRun.simulation === false &&
+      currentAttempt.generationRun.status !== "RUNNING"
+    ) {
+      await reconcileCompletedScheduledAttempt(
+        existing,
+        currentAttempt.generationRun,
+        now,
+      );
+      return null;
+    }
+
     if (
       existing.attempt >=
       MAX_SCHEDULE_ATTEMPTS
@@ -449,13 +480,25 @@ async function claimScheduleSlot(
       return null;
     }
 
+    const processRestartTakeover =
+      existing.status === "RUNNING" &&
+      attemptOwnedByPreviousProcess(currentAttempt?.details);
+
     if (
+      !processRestartTakeover &&
       now.getTime() -
         existing.startedAt.getTime() <
-      RETRY_AFTER_MS
+        RETRY_AFTER_MS
     ) {
       return null;
     }
+
+    const retryReason = processRestartTakeover
+      ? PROCESS_RESTARTED_ATTEMPT_REASON
+      : STALE_RUNNING_ATTEMPT_REASON;
+    const terminalCheckpoint = processRestartTakeover
+      ? "PROCESS_RESTART_TERMINALIZED"
+      : "STALE_TERMINALIZED";
 
     return prisma.$transaction(async (tx) => {
       const claimed = await tx.targetScheduleRun.updateMany({
@@ -495,7 +538,7 @@ async function claimScheduleSlot(
           },
           data: {
             status: "FAILED",
-            reason: STALE_RUNNING_ATTEMPT_REASON,
+            reason: retryReason,
             finishedAt: now,
           },
         });
@@ -514,7 +557,7 @@ async function claimScheduleSlot(
             data: {
               status: "FAILED",
               finishedAt: now,
-              error: STALE_RUNNING_ATTEMPT_REASON,
+              error: retryReason,
             },
           });
 
@@ -523,9 +566,9 @@ async function claimScheduleSlot(
               data: {
                 runId: staleAttempt.generationRunId,
                 level: "ERROR",
-                message: "Checkpoint STALE_TERMINALIZED",
+                message: `Checkpoint ${terminalCheckpoint}`,
                 data: {
-                  checkpoint: "STALE_TERMINALIZED",
+                  checkpoint: terminalCheckpoint,
                   targetScheduleRunId: existing.id,
                   attempt: existing.attempt,
                 },
@@ -541,6 +584,7 @@ async function claimScheduleSlot(
           attempt: existing.attempt + 1,
           status: "RUNNING",
           startedAt: now,
+          details: runningAttemptDetails("CLAIMED"),
         },
       });
 
@@ -580,11 +624,114 @@ async function claimScheduleSlot(
         attempt: audit.attempt,
         status: "RUNNING",
         startedAt: now,
+        details: runningAttemptDetails("CLAIMED"),
       },
     });
 
     return audit;
   });
+}
+
+type CurrentAttemptForRecovery = {
+  details: Prisma.JsonValue | null;
+  generationRun: {
+    id: string;
+    trigger: string;
+    simulation: boolean;
+    status: string;
+    error: string | null;
+    summary: Prisma.JsonValue | null;
+    finishedAt: Date | null;
+  } | null;
+};
+
+function runningAttemptDetails(
+  checkpoint: string,
+  extra: Record<string, string | number | boolean | null> = {},
+): Prisma.InputJsonValue {
+  return {
+    schedulerOwnerId: SCHEDULER_OWNER_ID,
+    schedulerInstanceId: SCHEDULER_INSTANCE_ID,
+    checkpoint,
+    observedAt: new Date().toISOString(),
+    ...extra,
+  };
+}
+
+function attemptOwnedByPreviousProcess(details: unknown): boolean {
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return false;
+  }
+  const record = details as Record<string, unknown>;
+  return (
+    typeof record.schedulerOwnerId === "string" &&
+    typeof record.schedulerInstanceId === "string" &&
+    record.schedulerInstanceId === SCHEDULER_INSTANCE_ID &&
+    record.schedulerOwnerId !== SCHEDULER_OWNER_ID
+  );
+}
+
+async function readCurrentAttemptForRecovery(
+  existing: TargetScheduleRun,
+): Promise<CurrentAttemptForRecovery | null> {
+  return prisma.targetScheduleAttempt.findUnique({
+    where: {
+      targetScheduleRunId_attempt: {
+        targetScheduleRunId: existing.id,
+        attempt: existing.attempt,
+      },
+    },
+    select: {
+      details: true,
+      generationRun: {
+        select: {
+          id: true,
+          trigger: true,
+          simulation: true,
+          status: true,
+          error: true,
+          summary: true,
+          finishedAt: true,
+        },
+      },
+    },
+  });
+}
+
+async function reconcileCompletedScheduledAttempt(
+  existing: TargetScheduleRun,
+  generation: NonNullable<CurrentAttemptForRecovery["generationRun"]>,
+  now: Date,
+): Promise<void> {
+  const targetSummary =
+    readTargetSummaries(generation.summary).get(existing.targetPlaylistId) ?? null;
+  const status = scheduleStatus(generation.status, targetSummary);
+  const reason =
+    typeof targetSummary?.error === "string"
+      ? targetSummary.error
+      : generation.error ?? null;
+
+  await finishOne(
+    { id: existing.id, attempt: existing.attempt },
+    status,
+    reason,
+    generation.finishedAt ?? now,
+    {
+      generationRunId: generation.id,
+      targetDurationMs: numberOrNull(targetSummary?.targetDurationMs),
+      validDurationBeforeMs: numberOrNull(targetSummary?.validDurationBeforeMs),
+      removedDurationMs: numberOrZero(targetSummary?.removedDurationMs),
+      addedDurationMs: numberOrZero(targetSummary?.addedDurationMs),
+      preservedCount: numberOrZero(targetSummary?.preservedCount),
+      removedCount: numberOrZero(targetSummary?.removedCount),
+      addedCount: numberOrZero(targetSummary?.addedCount),
+      snapshotBefore: stringOrNull(targetSummary?.snapshotBefore),
+      snapshotAfter: stringOrNull(targetSummary?.snapshotAfter),
+      details: targetSummary
+        ? (targetSummary as Prisma.InputJsonValue)
+        : undefined,
+    },
+  );
 }
 
 function scheduleStatus(
@@ -673,10 +820,7 @@ async function recordAttemptCheckpoint(
       status: "RUNNING",
     },
     data: {
-      details: {
-        checkpoint,
-        observedAt: new Date().toISOString(),
-      } as Prisma.InputJsonValue,
+      details: runningAttemptDetails(checkpoint),
     },
   });
 
@@ -689,16 +833,36 @@ async function recordAttemptCheckpoint(
 
 async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: string) {
   await prisma.$transaction(async (tx) => {
+    const generation = await tx.generationRun.findUnique({
+      where: { id: generationRunId },
+      select: { trigger: true, simulation: true },
+    });
+    if (
+      !generation ||
+      generation.trigger !== "SCHEDULED" ||
+      generation.simulation
+    ) {
+      throw new Error(
+        `GenerationRun ${generationRunId} is not a real SCHEDULED run and cannot own scheduler attempt ${audit.id}#${audit.attempt}`,
+      );
+    }
+
     const attempt = await tx.targetScheduleAttempt.updateMany({
       where: {
         targetScheduleRunId: audit.id,
         attempt: audit.attempt,
+        status: "RUNNING",
       },
-      data: { generationRunId },
+      data: {
+        generationRunId,
+        details: runningAttemptDetails("GENERATION_LINKED", {
+          generationRunId,
+        }),
+      },
     });
     if (attempt.count !== 1) {
       throw new Error(
-        `Missing TargetScheduleAttempt ${audit.id}#${audit.attempt} while linking generation`,
+        `Missing RUNNING TargetScheduleAttempt ${audit.id}#${audit.attempt} while linking generation`,
       );
     }
 
