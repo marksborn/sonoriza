@@ -142,3 +142,79 @@ test("Gate 2 reader treats one empty Last.fm response with totalPages=0 as compl
   assert.equal(result.totalPages, 0);
   assert.equal(result.scrobbles.length, 0);
 });
+
+test("#279 transient Last.fm error 8 is retried instead of aborting the observation", async () => {
+  const calls: number[] = [];
+  let failures = 0;
+
+  const result = await readLastFmRecentObservation({
+    client: {
+      async getRecentTracksPage(input) {
+        calls.push(input.page ?? 1);
+        if ((input.page ?? 1) === 2 && failures < 1) {
+          failures += 1;
+          throw new Error(
+            "Last.fm API error 8: Operation failed - Most likely the backend service failed. Please try again.",
+          );
+        }
+        return page({
+          page: input.page ?? 1,
+          totalPages: 2,
+          total: 2,
+          events: [event(`k${input.page ?? 1}`, "2026-09-03T12:30:00.000Z")],
+        });
+      },
+    },
+    username: "marks",
+    from,
+    to,
+    observedAt: to,
+    retry: { maxAttempts: 3, baseDelayMs: 0 },
+  });
+
+  assert.deepEqual(calls, [1, 2, 2]);
+  assert.equal(result.complete, true);
+  assert.equal(result.pagesFetched, 2);
+});
+
+test("#279 non-transient Last.fm errors still fail closed without retry", async () => {
+  let calls = 0;
+
+  await assert.rejects(
+    readLastFmRecentObservation({
+      client: {
+        async getRecentTracksPage() {
+          calls += 1;
+          throw new Error("Last.fm API error 10: Invalid API key");
+        },
+      },
+      username: "marks",
+      from,
+      to,
+      retry: { maxAttempts: 3, baseDelayMs: 0 },
+    }),
+    /Last\.fm API error 10/,
+  );
+  assert.equal(calls, 1);
+});
+
+test("#279 persistent transient Last.fm failure stops after the bounded budget", async () => {
+  let calls = 0;
+
+  await assert.rejects(
+    readLastFmRecentObservation({
+      client: {
+        async getRecentTracksPage() {
+          calls += 1;
+          throw new Error("Last.fm API error 8: Operation failed");
+        },
+      },
+      username: "marks",
+      from,
+      to,
+      retry: { maxAttempts: 3, baseDelayMs: 0 },
+    }),
+    /Last\.fm API error 8/,
+  );
+  assert.equal(calls, 3);
+});
