@@ -20,6 +20,7 @@ import {
   type KeepFilledTargetPatch,
 } from "@/services/keep-filled-maintenance";
 import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
+import { processMemorySnapshot } from "@/services/process-memory";
 import type { Candidate } from "@/services/playlist-planner";
 import {
   LEGACY_GLOBAL_SHARING_POLICY,
@@ -42,7 +43,11 @@ import {
 
 import { generatePlaylists } from "./generate-playlists";
 import { runIsolated } from "./isolated-execution";
-import { failedRetryAfterMs, scheduleStatus } from "./schedule-retry-policy";
+import {
+  failedRetryAfterMs,
+  providerWriteNeverStarted,
+  scheduleStatus,
+} from "./schedule-retry-policy";
 import { podcast09DestinationEpisodeIds } from "./podcast09-destination-evidence";
 
 const RETRY_AFTER_MS = 30 * 60 * 1000;
@@ -449,7 +454,8 @@ export async function runScheduledGeneration(
   return { processed, results };
 }
 
-async function claimScheduleSlot(
+// Exported for the #435 Gate 3G integration test.
+export async function claimScheduleSlot(
   userId: string,
   target: TargetPlaylist,
   slot: ReturnType<typeof dailyScheduleSlot>,
@@ -500,8 +506,14 @@ async function claimScheduleSlot(
       // A linked real RUNNING GenerationRun may have died during an ambiguous
       // Spotify write. Gate 3E does not retry that case early; it preserves the
       // existing stale window until write reconciliation is implemented.
+      // #435 Gate 3G: the persisted checkpoints prove whether that write could
+      // have started; a run that died before PROVIDER_WRITE_START is taken
+      // over immediately.
       (!currentAttempt.generationRun ||
-        currentAttempt.generationRun.simulation === true);
+        currentAttempt.generationRun.simulation === true ||
+        providerWriteNeverStarted(
+          currentAttempt.generationRun.logs.map((log) => log.message),
+        ));
 
     if (
       !processRestartTakeover &&
@@ -661,6 +673,7 @@ type CurrentAttemptForRecovery = {
     error: string | null;
     summary: Prisma.JsonValue | null;
     finishedAt: Date | null;
+    logs: Array<{ message: string }>;
   } | null;
 };
 
@@ -712,6 +725,10 @@ async function readCurrentAttemptForRecovery(
           error: true,
           summary: true,
           finishedAt: true,
+          logs: {
+            where: { message: { startsWith: "Checkpoint " } },
+            select: { message: true },
+          },
         },
       },
     },
@@ -832,7 +849,9 @@ async function recordAttemptCheckpoint(
       status: "RUNNING",
     },
     data: {
-      details: runningAttemptDetails(checkpoint),
+      details: runningAttemptDetails(checkpoint, {
+        ...processMemorySnapshot(),
+      }),
     },
   });
 

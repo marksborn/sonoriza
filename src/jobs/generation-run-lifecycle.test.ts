@@ -78,11 +78,23 @@ integrationTest(
       });
       assert.ok(checkpoints.length >= 1);
       assert.equal(checkpoints[0]?.message, "Checkpoint RUN_CREATED");
-      assert.deepEqual(checkpoints[0]?.data, {
+      const { memory, ...checkpointData } = checkpoints[0]?.data as Record<
+        string,
+        unknown
+      >;
+      assert.deepEqual(checkpointData, {
         checkpoint: "RUN_CREATED",
         trigger: "SCHEDULED",
         simulate: false,
       });
+      // #442: every checkpoint carries a process memory sample.
+      assert.deepEqual(Object.keys(memory as object).sort(), [
+        "externalMb",
+        "heapTotalMb",
+        "heapUsedMb",
+        "rssMb",
+      ]);
+      assert.ok((memory as { rssMb: number }).rssMb > 0);
     } finally {
       globalThis.fetch = originalFetch;
     }

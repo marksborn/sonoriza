@@ -64,3 +64,24 @@ function retryableBeforeWrite(summary: unknown): boolean {
     (summary as Record<string, unknown>).retryableBeforeWrite === true
   );
 }
+
+const CHECKPOINT_PREFIX = "Checkpoint ";
+const PROVIDER_WRITE_START_MESSAGE = `${CHECKPOINT_PREFIX}PROVIDER_WRITE_START`;
+
+/**
+ * #435 Gate 3G: decides, from the persisted checkpoint log messages of a
+ * GenerationRun whose process died, whether a Spotify mutation can have
+ * started. Every playlist write in the generation path happens after the
+ * PROVIDER_WRITE_START checkpoint is persisted, so its absence proves nothing
+ * was written.
+ *
+ * A run with no checkpoints at all is treated as unknown (it may predate the
+ * checkpoint instrumentation), never as safe.
+ */
+export function providerWriteNeverStarted(logMessages: string[]): boolean {
+  const checkpoints = logMessages.filter((message) =>
+    message.startsWith(CHECKPOINT_PREFIX),
+  );
+  if (checkpoints.length === 0) return false;
+  return !checkpoints.includes(PROVIDER_WRITE_START_MESSAGE);
+}
