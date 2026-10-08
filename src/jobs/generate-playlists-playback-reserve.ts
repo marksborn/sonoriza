@@ -84,7 +84,7 @@ export async function generatePlaylists(
       simulationState,
       () =>
         baseGeneratePlaylists({
-          ...effectiveOpts,
+          ...withoutScheduledLifecycleHooks(effectiveOpts),
           trigger: "SIMULATION",
           simulate: true,
         }),
@@ -252,4 +252,22 @@ async function appendPlaybackReserveRuntimeSummary(
       } as Prisma.InputJsonValue,
     },
   });
+}
+
+
+/**
+ * #435 Gate 3E
+ *
+ * Inline Playback Reserve simulations are implementation details of a real
+ * scheduled run. They may inspect the same prepared state, but they do not own
+ * the scheduler attempt and therefore must never inherit lifecycle callbacks
+ * that link/fence the real GenerationRun.
+ */
+function withoutScheduledLifecycleHooks(
+  opts: GeneratePlaylistsOptions,
+): GeneratePlaylistsOptions {
+  const simulationOpts = { ...opts };
+  delete simulationOpts.onGenerationRunCreated;
+  delete simulationOpts.assertGenerationRunStillActive;
+  return simulationOpts;
 }

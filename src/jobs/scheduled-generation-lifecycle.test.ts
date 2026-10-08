@@ -51,10 +51,18 @@ test("#435 Gate 3C stale retry terminalizes the linked GenerationRun and records
 
   assert.match(
     source,
-    /staleAttempt\?\.generationRunId[\s\S]*?generationRun\.updateMany\([\s\S]*?status: "RUNNING"[\s\S]*?status: "FAILED"[\s\S]*?STALE_RUNNING_ATTEMPT_REASON/,
+    /staleAttempt\?\.generationRunId[\s\S]*?generationRun\.updateMany\([\s\S]*?status: "RUNNING"[\s\S]*?status: "FAILED"[\s\S]*?error: retryReason/,
   );
-  assert.match(source, /Checkpoint STALE_TERMINALIZED/);
-  assert.match(source, /checkpoint: "STALE_TERMINALIZED"/);
+  assert.match(
+    source,
+    /const retryReason = processRestartTakeover[\s\S]*?PROCESS_RESTARTED_ATTEMPT_REASON[\s\S]*?STALE_RUNNING_ATTEMPT_REASON/,
+  );
+  assert.match(
+    source,
+    /const terminalCheckpoint = processRestartTakeover[\s\S]*?"PROCESS_RESTART_TERMINALIZED"[\s\S]*?"STALE_TERMINALIZED"/,
+  );
+  assert.match(source, /message: `Checkpoint \$\{terminalCheckpoint\}`/);
+  assert.match(source, /checkpoint: terminalCheckpoint/);
 });
 
 test("#435 Gate 3C scheduled writes are fenced to the still-owning attempt", () => {
