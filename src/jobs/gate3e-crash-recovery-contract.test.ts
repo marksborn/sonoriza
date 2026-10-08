@@ -59,7 +59,7 @@ test("#435 Gate 3E process restart has an explicit persisted scheduler lease", (
   );
   assert.match(
     source,
-    /processRestartTakeover[\\s\\S]*?attemptOwnedByPreviousProcess\\(currentAttempt\\.details\\)[\\s\\S]*?!currentAttempt\\.generationRun[\\s\\S]*?currentAttempt\\.generationRun\\.simulation === true/,
+    /processRestartTakeover[\s\S]*?attemptOwnedByPreviousProcess\(currentAttempt\.details\)[\s\S]*?!currentAttempt\.generationRun[\s\S]*?currentAttempt\.generationRun\.simulation === true/,
   );
   assert.match(
     source,
