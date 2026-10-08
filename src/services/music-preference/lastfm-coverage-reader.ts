@@ -2,6 +2,7 @@ import type {
   LastFmClient,
   LastFmRecentTracksPage,
 } from "@/services/lastfm/client";
+import { withLastFmTransientRetry } from "@/services/lastfm/backfill";
 
 import type { LastFmRecentObservation } from "./lastfm-coverage";
 
@@ -23,6 +24,8 @@ export async function readLastFmRecentObservation(input: {
   to: Date;
   observedAt?: Date;
   maxPages?: number;
+  /** Test seam; production uses the shared transient retry budget. */
+  retry?: { maxAttempts?: number; baseDelayMs?: number };
 }): Promise<LastFmRecentObservation> {
   const username = input.username.trim();
   if (!username) throw new Error("MUSIC-06 Last.fm reader requires username");
@@ -43,12 +46,22 @@ export async function readLastFmRecentObservation(input: {
   const observedAt = input.observedAt ?? new Date();
   const pages: LastFmRecentTracksPage[] = [];
 
-  const first = await input.client.getRecentTracksPage({
-    username,
-    page: 1,
-    from: input.from,
-    to: input.to,
-  });
+  // #279: Last.fm answers "error 8: Operation failed ... Please try again"
+  // intermittently. Without a retry, one hiccup made MUSIC-07 abstain for the
+  // whole run. Retry only transient failures (API 8/11/16, HTTP 5xx).
+  const readPage = (page: number) =>
+    withLastFmTransientRetry(
+      () =>
+        input.client.getRecentTracksPage({
+          username,
+          page,
+          from: input.from,
+          to: input.to,
+        }),
+      input.retry,
+    );
+
+  const first = await readPage(1);
   pages.push(first);
 
   // Last.fm may return totalPages=0 for an empty window. The first request is
@@ -57,14 +70,7 @@ export async function readLastFmRecentObservation(input: {
   const pagesToFetch = Math.min(Math.max(1, reportedTotalPages), maxPages);
 
   for (let page = 2; page <= pagesToFetch; page += 1) {
-    pages.push(
-      await input.client.getRecentTracksPage({
-        username,
-        page,
-        from: input.from,
-        to: input.to,
-      }),
-    );
+    pages.push(await readPage(page));
   }
 
   const totalPages = pages.reduce(
