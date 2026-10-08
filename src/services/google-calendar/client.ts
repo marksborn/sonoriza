@@ -1,3 +1,5 @@
+import { withProviderReadDeadline } from "@/services/provider-read-deadline";
+
 import { getGoogleAccessToken } from "./token";
 
 const API = "https://www.googleapis.com/calendar/v3";
@@ -29,15 +31,24 @@ export class GoogleCalendarClient {
   }
 
   private async request<T>(path: string): Promise<T> {
-    const res = await fetch(`${API}${path}`, {
-      headers: { Authorization: `Bearer ${this.accessToken}` },
-    });
-    if (!res.ok) {
-      throw new Error(
-        `Google Calendar GET ${path} failed (${res.status}): ${await res.text()}`,
-      );
-    }
-    return (await res.json()) as T;
+    return withProviderReadDeadline(
+      {
+        provider: "google-calendar",
+        operation: `GET ${path}`,
+      },
+      async (signal) => {
+        const res = await fetch(`${API}${path}`, {
+          signal,
+          headers: { Authorization: `Bearer ${this.accessToken}` },
+        });
+        if (!res.ok) {
+          throw new Error(
+            `Google Calendar GET ${path} failed (${res.status}): ${await res.text()}`,
+          );
+        }
+        return (await res.json()) as T;
+      },
+    );
   }
 
   /** Lists the calendars the user can see, for the calendar-selection UI. */

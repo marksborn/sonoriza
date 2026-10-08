@@ -63,7 +63,7 @@ test("#435 Gate 3E process restart has an explicit persisted scheduler lease", (
   );
   assert.match(
     source,
-    /!processRestartTakeover[\s\S]*?RETRY_AFTER_MS/,
+    /!processRestartTakeover[\s\S]*?retryAfterMsFor\(existing\.status\)/,
   );
   assert.match(source, /PROCESS_RESTARTED_ATTEMPT_REASON/);
   assert.match(source, /PROCESS_RESTART_TERMINALIZED/);
@@ -78,7 +78,10 @@ test("#435 Gate 3E reconciles a completed real scheduled run before retrying", (
   const maxAttemptsCheck = source.indexOf(
     "existing.attempt >=\n      MAX_SCHEDULE_ATTEMPTS",
   );
-  const retryAgeCheck = source.indexOf("RETRY_AFTER_MS", reconcileCheck);
+  const retryAgeCheck = source.indexOf(
+    "retryAfterMsFor(existing.status)",
+    reconcileCheck,
+  );
 
   assert.notEqual(reconcileCheck, -1);
   assert.notEqual(maxAttemptsCheck, -1);
@@ -92,7 +95,7 @@ test("#435 Gate 3E reconciles a completed real scheduled run before retrying", (
   );
   assert.match(
     source,
-    /async function reconcileCompletedScheduledAttempt[\s\S]*?scheduleStatus\(generation\.status, targetSummary\)[\s\S]*?finishOne\(/,
+    /async function reconcileCompletedScheduledAttempt[\s\S]*?scheduleStatus\(\s*generation\.status,\s*targetSummary,\s*generation\.summary,?\s*\)[\s\S]*?finishOne\(/,
   );
 });
 

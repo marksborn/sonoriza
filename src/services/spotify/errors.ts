@@ -3,6 +3,7 @@ import { recordSpotifyBackoff } from "./backoff";
 export type SpotifyApiErrorKind =
   | "RATE_LIMITED"
   | "QUOTA_EXCEEDED"
+  | "READ_TIMEOUT"
   | "HTTP_ERROR"
   | "LOCAL_PROCESSING_ERROR";
 

@@ -475,3 +475,38 @@ test("changed playlist snapshot discards a partial checkpoint and restarts from 
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("#435 Gate 3D incremental source read cannot hang past the Spotify deadline", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = process.env.SPOTIFY_READ_TIMEOUT_MS;
+  process.env.SPOTIFY_READ_TIMEOUT_MS = "20";
+
+  globalThis.fetch = (async (_input, init) => {
+    const signal = init?.signal;
+    assert.ok(signal);
+    return await new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener(
+        "abort",
+        () => reject(signal.reason ?? new Error("aborted")),
+        { once: true },
+      );
+    });
+  }) as typeof fetch;
+
+  try {
+    const reader = createReader();
+    const cursor = await reader.createSource(source());
+    await assert.rejects(cursor.readNext(), (error: unknown) => {
+      assert.ok(error instanceof SpotifyApiError);
+      assert.equal(error.kind, "READ_TIMEOUT");
+      assert.equal(error.operation, "playlist-items");
+      assert.equal(error.retryable, true);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTimeout === undefined) delete process.env.SPOTIFY_READ_TIMEOUT_MS;
+    else process.env.SPOTIFY_READ_TIMEOUT_MS = originalTimeout;
+  }
+});

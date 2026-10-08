@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { withProviderReadDeadline } from "@/services/provider-read-deadline";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const EXPIRY_SKEW_SECONDS = 60;
@@ -30,27 +31,36 @@ export async function getGoogleAccessToken(userId: string): Promise<string> {
     );
   }
 
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: account.refresh_token,
-      client_id: process.env.AUTH_GOOGLE_ID ?? "",
-      client_secret: process.env.AUTH_GOOGLE_SECRET ?? "",
-    }),
-  });
+  const data = await withProviderReadDeadline(
+    {
+      provider: "google-calendar",
+      operation: "oauth-token-refresh",
+    },
+    async (signal) => {
+      const res = await fetch(TOKEN_URL, {
+        method: "POST",
+        signal,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: account.refresh_token!,
+          client_id: process.env.AUTH_GOOGLE_ID ?? "",
+          client_secret: process.env.AUTH_GOOGLE_SECRET ?? "",
+        }),
+      });
 
-  if (!res.ok) {
-    throw new Error(
-      `Google token refresh failed (${res.status}): ${await res.text()}`,
-    );
-  }
+      if (!res.ok) {
+        throw new Error(
+          `Google token refresh failed (${res.status}): ${await res.text()}`,
+        );
+      }
 
-  const data = (await res.json()) as {
-    access_token: string;
-    expires_in: number;
-  };
+      return (await res.json()) as {
+        access_token: string;
+        expires_in: number;
+      };
+    },
+  );
 
   await prisma.account.update({
     where: { id: account.id },

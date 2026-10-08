@@ -3,7 +3,8 @@ import type { MusicRepeatWindowUnit } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { Candidate } from "@/services/playlist-planner";
 
-import { spotifyApiErrorFromResponse } from "./errors";
+import { SpotifyApiError } from "./errors";
+import { spotifyRequestAttempt } from "./request";
 import {
   mapSpotifyRecentlyPlayedEvent,
   type SpotifyListeningEventInput,
@@ -462,15 +463,19 @@ function assertValidPolicy(
 async function spotifyGet<T>(accessToken: string, path: string): Promise<T> {
   let retries = 0;
   while (true) {
-    const response = await fetch(`${API}${path}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (response.ok) return (await response.json()) as T;
+    let error: SpotifyApiError;
+    try {
+      return await spotifyRequestAttempt<T>({
+        accessToken,
+        path,
+        method: "GET",
+        operation: "recently-played",
+      });
+    } catch (requestError) {
+      if (!(requestError instanceof SpotifyApiError)) throw requestError;
+      error = requestError;
+    }
 
-    const error = await spotifyApiErrorFromResponse(response, {
-      method: "GET",
-      operation: "recently-played",
-    });
     if (error.kind === "RATE_LIMITED" && retries < MAX_RATE_LIMIT_RETRIES) {
       retries += 1;
       const waitMs =

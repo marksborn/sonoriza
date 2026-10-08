@@ -1,6 +1,7 @@
 import type { Prisma, RunStatus, RunTrigger, TargetPlaylist } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { isProviderReadTimeout } from "@/jobs/schedule-retry-policy";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
 import {
   resolveTargetCalendarScope,
@@ -311,6 +312,10 @@ export async function generatePlaylists(
 
   let writer: SpotifyClient | null = null;
   let reader: SpotifyIncrementalReader | null = null;
+  // #435 Gate 3F: set immediately before the first provider mutation can
+  // begin. Until then a provider read timeout is safe for the scheduler to
+  // retry because nothing has been written to Spotify.
+  let providerWriteStarted = false;
 
   try {
     await persistGenerationCheckpoint(run.id, "RUN_CREATED", {
@@ -694,6 +699,9 @@ export async function generatePlaylists(
       };
       summary.spotifyApi = spotifyMetrics;
 
+      if (summary.inconclusiveReason === "PROVIDER_TIMEOUT") {
+        summary.retryableBeforeWrite = true;
+      }
       const error = collectionFailureMessage(setupFailures, simulate);
       log({ level: "WARN", message: error, data: summary.sourceCollection });
       await finalizeRun(run.id, "FAILED", logs, summary, error);
@@ -1504,6 +1512,7 @@ export async function generatePlaylists(
             run.id,
             opts.assertGenerationRunStillActive,
           );
+          providerWriteStarted = true;
           await persistGenerationCheckpoint(run.id, "PROVIDER_WRITE_START", {
             targetPlaylistId: target.id,
           });
@@ -1761,6 +1770,10 @@ export async function generatePlaylists(
       reader?.getRequestMetrics() ?? null,
       writer?.getRequestMetrics() ?? null,
     );
+    if (!providerWriteStarted && isProviderReadTimeout(error)) {
+      summary.failureClass = "PROVIDER_TIMEOUT";
+      summary.retryableBeforeWrite = true;
+    }
     log({ level: "ERROR", message: `Run failed: ${errorMessage(error)}` });
     await finalizeRun(run.id, "FAILED", logs, summary, errorMessage(error));
     return { runId: run.id, status: "FAILED" };
@@ -2121,12 +2134,15 @@ async function finalizeRun(
 
 function collectionFailureReason(
   failures: SourceCollectionFailureRecord[],
-): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "SOURCE_UNAVAILABLE" {
+): "QUOTA_EXCEEDED" | "RATE_LIMITED" | "PROVIDER_TIMEOUT" | "SOURCE_UNAVAILABLE" {
   if (failures.some((failure) => failure.errorKind === "QUOTA_EXCEEDED")) {
     return "QUOTA_EXCEEDED";
   }
   if (failures.some((failure) => failure.errorKind === "RATE_LIMITED")) {
     return "RATE_LIMITED";
+  }
+  if (failures.some((failure) => failure.errorKind === "READ_TIMEOUT")) {
+    return "PROVIDER_TIMEOUT";
   }
   return "SOURCE_UNAVAILABLE";
 }
@@ -2144,7 +2160,9 @@ function collectionFailureMessage(
       ? "o Spotify atingiu a quota disponível durante a leitura das fontes"
       : reason === "RATE_LIMITED"
         ? "o Spotify limitou temporariamente a leitura de algumas fontes mesmo após a tentativa controlada de retry"
-        : "uma ou mais fontes do Spotify não puderam ser lidas até o ponto necessário para validar o plano";
+        : reason === "PROVIDER_TIMEOUT"
+          ? "uma leitura do Spotify excedeu o deadline configurado e foi cancelada"
+          : "uma ou mais fontes do Spotify não puderam ser lidas até o ponto necessário para validar o plano";
 
   return `${prefix}: ${cause}. Nenhuma configuração foi considerada incorreta e nenhuma playlist do Spotify foi alterada.`;
 }

@@ -82,6 +82,15 @@ slot makes successful/no-op maintenance idempotent: repeated dispatcher calls do
 not run the same daily slot twice. A missed exact minute remains due later on the
 same local day. `MANUAL` targets are ignored by this endpoint.
 
+Retries (#435): each slot gets at most three attempts. A provider read that
+exceeds its deadline (`SPOTIFY_READ_TIMEOUT_MS` / `GOOGLE_CALENDAR_READ_TIMEOUT_MS`,
+default 10 s) before any Spotify write ends the attempt as `FAILED`, and the slot
+is retried after `SCHEDULE_FAILED_RETRY_AFTER_MS` (default 5 min, i.e. the next
+dispatcher tick). Other generation failures end as `BLOCKED` and are not retried
+the same day. An attempt still `RUNNING` is only taken over after 30 minutes (or
+right after a PM2 restart when no real Spotify write could be in flight), since
+Spotify writes are not deadline-bounded yet.
+
 `KEEP_FILLED` reads the current target under a stable Spotify snapshot, preserves
 valid content, fills only the deficit and prefers append/remove mutations. It
 falls back to a full replacement only when an incremental URI mutation would be
