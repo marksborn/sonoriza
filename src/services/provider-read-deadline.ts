@@ -53,29 +53,20 @@ export async function withProviderReadDeadline<T>(
 ): Promise<T> {
   const timeoutMs =
     input.timeoutMs ?? providerReadTimeoutMs(input.provider);
-  const controller = new AbortController();
-  let timedOut = false;
 
-  const onExternalAbort = () => {
-    controller.abort(input.signal?.reason);
-  };
-
-  if (input.signal?.aborted) {
-    onExternalAbort();
-  } else {
-    input.signal?.addEventListener("abort", onExternalAbort, { once: true });
-  }
-
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-  timer.unref?.();
+  // Use Node's native AbortSignal timeout clock instead of the mutable global
+  // setTimeout. Some generation tests intentionally replace setTimeout to
+  // fast-forward Spotify Retry-After waits; the provider deadline must remain
+  // a real wall-clock deadline and must not be fast-forwarded with that retry.
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = input.signal
+    ? AbortSignal.any([input.signal, timeoutSignal])
+    : timeoutSignal;
 
   try {
-    return await work(controller.signal);
+    return await work(signal);
   } catch (error) {
-    if (timedOut) {
+    if (timeoutSignal.aborted && !input.signal?.aborted) {
       throw new ProviderReadTimeoutError(
         input.provider,
         input.operation,
@@ -83,8 +74,5 @@ export async function withProviderReadDeadline<T>(
       );
     }
     throw error;
-  } finally {
-    clearTimeout(timer);
-    input.signal?.removeEventListener("abort", onExternalAbort);
   }
 }
