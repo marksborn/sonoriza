@@ -482,7 +482,8 @@ async function claimScheduleSlot(
 
     const processRestartTakeover =
       existing.status === "RUNNING" &&
-      attemptOwnedByPreviousProcess(currentAttempt?.details);
+      currentAttempt?.status === "RUNNING" &&
+      attemptOwnedByPreviousProcess(currentAttempt.details);
 
     if (
       !processRestartTakeover &&
@@ -633,6 +634,7 @@ async function claimScheduleSlot(
 }
 
 type CurrentAttemptForRecovery = {
+  status: TargetScheduleRunStatus;
   details: Prisma.JsonValue | null;
   generationRun: {
     id: string;
@@ -682,6 +684,7 @@ async function readCurrentAttemptForRecovery(
       },
     },
     select: {
+      status: true,
       details: true,
       generationRun: {
         select: {
