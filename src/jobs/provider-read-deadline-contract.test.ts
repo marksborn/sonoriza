@@ -7,8 +7,13 @@ import {
   withProviderReadDeadline,
 } from "@/services/provider-read-deadline";
 
-test("#435 Gate 3D provider deadline aborts a stuck external read", async () => {
+test("#435 Gate 3D provider deadline aborts a stuck external read", async (t) => {
   const startedAt = Date.now();
+  // AbortSignal.timeout() is unref'd. In production the stuck socket keeps the
+  // event loop alive; here nothing else does, so hold it open explicitly or
+  // Node 22 ends the test before the deadline fires.
+  const keepAlive = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(keepAlive));
 
   await assert.rejects(
     withProviderReadDeadline(
