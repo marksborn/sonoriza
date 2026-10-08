@@ -87,9 +87,13 @@ exceeds its deadline (`SPOTIFY_READ_TIMEOUT_MS` / `GOOGLE_CALENDAR_READ_TIMEOUT_
 default 10 s) before any Spotify write ends the attempt as `FAILED`, and the slot
 is retried after `SCHEDULE_FAILED_RETRY_AFTER_MS` (default 5 min, i.e. the next
 dispatcher tick). Other generation failures end as `BLOCKED` and are not retried
-the same day. An attempt still `RUNNING` is only taken over after 30 minutes (or
-right after a PM2 restart when no real Spotify write could be in flight), since
-Spotify writes are not deadline-bounded yet.
+the same day. An attempt still `RUNNING` is only taken over after 30 minutes,
+since Spotify writes are not deadline-bounded yet. After a PM2 restart (for
+example `max_memory_restart`), the next dispatcher tick takes over immediately
+when the dead run's persisted checkpoints show it never reached
+`PROVIDER_WRITE_START`; otherwise the 30 minute window still applies. Each
+checkpoint also records process memory (`rssMb`, `heapUsedMb`, ...) to locate
+the stage that pushes the run past the PM2 memory limit (#442).
 
 `KEEP_FILLED` reads the current target under a stable Spotify snapshot, preserves
 valid content, fills only the deficit and prefers append/remove mutations. It
