@@ -42,6 +42,30 @@ export function providerReadTimeoutMs(
   return DEFAULT_PROVIDER_READ_TIMEOUT_MS;
 }
 
+export const DEFAULT_SPOTIFY_WRITE_TIMEOUT_MS = 30_000;
+
+/**
+ * #435 Gate 3H: deadline for Spotify playlist mutations. Longer than reads
+ * because a write must never be cut short while healthy, but bounded so a
+ * hung write can no longer hold a scheduled attempt for the 30 min stale
+ * window. A timed-out write has an UNKNOWN outcome; callers must re-read the
+ * live playlist before acting again.
+ */
+export function spotifyWriteTimeoutMs(
+  raw = process.env.SPOTIFY_WRITE_TIMEOUT_MS,
+): number {
+  if (!raw) return DEFAULT_SPOTIFY_WRITE_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (
+    Number.isInteger(parsed) &&
+    parsed > 0 &&
+    parsed <= MAX_PROVIDER_READ_TIMEOUT_MS
+  ) {
+    return parsed;
+  }
+  return DEFAULT_SPOTIFY_WRITE_TIMEOUT_MS;
+}
+
 export async function withProviderReadDeadline<T>(
   input: {
     provider: ProviderReadName;

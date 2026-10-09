@@ -1,5 +1,6 @@
 import {
   ProviderReadTimeoutError,
+  spotifyWriteTimeoutMs,
   withProviderReadDeadline,
 } from "@/services/provider-read-deadline";
 
@@ -41,7 +42,36 @@ export async function spotifyRequestAttempt<T>(input: {
   };
 
   if (input.method !== "GET") {
-    return execute(input.init?.signal ?? undefined);
+    // #435 Gate 3H: writes are bounded too, but a timed-out write is NOT
+    // retryable here: Spotify may still apply it. It surfaces as WRITE_TIMEOUT
+    // (outcome unknown) so the caller re-reads the live playlist first.
+    const timeoutMs = spotifyWriteTimeoutMs();
+    try {
+      return await withProviderReadDeadline(
+        {
+          provider: "spotify",
+          operation: input.operation,
+          timeoutMs,
+          signal: input.init?.signal,
+        },
+        execute,
+      );
+    } catch (error) {
+      if (error instanceof ProviderReadTimeoutError) {
+        throw new SpotifyApiError({
+          kind: "WRITE_TIMEOUT",
+          status: 0,
+          method: input.method,
+          operation: input.operation,
+          reason: "WRITE_TIMEOUT",
+          retryable: false,
+          message:
+            `Spotify API ${input.method} ${input.operation} timed out after ` +
+            `${timeoutMs}ms; the write outcome is unknown`,
+        });
+      }
+      throw error;
+    }
   }
 
   try {

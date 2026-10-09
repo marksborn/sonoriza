@@ -433,3 +433,69 @@ integrationTest(
 );
 
 // Planner/unit tests continue below unchanged in this file.
+
+integrationTest(
+  "#435 Gate 3H a hung Spotify write times out as ambiguous and keeps the slot retryable",
+  { concurrency: false },
+  async (t) => {
+    const user = await createFixture();
+    t.after(async () => {
+      await prisma.user.delete({ where: { id: user.id } });
+    });
+
+    const originalFetch = globalThis.fetch;
+    const originalTimeout = process.env.SPOTIFY_WRITE_TIMEOUT_MS;
+    process.env.SPOTIFY_WRITE_TIMEOUT_MS = "50";
+    const keepAlive = setInterval(() => {}, 1_000);
+    t.after(() => clearInterval(keepAlive));
+    let writes = 0;
+
+    globalThis.fetch = (async (_input, init) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method !== "GET") {
+        writes += 1;
+        const signal = init?.signal;
+        assert.ok(signal, "Spotify writes must carry a deadline signal");
+        return await new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(signal.reason ?? new Error("aborted")),
+            { once: true },
+          );
+        });
+      }
+      return jsonResponse({
+        snapshot_id: "snapshot-before",
+        items: [episode("spotify:episode:hung-write", "show-hung-write")],
+        next: null,
+      });
+    }) as typeof fetch;
+
+    try {
+      const result = await generatePlaylists({
+        userId: user.id,
+        trigger: "MANUAL",
+        simulate: false,
+      });
+
+      assert.equal(writes, 1, "the ambiguous write must not be retried in-process");
+      assert.notEqual(result.status, "SUCCESS");
+
+      const run = await readRun(result.runId);
+      const summary = summaryObject(run.summary) as unknown as {
+        targets: Array<Record<string, unknown>>;
+      };
+      const target = summary.targets[0];
+      assert.equal(target?.ambiguousWriteTimeout, true);
+      assert.equal(target?.writeOutcome, "UNKNOWN_TIMEOUT");
+      assert.match(String(target?.error ?? ""), /write outcome is unknown/);
+
+      const { scheduleStatus } = await import("./schedule-retry-policy");
+      assert.equal(scheduleStatus(result.status, target ?? null, run.summary), "FAILED");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalTimeout === undefined) delete process.env.SPOTIFY_WRITE_TIMEOUT_MS;
+      else process.env.SPOTIFY_WRITE_TIMEOUT_MS = originalTimeout;
+    }
+  },
+);
