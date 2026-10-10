@@ -87,6 +87,7 @@ type TargetPlaylistFormProps = {
   calendarOptions: CalendarOption[];
   sourceOptions: TargetSourceOption[];
   globalSharingPolicy: "EXCLUSIVE" | "SHAREABLE";
+  durationBandEditingEnabled: boolean;
   saveAction: (formData: FormData) => void | Promise<void>;
   submitLabel: string;
 };
@@ -125,6 +126,7 @@ export function TargetPlaylistForm({
   calendarOptions,
   sourceOptions,
   globalSharingPolicy,
+  durationBandEditingEnabled,
   saveAction,
   submitLabel,
 }: TargetPlaylistFormProps) {
@@ -1130,12 +1132,18 @@ export function TargetPlaylistForm({
               <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
                 O padrão abaixo se repete até atingir a duração desejada. Use os controles para reorganizar.
                 A faixa de cada podcast viaja com ele ao mover ou remover um passo. A seleção por faixa
-                será ativada somente em um piloto posterior; salvar agora não altera a geração real.
+                ainda não altera a geração real. O piloto só será ativado depois de validarmos o planner.
               </p>
             </div>
             <span className="text-xs font-bold text-muted-inverse/60">{sequence.length}/20 passos</span>
           </div>
 
+          {!durationBandEditingEnabled && (
+            <p className="mt-3 rounded-xl border border-line-dark/55 bg-surface-dark px-3 py-2 text-xs leading-5 text-muted-inverse">
+              Faixas específicas em preparação. A edição permanece bloqueada até a ativação controlada;
+              por enquanto, novos podcasts usam Qualquer duração.
+            </p>
+          )}
           <div className="mt-4 flex flex-wrap gap-2">
             {sequenceSlots.map(({ type, band }, index) => (
               <div
@@ -1152,6 +1160,7 @@ export function TargetPlaylistForm({
                     <span className="sr-only">Duração do podcast no passo {index + 1}</span>
                     <select
                       value={band}
+                      disabled={!durationBandEditingEnabled}
                       onChange={(event) => changeDurationBand(index, event.target.value as PodcastDurationBand)}
                       aria-label={`Duração do podcast no passo ${index + 1}`}
                       className="rounded-lg border border-line-dark/70 bg-surface-dark px-2 py-1.5 text-xs text-ink-inverse"
