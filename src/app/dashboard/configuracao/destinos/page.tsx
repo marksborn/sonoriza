@@ -405,17 +405,22 @@ async function saveTarget(formData: FormData) {
   // product owner explicitly permits a pilot. Do not allow a stale/malicious
   // client to opt in while productive selection still uses the legacy planner.
   if (process.env.PODCAST08_DURATION_EDITOR_ENABLED !== "1") {
-    const persisted = existingTarget?.podcastDurationSlotBands === null ||
-      existingTarget?.podcastDurationSlotBands === undefined
-      ? sequencePattern!.map(() => "ANY")
-      : parsePersistedPodcastDurationSlots(
+    const persisted = existingTarget
+      ? parsePersistedPodcastDurationSlots(
           existingTarget.sequencePattern,
           existingTarget.podcastDurationSlotBands,
-        );
-    if (
-      !persisted ||
-      podcastDurationSlotBands.some((band, index) => band !== persisted[index])
-    ) {
+        )
+      : [];
+    if (persisted === null) fail("podcast-bands");
+    const hadSpecific = persisted.some((band) => band !== "ANY");
+    if (hadSpecific) {
+      // Frozen pilot settings may only survive an unrelated legacy edit;
+      // changing their slot index is not allowed with the feature OFF.
+      if (
+        JSON.stringify(sequencePattern) !== JSON.stringify(existingTarget?.sequencePattern) ||
+        JSON.stringify(podcastDurationSlotBands) !== JSON.stringify(persisted)
+      ) fail("podcast-bands-disabled");
+    } else if (podcastDurationSlotBands.some((band) => band !== "ANY")) {
       fail("podcast-bands-disabled");
     }
   }
