@@ -43,9 +43,11 @@ export type Podcast08ShadowEvidence = Readonly<{
  * are NOT raw provider catalog data. A single invocation models ONE budget or
  * PER_EVENT planning block, not inter-target reservations or a full event day.
  *
- * Deliberately abstains for strict show ordering: a band must not skip over an
- * earlier strict episode to select a later episode from that show. Full
- * stateful/show protections belong in Gate 5, not in this preview.
+ * #451: strict ordered shows are only considered when the already-filtered
+ * canonical pool has stable program identity and order; projectPodcastDurationPlan
+ * prevents a band from skipping any earlier unselected episode in that show.
+ * A stateful cursor or mixed/unidentified strict source still abstains.
+ * Full productive stateful policy remains outside this SHADOW-only feature.
  *
  * No provider or database access, and the actual PlanResult is never mutated.
  */
@@ -92,11 +94,23 @@ export function comparePodcastDurationShadow(
   if (plannerInput.rules.compositionMode !== "SEQUENCE") {
     return abstain("ABSTAIN_UNSUPPORTED_COMPOSITION", "PROPORTION_MODE");
   }
-  if (
-    [...plannerInput.pools.podcasts, ...(plannerInput.preserved ?? [])]
-      .some((item) => item.type === "PODCAST" && item.podcastStrictSequence === true)
-  ) {
-    return abstain("ABSTAIN_STRICT_SEQUENCE", "PODCAST_STRICT_SEQUENCE_REQUIRES_STATEFUL_PROJECTION");
+  const podcastCandidates = [
+    ...plannerInput.pools.podcasts, ...(plannerInput.preserved ?? []),
+  ].filter((item) => item.type === "PODCAST");
+  if (podcastCandidates.some((item) => item.podcastSequenceStateful === true)) {
+    return abstain("ABSTAIN_STRICT_SEQUENCE", "PODCAST_STATEFUL_PROGRESS_REQUIRES_PROOF");
+  }
+  const strictProgramIds = new Set(
+    podcastCandidates.filter((item) => item.podcastStrictSequence === true)
+      .map((item) => item.programId?.trim() ?? ""),
+  );
+  if (strictProgramIds.has("")) {
+    return abstain("ABSTAIN_STRICT_SEQUENCE", "PODCAST_STRICT_PROGRAM_ID_MISSING");
+  }
+  if (podcastCandidates.some((item) =>
+    item.programId && strictProgramIds.has(item.programId.trim()) &&
+    item.podcastStrictSequence !== true)) {
+    return abstain("ABSTAIN_STRICT_SEQUENCE", "PODCAST_MIXED_STRICT_SHOW_CONTEXT");
   }
 
   let projection: ReturnType<typeof projectPodcastDurationPlan>;
