@@ -47,3 +47,20 @@ O workflow `PODCAST-08 duration bands validation` executa testes dedicados de 17
 - Não executar migrations, Spotify writes, gerações manuais/simuladas ou testes com dados produtivos por este gate.
 - PR, aprovação de merge, deploy e ativação do comportamento por target continuam separados.
 - A issue #365 somente poderá ser fechada quando os gates operacionais e critérios de aceite completos estiverem comprovados.
+
+
+## Gate 3 — persistência aditiva e fingerprint sem efeito para usuários legados
+
+Implementação no mesmo branch/PR #447, **não mergeada nem aplicada em produção**.
+
+- `prisma/schema.prisma`: novo `PodcastDurationBandSettings` 1:1 com usuário (`shortMaxMinutes=30`, `mediumMaxMinutes=60`); `TargetPlaylist.podcastDurationSlotBands Json?` como **sidecar** da sequência atual, sem alterar `sequencePattern` existente.
+- `prisma/migrations/20261010013000_podcast08_duration_band_settings/migration.sql`: migração aditiva `ADD COLUMN`, `CREATE TABLE`, FK CASCADE e constraint SQL `1 <= short < medium <= 1440`; **sem backfill e sem reescrever arrays legados**.
+- `src/services/playlist-planner/podcast-duration-persistence.ts`: parser fail-closed para sidecars 1:1, `MUSIC` sempre `ANY`, ausência de sidecar => `ANY` para todos os slots; fingerprint decorator canônico é **exatamente neutro** quando nenhum slot de podcast exige banda específica. Mudanças efetivas de bandas ou divisores alteram o fingerprint; ordenação de targets não altera o hash.
+- `src/services/configuration-readiness.ts`: assessment lê somente os novos campos e a configuração de limites; metadados inconsistentes geram issues de configuração e bloqueiam a geração real via CONFIG-04. Fingerprint antigo é preservado quando as bandas são todas `ANY` ou metadata é nula.
+- Testes: `podcast-duration-persistence.test.ts` prova neutralidade e detecção de inconsistências; `podcast-duration-persistence.integration.test.ts` usa **Postgres efêmero no CI** para verificar criação dos limites e gravação do sidecar sem modificar a sequência legada. O CI também executa testes CONFIG-04, planner, TypeScript e build.
+
+### Restrições de Gate 3
+- Novos campos de banco e leitura do fingerprint **não significam ativação**: nenhum editor escreve o sidecar neste gate e o planner continua usando apenas `ContentType[]`. Ainda não há UI para alterar os divisores.
+- Não aplicar esta migração isoladamente antes do merge aprovado. O binário Next/Prisma que lê esses campos exige a migração aplicada **antes do restart/deploy**.
+- **Gate 4/5/6 ainda pendentes:** captura e comparação shadow sem mutações, decisão de fallback, runtime e UI com gravação **atômica e validada** do par `sequencePattern`/`podcastDurationSlotBands`. O formulário atual não conhece esse sidecar; para permitir edição de slots com bandas, precisará gravar ambos num único fluxo e prevenir desalinhamento de índices.
+- A sequência antiga com `ANY` não muda os planos. A paridade de ORDER_HASH produtivo continua uma obrigação dos próximos gates; não declarar que este PR implementou seleção por faixa.
