@@ -5,7 +5,6 @@ export { parsePersistedPodcastDurationSlots, type PersistedPodcastDurationSlots 
 import {
   DEFAULT_PODCAST_DURATION_BAND_LIMITS,
   parsePodcastDurationBandLimits,
-  type PodcastDurationBand,
   type PodcastDurationBandLimits,
 } from "./podcast-duration-bands";
 
