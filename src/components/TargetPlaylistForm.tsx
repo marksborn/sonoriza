@@ -3,6 +3,16 @@
 import { useEffect, useState } from "react";
 
 import { UiIcon } from "@/components/UiIcon";
+import type { PodcastDurationBand } from "@/services/playlist-planner/podcast-duration-bands";
+import {
+  appendPodcastDurationEditorSlot,
+  hydratePodcastDurationEditorSlots,
+  movePodcastDurationEditorSlot,
+  removePodcastDurationEditorSlot,
+  serializePodcastDurationEditorSlots,
+  setPodcastDurationEditorBand,
+  type PodcastDurationEditorSlot,
+} from "@/services/playlist-planner/podcast-duration-sequence-editor";
 
 type ContentType = "MUSIC" | "PODCAST";
 type CompositionMode = "PROPORTION" | "SEQUENCE";
@@ -58,6 +68,7 @@ export type TargetPlaylistFormInitial = {
   podcastEpisodeMaxDurationMode: PodcastEpisodeMaxDurationMode;
   podcastEpisodeMaxDurationMinutes: number;
   sequencePattern: ContentType[];
+  podcastDurationSlotBands: PodcastDurationBand[];
   maxEpisodesPerProgram: number;
   maxTracksPerArtist: number | null;
   maxTracksPerAlbum: number | null;
@@ -149,9 +160,14 @@ export function TargetPlaylistForm({
   const [podcastPercent, setPodcastPercent] = useState(initial.podcastPercent);
   const [podcastEpisodeMaxDurationMode, setPodcastEpisodeMaxDurationMode] =
     useState<PodcastEpisodeMaxDurationMode>(initial.podcastEpisodeMaxDurationMode);
-  const [sequence, setSequence] = useState<ContentType[]>(
-    initial.sequencePattern.length > 0 ? initial.sequencePattern : DEFAULT_SEQUENCE,
+  const [sequenceSlots, setSequenceSlots] = useState<PodcastDurationEditorSlot[]>(
+    () => hydratePodcastDurationEditorSlots(
+      initial.sequencePattern.length > 0 ? initial.sequencePattern : DEFAULT_SEQUENCE,
+      initial.podcastDurationSlotBands,
+    ) ?? DEFAULT_SEQUENCE.map((type) => ({ type, band: "ANY" })),
   );
+  const sequence = sequenceSlots.map((slot) => slot.type);
+  const serializedSequence = serializePodcastDurationEditorSlots(sequenceSlots);
 
   const musicPercent = 100 - podcastPercent;
   const idPrefix = initial.id ?? "new-target";
@@ -163,32 +179,26 @@ export function TargetPlaylistForm({
   }, [scheduleTimezone, updatePolicy]);
 
   function moveSequence(index: number, direction: -1 | 1) {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= sequence.length) return;
-
-    setSequence((current) => {
-      const next = [...current];
-      const currentValue = next[index]!;
-      next[index] = next[nextIndex]!;
-      next[nextIndex] = currentValue;
-      return next;
-    });
+    setSequenceSlots((current) => movePodcastDurationEditorSlot(current, index, direction));
   }
 
   function removeSequence(index: number) {
-    if (sequence.length <= 1) return;
-    setSequence((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    setSequenceSlots((current) => removePodcastDurationEditorSlot(current, index));
   }
 
   function addSequence(type: ContentType) {
-    if (sequence.length >= 20) return;
-    setSequence((current) => [...current, type]);
+    setSequenceSlots((current) => appendPodcastDurationEditorSlot(current, type));
+  }
+
+  function changeDurationBand(index: number, band: PodcastDurationBand) {
+    setSequenceSlots((current) => setPodcastDurationEditorBand(current, index, band));
   }
 
   return (
     <form action={saveAction} className="space-y-6">
       {initial.id && <input type="hidden" name="id" value={initial.id} />}
-      <input type="hidden" name="sequencePattern" value={JSON.stringify(sequence)} />
+      <input type="hidden" name="sequencePattern" value={serializedSequence.sequencePattern} />
+      <input type="hidden" name="podcastDurationSlotBands" value={serializedSequence.podcastDurationSlotBands} />
       <input type="hidden" name="podcastPercent" value={podcastPercent} />
 
       <div className="grid gap-5 md:grid-cols-2">
@@ -1119,13 +1129,15 @@ export function TargetPlaylistForm({
               <p className="text-sm font-black text-ink-inverse">Ordem Música / Podcast</p>
               <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
                 O padrão abaixo se repete até atingir a duração desejada. Use os controles para reorganizar.
+                A faixa de cada podcast viaja com ele ao mover ou remover um passo. A seleção por faixa
+                será ativada somente em um piloto posterior; salvar agora não altera a geração real.
               </p>
             </div>
             <span className="text-xs font-bold text-muted-inverse/60">{sequence.length}/20 passos</span>
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {sequence.map((type, index) => (
+            {sequenceSlots.map(({ type, band }, index) => (
               <div
                 key={`${type}-${index}`}
                 className={`flex items-center gap-1 rounded-xl border px-2 py-1.5 ${
@@ -1135,6 +1147,22 @@ export function TargetPlaylistForm({
                 }`}
               >
                 <span className="px-1 text-xs font-black">{contentLabel(type)}</span>
+                {type === "PODCAST" && (
+                  <label className="flex items-center gap-1 text-xs font-bold">
+                    <span className="sr-only">Duração do podcast no passo {index + 1}</span>
+                    <select
+                      value={band}
+                      onChange={(event) => changeDurationBand(index, event.target.value as PodcastDurationBand)}
+                      aria-label={`Duração do podcast no passo ${index + 1}`}
+                      className="rounded-lg border border-line-dark/70 bg-surface-dark px-2 py-1.5 text-xs text-ink-inverse"
+                    >
+                      <option value="ANY">Qualquer duração</option>
+                      <option value="SHORT">Curto</option>
+                      <option value="MEDIUM">Médio</option>
+                      <option value="LONG">Longo</option>
+                    </select>
+                  </label>
+                )}
                 <button
                   type="button"
                   aria-label={`Mover ${contentLabel(type)} para a esquerda`}
