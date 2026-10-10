@@ -179,3 +179,30 @@ Implementado no PR #447 sem habilitar escrita por faixas, sem migration adiciona
 5. Abrir mudança separada para futura integração produtiva de Gate 7B **somente se aprovada**, incluindo prewrite proof atual, commit/snapshot invariants, writer ownership/fencing, observabilidade e rollback. **Não substituir guardas existentes nem habilitar flags na VPS com este PR.**
 
 A issue #365 permanece aberta. `REVIEW_CANDIDATE` **não é** `DEPLOY_READY` nem autorização de Spotify writes.
+
+
+## Gate 7A — pré-publicação, evidência e rollback (somente preparação)
+
+**Estado:** PR Draft #447; não ativado, não mergeado, não implantado. Este gate NÃO concede permissão para publicar playlists.
+
+### Proteções executáveis
+- `podcast-duration-pilot-prewrite.ts` oferece `evaluatePodcast08PilotPrewriteProof()`, função **pura/read-only**. Ela retorna `READY_FOR_REVIEW` somente quando todos os campos de evidência forem preenchidos e consistentes, sempre com `canWriteSpotify:false`. Não foi acoplada ao writer; não consulta banco, não lê Spotify, não modifica playlists e não substitui prewrite real.
+- O checklist exige: escopo de **um único destino** com ID explícito, sequência não segmentada e não estrita/stateful; simulação `SUCCESS` com aplicação das faixas, qualidade aprovada e no máximo **30 minutos**; fingerprint atual e `finalOrderHash` iguais aos da simulação; snapshot Spotify inalterado entre planejamento e prewrite; backup da playlist do mesmo destino/snapshot contendo **artefato identificável da ordem completa dos URIs**, hash, contagem e data de captura no máximo **10 minutos** anterior; fonte/cadência, reservas, estado de escuta e fence do run revalidados.
+- Os hashes e snapshots no checklist são **evidências recebidas**; a função pura não atesta que a operação de leitura ocorreu. A produção futura deverá ligar cada sinal aos componentes canônicos existentes, revalidar e bloquear qualquer divergência.
+- O Gate 5 ainda usa `productiveWritesApproved:false` no resolvedor, sem mudança. Adicionalmente, `mustBlockPodcast08RequestedRealWrite()` é invocado **antes da coleta de fontes**: qualquer execução real que solicite `PODCAST08_ACTIVE_MODE=ACTIVE` com ID allowlisted dentro dos destinos da rodada termina `FAILED / BLOCKED_REAL_WRITE_NOT_APPROVED`, sem chamadas Spotify de leitura ou escrita naquele caminho. O comportamento antigo permanece inalterado quando modo/allowlist estão OFF.
+- Testes `podcast-duration-pilot-prewrite.test.ts`: verificam todos os recusas de escopo, simulação velha/ausente, configurações, hash de ordem, snapshot, backup, guardas operacionais e garantia `canWriteSpotify:false`; confirmam o bloqueio de uma escrita real solicitando ACTIVE **antes** dos pontos de leitura de fontes/writer no código.
+
+### Runbook proposto para Gate 7B (não autorizado neste PR)
+1. **Antes de habilitar qualquer flag:** homologar migration em banco separado, realizar backup consistente do banco e testar restauração. Manter todos os jobs agendados e outras integrações sem alteração. Obter aprovação explícita do operador para merge, migração, deploy e qualquer teste com dados reais.
+2. **Escolher apenas um destino piloto**, preferencialmente Trabalho se continuar elegível, e determinar seu ID real. Usar somente SEQUENCE com duração fixa/bloco único; sem sequência estrita/stateful; sem reutilizar itens reservados de outros destinos. Confirmar o modo de produção dos demais destinos.
+3. **Capturar a playlist real** antes da mudança: Spotify playlist ID, snapshot ID, lista completa e ordenada de URIs (incluindo repetições e posições), fingerprint/hash da ordem e timestamp. Guardar em armazenamento privado e verificável com acesso restrito. Um snapshot ID isolado **não é backup** nem garante restauração.
+4. **Homologar simulação ativa separada**, com fluxo de coleta completo, validação de calendário, cadência, estado e regras de exclusividade. Não usar simulação experimental para aprovar CONFIG-04 produtivo; a implementação atual marca `qualityPassed=false` para que isso não aconteça.
+5. **Prova pré-write futura:** repetir as consultas canônicas que comprovam fingerprint, ordem, snapshot, episódios e reservas imediatamente antes do provider mutation, com fence de `GenerationRun` e vedação de jobs concorrentes. Se um único sinal divergir, cancelar sem Spotify writes.
+6. **Ativação futura distinta:** exigir PR separado e aprovado para ligar a autorização de escrita real, com limites de no máximo um destino, janela controlada, observabilidade, guarda de memória e métricas de fallback. É proibido mudar `productiveWritesApproved` para `true` só por variável de ambiente ou configuração salva.
+7. **Critérios de rollback:** erro de fonte, playback, quota, snapshots, mudança na ordem não prevista, falha de qualidade, aumento de memória ou qualquer escrita parcial → **parar o piloto**, desabilitar o gate, bloquear novas gerações, inspecionar o novo snapshot, e restaurar a lista original de URIs pela interface/rotina oficial de escrita Spotify com aprovação operacional. Verificar hash e posições após a restauração; se snapshot/edições concorrentes mudaram, **não sobrescrever automaticamente**, conciliar antes. Não confundir restaurar lista com recuperar histórico de reprodução do usuário.
+8. **Encerramento:** registrar run IDs, hashes de plano, snapshot antes/depois, URIs (somente em backup restrito), decisões dos gates, uso de memória, outcomes de playlist e decisão manual de continuar/parar. Fechar #365 somente após evidências end-to-end, não após o merge do Gate 7A.
+
+### Critérios negativos absolutos
+- Sem habilitar `PODCAST08_ACTIVE_MODE` e `PODCAST08_DURATION_EDITOR_ENABLED` na VPS.
+- Sem executar migrations produtivas, escrever no Spotify, alterar PM2 ou adicionar cron durante este gate.
+- Nenhum ambiente/flag sozinho remove `canWriteSpotify:false`; o Guard 7A é preparatório e o piloto real requer revisão adicional.
