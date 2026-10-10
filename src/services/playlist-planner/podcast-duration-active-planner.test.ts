@@ -61,13 +61,13 @@ test("#365 Gate 5: ACTIVE chooses SHORT first and LONG second with same canonica
 test("#365 Gate 5: fallback remains subject to duration fit and show cap", () => {
   const input=buildInput(true);
   input.targets[0]!.rules={
-    ...rules,targetDurationMs:35*min,
+    ...rules,targetDurationMs:60*min,
   };
   input.pools.podcasts=[
     episode("long",70,"long"),
     episode("short",20,"show-A"),
     episode("another-short",15,"show-A"),
-    episode("medium",30,"show-B"),
+    episode("medium",35,"show-B"),
   ];
   const out=planRun(input);
   assert.deepEqual(out.targets[0]?.result.items.map((item)=>item.uri),["short","medium"]);
