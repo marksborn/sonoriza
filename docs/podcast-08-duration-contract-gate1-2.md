@@ -64,3 +64,22 @@ Implementação no mesmo branch/PR #447, **não mergeada nem aplicada em produç
 - Não aplicar esta migração isoladamente antes do merge aprovado. O binário Next/Prisma que lê esses campos exige a migração aplicada **antes do restart/deploy**.
 - **Gate 4/5/6 ainda pendentes:** captura e comparação shadow sem mutações, decisão de fallback, runtime e UI com gravação **atômica e validada** do par `sequencePattern`/`podcastDurationSlotBands`. O formulário atual não conhece esse sidecar; para permitir edição de slots com bandas, precisará gravar ambos num único fluxo e prevenir desalinhamento de índices.
 - A sequência antiga com `ANY` não muda os planos. A paridade de ORDER_HASH produtivo continua uma obrigação dos próximos gates; não declarar que este PR implementou seleção por faixa.
+
+
+## Gate 4 — counterfactual *shadow* em memória (sem integração produtiva)
+
+Arquivos:
+- `src/services/playlist-planner/planner.ts`: a função produtiva `planPlaylist()` mantém o caminho anterior sem opções novas. `projectPodcastDurationPlan()` é um **entrypoint separado e explícito** para planejamento hipotético, usando a mesma função `pickCandidate`, mesmos guardas de URI, duração/cabimento e limite por programa. Bandas são aplicadas somente nesse entrypoint, com fallback determinístico por slot.
+- `src/services/playlist-planner/podcast-duration-shadow.ts`: `comparePodcastDurationShadow()` executa no máximo dois planejamentos **puramente em memória** a partir do mesmo `PlanPlaylistInput` já autorizado/filtrado, preserva o resultado `actual` e registra ordem hipotética, número de posições alteradas, requested/selected, fallback e motivos. Não toca APIs de Spotify/Google, banco nem arquivos.
+- `src/services/playlist-planner/podcast-duration-shadow.test.ts`: regressão de **14 cenários**: paridade ANY, seleção SHORT/LONG, fallback, ordem, show cap, limite de destino, fit CALENDAR-03, duração restante IN_PROGRESS, prefixo preserved, strict sequence abstention, proporção abstention e continuidade de índice CALENDAR-02.
+
+### Semântica e limites da evidência
+
+- `READY_SHADOW` **não é** um plano produtivo aprovado, nem prova de playlist inteira. O escopo é **um único bloco de planejamento com candidatos já elegíveis**, sem atribuição de reservas entre destinos, paginação adicional, ou remanejamento de blocos de calendário.
+- Os pools **devem** ter passado por política de show, source scope, cadência, estado, replay, disponibilidade e compartilhamento **antes** da comparação. O simulador não reconstitui essas políticas a partir de um catálogo Spotify bruto.
+- Para shows com `podcastStrictSequence`, a projeção **abstém** `ABSTAIN_STRICT_SEQUENCE` em vez de apresentar um resultado possivelmente enganoso ao saltar episódios canônicos.
+- `ABSTAIN_UNSUPPORTED_COMPOSITION` em `PROPORTION`. `ABSTAIN_INVALID_CONFIGURATION` em bandas/limites inconsistentes. A geração produtiva **nunca recebe** `projectPodcastDurationPlan` neste gate.
+- `actualSelectionUnchanged=true`, `plannerInfluence=false`, `spotifyWrites=false`, `databaseReads=false`, `providerReads=false`: atributos estruturais do **módulo puro**, não uma afirmação de que outra parte da aplicação deixou de usar o banco.
+- Ainda falta a **ligação ao pipeline de simulação real** com contexto completo de fontes, identidade, estado, compartilhamento e segmentos. Não habilitar uma tela de preview nem prometer comparativo por destino antes desse gate de integração. Caso o contexto completo não esteja disponível, abstain ao invés de publicar sugestões imprecisas.
+
+**Gate de aprovação:** CI verde no código de projeção isolada; depois conectar `SHADOW` no pipeline usando snapshots elegíveis reais, com comparação de `ORDER_HASH` e prova de que os planos produtivos/simulações anteriores não foram alterados. Só o Gate 5 poderá estudar influência real do filtro nos itens selecionados, sob nova aprovação.
