@@ -41,6 +41,8 @@ export type Podcast08PilotPrewriteInput = Readonly<{
     playlistId: string;
     snapshotId: string;
     orderedUrisCount: number;
+    orderedUrisHash: string;
+    backupArtifactRef: string;
     capturedAtMs: number;
   }> | null;
   destinationPlaylistId: string;
@@ -131,6 +133,8 @@ export function evaluatePodcast08PilotPrewriteProof(
     backup.snapshotId !== input.snapshotAtPrewrite ||
     !Number.isSafeInteger(backup.orderedUrisCount) ||
     backup.orderedUrisCount < 0 ||
+    !backup.orderedUrisHash.trim() ||
+    !backup.backupArtifactRef.trim() ||
     !Number.isFinite(backup.capturedAtMs) ||
     backup.capturedAtMs > input.nowMs ||
     input.nowMs - backup.capturedAtMs > MAX_BACKUP_AGE_MS
