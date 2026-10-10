@@ -133,6 +133,6 @@ test("#365 integration: unavailable per-event context must abstain", () => {
 test("#365 integration: production scheduling is excluded by both simulation and opt-in gating", () => {
   const code = readFileSync("src/jobs/generate-playlists-incremental.ts","utf8");
   assert.match(code,
-    /const podcast08ShadowEnabled\s*=\s*simulate && process\.env\.PODCAST08_SHADOW_MODE === "SHADOW"/);
+    /const podcast08ShadowEnabled\s*=\s*simulate && \(process\.env\.PODCAST08_SHADOW_MODE === "SHADOW" \|\|/);
   assert.match(code, /const podcast08Contexts = new Map/);
 });

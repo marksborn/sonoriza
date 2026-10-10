@@ -13,6 +13,11 @@ import {
 } from "@/services/playlist-planner/podcast-duration-bands";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
 import { resolvePodcast08ActiveTargetPolicy } from "@/services/playlist-planner/podcast-duration-active-gate";
+import {
+  validatePodcast08EphemeralPreviewRequest,
+  validatePodcast08EphemeralPreviewTarget,
+  type Podcast08EphemeralPreview,
+} from "@/services/playlist-planner/podcast-duration-ephemeral-preview";
 import { podcast08UnapprovedRealPilotTargetIds } from "@/services/playlist-planner/podcast-duration-pilot-readiness";
 import { mustBlockPodcast08RequestedRealWrite } from "@/services/playlist-planner/podcast-duration-pilot-prewrite";
 import {
@@ -108,6 +113,8 @@ export interface GeneratePlaylistsOptions {
   musicOrderSimulationEvidence?: Record<string, ReusableMusicOrderEvidence>;
   /** SCHEDULE-01: optional subset; omitted keeps manual generation behavior unchanged. */
   targetPlaylistIds?: string[];
+  /** #449: one-shot, in-memory override, only for a scoped simulation. */
+  podcast08EphemeralPreview?: Podcast08EphemeralPreview;
   /** #435: invoked immediately after the GenerationRun exists, before long-running work. */
   onGenerationRunCreated?: (runId: string) => void | Promise<void>;
   /** #435 Gate 3C: scheduled callers fence every provider write to the owning attempt. */
@@ -300,6 +307,15 @@ export async function generatePlaylists(
         ]
       : null;
 
+  if (opts.podcast08EphemeralPreview) {
+    validatePodcast08EphemeralPreviewRequest({
+      simulate,
+      targetScope,
+      preview: opts.podcast08EphemeralPreview,
+      activeMode: process.env.PODCAST08_ACTIVE_MODE,
+    });
+  }
+
   const simulationDisabledTargetIds =
     resolveSimulationDisabledTargetIds({
       simulate,
@@ -410,6 +426,9 @@ export async function generatePlaylists(
       );
     }
     summary.resolvedTargetIds = targets.map((target) => target.id);
+    if (opts.podcast08EphemeralPreview && targets.length !== 1) {
+      throw new Error("PODCAST-08 preview requires exactly one enabled owned target.");
+    }
 
     // PODCAST-08 Gate 7: fail before any provider reads/writes when a real
     // generation requests ACTIVE or contains any configured non-ANY bands. Gate 5A does not yet
@@ -631,6 +650,32 @@ export async function generatePlaylists(
           `${resolution.effectiveSourceIds.length} effective source(s)`,
         data: resolution,
       });
+    }
+
+    if (opts.podcast08EphemeralPreview) {
+      const preview = opts.podcast08EphemeralPreview;
+      const runTarget = runTargets.find(target => target.targetPlaylistId === preview.targetPlaylistId);
+      const persistedTarget = targets.find(target => target.id === preview.targetPlaylistId);
+      if (!runTarget || !persistedTarget) {
+        throw new Error("PODCAST-08 preview target cannot be planned in the current calendar scope.");
+      }
+      validatePodcast08EphemeralPreviewTarget({
+        preview,
+        targetId: persistedTarget.id,
+        compositionMode: runTarget.rules.compositionMode,
+        sequencePattern: runTarget.rules.sequencePattern,
+        hasDurationBlocks: Boolean(runTarget.durationBlocks),
+        enabled: persistedTarget.enabled,
+      });
+      summary.podcast08EphemeralPreview = {
+        gate: "449",
+        mode: "EPHEMERAL_SHADOW_ONLY",
+        targetPlaylistId: preview.targetPlaylistId,
+        bands: [...preview.bands],
+        persisted: false,
+        spotifyWrites: false,
+        realRunApprovalEligible: false,
+      };
     }
 
     const activeTargetIds = new Set(
@@ -875,9 +920,15 @@ export async function generatePlaylists(
     // calculation happens ONCE after the final incremental plan is available;
     // ordinary runs (especially the 06:00 scheduled Carro run) pay no cost.
     const podcast08ShadowEnabled =
-      simulate && process.env.PODCAST08_SHADOW_MODE === "SHADOW";
+      simulate && (process.env.PODCAST08_SHADOW_MODE === "SHADOW" ||
+        Boolean(opts.podcast08EphemeralPreview));
     const podcast08BandsByTargetId = new Map<string, readonly PodcastDurationBand[]>();
-    if (podcast08ShadowEnabled) {
+    if (opts.podcast08EphemeralPreview) {
+      podcast08BandsByTargetId.set(
+        opts.podcast08EphemeralPreview.targetPlaylistId,
+        opts.podcast08EphemeralPreview.bands,
+      );
+    } else if (podcast08ShadowEnabled) {
       for (const target of targets) {
         if (target.compositionMode !== "SEQUENCE") continue;
         const bands = parsePersistedPodcastDurationSlots(
@@ -1098,9 +1149,16 @@ export async function generatePlaylists(
         podcast08Contexts.clear();
       }
     }
+    if (opts.podcast08EphemeralPreview) {
+      // This run must not be reused as productive CONFIG-04 approval evidence.
+      // It is diagnostic even if the legacy plan passed composition quality.
+      summary.podcast08SimulationOnly = true;
+      summary.podcast08PreviewNotForApproval = true;
+    }
     const qualityFailures = incremental.qualityFailures;
     summary.qualityPassed =
-      qualityFailures.length === 0 && !podcast08ExperimentalSelectionApplied;
+      qualityFailures.length === 0 && !podcast08ExperimentalSelectionApplied &&
+      !Boolean(opts.podcast08EphemeralPreview);
     if (podcast08ExperimentalSelectionApplied) {
       summary.podcast08SimulationOnly = true;
       log({
