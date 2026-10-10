@@ -146,3 +146,10 @@ Implementado no PR #447, ainda em Draft, sem merge nem deploy.
 - **NÃO habilitar variáveis de ambiente em produção.** A aprovação de simulação não aprova Spotify writes.
 - Antes de um rollout produtivo: provar fidelidade de simulação/manual/scheduler, snapshot do destino, composição e authority gates; adicionar revalidação prewrite de bands + limites + config fingerprint e allowlist ativo; monitorar fontes e picos de memória; rodar um único destino piloto e ter rollback.
 - A issue #365 permanece aberta. **A PR #447 não deve ser mergeada/deployada automaticamente** enquanto não passar CI e revisão operacional.
+
+## CI e isolamento de módulos cliente (Gate 6A/5A)
+- Primeira revisão de Gate 6A falhou no typecheck com `TS4104`: o formulário esperava `PodcastDurationBand[]`, mas o parser retorna `readonly PodcastDurationBand[]`. Correção: cópia explícita e mutável na prop inicial.
+- A execução intermediária seguinte revelou falha de Next.js Webpack `UnhandledSchemeError: node:crypto` porque o editor client-side importava `podcast-duration-persistence.ts` (que contém fingerprint SHA). Correção: extrair `podcast-duration-sequence-sidecar.ts` puro/browser-safe, manter reexport no módulo de persistência e importar somente o módulo puro no `podcast-duration-sequence-editor.ts`. O fingerprint continua somente no servidor.
+- O Gate 5A pode usar o algoritmo de seleção em simulações autorizadas, mas **nunca aprova a mesma simulação como prova CONFIG-04 para escrita produtiva legada**: `summary.qualityPassed` é intencionalmente `false` se um destino realmente recebeu seleção experimental; `summary.podcast08SimulationOnly=true` e `realRunApprovalEligible=false`. Assim, a operação real não herda autorização de uma comparação sem paridade.
+- A simulação ACTIVE é um experimento opt-in e **pode executar o seletor por rodada incremental**, ao contrário do Gate 4B read-only, que projeta só depois do plano final. Não ativar no horário do job pesado (#442) sem observabilidade e orçamento de memória.
+- Correções sujeitas a revalidação no CI do novo head; não declarar verde até verificar os checks GitHub Actions.
