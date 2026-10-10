@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -144,4 +145,15 @@ test("#365 Gate 7: no silent legacy Spotify write when an ACTIVE pilot target is
   assert.equal(mustBlockPodcast08RequestedRealWrite({
     ...baseGuard,targetAllowlist:"",
   }),false);
+});
+
+test("#365 Gate 7: a requested ACTIVE real run is rejected before any provider reads or Spotify writes", () => {
+  const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const guard = source.indexOf("if (mustBlockPodcast08RequestedRealWrite({");
+  const sourceRead = source.indexOf('await persistGenerationCheckpoint(run.id, "SOURCE_READ_START"');
+  const writer = source.indexOf("if (!simulate) writer = await SpotifyClient.forUser(userId)");
+  assert.ok(guard >= 0, "must include server-side real-write veto");
+  assert.ok(sourceRead > guard, "veto must be before Spotify source collection");
+  assert.ok(writer > guard, "veto must be before obtaining Spotify writer");
+  assert.match(source, /productiveWritesApproved: false/);
 });
