@@ -40,6 +40,7 @@ import {
 import { saveTargetDiscoveryPolicy } from "./discovery-actions";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
 import type { PodcastDurationBand } from "@/services/playlist-planner/podcast-duration-bands";
+import { maySavePodcastDurationBandsWhenEditorDisabled } from "@/services/playlist-planner/podcast-duration-sequence-editor";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
 const CREATE_NEW = "__NEW__";
@@ -404,26 +405,15 @@ async function saveTarget(formData: FormData) {
   // Gate 6 preparatory UI remains read-only for specific bands until the
   // product owner explicitly permits a pilot. Do not allow a stale/malicious
   // client to opt in while productive selection still uses the legacy planner.
-  if (process.env.PODCAST08_DURATION_EDITOR_ENABLED !== "1") {
-    const persisted = existingTarget
-      ? parsePersistedPodcastDurationSlots(
-          existingTarget.sequencePattern,
-          existingTarget.podcastDurationSlotBands,
-        )
-      : [];
-    if (persisted === null) fail("podcast-bands");
-    const hadSpecific = persisted.some((band) => band !== "ANY");
-    if (hadSpecific) {
-      // Frozen pilot settings may only survive an unrelated legacy edit;
-      // changing their slot index is not allowed with the feature OFF.
-      if (
-        JSON.stringify(sequencePattern) !== JSON.stringify(existingTarget?.sequencePattern) ||
-        JSON.stringify(podcastDurationSlotBands) !== JSON.stringify(persisted)
-      ) fail("podcast-bands-disabled");
-    } else if (podcastDurationSlotBands.some((band) => band !== "ANY")) {
-      fail("podcast-bands-disabled");
-    }
-  }
+  if (
+    process.env.PODCAST08_DURATION_EDITOR_ENABLED !== "1" &&
+    !maySavePodcastDurationBandsWhenEditorDisabled({
+      existingSequence: existingTarget?.sequencePattern ?? null,
+      existingBands: existingTarget?.podcastDurationSlotBands ?? null,
+      nextSequence: sequencePattern!,
+      nextBands: podcastDurationSlotBands,
+    })
+  ) fail("podcast-bands-disabled");
 
   let normalizedCalendarMode: "LEGACY_GLOBAL" | "SELECTED" | "ALL_QUERYABLE" =
     "LEGACY_GLOBAL";
