@@ -63,3 +63,29 @@ export function serializePodcastDurationEditorSlots(slots: readonly PodcastDurat
     podcastDurationSlotBands: JSON.stringify(slots.map(({ band }) => band)),
   };
 }
+
+/**
+ * Feature-gated write guard. With the editor OFF, legacy ANY sequences can
+ * still be edited freely. Existing pilot-specific bands can only be preserved
+ * unchanged (including position); malicious/stale clients cannot activate one.
+ */
+export function maySavePodcastDurationBandsWhenEditorDisabled(input: {
+  existingSequence: unknown | null;
+  existingBands: unknown;
+  nextSequence: readonly ContentType[];
+  nextBands: readonly PodcastDurationBand[];
+}): boolean {
+  const next = parsePersistedPodcastDurationSlots(input.nextSequence, input.nextBands);
+  if (!next) return false;
+  if (input.existingSequence === null) return next.every((band) => band === "ANY");
+  const existing = parsePersistedPodcastDurationSlots(
+    input.existingSequence, input.existingBands,
+  );
+  if (!existing) return false;
+  const active = existing.some((band) => band !== "ANY");
+  if (!active) return next.every((band) => band === "ANY");
+  return (
+    JSON.stringify(input.existingSequence) === JSON.stringify(input.nextSequence) &&
+    JSON.stringify(existing) === JSON.stringify(next)
+  );
+}
