@@ -103,3 +103,27 @@ Implementado em branch de PR #447, **ainda não implantado**.
 - Não existe nova política **produtiva** de fallback. Gate 5 pendente.
 - Não há tentativa de coletar páginas Spotify adicionais para satisfazer uma banda: a evidência avalia só candidatos já coletados pela seleção anterior.
 - Destinos PER_EVENT e podcasts com sequência estrita não são projetados no Gate 4B; retornam abstention.
+
+
+## Gate 6A — configuração preparatória da interface, SEM ativação produtiva
+
+Este gate foi adicionado ao PR Draft #447 em 10/10/2026. Embora tenha telas e ações de salvar, **não é um piloto ativado**.
+
+### Configuração global (usuário)
+- `/dashboard/configuracao/fontes/podcasts`: painel de limites globais Curto/Médio com apresentação de Longo como > Médio, preenchido por `PodcastDurationBandSettings` (fallback 30/60).
+- `saveGlobalDurationBands`: ação servidor autenticada, valida entradas numéricas inteiras e `short < medium <= 1440`, faz `upsert` por `userId` e revalida página/revisão. A alteração não muda a seleção de nenhum destino enquanto suas bandas permanecerem `ANY`.
+
+### Sequência por destino
+- `TargetPlaylistForm` mantém agora o estado como **array único de pares** `{type,band}`, e não dois arrays sincronizados. Reordenar/remover/adicionar movimenta o mesmo par; o servidor recebe `sequencePattern` e `podcastDurationSlotBands` da mesma serialização.
+- `saveTarget` continua uma **única transação** e grava ambos os campos na mesma instrução `update/create`. `parsePersistedPodcastDurationSlots` rejeita quantidades inconsistentes, MUSIC com banda específica e qualquer payload desconhecido; formulários antigos não podem apagar bandas persistidas.
+- UI mostra as quatro opções Qualquer/Curto/Médio/Longo por slot de Podcast e aviso explícito de que a seleção ainda não atua na produção.
+- **Trava dupla:** se `PODCAST08_DURATION_EDITOR_ENABLED !== "1"`, os selects estão desabilitados **e a ação servidor também proíbe** gravar bandas específicas novas ou mover a posição de bandas existentes. Ainda permite livremente editar sequências antigas `ANY`.
+- O modo `PODCAST08_SHADOW_MODE=SHADOW` é outro gate **independente** e por si só não ativa editor nem seleção produtiva. Não mudar variáveis de ambiente nem ativar em produção sem autorização.
+
+### Validação
+- `podcast-duration-sequence-editor.test.ts` verifica pares inseparáveis em reorder/remove/add, serialização consistente, limites 1–20 passos, hidratação legada e guarda de gravação inativa.
+- Workflow PODCAST-08 observa agora os arquivos da UI/formulários e executa os testes + typecheck + build.
+- Gate 5 de influência autoritativa e Gate 7 de piloto monitorado ainda estão **pendentes**. Não fechar #365 nem fazer merge/deploy por causa deste gate isolado.
+
+### Atenção para homologação
+Salvar limites globais e sequências neutras `ANY` é seguro; **não habilitar o editor para gravar bandas não-ANY** antes que a seleção do planner produtivo trate essas bandas corretamente e que o gate CONFIG-04 aprove uma nova simulação. O preview SHADOW 4B ainda abstém para PER_EVENT e sequência estrita. Testes de regressão são condição necessária, mas não substituem testes de UI reais (Android e desktop).
