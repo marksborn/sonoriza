@@ -55,7 +55,7 @@ export function comparePodcastDurationShadow(
   limits: PodcastDurationBandLimits = DEFAULT_PODCAST_DURATION_BAND_LIMITS,
 ): Readonly<{ actual: PlanResult; evidence: Podcast08ShadowEvidence }> {
   const actual = planPlaylist(plannerInput);
-  const prefix: Omit<Podcast08ShadowEvidence, "status" | "reason" | "projectedItemCount" | "projectedPodcastCount" | "projectedUris" | "differentPositions" | "fallbackCount" | "slots"> = {
+  const prefix: Omit<Podcast08ShadowEvidence, "status" | "reason" | "projectedItemCount" | "projectedPodcastCount" | "projectedUris" | "projectedOrderHash" | "differentPositions" | "fallbackCount" | "slots"> = {
     gate: 4,
     mode: "SHADOW",
     plannerInfluence: false,
