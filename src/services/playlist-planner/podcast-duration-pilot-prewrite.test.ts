@@ -18,7 +18,11 @@ const base: Podcast08PilotPrewriteInput = {
     runId: "sim-01",
     completedAtMs: now - 60_000,
     status: "SUCCESS",
-    qualityPassed: true,
+    qualityPassed: false,
+    qualityFailuresCount: 0,
+    collectionComplete: true,
+    simulationOnly: true,
+    realRunApprovalEligible: false,
     usedDurationBands: true,
     configurationFingerprint: "config-abc",
     finalOrderHash: "order-abc",
@@ -73,7 +77,15 @@ test("#365 Gate 7: segmented targets and stateful/strict shows are forbidden", (
 
 test("#365 Gate 7: a successful but quality-failed, legacy or absent simulation is not enough", () => {
   assert.equal(verify({approvedSimulation:null}).status,"ABSTAIN_NO_APPROVED_SIMULATION");
-  assert.equal(verify({approvedSimulation:{...base.approvedSimulation!,qualityPassed:false}}).status,
+  assert.equal(verify({approvedSimulation:{...base.approvedSimulation!,qualityPassed:true}}).status,
+    "ABSTAIN_NO_APPROVED_SIMULATION");
+  assert.equal(verify({approvedSimulation:{...base.approvedSimulation!,qualityFailuresCount:1}}).status,
+    "ABSTAIN_NO_APPROVED_SIMULATION");
+  assert.equal(verify({approvedSimulation:{...base.approvedSimulation!,collectionComplete:false}}).status,
+    "ABSTAIN_NO_APPROVED_SIMULATION");
+  assert.equal(verify({approvedSimulation:{...base.approvedSimulation!,simulationOnly:false}}).status,
+    "ABSTAIN_NO_APPROVED_SIMULATION");
+  assert.equal(verify({approvedSimulation:{...base.approvedSimulation!,realRunApprovalEligible:true}}).status,
     "ABSTAIN_NO_APPROVED_SIMULATION");
   assert.equal(verify({approvedSimulation:{...base.approvedSimulation!,usedDurationBands:false}}).status,
     "ABSTAIN_NO_APPROVED_SIMULATION");
