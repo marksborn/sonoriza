@@ -30,6 +30,8 @@ const base: Podcast08PilotPrewriteInput = {
     playlistId: "spotify-work",
     snapshotId: "snapshot-1",
     orderedUrisCount: 25,
+    orderedUrisHash: "sha256-of-ordered-uris",
+    backupArtifactRef: "secure-backup-id",
     capturedAtMs: now - 60_000,
   },
   destinationPlaylistId: "spotify-work",
@@ -106,6 +108,10 @@ test("#365 Gate 7: rollback backup is mandatory, fresh and bound to target snaps
   assert.equal(verify({rollbackBackup:{...base.rollbackBackup!,playlistId:"other"}}).status,
     "ABSTAIN_BACKUP_MISSING");
   assert.equal(verify({rollbackBackup:{...base.rollbackBackup!,orderedUrisCount:-1}}).status,
+    "ABSTAIN_BACKUP_MISSING");
+  assert.equal(verify({rollbackBackup:{...base.rollbackBackup!,orderedUrisHash:""}}).status,
+    "ABSTAIN_BACKUP_MISSING");
+  assert.equal(verify({rollbackBackup:{...base.rollbackBackup!,backupArtifactRef:""}}).status,
     "ABSTAIN_BACKUP_MISSING");
   assert.equal(verify({rollbackBackup:{
     ...base.rollbackBackup!,capturedAtMs:now-11*60_000,
