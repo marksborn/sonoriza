@@ -12,6 +12,7 @@ import {
   type PodcastDurationBand,
 } from "@/services/playlist-planner/podcast-duration-bands";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
+import { resolvePodcast08ActiveTargetPolicy } from "@/services/playlist-planner/podcast-duration-active-gate";
 import {
   evaluatePodcast08FinalSimulationShadow,
   type Podcast08CapturedContext,
@@ -759,6 +760,58 @@ export async function generatePlaylists(
       );
     }
 
+    // PODCAST-08 Gate 5: allowlisted, per-target ACTIVE selector is testable
+    // exclusively inside SIMULATION in this PR. Real Spotify writes remain
+    // hard-disabled regardless of any environment switch until Gate 7 reviews
+    // live prewrite configuration/fingerprint and authorizes the pilot.
+    const podcast08ActiveDecisions = new Map<string, {
+      targetPlaylistId: string;
+      status: "ACTIVE" | "ABSTAIN_UNSAFE_CONTEXT";
+      fallbackCount: number;
+    }>();
+    const podcast08ActiveConfig: Array<{
+      targetPlaylistId: string;
+      status: string;
+    }> = [];
+    if (process.env.PODCAST08_ACTIVE_MODE === "ACTIVE") {
+      const activeSettings = await prisma.podcastDurationBandSettings.findUnique({
+        where: { userId },
+        select: { shortMaxMinutes: true, mediumMaxMinutes: true },
+      });
+      const globalLimits = activeSettings ?? DEFAULT_PODCAST_DURATION_BAND_LIMITS;
+      const persistedById = new Map(targets.map((target) => [target.id, target]));
+      for (const runTarget of runTargets) {
+        const originalTarget = persistedById.get(runTarget.targetPlaylistId);
+        if (!originalTarget) continue;
+        const decision = resolvePodcast08ActiveTargetPolicy({
+          mode: process.env.PODCAST08_ACTIVE_MODE,
+          targetAllowlist: process.env.PODCAST08_ACTIVE_TARGET_IDS,
+          // Gate 5 cannot approve productive Spotify writes. Gate 7 must
+          // explicitly rework this flag with prewrite simulation proof.
+          productiveWritesApproved: false,
+          simulate,
+          targetId: runTarget.targetPlaylistId,
+          compositionMode: runTarget.rules.compositionMode,
+          sequencePattern: runTarget.rules.sequencePattern,
+          rawBands: originalTarget.podcastDurationSlotBands,
+          limits: globalLimits,
+          hasDurationBlocks: Boolean(runTarget.durationBlocks),
+        });
+        podcast08ActiveConfig.push({
+          targetPlaylistId: runTarget.targetPlaylistId,
+          status: decision.status,
+        });
+        if (decision.policy) runTarget.podcast08ActivePolicy = decision.policy;
+      }
+      summary.podcast08ActiveGate = {
+        gate: 5,
+        mode: "ACTIVE_REQUESTED",
+        simulate,
+        spotifyWritesEnabled: false,
+        targets: podcast08ActiveConfig,
+      };
+    }
+
     // PODCAST-08 Gate 4: opt-in, simulation-only context capture. Pure shadow
     // calculation happens ONCE after the final incremental plan is available;
     // ordinary runs (especially the 06:00 scheduled Carro run) pay no cost.
@@ -789,6 +842,17 @@ export async function generatePlaylists(
       preservedByTargetId: new Map(Object.entries(opts.preservedByTargetId ?? {})),
       blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
+      ...(podcast08ActiveConfig.length > 0
+        ? {
+            onPodcast08ActiveDecision: (entry: {
+              targetPlaylistId: string;
+              status: "ACTIVE" | "ABSTAIN_UNSAFE_CONTEXT";
+              fallbackCount: number;
+            }) => {
+              podcast08ActiveDecisions.set(entry.targetPlaylistId, entry);
+            },
+          }
+        : {}),
       ...(podcast08BandsByTargetId.size > 0
         ? {
             onPodcast08SingleBlockContext: (entry: {
@@ -912,6 +976,19 @@ export async function generatePlaylists(
     }
 
     let plan = incremental.plan;
+    if (podcast08ActiveConfig.length > 0) {
+      summary.podcast08ActiveGate = {
+        gate: 5,
+        mode: "ACTIVE_REQUESTED",
+        simulate,
+        spotifyWritesEnabled: false,
+        targets: podcast08ActiveConfig.map((entry) => ({
+          ...entry,
+          runtime: podcast08ActiveDecisions.get(entry.targetPlaylistId) ?? null,
+        })),
+      };
+      podcast08ActiveDecisions.clear();
+    }
     // Observe only the final, fully collected canonical planner contexts.
     // This is never invoked for real updates; no extra Spotify calls or writes.
     if (podcast08BandsByTargetId.size > 0 && !incremental.failure) {
