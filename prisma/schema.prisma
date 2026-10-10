@@ -31,6 +31,7 @@ model User {
   calendarSelections               CalendarSelection[]
   sourcePlaylists                  SourcePlaylist[]
   targetPlaylists                  TargetPlaylist[]
+  podcastDurationBandSettings      PodcastDurationBandSettings?
   generationRuns                   GenerationRun[]
   musicPlaybackPolicy              MusicPlaybackPolicy?
   trackListeningStates             TrackListeningState[]
@@ -774,6 +775,8 @@ model TargetPlaylist {
   podcastEpisodeMaxDurationMode    PodcastEpisodeMaxDurationMode @default(NONE)
   podcastEpisodeMaxDurationSeconds Int?
   sequencePattern                  Json
+  // PODCAST-08 Gate 3: sidecar aligned 1:1 with legacy sequencePattern (null => all ANY).
+  podcastDurationSlotBands         Json?
   maxEpisodesPerProgram            Int                           @default(1)
   maxTracksPerArtist               Int?
   maxTracksPerAlbum                Int?
@@ -791,6 +794,17 @@ model TargetPlaylist {
 
   @@unique([userId, id])
   @@index([userId, priority])
+}
+
+// PODCAST-08 Gate 3: dormant per-user global thresholds. No runtime planner
+// reads or writes until the explicit shadow/active gates are approved.
+model PodcastDurationBandSettings {
+  userId            String   @id
+  shortMaxMinutes   Int      @default(30)
+  mediumMaxMinutes  Int      @default(60)
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model TargetPlaylistSource {
