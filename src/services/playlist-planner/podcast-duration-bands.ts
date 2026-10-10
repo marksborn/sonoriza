@@ -62,7 +62,7 @@ export function parsePodcastDurationSequenceSlots(
   if (!Array.isArray(raw)) return [];
   const slots: PodcastDurationSequenceSlot[] = [];
   for (const value of raw) {
-    const entry =
+    const entry: Record<string, unknown> | null =
       typeof value === "string"
         ? { type: value }
         : value !== null && typeof value === "object" && !Array.isArray(value)
