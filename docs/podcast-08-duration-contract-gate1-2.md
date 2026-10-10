@@ -83,3 +83,23 @@ Arquivos:
 - Ainda falta a **ligação ao pipeline de simulação real** com contexto completo de fontes, identidade, estado, compartilhamento e segmentos. Não habilitar uma tela de preview nem prometer comparativo por destino antes desse gate de integração. Caso o contexto completo não esteja disponível, abstain ao invés de publicar sugestões imprecisas.
 
 **Gate de aprovação:** CI verde no código de projeção isolada; depois conectar `SHADOW` no pipeline usando snapshots elegíveis reais, com comparação de `ORDER_HASH` e prova de que os planos produtivos/simulações anteriores não foram alterados. Só o Gate 5 poderá estudar influência real do filtro nos itens selecionados, sob nova aprovação.
+
+
+## Gate 4B — integração opt-in com a simulação incremental real
+
+Implementado em branch de PR #447, **ainda não implantado**.
+
+- O `planRun` canônico expõe um callback opcional `onPodcast08SingleBlockContext` que recebe **o pool por destino já filtrado**, com política de sharing/URI, scope de fontes, cap de programa, estado de preservação e duração resolvidos pelo fluxo real. O callback não recalcula nada.
+- `collectIncrementally` encaminha esse callback nas rodadas normais/replan; o chamador **sobrescreve as referências da última rodada**, evitando executar shadow por página e piorar o pico de memória #442.
+- `generate-playlists-incremental.ts` liga esse comportamento exclusivamente quando **`simulate === true` E `PODCAST08_SHADOW_MODE=SHADOW`**, e pelo menos um destino `SEQUENCE` possui sidecar com banda não-`ANY`. Caso contrário, não captura nada nem consulta limites.
+- Após a coleta, uma leitura adicional de limites por usuário (`PodcastDurationBandSettings`) e a rotina pura `evaluatePodcast08FinalSimulationShadow` executam um comparativo. O comparativo **abstém** se não há bloco único, se o resultado-base replay não corresponde ao resultado autoritativo (p.ex. por wrappers PODCAST-09 ou reserva), ou em qualquer caso já bloqueado pelo comparador puro.
+- O `GenerationRun.summary.podcast08Shadow` recebe dados **limitados**: SHA de ordem real e hipotética, número de posições diferentes, quantidade de fallback, bandas e no máximo 40 slots resumidos. Nunca substitui `plan.targets`, `qualityPassed`, a escrita Spotify ou a ordem final.
+- O campo `scope = FINAL_INCREMENTAL_SINGLE_BLOCK_PRE_POSTPROCESS` deixa claro que os hashes são de **antes** do pós-processamento de ordem (MUSIC-06 etc). Essa saída NÃO equivale ao ORDER_HASH final aprovado de publicação e NÃO autoriza seleção por banda.
+- Novo teste `podcast-duration-simulation-shadow.test.ts` cobre integração com `planRun` real, exclusão por fonte, reservas entre destinos, mismatch de baseline, abstention e ativação apenas em simulação opt-in. O CI executa esse teste junto aos Gates 1–4 e regressões.
+- Não rodar `PODCAST08_SHADOW_MODE=SHADOW` em produção sem autorização e janela de observação; faltam fluxos de escrita validada no editor para bandas específicas e contexto de reprodução com dados reais antes de um piloto.
+
+### O que ainda NÃO está feito
+- Não existe UI/editor para salvar bandas por slot ou configurar limites globais; Gate 6 pendente.
+- Não existe nova política **produtiva** de fallback. Gate 5 pendente.
+- Não há tentativa de coletar páginas Spotify adicionais para satisfazer uma banda: a evidência avalia só candidatos já coletados pela seleção anterior.
+- Destinos PER_EVENT e podcasts com sequência estrita não são projetados no Gate 4B; retornam abstention.
