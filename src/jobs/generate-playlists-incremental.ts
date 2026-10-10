@@ -6,6 +6,16 @@ import {
   isSpotifyWriteTimeout,
 } from "@/jobs/schedule-retry-policy";
 import { processMemorySnapshot } from "@/services/process-memory";
+import {
+  DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+  parsePodcastDurationBandLimits,
+  type PodcastDurationBand,
+} from "@/services/playlist-planner/podcast-duration-bands";
+import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
+import {
+  evaluatePodcast08FinalSimulationShadow,
+  type Podcast08CapturedContext,
+} from "@/services/playlist-planner/podcast-duration-simulation-shadow";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
 import {
   resolveTargetCalendarScope,
@@ -749,6 +759,25 @@ export async function generatePlaylists(
       );
     }
 
+    // PODCAST-08 Gate 4: opt-in, simulation-only context capture. Pure shadow
+    // calculation happens ONCE after the final incremental plan is available;
+    // ordinary runs (especially the 06:00 scheduled Carro run) pay no cost.
+    const podcast08ShadowEnabled =
+      simulate && process.env.PODCAST08_SHADOW_MODE === "SHADOW";
+    const podcast08BandsByTargetId = new Map<string, readonly PodcastDurationBand[]>();
+    if (podcast08ShadowEnabled) {
+      for (const target of targets) {
+        if (target.compositionMode !== "SEQUENCE") continue;
+        const bands = parsePersistedPodcastDurationSlots(
+          target.sequencePattern, target.podcastDurationSlotBands,
+        );
+        if (bands?.some((band) => band !== "ANY")) {
+          podcast08BandsByTargetId.set(target.id, bands);
+        }
+      }
+    }
+    const podcast08Contexts = new Map<string, Podcast08CapturedContext>();
+
     let musicUnavailableSkippedCount = 0;
     let genericPodcastSuppressedCount = 0;
     const incremental = await collectIncrementally({
@@ -760,6 +789,20 @@ export async function generatePlaylists(
       preservedByTargetId: new Map(Object.entries(opts.preservedByTargetId ?? {})),
       blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
+      ...(podcast08BandsByTargetId.size > 0
+        ? {
+            onPodcast08SingleBlockContext: (entry: {
+              targetPlaylistId: string;
+              input: Podcast08CapturedContext["input"];
+            }) => {
+              if (podcast08BandsByTargetId.has(entry.targetPlaylistId)) {
+                podcast08Contexts.set(entry.targetPlaylistId, {
+                  input: entry.input,
+                });
+              }
+            },
+          }
+        : {}),
       recoverSourceFailure: (_source, error) =>
         isDegradableSpotifySourceFailure(error),
       onBatch(source, batch) {
@@ -869,6 +912,48 @@ export async function generatePlaylists(
     }
 
     let plan = incremental.plan;
+    // Observe only the final, fully collected canonical planner contexts.
+    // This is never invoked for real updates; no extra Spotify calls or writes.
+    if (podcast08BandsByTargetId.size > 0 && !incremental.failure) {
+      try {
+        const storedSettings = await prisma.podcastDurationBandSettings.findUnique({
+          where: { userId },
+          select: { shortMaxMinutes: true, mediumMaxMinutes: true },
+        });
+        const limits = storedSettings
+          ? parsePodcastDurationBandLimits(storedSettings)
+          : DEFAULT_PODCAST_DURATION_BAND_LIMITS;
+        if (!limits) {
+          summary.podcast08Shadow = {
+            gate: 4,
+            mode: "SHADOW",
+            status: "ABSTAIN_INVALID_GLOBAL_LIMITS",
+            plannerInfluence: false,
+            spotifyWrites: false,
+          };
+        } else {
+          summary.podcast08Shadow = evaluatePodcast08FinalSimulationShadow({
+            finalPlan: plan,
+            contexts: podcast08Contexts,
+            bandsByTargetId: podcast08BandsByTargetId,
+            limits,
+            extraConfigurationDatabaseReads: 1,
+          });
+        }
+      } catch (error) {
+        // Diagnostics must never alter or fail the authoritative simulation.
+        summary.podcast08Shadow = {
+          gate: 4,
+          mode: "SHADOW",
+          status: "ABSTAIN_EVIDENCE_UNAVAILABLE",
+          reason: error instanceof Error ? error.name : "UNKNOWN",
+          plannerInfluence: false,
+          spotifyWrites: false,
+        };
+      } finally {
+        podcast08Contexts.clear();
+      }
+    }
     const qualityFailures = incremental.qualityFailures;
     summary.qualityPassed = qualityFailures.length === 0;
     summary.qualityFailures = qualityFailures.map((planned) => ({
