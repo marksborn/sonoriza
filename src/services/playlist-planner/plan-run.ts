@@ -2,7 +2,11 @@ import {
   applyPodcast06PlannerRuntimeToCandidates,
   capturePodcast06PlannerShadow,
 } from "./podcast-cadence-shadow-runtime";
-import { planPlaylist, type PlannerPools, type PlanPlaylistInput } from "./planner";
+import { planPlaylist, projectPodcastDurationPlan, type PlannerPools, type PlanPlaylistInput } from "./planner";
+import {
+  podcast08ActiveCandidateVeto,
+  type Podcast08ActiveTargetPolicy,
+} from "./podcast-duration-active-gate";
 import {
   analyzeLegacyReservationForTarget,
   buildTargetSharingShadowEvidence,
@@ -33,6 +37,8 @@ export interface RunTarget {
   rules: PlaylistRules;
   /** CALENDAR-02: absent keeps the legacy single-budget planner path. */
   durationBlocks?: DurationPlanningBlock[];
+  /** PODCAST-08: policy supplied only through explicit simulation/pilot gates. */
+  podcast08ActivePolicy?: Podcast08ActiveTargetPolicy;
 }
 
 export interface PlanRunInput {
@@ -69,6 +75,12 @@ export interface PlanRunInput {
    */
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
+  /** Records a final-run diagnostic from the optional active pilot selector. */
+  onPodcast08ActiveDecision?: (entry: {
+    targetPlaylistId: string;
+    status: "ACTIVE" | "ABSTAIN_UNSAFE_CONTEXT";
+    fallbackCount: number;
+  }) => void;
   /** PODCAST-08: opt-in capture of the final canonical candidate context.
    * No shadow planning occurs in this callback, and productive inputs/outputs
    * are unchanged. The incremental caller retains only the latest context.
@@ -121,6 +133,7 @@ export function planRun({
   blockedMusicTrackIdsByTargetId,
   initialReserved,
   onPodcast08SingleBlockContext,
+  onPodcast08ActiveDecision,
 }: PlanRunInput): PlanRunResult {
   const ordered = [...targets].sort((a, b) => a.priority - b.priority);
   const legacyHardReserved = new Set<string>(initialReserved ?? []);
@@ -230,6 +243,24 @@ export function planRun({
       reserved,
       preserved,
     };
+    // Gate 5: the canonical selector can opt in to the existing duration-band
+    // core only when the caller passed an explicitly approved target policy.
+    // Per-event and stateful/strict shows abstain rather than skip episodes.
+    const podcast08Policy = target.podcast08ActivePolicy;
+    const podcast08Veto = podcast08Policy
+      ? target.durationBlocks
+        ? "ABSTAIN_UNSAFE_CONTEXT"
+        : podcast08ActiveCandidateVeto(targetPools.podcasts, preserved)
+          ? "ABSTAIN_UNSAFE_CONTEXT"
+          : null
+      : null;
+    const podcast08Projection = podcast08Policy && !podcast08Veto
+      ? projectPodcastDurationPlan(
+          singleBlockInput,
+          podcast08Policy.bands,
+          podcast08Policy.limits,
+        )
+      : null;
     const result = target.durationBlocks
       ? planSegmentedTarget({
           target,
@@ -237,7 +268,18 @@ export function planRun({
           reserved,
           preserved,
         })
-      : planPlaylist(singleBlockInput);
+      : podcast08Projection
+        ? podcast08Projection.result
+        : planPlaylist(singleBlockInput);
+    if (podcast08Policy) {
+      onPodcast08ActiveDecision?.({
+        targetPlaylistId: target.targetPlaylistId,
+        status: podcast08Projection ? "ACTIVE" : "ABSTAIN_UNSAFE_CONTEXT",
+        fallbackCount: podcast08Projection?.slots.filter(
+          (slot) => slot.fallbackApplied,
+        ).length ?? 0,
+      });
+    }
     if (!target.durationBlocks) {
       onPodcast08SingleBlockContext?.({
         targetPlaylistId: target.targetPlaylistId,
