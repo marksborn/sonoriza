@@ -412,7 +412,7 @@ export async function generatePlaylists(
     summary.resolvedTargetIds = targets.map((target) => target.id);
 
     // PODCAST-08 Gate 7: fail before any provider reads/writes when a real
-    // generation explicitly requests an ACTIVE target. Gate 5A does not yet
+    // generation requests ACTIVE or contains any configured non-ANY bands. Gate 5A does not yet
     // have productive approval. Silently falling back to legacy would publish
     // a playlist that contradicts the user's chosen podcast bands.
     const unauthorizedPilotTargetIds = podcast08UnapprovedRealPilotTargetIds({
@@ -420,10 +420,20 @@ export async function generatePlaylists(
       activeMode: process.env.PODCAST08_ACTIVE_MODE,
       allowlistCsv: process.env.PODCAST08_ACTIVE_TARGET_IDS,
       runTargetIds: targets.map((target) => target.id),
+      configuredSpecificBandTargetIds: targets
+        .filter((target) => target.compositionMode === "SEQUENCE")
+        .filter((target) => {
+          const bands = parsePersistedPodcastDurationSlots(
+            target.sequencePattern,
+            target.podcastDurationSlotBands,
+          );
+          return bands?.some((band) => band !== "ANY") === true;
+        })
+        .map((target) => target.id),
     });
     if (unauthorizedPilotTargetIds.length > 0) {
       const error =
-        "PODCAST-08: a seleção por faixas ainda não está autorizada para escrever no Spotify. Desative o modo ACTIVE ou execute somente uma simulação controlada.";
+        "PODCAST-08: geração real bloqueada. Existe um destino com faixa específica ou solicitação ACTIVE, mas o piloto ainda não está autorizado para escrita no Spotify.";
       summary.podcast08PilotPrewriteGuard = {
         gate: 7,
         status: "BLOCKED_REAL_PILOT_NOT_APPROVED",
