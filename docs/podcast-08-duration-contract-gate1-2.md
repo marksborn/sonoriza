@@ -153,3 +153,29 @@ Implementado no PR #447, ainda em Draft, sem merge nem deploy.
 - O Gate 5A pode usar o algoritmo de seleção em simulações autorizadas, mas **nunca aprova a mesma simulação como prova CONFIG-04 para escrita produtiva legada**: `summary.qualityPassed` é intencionalmente `false` se um destino realmente recebeu seleção experimental; `summary.podcast08SimulationOnly=true` e `realRunApprovalEligible=false`. Assim, a operação real não herda autorização de uma comparação sem paridade.
 - A simulação ACTIVE é um experimento opt-in e **pode executar o seletor por rodada incremental**, ao contrário do Gate 4B read-only, que projeta só depois do plano final. Não ativar no horário do job pesado (#442) sem observabilidade e orçamento de memória.
 - Correções sujeitas a revalidação no CI do novo head; não declarar verde até verificar os checks GitHub Actions.
+
+
+## Gate 7A — preparo de piloto: evidência de prontidão e veto explícito de escrita
+
+Implementado no PR #447 sem habilitar escrita por faixas, sem migration adicional e sem alterar flags de produção.
+
+### Avaliação de prontidão (somente análise)
+- Novo `podcast-duration-pilot-readiness.ts`: `assessPodcast08PilotReadiness` retorna apenas `REVIEW_CANDIDATE` ou `BLOCKED`, com motivos estruturados.
+- Requer **exatamente um destino** explicitamente autorizado; simulação experimental `SUCCESS` de mesmo alvo; `podcast08SimulationOnly=true`; `podcast08ActiveGate` com `ACTIVE_ALLOWED` e execução `ACTIVE`, `spotifyWritesEnabled=false`, `realRunApprovalEligible=false`; `collectionComplete=true`, sem inconclusão nem falhas de composição registradas.
+- Requer fingerprint de configuração da simulação **igual** ao atual, snapshots Spotify de simulação e de revisão **presentes e iguais**, e captura do snapshot/hash original com procedimento de restauração revisado.
+- Requer CI verde e aprovação operacional explícita. **A função não consulta esses sistemas por conta própria**; o chamador futuro deverá obter cada evidência por fonte confiável. Não preencher placeholders ou inferir que snapshots são iguais.
+- Retorna **sempre** `productiveWritesAllowed:false` e `requiresSeparateImplementation:true`, inclusive no estado `REVIEW_CANDIDATE`. Preparação de evidências não é permissão para publicar.
+
+### Fail-closed operacional
+- A rotina produtiva `generatePlaylists` agora invoca `podcast08UnapprovedRealPilotTargetIds` imediatamente após consultar os destinos. Caso `!simulate`, `PODCAST08_ACTIVE_MODE=ACTIVE` e algum destino desta execução conste na allowlist, registra `BLOCKED_REAL_PILOT_NOT_APPROVED`, encerra a rodada `FAILED` e retorna **antes de consultar qualquer fonte Spotify e antes de qualquer mutação**.
+- Com as flags desligadas, o fluxo legado continua inalterado; simulações experimentais continuam disponíveis apenas sob controles do Gate 5A. Essa defesa funciona além de `productiveWritesApproved:false` já fixado na resolução do alvo.
+- Testes `podcast-duration-pilot-readiness.test.ts`: **11 casos**, incluindo evidência completa (ainda sem escrita), simulação legada, configuração alterada, snapshot modificado, rollback não preparado, falta de CI/aprovação, fontes inconclusivas e pedidos produtivos não autorizados.
+
+### Checklist de homologação antes de qualquer proposta de Gate 7B
+1. Confirmar CI verde **do head atual** do PR #447; revisar riscos da migration aditiva Prisma e comparar fingerprint legada.
+2. Homologar apenas uma simulação isolada, com um destino (ex.: Trabalho), usando dados reais e contexto autorizado; confirmar source scope, show caps, stateful/strict abstentions, reservas, índices e memória.
+3. Capturar hash/ordem e snapshot Spotify antes do piloto, garantir backup restaurável e testar recuperação fora de produção. Comparar snapshot novamente imediatamente antes de eventual escrita real.
+4. Exigir aprovação explícita e janela de observação. Qualquer divergência implica bloqueio, não fallback silencioso.
+5. Abrir mudança separada para futura integração produtiva de Gate 7B **somente se aprovada**, incluindo prewrite proof atual, commit/snapshot invariants, writer ownership/fencing, observabilidade e rollback. **Não substituir guardas existentes nem habilitar flags na VPS com este PR.**
+
+A issue #365 permanece aberta. `REVIEW_CANDIDATE` **não é** `DEPLOY_READY` nem autorização de Spotify writes.
