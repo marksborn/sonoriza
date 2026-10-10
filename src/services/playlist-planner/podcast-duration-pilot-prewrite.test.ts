@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   evaluatePodcast08PilotPrewriteProof,
+  mustBlockPodcast08RequestedRealWrite,
   type Podcast08PilotPrewriteInput,
 } from "./podcast-duration-pilot-prewrite";
 
@@ -120,4 +121,21 @@ test("#365 Gate 7: every authoritative prewrite validator is mandatory", () => {
   ] as const) {
     assert.equal(verify({[key]:false}).status,"ABSTAIN_UNVERIFIED_OPERATIONAL_GATES");
   }
+});
+
+test("#365 Gate 7: no silent legacy Spotify write when an ACTIVE pilot target is requested", () => {
+  const baseGuard = {
+    simulate:false,mode:"ACTIVE",targetAllowlist:"work,car",
+    runTargetIds:["work","another"],
+  };
+  assert.equal(mustBlockPodcast08RequestedRealWrite(baseGuard),true);
+  assert.equal(mustBlockPodcast08RequestedRealWrite({...baseGuard,simulate:true}),false);
+  assert.equal(mustBlockPodcast08RequestedRealWrite({...baseGuard,mode:"SHADOW"}),false);
+  assert.equal(mustBlockPodcast08RequestedRealWrite({...baseGuard,mode:undefined}),false);
+  assert.equal(mustBlockPodcast08RequestedRealWrite({
+    ...baseGuard,runTargetIds:["unrelated"],
+  }),false);
+  assert.equal(mustBlockPodcast08RequestedRealWrite({
+    ...baseGuard,targetAllowlist:"",
+  }),false);
 });
