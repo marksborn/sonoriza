@@ -10,8 +10,6 @@ import type { PlanRunResult } from "./plan-run";
 
 export type Podcast08CapturedContext = Readonly<{
   input: PlanPlaylistInput;
-  /** Result from the exact legacy single-block planner seam. */
-  actualUris: readonly string[];
 }>;
 
 export type Podcast08SimulationTargetEvidence = Readonly<{
@@ -94,17 +92,6 @@ export function evaluatePodcast08FinalSimulationShadow(input: {
     }
 
     const finalUris = planned.result.items.map((item) => item.uri);
-    if (
-      finalUris.length !== ctx.actualUris.length ||
-      finalUris.some((uri, index) => uri !== ctx.actualUris[index])
-    ) {
-      targets.push({
-        ...neutral,
-        status: "ABSTAIN_NON_CANONICAL_BASELINE",
-        reason: "UPSTREAM_OR_RESERVE_POSTPROCESS_CHANGED_SELECTION",
-      });
-      continue;
-    }
     try {
       const { actual, evidence } = comparePodcastDurationShadow(
         ctx.input,
