@@ -90,6 +90,60 @@ test("#365 integration: captured context respects higher-priority destination re
   assert.equal(evidence.targets[0]?.differentPositions, 0);
 });
 
+test("#451 integration: strict heads from scoped canonical planner can compete across shows", () => {
+  const strictEpisode = (uri: string, minutes: number, show: string) => ({
+    ...episode(uri, minutes, show),
+    podcastStrictSequence: true,
+    podcastSequenceStateful: false,
+    sourcePlaylistId: "allowed",
+  });
+  const strictRules = {
+    ...rules,
+    targetDurationMs: m(90),
+    sequencePattern: ["PODCAST" as const, "MUSIC" as const, "PODCAST" as const],
+    maxEpisodesPerProgram: 2,
+  };
+  const { contexts, finalPlan } = runScoped({
+    pools: {
+      music: [{
+        type: "MUSIC", uri: "music-5", durationMs: m(5), title: "music-5",
+        sourcePlaylistId: "allowed",
+      }],
+      podcasts: [
+        strictEpisode("show-A-head-long-70", 70, "show-A"),
+        strictEpisode("show-A-later-short-20", 20, "show-A"),
+        strictEpisode("show-B-head-short-15", 15, "show-B"),
+        strictEpisode("outside-target", 10, "show-C"),
+      ],
+    },
+    targets: [{
+      targetPlaylistId: "work", name: "Trabalho", priority: 0,
+      rules: strictRules,
+    }],
+    sourceIdsByTargetId: new Map([["work", new Set(["allowed"])]]),
+  });
+  const legacyUris = finalPlan.targets[0]!.result.items.map((x) => x.uri);
+  assert.deepEqual(legacyUris,
+    ["show-A-head-long-70", "music-5", "show-B-head-short-15"]);
+  const ctx = contexts.get("work")!;
+  assert.equal(ctx.input.pools.podcasts.some(p => p.uri === "outside-target"), false);
+  const evidence = evaluatePodcast08FinalSimulationShadow({
+    finalPlan, contexts, bandsByTargetId: new Map([
+      ["work", ["SHORT", "ANY", "ANY"]],
+    ]),
+  });
+  assert.equal(evidence.targets[0]?.status, "READY_SHADOW");
+  assert.equal(evidence.targets[0]?.differentPositions, 2);
+  assert.equal(evidence.targets[0]?.sampledSlots[0]?.fallbackApplied, false);
+  assert.equal(evidence.targets[0]?.sampledSlots[1]?.fallbackApplied, false);
+  // It may choose the short head from show B, never show A's later short
+  // while show A's mandatory long head remains pending.
+  assert.deepEqual(finalPlan.targets[0]!.result.items.map(x => x.uri),
+    legacyUris);
+  assert.equal(evidence.spotifyWrites, false);
+  assert.equal(evidence.plannerInfluence, false);
+});
+
 test("#365 integration: upstream postprocessing changes trigger abstention", () => {
   const { contexts, finalPlan } = runScoped({
     pools: { music: [], podcasts: [
