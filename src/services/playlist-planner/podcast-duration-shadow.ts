@@ -1,3 +1,4 @@
+import { playlistOrderHash } from "@/services/playlist-ordering";
 import {
   DEFAULT_PODCAST_DURATION_BAND_LIMITS,
   type PodcastDurationBand,
@@ -28,6 +29,7 @@ export type Podcast08ShadowEvidence = Readonly<{
   projectedPodcastCount: number | null;
   actualUris: readonly string[];
   projectedUris: readonly string[] | null;
+  projectedOrderHash: string | null;
   differentPositions: number | null;
   fallbackCount: number;
   slots: readonly PodcastDurationShadowSlot[];
@@ -80,6 +82,7 @@ export function comparePodcastDurationShadow(
       projectedItemCount: null,
       projectedPodcastCount: null,
       projectedUris: null,
+      projectedOrderHash: null,
       differentPositions: null,
       fallbackCount: 0,
       slots: [],
@@ -122,6 +125,7 @@ export function comparePodcastDurationShadow(
         item.type === "PODCAST",
       ).length,
       projectedUris,
+      projectedOrderHash: playlistOrderHash(projection.result.items),
       differentPositions,
       fallbackCount: projection.slots.filter((slot) => slot.fallbackApplied).length,
       slots: projection.slots,
