@@ -2,7 +2,7 @@ import {
   applyPodcast06PlannerRuntimeToCandidates,
   capturePodcast06PlannerShadow,
 } from "./podcast-cadence-shadow-runtime";
-import { planPlaylist, type PlannerPools } from "./planner";
+import { planPlaylist, type PlannerPools, type PlanPlaylistInput } from "./planner";
 import {
   analyzeLegacyReservationForTarget,
   buildTargetSharingShadowEvidence,
@@ -69,6 +69,15 @@ export interface PlanRunInput {
    */
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
+  /** PODCAST-08: opt-in capture of the final canonical candidate context.
+   * No shadow planning occurs in this callback, and productive inputs/outputs
+   * are unchanged. The incremental caller retains only the latest context.
+   */
+  onPodcast08SingleBlockContext?: (entry: {
+    targetPlaylistId: string;
+    input: PlanPlaylistInput;
+    result: PlanResult;
+  }) => void;
 }
 
 export interface PlanRunTargetResult {
@@ -111,6 +120,7 @@ export function planRun({
   preservedByTargetId,
   blockedMusicTrackIdsByTargetId,
   initialReserved,
+  onPodcast08SingleBlockContext,
 }: PlanRunInput): PlanRunResult {
   const ordered = [...targets].sort((a, b) => a.priority - b.priority);
   const legacyHardReserved = new Set<string>(initialReserved ?? []);
@@ -214,6 +224,12 @@ export function planRun({
       globalProgramCounts: globalPodcastProgramCounts,
       rules: target.rules,
     });
+    const singleBlockInput: PlanPlaylistInput = {
+      rules: target.rules,
+      pools: targetPools,
+      reserved,
+      preserved,
+    };
     const result = target.durationBlocks
       ? planSegmentedTarget({
           target,
@@ -221,12 +237,14 @@ export function planRun({
           reserved,
           preserved,
         })
-      : planPlaylist({
-          rules: target.rules,
-          pools: targetPools,
-          reserved,
-          preserved,
-        });
+      : planPlaylist(singleBlockInput);
+    if (!target.durationBlocks) {
+      onPodcast08SingleBlockContext?.({
+        targetPlaylistId: target.targetPlaylistId,
+        input: singleBlockInput,
+        result,
+      });
+    }
     addTargetReservations({
       targetPlaylistId: target.targetPlaylistId,
       sharingPolicy: effectiveSharingPolicy,
