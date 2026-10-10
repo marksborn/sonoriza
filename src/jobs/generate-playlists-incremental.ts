@@ -976,12 +976,20 @@ export async function generatePlaylists(
     }
 
     let plan = incremental.plan;
+    // A simulation with an active PODCAST-08 selection is an experimental
+    // counterfactual. It MUST NOT grant CONFIG-04 approval for a productive
+    // run that still uses the legacy selector.
+    const podcast08ExperimentalSelectionApplied = simulate &&
+      [...podcast08ActiveDecisions.values()].some(
+        (decision) => decision.status === "ACTIVE",
+      );
     if (podcast08ActiveConfig.length > 0) {
       summary.podcast08ActiveGate = {
         gate: 5,
         mode: "ACTIVE_REQUESTED",
         simulate,
         spotifyWritesEnabled: false,
+        realRunApprovalEligible: !podcast08ExperimentalSelectionApplied,
         targets: podcast08ActiveConfig.map((entry) => ({
           ...entry,
           runtime: podcast08ActiveDecisions.get(entry.targetPlaylistId) ?? null,
@@ -1032,7 +1040,15 @@ export async function generatePlaylists(
       }
     }
     const qualityFailures = incremental.qualityFailures;
-    summary.qualityPassed = qualityFailures.length === 0;
+    summary.qualityPassed =
+      qualityFailures.length === 0 && !podcast08ExperimentalSelectionApplied;
+    if (podcast08ExperimentalSelectionApplied) {
+      summary.podcast08SimulationOnly = true;
+      log({
+        level: "INFO",
+        message: "PODCAST-08 piloto de simulação: a seleção por faixas não aprova execução real; manter CONFIG-04 bloqueado até Gate 7.",
+      });
+    }
     summary.qualityFailures = qualityFailures.map((planned) => ({
       name: planned.name,
       requestedPodcastPercent: planned.result.stats.requestedPodcastPercent,
