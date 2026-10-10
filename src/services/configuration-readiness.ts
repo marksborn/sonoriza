@@ -835,7 +835,12 @@ export async function assessConfiguration(
     targets,
     issues,
     fingerprint:
-      invalidPodcastDurationSlotTargets.size > 0 || hasInvalidPodcastDurationLimits
+      invalidPodcastDurationSlotTargets.size > 0 ||
+      hasInvalidPodcastDurationLimits ||
+      targetsRaw.some(
+        (target) => target.compositionMode === "SEQUENCE" &&
+          !hasOnlyValidSequenceEntries(target.sequencePattern),
+      )
         ? fingerprint(fingerprintPayload)
         : podcastDurationConfigurationFingerprint(
             fingerprint(fingerprintPayload),
