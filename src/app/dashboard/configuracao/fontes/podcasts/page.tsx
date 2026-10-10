@@ -5,6 +5,10 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+  parsePodcastDurationBandLimits,
+} from "@/services/playlist-planner/podcast-duration-bands";
+import {
   loadPodcastSavedEpisodesPolicy,
   savePodcastSavedEpisodesPolicy,
   type PodcastSavedEpisodesFrequencyScopeValue,
@@ -32,6 +36,34 @@ import {
 
 const secondaryButtonClass =
   "inline-flex items-center justify-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-2.5 text-sm font-black text-ink-inverse transition hover:border-brand-400/55";
+
+async function saveGlobalDurationBands(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+  const shortText = formData.get("shortMaxMinutes");
+  const mediumText = formData.get("mediumMaxMinutes");
+  if (
+    typeof shortText !== "string" || !/^[0-9]{1,4}$/.test(shortText) ||
+    typeof mediumText !== "string" || !/^[0-9]{1,4}$/.test(mediumText)
+  ) {
+    redirect("/dashboard/configuracao/fontes/podcasts?erro=duracao");
+  }
+  const limits = parsePodcastDurationBandLimits({
+    shortMaxMinutes: Number(shortText),
+    mediumMaxMinutes: Number(mediumText),
+  });
+  if (!limits) redirect("/dashboard/configuracao/fontes/podcasts?erro=duracao");
+
+  await prisma.podcastDurationBandSettings.upsert({
+    where: { userId: session.user.id },
+    create: { userId: session.user.id, ...limits },
+    update: limits,
+  });
+  revalidatePodcastConfiguration();
+  revalidatePath("/dashboard/configuracao/destinos");
+  redirect("/dashboard/configuracao/fontes/podcasts?salvo=duracao");
+}
 
 async function updateSavedEpisodesPolicy(formData: FormData) {
   "use server";
@@ -221,6 +253,11 @@ export default async function PodcastPoliciesPage({
     }),
     loadPodcastShowPolicies(session.user.id),
   ]);
+  const durationBandSettings = await prisma.podcastDurationBandSettings.findUnique({
+    where: { userId: session.user.id },
+    select: { shortMaxMinutes: true, mediumMaxMinutes: true },
+  });
+  const globalDurationBands = durationBandSettings ?? DEFAULT_PODCAST_DURATION_BAND_LIMITS;
   const policies = await hydratePodcastShowPolicyHistory(
     session.user.id,
     basePolicies,
@@ -314,6 +351,18 @@ export default async function PodcastPoliciesPage({
           </div>
         )}
 
+        {params.salvo === "duracao" && (
+          <div className="status-success mt-5 rounded-2xl border p-4 text-sm font-bold">
+            Limites globais de duração salvos. Caso algum destino use uma faixa específica,
+            faça uma nova simulação antes de gerar playlists reais.
+          </div>
+        )}
+        {params.erro === "duracao" && (
+          <div className="status-warning mt-5 rounded-2xl border p-4 text-sm font-bold">
+            Informe dois limites inteiros válidos: o curto deve ser maior que zero,
+            o médio maior que o curto e no máximo 1440 minutos.
+          </div>
+        )}
         {params.salvo === "1" && (
           <div className="status-success mt-5 rounded-2xl border p-4 text-sm font-bold">
             Política salva. A configuração mudou; faça uma nova simulação antes da próxima geração real.
@@ -329,6 +378,38 @@ export default async function PodcastPoliciesPage({
             A fonte não pertence mais à sua configuração de podcasts.
           </div>
         )}
+
+        <section className="product-panel mt-6 p-5 sm:p-6">
+          <h2 className="text-lg font-black text-ink-inverse">PODCAST-08 · Faixas de duração</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-inverse">
+            Defina os limites globais para classificar episódios pelo tempo restante.
+            As opções Curto, Médio e Longo ficam disponíveis nos passos de podcast
+            em Destinos. Esta configuração ainda não ativa a seleção por faixa na geração real.
+          </p>
+          <form action={saveGlobalDurationBands} className="mt-5 flex flex-wrap items-end gap-4">
+            <label className="text-sm font-bold text-ink-inverse">
+              Curto: até (minutos)
+              <input type="number" name="shortMaxMinutes" min={1} max={1439}
+                step={1} required defaultValue={globalDurationBands.shortMaxMinutes}
+                className="mt-2 block w-36 rounded-xl border border-line-dark/70 bg-surface-dark px-3 py-2.5 text-sm text-ink-inverse" />
+            </label>
+            <label className="text-sm font-bold text-ink-inverse">
+              Médio: até (minutos)
+              <input type="number" name="mediumMaxMinutes" min={2} max={1440}
+                step={1} required defaultValue={globalDurationBands.mediumMaxMinutes}
+                className="mt-2 block w-36 rounded-xl border border-line-dark/70 bg-surface-dark px-3 py-2.5 text-sm text-ink-inverse" />
+            </label>
+            <button type="submit" className="rounded-xl bg-accent px-5 py-2.5 text-sm font-black text-brand-900">
+              Salvar limites globais
+            </button>
+          </form>
+          <p className="mt-3 text-xs leading-5 text-muted-inverse/65">
+            Acima do limite médio é Longo. Qualquer duração mantém a seleção atual.
+            <Link href="/dashboard/configuracao/destinos" className="ml-1 font-bold text-accent-400 underline">
+              Configurar sequência dos destinos
+            </Link>
+          </p>
+        </section>
 
         {savedSources.length === 0 && clientShows.length === 0 ? (
           <section className="product-panel mt-6 p-6 text-center">
