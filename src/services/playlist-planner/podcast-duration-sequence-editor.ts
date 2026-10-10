@@ -1,6 +1,6 @@
 import type { ContentType } from "./types";
 import type { PodcastDurationBand } from "./podcast-duration-bands";
-import { parsePersistedPodcastDurationSlots } from "./podcast-duration-persistence";
+import { parsePersistedPodcastDurationSlots } from "./podcast-duration-sequence-sidecar";
 
 export type PodcastDurationEditorSlot = Readonly<{
   type: ContentType;
