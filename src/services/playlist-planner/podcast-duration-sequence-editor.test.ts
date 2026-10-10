@@ -7,6 +7,7 @@ import {
   removePodcastDurationEditorSlot,
   serializePodcastDurationEditorSlots,
   setPodcastDurationEditorBand,
+  maySavePodcastDurationBandsWhenEditorDisabled,
 } from "./podcast-duration-sequence-editor";
 import { parsePersistedPodcastDurationSlots } from "./podcast-duration-persistence";
 
@@ -74,4 +75,49 @@ test("#365 UI: max of 20 and min of one slot remain enforced", () => {
 test("#365 UI: malformed stored bands cannot silently become ANY", () => {
   assert.equal(hydratePodcastDurationEditorSlots(["MUSIC","PODCAST"],["LONG","SHORT"]),null);
   assert.equal(hydratePodcastDurationEditorSlots(["MUSIC","PODCAST"],["SHORT"]),null);
+});
+
+test("#365 UI gate: no new specific band may be saved without opt-in", () => {
+  assert.equal(maySavePodcastDurationBandsWhenEditorDisabled({
+    existingSequence: null, existingBands: null,
+    nextSequence: ["MUSIC","PODCAST"], nextBands: ["ANY","SHORT"],
+  }), false);
+  assert.equal(maySavePodcastDurationBandsWhenEditorDisabled({
+    existingSequence: null, existingBands: null,
+    nextSequence: ["MUSIC","PODCAST"], nextBands: ["ANY","ANY"],
+  }), true);
+});
+
+test("#365 UI gate: existing ANY sequence stays freely editable", () => {
+  assert.equal(maySavePodcastDurationBandsWhenEditorDisabled({
+    existingSequence: ["MUSIC","PODCAST"], existingBands: null,
+    nextSequence: ["PODCAST","MUSIC","PODCAST"], nextBands: ["ANY","ANY","ANY"],
+  }), true);
+  assert.equal(maySavePodcastDurationBandsWhenEditorDisabled({
+    existingSequence: ["PODCAST"], existingBands: ["ANY"],
+    nextSequence: ["PODCAST","PODCAST"], nextBands: ["ANY","ANY"],
+  }), true);
+});
+
+test("#365 UI gate: existing specific bands may be preserved but never rearranged", () => {
+  const args = {
+    existingSequence: ["PODCAST","MUSIC"],
+    existingBands: ["SHORT","ANY"],
+    nextSequence: ["PODCAST","MUSIC"] as const,
+    nextBands: ["SHORT","ANY"] as const,
+  };
+  assert.equal(maySavePodcastDurationBandsWhenEditorDisabled(args),true);
+  assert.equal(maySavePodcastDurationBandsWhenEditorDisabled({
+    ...args, nextSequence: ["MUSIC","PODCAST"], nextBands: ["ANY","SHORT"],
+  }),false);
+  assert.equal(maySavePodcastDurationBandsWhenEditorDisabled({
+    ...args, nextSequence: ["PODCAST","MUSIC"], nextBands: ["ANY","ANY"],
+  }),false);
+});
+
+test("#365 UI gate: malformed metadata cannot bypass disabled editor protection", () => {
+  assert.equal(maySavePodcastDurationBandsWhenEditorDisabled({
+    existingSequence: ["PODCAST"], existingBands: ["INVALID"],
+    nextSequence: ["PODCAST"], nextBands: ["ANY"],
+  }), false);
 });
