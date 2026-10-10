@@ -128,15 +128,7 @@ export function evaluatePodcast08FinalSimulationShadow(input: {
         status: evidence.status,
         reason: evidence.reason,
         projectedCount: evidence.projectedItemCount,
-        projectedOrderHash: evidence.status === "READY_SHADOW"
-          ? playlistOrderHash(
-              // In a shadow only, URI order is enough to compare independently
-              // of later music ordering; hash the same canonical playlist shape.
-              (evidence.projectedUris ?? []).map((uri, index) => ({
-                uri, position: index, type: "MUSIC" as const,
-              })) as Parameters<typeof playlistOrderHash>[0],
-            )
-          : null,
+        projectedOrderHash: evidence.projectedOrderHash,
         differentPositions: evidence.differentPositions,
         fallbackCount: evidence.fallbackCount,
         sampledSlots: evidence.slots.slice(0, 40).map((slot) => ({
