@@ -28,11 +28,11 @@ export type Podcast08PilotPrewriteInput = Readonly<{
     completedAtMs: number;
     status: "SUCCESS" | "FAILED" | "RUNNING";
     /** Experimental Gate 5A sets qualityPassed=false so CONFIG-04 cannot approve writes. */
-    qualityPassed: false;
+    qualityPassed: boolean;
     qualityFailuresCount: number;
     collectionComplete: boolean;
-    simulationOnly: true;
-    realRunApprovalEligible: false;
+    simulationOnly: boolean;
+    realRunApprovalEligible: boolean;
     usedDurationBands: boolean;
     configurationFingerprint: string;
     finalOrderHash: string;
