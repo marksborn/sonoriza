@@ -802,7 +802,7 @@ model PodcastDurationBandSettings {
   userId            String   @id
   shortMaxMinutes   Int      @default(30)
   mediumMaxMinutes  Int      @default(60)
-  updatedAt         DateTime @updatedAt
+  updatedAt         DateTime @default(now()) @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
