@@ -113,7 +113,7 @@ test("#451 integration: strict heads from scoped canonical planner can compete a
         strictEpisode("show-A-head-long-70", 70, "show-A"),
         strictEpisode("show-A-later-short-20", 20, "show-A"),
         strictEpisode("show-B-head-short-15", 15, "show-B"),
-        strictEpisode("outside-target", 10, "show-C"),
+        {...strictEpisode("outside-target", 10, "show-C"), sourcePlaylistId:"blocked"},
       ],
     },
     targets: [{
