@@ -170,10 +170,15 @@ export function podcast08UnapprovedRealPilotTargetIds(input: {
   activeMode: string | null | undefined;
   allowlistCsv: string | null | undefined;
   runTargetIds: readonly string[];
+  /** Any persisted non-ANY SEQUENCE destination may not silently use legacy writes. */
+  configuredSpecificBandTargetIds?: readonly string[];
 }): string[] {
-  if (input.simulate || input.activeMode !== "ACTIVE") return [];
-  const allowlist = new Set(
-    (input.allowlistCsv ?? "").split(",").map(s => s.trim()).filter(Boolean),
-  );
-  return input.runTargetIds.filter(id => allowlist.has(id));
+  if (input.simulate) return [];
+  const allowlist = input.activeMode === "ACTIVE"
+    ? new Set(
+        (input.allowlistCsv ?? "").split(",").map(s => s.trim()).filter(Boolean),
+      )
+    : new Set<string>();
+  const configuredBands = new Set(input.configuredSpecificBandTargetIds ?? []);
+  return input.runTargetIds.filter(id => allowlist.has(id) || configuredBands.has(id));
 }
