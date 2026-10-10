@@ -13,6 +13,7 @@ import {
 } from "@/services/playlist-planner/podcast-duration-bands";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
 import { resolvePodcast08ActiveTargetPolicy } from "@/services/playlist-planner/podcast-duration-active-gate";
+import { mustBlockPodcast08RequestedRealWrite } from "@/services/playlist-planner/podcast-duration-pilot-prewrite";
 import {
   evaluatePodcast08FinalSimulationShadow,
   type Podcast08CapturedContext,
@@ -408,6 +409,29 @@ export async function generatePlaylists(
       );
     }
     summary.resolvedTargetIds = targets.map((target) => target.id);
+
+    // PODCAST-08 Gate 7A: the ACTIVE selector is simulation-only in this PR.
+    // A real run explicitly requesting an ACTIVE target MUST fail closed rather
+    // than silently publish a legacy order that ignores the saved duration band.
+    // This check happens before any source/provider read or Spotify write.
+    if (mustBlockPodcast08RequestedRealWrite({
+      simulate,
+      mode: process.env.PODCAST08_ACTIVE_MODE,
+      targetAllowlist: process.env.PODCAST08_ACTIVE_TARGET_IDS,
+      runTargetIds: targets.map((target) => target.id),
+    })) {
+      const error =
+        "PODCAST-08: execução real bloqueada. O piloto por faixas ainda não foi autorizado para gravação no Spotify.";
+      summary.podcast08PrewriteGate = {
+        gate: "PODCAST-08-7A",
+        status: "BLOCKED_REAL_WRITE_NOT_APPROVED",
+        canWriteSpotify: false,
+      };
+      log({ level: "WARN", message: error });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
+
     const queryableCalendars = await prisma.calendarSelection.findMany({
       where: { userId, selected: true },
       select: { googleCalendarId: true, usedForDuration: true },
