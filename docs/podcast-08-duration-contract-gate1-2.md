@@ -127,3 +127,22 @@ Este gate foi adicionado ao PR Draft #447 em 10/10/2026. Embora tenha telas e a�
 
 ### Atenção para homologação
 Salvar limites globais e sequências neutras `ANY` é seguro; **não habilitar o editor para gravar bandas não-ANY** antes que a seleção do planner produtivo trate essas bandas corretamente e que o gate CONFIG-04 aprove uma nova simulação. O preview SHADOW 4B ainda abstém para PER_EVENT e sequência estrita. Testes de regressão são condição necessária, mas não substituem testes de UI reais (Android e desktop).
+
+
+## Gate 5A — seletor por faixa no planner, piloto de **simulação** com autorização explícita
+
+Implementado no PR #447, ainda em Draft, sem merge nem deploy.
+
+- Corrigido o bloqueio de CI do Gate 6A: `src/app/dashboard/configuracao/destinos/page.tsx` agora passa uma cópia mutável ao formulário. Todos os 11 workflows anteriores falharam em `TS4104` no mesmo local; a correção é isolada e será retestada com esta entrega.
+- O algoritmo de faixa usa `projectPodcastDurationPlan` no **ponto canônico** de seleção de um destino: aplica as bandas sobre a mesma função `pickCandidate` (reservas de URI, cap por programa, duração máxima, cabimento, estado e ordenação da pool já filtrada). Não cria uma rota de seleção paralela nem novas consultas Spotify.
+- `RunTarget.podcast08ActivePolicy` é **opcional e ausente** nos fluxos atuais. Quando não fornecido, `planRun` continua chamando `planPlaylist` sem filtros e preserva `ORDER_HASH` legado.
+- `resolvePodcast08ActiveTargetPolicy`: só aprova um destino em `SEQUENCE`, com sidecar específico válido, configuração de limites válida, destino explicitamente allowlisted por ID e ausência de `durationBlocks`.
+- Proteções obrigatórias: podcasts `podcastStrictSequence` ou `podcastSequenceStateful` fazem o destino **abster** e usar a seleção legada. Destinos `PER_EVENT` continuam no caminho antigo. Preservação, exclusividade e prioridades originais continuam sob o próprio `planRun`.
+- O gate de orquestração exige `PODCAST08_ACTIVE_MODE=ACTIVE` e `PODCAST08_ACTIVE_TARGET_IDS` não vazio. **Apenas simulação pode ativar o novo seletor neste gate.** No código, `productiveWritesApproved: false` está deliberadamente fixo; nem um operador que configure as variáveis em produção consegue usar o novo algoritmo para escrever playlists. Uma migração de Gate 7 e evidência de aprovação explícita serão necessárias antes de permitir essa alteração.
+- Evidências resumidas em `GenerationRun.summary.podcast08ActiveGate` quando modo ACTIVE solicitado: destinos autorizados/abstidos, status do último planejamento, quantidade de fallbacks, `spotifyWritesEnabled:false`. O resultado real de simulação pode refletir a seleção por banda apenas para destinos autorizados.
+- Testes Gate 5: `podcast-duration-active-gate.test.ts` valida modo, allowlist, write veto, banda/limites inválidos, eventos e estado estrito. `podcast-duration-active-planner.test.ts` compara seleção real em memória, paridade OFF, fallback, show cap, reservas, sequência rígida, eventos, bloqueio de escrita e qualidade. Ambos executados no CI PODCAST-08 junto ao planner legado, CONFIG-04 e build.
+
+### Restrições e Gate 7
+- **NÃO habilitar variáveis de ambiente em produção.** A aprovação de simulação não aprova Spotify writes.
+- Antes de um rollout produtivo: provar fidelidade de simulação/manual/scheduler, snapshot do destino, composição e authority gates; adicionar revalidação prewrite de bands + limites + config fingerprint e allowlist ativo; monitorar fontes e picos de memória; rodar um único destino piloto e ter rollback.
+- A issue #365 permanece aberta. **A PR #447 não deve ser mergeada/deployada automaticamente** enquanto não passar CI e revisão operacional.
