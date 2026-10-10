@@ -140,3 +140,20 @@ test("#365 Gate 7: explicitly allowlisted real write attempt is rejected", () =>
     simulate:false,activeMode:"ACTIVE",allowlistCsv:"",runTargetIds:["work"],
   }),[]);
 });
+
+test("#365 Gate 7: saved specific bands block legacy real writes even with ACTIVE off", () => {
+  const params = {
+    simulate: false,
+    activeMode: "OFF",
+    allowlistCsv: "",
+    runTargetIds: ["work", "car"],
+    configuredSpecificBandTargetIds: ["work"],
+  };
+  assert.deepEqual(podcast08UnapprovedRealPilotTargetIds(params), ["work"]);
+  assert.deepEqual(podcast08UnapprovedRealPilotTargetIds({
+    ...params, simulate: true,
+  }), []);
+  assert.deepEqual(podcast08UnapprovedRealPilotTargetIds({
+    ...params, configuredSpecificBandTargetIds: ["another"],
+  }), []);
+});
