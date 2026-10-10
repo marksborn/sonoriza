@@ -6,6 +6,19 @@ import {
   isSpotifyWriteTimeout,
 } from "@/jobs/schedule-retry-policy";
 import { processMemorySnapshot } from "@/services/process-memory";
+import {
+  DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+  parsePodcastDurationBandLimits,
+  type PodcastDurationBand,
+} from "@/services/playlist-planner/podcast-duration-bands";
+import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
+import { resolvePodcast08ActiveTargetPolicy } from "@/services/playlist-planner/podcast-duration-active-gate";
+import { podcast08UnapprovedRealPilotTargetIds } from "@/services/playlist-planner/podcast-duration-pilot-readiness";
+import { mustBlockPodcast08RequestedRealWrite } from "@/services/playlist-planner/podcast-duration-pilot-prewrite";
+import {
+  evaluatePodcast08FinalSimulationShadow,
+  type Podcast08CapturedContext,
+} from "@/services/playlist-planner/podcast-duration-simulation-shadow";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
 import {
   resolveTargetCalendarScope,
@@ -397,6 +410,63 @@ export async function generatePlaylists(
       );
     }
     summary.resolvedTargetIds = targets.map((target) => target.id);
+
+    // PODCAST-08 Gate 7: fail before any provider reads/writes when a real
+    // generation requests ACTIVE or contains any configured non-ANY bands. Gate 5A does not yet
+    // have productive approval. Silently falling back to legacy would publish
+    // a playlist that contradicts the user's chosen podcast bands.
+    const unauthorizedPilotTargetIds = podcast08UnapprovedRealPilotTargetIds({
+      simulate,
+      activeMode: process.env.PODCAST08_ACTIVE_MODE,
+      allowlistCsv: process.env.PODCAST08_ACTIVE_TARGET_IDS,
+      runTargetIds: targets.map((target) => target.id),
+      configuredSpecificBandTargetIds: targets
+        .filter((target) => target.compositionMode === "SEQUENCE")
+        .filter((target) => {
+          const bands = parsePersistedPodcastDurationSlots(
+            target.sequencePattern,
+            target.podcastDurationSlotBands,
+          );
+          return bands?.some((band) => band !== "ANY") === true;
+        })
+        .map((target) => target.id),
+    });
+    if (unauthorizedPilotTargetIds.length > 0) {
+      const error =
+        "PODCAST-08: geração real bloqueada. Existe um destino com faixa específica ou solicitação ACTIVE, mas o piloto ainda não está autorizado para escrita no Spotify.";
+      summary.podcast08PilotPrewriteGuard = {
+        gate: 7,
+        status: "BLOCKED_REAL_PILOT_NOT_APPROVED",
+        targetIds: unauthorizedPilotTargetIds,
+        spotifyWrites: false,
+      };
+      log({level: "ERROR", message: error, data: summary.podcast08PilotPrewriteGuard});
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
+
+    // PODCAST-08 Gate 7A: the ACTIVE selector is simulation-only in this PR.
+    // A real run explicitly requesting an ACTIVE target MUST fail closed rather
+    // than silently publish a legacy order that ignores the saved duration band.
+    // This check happens before any source/provider read or Spotify write.
+    if (mustBlockPodcast08RequestedRealWrite({
+      simulate,
+      mode: process.env.PODCAST08_ACTIVE_MODE,
+      targetAllowlist: process.env.PODCAST08_ACTIVE_TARGET_IDS,
+      runTargetIds: targets.map((target) => target.id),
+    })) {
+      const error =
+        "PODCAST-08: execução real bloqueada. O piloto por faixas ainda não foi autorizado para gravação no Spotify.";
+      summary.podcast08PrewriteGate = {
+        gate: "PODCAST-08-7A",
+        status: "BLOCKED_REAL_WRITE_NOT_APPROVED",
+        canWriteSpotify: false,
+      };
+      log({ level: "WARN", message: error });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
+
     const queryableCalendars = await prisma.calendarSelection.findMany({
       where: { userId, selected: true },
       select: { googleCalendarId: true, usedForDuration: true },
@@ -749,6 +819,77 @@ export async function generatePlaylists(
       );
     }
 
+    // PODCAST-08 Gate 5: allowlisted, per-target ACTIVE selector is testable
+    // exclusively inside SIMULATION in this PR. Real Spotify writes remain
+    // hard-disabled regardless of any environment switch until Gate 7 reviews
+    // live prewrite configuration/fingerprint and authorizes the pilot.
+    const podcast08ActiveDecisions = new Map<string, {
+      targetPlaylistId: string;
+      status: "ACTIVE" | "ABSTAIN_UNSAFE_CONTEXT";
+      fallbackCount: number;
+    }>();
+    const podcast08ActiveConfig: Array<{
+      targetPlaylistId: string;
+      status: string;
+    }> = [];
+    if (process.env.PODCAST08_ACTIVE_MODE === "ACTIVE") {
+      const activeSettings = await prisma.podcastDurationBandSettings.findUnique({
+        where: { userId },
+        select: { shortMaxMinutes: true, mediumMaxMinutes: true },
+      });
+      const globalLimits = activeSettings ?? DEFAULT_PODCAST_DURATION_BAND_LIMITS;
+      const persistedById = new Map(targets.map((target) => [target.id, target]));
+      for (const runTarget of runTargets) {
+        const originalTarget = persistedById.get(runTarget.targetPlaylistId);
+        if (!originalTarget) continue;
+        const decision = resolvePodcast08ActiveTargetPolicy({
+          mode: process.env.PODCAST08_ACTIVE_MODE,
+          targetAllowlist: process.env.PODCAST08_ACTIVE_TARGET_IDS,
+          // Gate 5 cannot approve productive Spotify writes. Gate 7 must
+          // explicitly rework this flag with prewrite simulation proof.
+          productiveWritesApproved: false,
+          simulate,
+          targetId: runTarget.targetPlaylistId,
+          compositionMode: runTarget.rules.compositionMode,
+          sequencePattern: runTarget.rules.sequencePattern,
+          rawBands: originalTarget.podcastDurationSlotBands,
+          limits: globalLimits,
+          hasDurationBlocks: Boolean(runTarget.durationBlocks),
+        });
+        podcast08ActiveConfig.push({
+          targetPlaylistId: runTarget.targetPlaylistId,
+          status: decision.status,
+        });
+        if (decision.policy) runTarget.podcast08ActivePolicy = decision.policy;
+      }
+      summary.podcast08ActiveGate = {
+        gate: 5,
+        mode: "ACTIVE_REQUESTED",
+        simulate,
+        spotifyWritesEnabled: false,
+        targets: podcast08ActiveConfig,
+      };
+    }
+
+    // PODCAST-08 Gate 4: opt-in, simulation-only context capture. Pure shadow
+    // calculation happens ONCE after the final incremental plan is available;
+    // ordinary runs (especially the 06:00 scheduled Carro run) pay no cost.
+    const podcast08ShadowEnabled =
+      simulate && process.env.PODCAST08_SHADOW_MODE === "SHADOW";
+    const podcast08BandsByTargetId = new Map<string, readonly PodcastDurationBand[]>();
+    if (podcast08ShadowEnabled) {
+      for (const target of targets) {
+        if (target.compositionMode !== "SEQUENCE") continue;
+        const bands = parsePersistedPodcastDurationSlots(
+          target.sequencePattern, target.podcastDurationSlotBands,
+        );
+        if (bands?.some((band) => band !== "ANY")) {
+          podcast08BandsByTargetId.set(target.id, bands);
+        }
+      }
+    }
+    const podcast08Contexts = new Map<string, Podcast08CapturedContext>();
+
     let musicUnavailableSkippedCount = 0;
     let genericPodcastSuppressedCount = 0;
     const incremental = await collectIncrementally({
@@ -760,6 +901,31 @@ export async function generatePlaylists(
       preservedByTargetId: new Map(Object.entries(opts.preservedByTargetId ?? {})),
       blockedMusicTrackIdsByTargetId,
       initialReserved: opts.reservedUris ?? [],
+      ...(podcast08ActiveConfig.length > 0
+        ? {
+            onPodcast08ActiveDecision: (entry: {
+              targetPlaylistId: string;
+              status: "ACTIVE" | "ABSTAIN_UNSAFE_CONTEXT";
+              fallbackCount: number;
+            }) => {
+              podcast08ActiveDecisions.set(entry.targetPlaylistId, entry);
+            },
+          }
+        : {}),
+      ...(podcast08BandsByTargetId.size > 0
+        ? {
+            onPodcast08SingleBlockContext: (entry: {
+              targetPlaylistId: string;
+              input: Podcast08CapturedContext["input"];
+            }) => {
+              if (podcast08BandsByTargetId.has(entry.targetPlaylistId)) {
+                podcast08Contexts.set(entry.targetPlaylistId, {
+                  input: entry.input,
+                });
+              }
+            },
+          }
+        : {}),
       recoverSourceFailure: (_source, error) =>
         isDegradableSpotifySourceFailure(error),
       onBatch(source, batch) {
@@ -869,8 +1035,79 @@ export async function generatePlaylists(
     }
 
     let plan = incremental.plan;
+    // A simulation with an active PODCAST-08 selection is an experimental
+    // counterfactual. It MUST NOT grant CONFIG-04 approval for a productive
+    // run that still uses the legacy selector.
+    const podcast08ExperimentalSelectionApplied = simulate &&
+      [...podcast08ActiveDecisions.values()].some(
+        (decision) => decision.status === "ACTIVE",
+      );
+    if (podcast08ActiveConfig.length > 0) {
+      summary.podcast08ActiveGate = {
+        gate: 5,
+        mode: "ACTIVE_REQUESTED",
+        simulate,
+        spotifyWritesEnabled: false,
+        realRunApprovalEligible: !podcast08ExperimentalSelectionApplied,
+        targets: podcast08ActiveConfig.map((entry) => ({
+          ...entry,
+          runtime: podcast08ActiveDecisions.get(entry.targetPlaylistId) ?? null,
+        })),
+      };
+      podcast08ActiveDecisions.clear();
+    }
+    // Observe only the final, fully collected canonical planner contexts.
+    // This is never invoked for real updates; no extra Spotify calls or writes.
+    if (podcast08BandsByTargetId.size > 0 && !incremental.failure) {
+      try {
+        const storedSettings = await prisma.podcastDurationBandSettings.findUnique({
+          where: { userId },
+          select: { shortMaxMinutes: true, mediumMaxMinutes: true },
+        });
+        const limits = storedSettings
+          ? parsePodcastDurationBandLimits(storedSettings)
+          : DEFAULT_PODCAST_DURATION_BAND_LIMITS;
+        if (!limits) {
+          summary.podcast08Shadow = {
+            gate: 4,
+            mode: "SHADOW",
+            status: "ABSTAIN_INVALID_GLOBAL_LIMITS",
+            plannerInfluence: false,
+            spotifyWrites: false,
+          };
+        } else {
+          summary.podcast08Shadow = evaluatePodcast08FinalSimulationShadow({
+            finalPlan: plan,
+            contexts: podcast08Contexts,
+            bandsByTargetId: podcast08BandsByTargetId,
+            limits,
+            extraConfigurationDatabaseReads: 1,
+          });
+        }
+      } catch (error) {
+        // Diagnostics must never alter or fail the authoritative simulation.
+        summary.podcast08Shadow = {
+          gate: 4,
+          mode: "SHADOW",
+          status: "ABSTAIN_EVIDENCE_UNAVAILABLE",
+          reason: error instanceof Error ? error.name : "UNKNOWN",
+          plannerInfluence: false,
+          spotifyWrites: false,
+        };
+      } finally {
+        podcast08Contexts.clear();
+      }
+    }
     const qualityFailures = incremental.qualityFailures;
-    summary.qualityPassed = qualityFailures.length === 0;
+    summary.qualityPassed =
+      qualityFailures.length === 0 && !podcast08ExperimentalSelectionApplied;
+    if (podcast08ExperimentalSelectionApplied) {
+      summary.podcast08SimulationOnly = true;
+      log({
+        level: "INFO",
+        message: "PODCAST-08 piloto de simulação: a seleção por faixas não aprova execução real; manter CONFIG-04 bloqueado até Gate 7.",
+      });
+    }
     summary.qualityFailures = qualityFailures.map((planned) => ({
       name: planned.name,
       requestedPodcastPercent: planned.result.stats.requestedPodcastPercent,

@@ -13,6 +13,7 @@ import {
   type PlanRunResult,
   type PlannerPools,
   type RunTarget,
+  type PlanRunInput,
 } from "@/services/playlist-planner";
 import type { EffectiveSharingPolicy } from "@/services/playlist-planner/target-sharing-shadow";
 import type { TargetSharingReservationMap } from "@/services/playlist-planner/target-sharing-runtime";
@@ -101,6 +102,9 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   /** MUSIC-05 + MUSIC-07 target-local eligibility blockers. */
   blockedMusicTrackIdsByTargetId?: ReadonlyMap<string, ReadonlySet<string>>;
   initialReserved?: Iterable<string>;
+  /** Capture the eligible single-block context; shadow evaluation happens once later. */
+  onPodcast08SingleBlockContext?: PlanRunInput["onPodcast08SingleBlockContext"];
+  onPodcast08ActiveDecision?: PlanRunInput["onPodcast08ActiveDecision"];
   onBatch?: (source: TSource, batch: IncrementalSourceBatch) => void;
   onRound?: (round: IncrementalPlanningRound) => void;
   /** Test seam and bounded pre-write repair hook; production uses MUSIC-01 revalidation. */
@@ -144,6 +148,8 @@ export async function collectIncrementally<
   externalReservationsByUri,
   blockedMusicTrackIdsByTargetId,
   initialReserved,
+  onPodcast08SingleBlockContext,
+  onPodcast08ActiveDecision,
   onBatch,
   onRound,
   revalidateBeforeWrite = revalidateMusicRepeatBeforeRealWrite,
@@ -364,6 +370,8 @@ export async function collectIncrementally<
     preservedByTargetId: activePreservedByTargetId,
     blockedMusicTrackIdsByTargetId: effectiveBlockedMusicTrackIdsByTargetId,
     initialReserved,
+    onPodcast08SingleBlockContext,
+    onPodcast08ActiveDecision,
   });
   let qualityFailures = failedTargets(plan);
   let planningNeeds = targetsNeedingMoreCandidates(
@@ -383,6 +391,8 @@ export async function collectIncrementally<
       preservedByTargetId: activePreservedByTargetId,
       blockedMusicTrackIdsByTargetId: effectiveBlockedMusicTrackIdsByTargetId,
       initialReserved,
+      onPodcast08SingleBlockContext,
+      onPodcast08ActiveDecision,
     });
     qualityFailures = failedTargets(plan);
     planningNeeds = targetsNeedingMoreCandidates(

@@ -38,6 +38,9 @@ import {
 } from "@/services/target-schedule";
 
 import { saveTargetDiscoveryPolicy } from "./discovery-actions";
+import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
+import type { PodcastDurationBand } from "@/services/playlist-planner/podcast-duration-bands";
+import { maySavePodcastDurationBandsWhenEditorDisabled } from "@/services/playlist-planner/podcast-duration-sequence-editor";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
 const CREATE_NEW = "__NEW__";
@@ -201,6 +204,7 @@ async function saveTarget(formData: FormData) {
     ? integerBetween(formData.get("maxTracksPerAlbum"), 1, 50)
     : null;
   const sequencePattern = readSequence(formData.get("sequencePattern"));
+  const rawPodcastDurationBands = formData.get("podcastDurationSlotBands");
   const enabled = formData.get("enabled") === "on";
   const sourceScopeModeRaw = String(
     formData.get("sourceScopeMode") ?? "INHERIT_GLOBAL",
@@ -377,6 +381,40 @@ async function saveTarget(formData: FormData) {
 
   if (id && !existingTarget) fail("invalid");
 
+  // PODCAST-08 Gate 6: validate both JSON arrays as a unit. Older/stale
+  // forms cannot silently discard non-ANY metadata while editing a target.
+  let podcastDurationSlotBands: PodcastDurationBand[];
+  if (rawPodcastDurationBands === null) {
+    if (existingTarget?.podcastDurationSlotBands !== null &&
+        existingTarget?.podcastDurationSlotBands !== undefined) {
+      fail("podcast-bands");
+    }
+    podcastDurationSlotBands = sequencePattern!.map(() => "ANY");
+  } else {
+    if (typeof rawPodcastDurationBands !== "string") fail("podcast-bands");
+    let parsedBands: unknown;
+    try {
+      parsedBands = JSON.parse(rawPodcastDurationBands);
+    } catch {
+      fail("podcast-bands");
+    }
+    const parsed = parsePersistedPodcastDurationSlots(sequencePattern!, parsedBands);
+    if (!parsed) fail("podcast-bands");
+    podcastDurationSlotBands = [...parsed];
+  }
+  // Gate 6 preparatory UI remains read-only for specific bands until the
+  // product owner explicitly permits a pilot. Do not allow a stale/malicious
+  // client to opt in while productive selection still uses the legacy planner.
+  if (
+    process.env.PODCAST08_DURATION_EDITOR_ENABLED !== "1" &&
+    !maySavePodcastDurationBandsWhenEditorDisabled({
+      existingSequence: existingTarget?.sequencePattern ?? null,
+      existingBands: existingTarget?.podcastDurationSlotBands ?? null,
+      nextSequence: sequencePattern!,
+      nextBands: podcastDurationSlotBands,
+    })
+  ) fail("podcast-bands-disabled");
+
   let normalizedCalendarMode: "LEGACY_GLOBAL" | "SELECTED" | "ALL_QUERYABLE" =
     "LEGACY_GLOBAL";
   let normalizedCalendarSelectionIds: string[] = [];
@@ -511,6 +549,7 @@ async function saveTarget(formData: FormData) {
         ? podcastEpisodeMaxDurationMinutes! * 60
         : null,
     sequencePattern,
+    podcastDurationSlotBands,
     maxEpisodesPerProgram: maxEpisodesPerProgram!,
     maxTracksPerArtist,
     maxTracksPerAlbum,
@@ -950,7 +989,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
   }
 
   const errorMessage =
-    params.error === "calendar"
+    params.error === "podcast-bands-disabled"
+      ? "As faixas específicas ainda não estão habilitadas. Mantenha Qualquer duração até a ativação do piloto."
+      : params.error === "podcast-bands"
+      ? "As faixas de duração não correspondem aos passos da sequência. Recarregue a página e revise os podcasts antes de salvar."
+      : params.error === "calendar"
       ? "Este destino ainda usa compatibilidade global. Habilite ao menos um calendário para duração no CONFIG-01 ou escolha um calendário próprio."
       : params.error === "calendar-selection"
         ? "Escolha pelo menos um calendário, ou use “Todos os calendários consultáveis”. Destinos novos não usam fallback global silencioso."
@@ -1202,6 +1245,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 calendarOptions={calendarOptions}
                 sourceOptions={sourceOptions}
                 globalSharingPolicy={globalSharingPolicy}
+                durationBandEditingEnabled={process.env.PODCAST08_DURATION_EDITOR_ENABLED === "1"}
                 initial={{
                   name: "",
                   enabled: true,
@@ -1223,6 +1267,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   podcastEpisodeMaxDurationMode: "NONE",
                   podcastEpisodeMaxDurationMinutes: 45,
                   sequencePattern: ["MUSIC", "PODCAST", "MUSIC", "MUSIC", "PODCAST"],
+                  podcastDurationSlotBands: ["ANY", "ANY", "ANY", "ANY", "ANY"],
                   maxEpisodesPerProgram: 1,
                   maxTracksPerArtist: null,
                   maxTracksPerAlbum: null,
@@ -1424,6 +1469,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           calendarOptions={calendarOptions}
                           sourceOptions={sourceOptions}
                           globalSharingPolicy={globalSharingPolicy}
+                          durationBandEditingEnabled={process.env.PODCAST08_DURATION_EDITOR_ENABLED === "1"}
                           initial={{
                             id: target.id,
                             name: target.name,
@@ -1464,6 +1510,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               ),
                             ),
                             sequencePattern,
+                            podcastDurationSlotBands:
+                              [...(parsePersistedPodcastDurationSlots(
+                                target.sequencePattern,
+                                target.podcastDurationSlotBands,
+                              ) ?? sequencePattern.map(() => "ANY"))],
                             maxEpisodesPerProgram: target.maxEpisodesPerProgram,
                             maxTracksPerArtist: target.maxTracksPerArtist,
                             maxTracksPerAlbum: target.maxTracksPerAlbum,

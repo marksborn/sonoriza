@@ -1,0 +1,93 @@
+name: PODCAST-08 duration bands validation
+
+on:
+  pull_request:
+    paths:
+      - "src/services/playlist-planner/podcast-duration-*.ts"
+      - "src/services/playlist-planner/planner.ts"
+      - "src/services/playlist-planner/plan-run.ts"
+      - "src/jobs/incremental-planning.ts"
+      - "src/jobs/generate-playlists-incremental.ts"
+      - "src/components/TargetPlaylistForm.tsx"
+      - "src/app/dashboard/configuracao/destinos/page.tsx"
+      - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
+      - "src/services/configuration-readiness.ts"
+      - "prisma/schema.prisma"
+      - "prisma/migrations/**"
+      - "docs/podcast-08-duration-contract-gate1-2.md"
+      - ".github/workflows/podcast-08-duration-bands-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/services/playlist-planner/podcast-duration-*.ts"
+      - "src/services/playlist-planner/planner.ts"
+      - "src/services/playlist-planner/plan-run.ts"
+      - "src/jobs/incremental-planning.ts"
+      - "src/jobs/generate-playlists-incremental.ts"
+      - "src/components/TargetPlaylistForm.tsx"
+      - "src/app/dashboard/configuracao/destinos/page.tsx"
+      - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
+      - "src/services/configuration-readiness.ts"
+      - "prisma/schema.prisma"
+      - "prisma/migrations/**"
+      - "docs/podcast-08-duration-contract-gate1-2.md"
+      - ".github/workflows/podcast-08-duration-bands-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_podcast08
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_podcast08"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_podcast08?schema=public
+      NEXTAUTH_SECRET: podcast08-ci-secret
+      AUTH_SECRET: podcast08-ci-secret
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - name: PODCAST-08 pure and isolated persistence regression
+        run: >-
+          npx tsx --test
+          src/services/playlist-planner/podcast-duration-bands.test.ts
+          src/services/playlist-planner/podcast-duration-persistence.test.ts
+          src/services/playlist-planner/podcast-duration-persistence.integration.test.ts
+          src/services/playlist-planner/podcast-duration-shadow.test.ts
+          src/services/playlist-planner/podcast-duration-simulation-shadow.test.ts
+          src/services/playlist-planner/podcast-duration-sequence-editor.test.ts
+          src/services/playlist-planner/podcast-duration-active-gate.test.ts
+          src/services/playlist-planner/podcast-duration-active-planner.test.ts
+          src/services/playlist-planner/podcast-duration-pilot-readiness.test.ts
+          src/services/playlist-planner/podcast-duration-pilot-prewrite.test.ts
+      - run: npx tsx --test src/services/configuration-readiness.test.ts
+      - run: npm run test:planner
+      - run: npm run typecheck
+      - run: npm run build

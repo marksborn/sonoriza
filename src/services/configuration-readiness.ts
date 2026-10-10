@@ -6,6 +6,14 @@ import {
   playbackReserveFingerprintPayloadFragment,
 } from "@/services/playback-reserve-gate2";
 import { isValidTimeZone } from "@/services/target-schedule";
+import {
+  DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+  parsePodcastDurationBandLimits,
+} from "@/services/playlist-planner/podcast-duration-bands";
+import {
+  parsePersistedPodcastDurationSlots,
+  podcastDurationConfigurationFingerprint,
+} from "@/services/playlist-planner/podcast-duration-persistence";
 
 type SequenceEntry = "MUSIC" | "PODCAST";
 type MusicRepeatUnit = "DAYS" | "MONTHS" | "YEARS";
@@ -196,6 +204,7 @@ export async function assessConfiguration(
     targetsRaw,
     musicPolicyRaw,
     podcastCadencePoliciesRaw,
+    podcastDurationSettingsRaw,
   ] = await Promise.all([
     prisma.account.findMany({
       where: { userId, provider: { in: ["google", "spotify"] } },
@@ -271,6 +280,7 @@ export async function assessConfiguration(
         podcastEpisodeMaxDurationMode: true,
         podcastEpisodeMaxDurationSeconds: true,
         sequencePattern: true,
+        podcastDurationSlotBands: true,
         maxEpisodesPerProgram: true,
         maxTracksPerArtist: true,
         maxTracksPerAlbum: true,
@@ -298,6 +308,10 @@ export async function assessConfiguration(
         cadenceUnit: true,
         priority: true,
       },
+    }),
+    prisma.podcastDurationBandSettings.findUnique({
+      where: { userId },
+      select: { shortMaxMinutes: true, mediumMaxMinutes: true },
     }),
   ]);
 
@@ -545,6 +559,38 @@ export async function assessConfiguration(
     });
   }
 
+  // PODCAST-08 Gate 3: detect invalid sidecars without interpreting them as
+  // permissive ANY. Existing NULL metadata must remain neutral.
+  const invalidPodcastDurationSlotTargets = new Set<string>();
+  for (const rawTarget of targetsRaw) {
+    if (
+      rawTarget.podcastDurationSlotBands !== null &&
+      parsePersistedPodcastDurationSlots(
+        rawTarget.sequencePattern,
+        rawTarget.podcastDurationSlotBands,
+      ) === null
+    ) {
+      invalidPodcastDurationSlotTargets.add(rawTarget.id);
+      pushIssue({
+        code: `INVALID_PODCAST_DURATION_SLOTS:${rawTarget.id}`,
+        message: `Destino "${rawTarget.name}": as faixas de duração de podcast estão inconsistentes com a sequência. Revise a configuração antes da geração.`,
+        href: "/dashboard/configuracao/destinos",
+      });
+    }
+  }
+
+  const parsedPodcastDurationLimits = podcastDurationSettingsRaw
+    ? parsePodcastDurationBandLimits(podcastDurationSettingsRaw)
+    : DEFAULT_PODCAST_DURATION_BAND_LIMITS;
+  const hasInvalidPodcastDurationLimits = parsedPodcastDurationLimits === null;
+  if (hasInvalidPodcastDurationLimits) {
+    pushIssue({
+      code: "INVALID_PODCAST_DURATION_LIMITS",
+      message: "As faixas globais de duração de podcast são inválidas. Revise os limites antes de gerar playlists.",
+      href: "/dashboard/configuracao/fontes",
+    });
+  }
+
   for (const rawTarget of targetsRaw) {
     const label = `Destino \"${rawTarget.name}\"`;
 
@@ -788,7 +834,24 @@ export async function assessConfiguration(
     sources,
     targets,
     issues,
-    fingerprint: fingerprint(fingerprintPayload),
+    fingerprint:
+      invalidPodcastDurationSlotTargets.size > 0 ||
+      hasInvalidPodcastDurationLimits ||
+      targetsRaw.some(
+        (target) => target.compositionMode === "SEQUENCE" &&
+          !hasOnlyValidSequenceEntries(target.sequencePattern),
+      )
+        ? fingerprint(fingerprintPayload)
+        : podcastDurationConfigurationFingerprint(
+            fingerprint(fingerprintPayload),
+            targetsRaw.map((target) => ({
+              id: target.id,
+              compositionMode: target.compositionMode,
+              sequencePattern: target.sequencePattern,
+              podcastDurationSlotBands: target.podcastDurationSlotBands,
+            })),
+            parsedPodcastDurationLimits ?? DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+          ),
   };
 }
 

@@ -1,3 +1,12 @@
+import {
+  DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+  podcastDurationFallbackOrder,
+  podcastDurationMatchesBand,
+  classifyPodcastEffectiveDuration,
+  type PodcastDurationBand,
+  type PodcastDurationBandLimits,
+  type ClassifiedPodcastDurationBand,
+} from "./podcast-duration-bands";
 import type {
   Candidate,
   ContentType,
@@ -43,7 +52,57 @@ type MusicDiversityState = {
   missingAlbumIdentityRejectedUris: Set<string>;
 };
 
-export function planPlaylist({
+/** The productive entrypoint always uses the legacy canonical selection. */
+export function planPlaylist(input: PlanPlaylistInput): PlanResult {
+  return planPlaylistCore(input);
+}
+
+/**
+ * PODCAST-08 Gate 4: caller-supplied, fully local counterfactual. This function
+ * is NOT called by productive generation, scheduled generation or UI.
+ * The input pools must already honor the authorities of the current target.
+ */
+export function projectPodcastDurationPlan(
+  input: PlanPlaylistInput,
+  bands: readonly PodcastDurationBand[],
+  limits: PodcastDurationBandLimits = DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+): { result: PlanResult; slots: PodcastDurationShadowSlot[] } {
+  const pattern = input.rules.sequencePattern;
+  if (
+    input.rules.compositionMode !== "SEQUENCE" ||
+    bands.length !== pattern.length ||
+    bands.some((band, i) =>
+      (band !== "ANY" && band !== "SHORT" && band !== "MEDIUM" && band !== "LONG") ||
+      (pattern[i] === "MUSIC" && band !== "ANY"),
+    )
+  ) {
+    throw new Error("Invalid PODCAST-08 shadow sequence configuration");
+  }
+  // Validate even if a run never reaches a podcast slot.
+  classifyPodcastEffectiveDuration(60_000, limits);
+  const slots: PodcastDurationShadowSlot[] = [];
+  const result = planPlaylistCore(input, { bands, limits, slots });
+  return { result, slots };
+}
+
+export type PodcastDurationShadowSlot = Readonly<{
+  patternIndex: number;
+  position: number;
+  requestedBand: PodcastDurationBand;
+  fallbackStepBand: PodcastDurationBand | null;
+  selectedBand: ClassifiedPodcastDurationBand | null;
+  selectedUri: string | null;
+  fallbackApplied: boolean;
+  reason: "PRIMARY_MATCH" | "NO_ELIGIBLE_EPISODE_IN_REQUESTED_BAND" | "NO_ELIGIBLE_EPISODE_AFTER_FALLBACK";
+}>;
+
+type PodcastDurationProjection = {
+  bands: readonly PodcastDurationBand[];
+  limits: PodcastDurationBandLimits;
+  slots: PodcastDurationShadowSlot[];
+};
+
+function planPlaylistCore({
   rules,
   pools,
   reserved,
@@ -51,7 +110,7 @@ export function planPlaylist({
   constraintSeed,
   strictDurationBoundary = false,
   sequenceStartIndex = 0,
-}: PlanPlaylistInput): PlanResult {
+}: PlanPlaylistInput, projection?: PodcastDurationProjection): PlanResult {
   const target = Math.max(0, rules.targetDurationMs);
   const podcastPercent = clamp(rules.podcastPercent, 0, 100);
   const maxPodcastDurationMs =
@@ -189,14 +248,54 @@ export function planPlaylist({
         const slotType = pattern[patternIndex]!;
         sequenceSlotsRequested += 1;
 
-        const candidate = pickCandidate(
-          poolByType[slotType],
-          used,
-          programCounts,
-          rules.maxEpisodesPerProgram,
-          remainingMs,
-          musicDiversity,
-        );
+        let candidate: Candidate | null = null;
+        if (slotType === "PODCAST" && projection) {
+          const requestedBand = projection.bands[patternIndex] ?? "ANY";
+          let selectedStep: PodcastDurationBand | null = null;
+          for (const step of podcastDurationFallbackOrder(requestedBand)) {
+            // Reuse the exact canonical pickCandidate guard (URI, show cap,
+            // fit and ordering). Only the optional duration band differs.
+            candidate = pickCandidate(
+              poolByType.PODCAST,
+              used,
+              programCounts,
+              rules.maxEpisodesPerProgram,
+              remainingMs,
+              musicDiversity,
+              step,
+              projection.limits,
+            );
+            if (candidate) {
+              selectedStep = step;
+              break;
+            }
+          }
+          projection.slots.push({
+            patternIndex,
+            position: sequenceStartIndex + items.length,
+            requestedBand,
+            fallbackStepBand: selectedStep,
+            selectedBand: candidate
+              ? classifyPodcastEffectiveDuration(candidate.durationMs, projection.limits)
+              : null,
+            selectedUri: candidate?.uri ?? null,
+            fallbackApplied: selectedStep !== null && selectedStep !== requestedBand,
+            reason: selectedStep === null
+              ? "NO_ELIGIBLE_EPISODE_AFTER_FALLBACK"
+              : selectedStep === requestedBand
+                ? "PRIMARY_MATCH"
+                : "NO_ELIGIBLE_EPISODE_IN_REQUESTED_BAND",
+          });
+        } else {
+          candidate = pickCandidate(
+            poolByType[slotType],
+            used,
+            programCounts,
+            rules.maxEpisodesPerProgram,
+            remainingMs,
+            musicDiversity,
+          );
+        }
 
         if (!candidate) {
           const sameTypeCandidateExists = Boolean(
@@ -409,12 +508,15 @@ function pickCandidate(
   maxEpisodesPerProgram: number,
   maxDurationMs: number,
   musicDiversity: MusicDiversityState,
+  durationBand: PodcastDurationBand = "ANY",
+  bandLimits: PodcastDurationBandLimits = DEFAULT_PODCAST_DURATION_BAND_LIMITS,
 ): Candidate | null {
   for (const candidate of pool) {
     if (used.has(candidate.uri)) continue;
     if (candidate.durationMs <= 0 || candidate.durationMs > maxDurationMs) continue;
 
     if (candidate.type === "PODCAST") {
+      if (!podcastDurationMatchesBand(candidate.durationMs, durationBand, bandLimits)) continue;
       if (!candidate.programId) continue;
       const count = programCounts.get(candidate.programId) ?? 0;
       if (count >= maxEpisodesPerProgram) continue;
