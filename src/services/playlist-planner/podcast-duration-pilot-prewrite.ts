@@ -146,3 +146,26 @@ export function evaluatePodcast08PilotPrewriteProof(
   // Even with every proof present, a separate reviewed write gate is required.
   return evidence("READY_FOR_REVIEW");
 }
+
+
+/**
+ * Gate 7A guard for any real run that includes an explicitly allowlisted
+ * PODCAST-08 ACTIVE destination. Until a later reviewed deployment enables a
+ * full revalidated pilot, DO NOT silently write the legacy selection instead.
+ * No DB, Spotify, or environment access.
+ */
+export function mustBlockPodcast08RequestedRealWrite(input: {
+  simulate: boolean;
+  mode: string | null | undefined;
+  targetAllowlist: string | null | undefined;
+  runTargetIds: readonly string[];
+}): boolean {
+  if (input.simulate || input.mode !== "ACTIVE") return false;
+  const requestedIds = new Set(
+    (input.targetAllowlist ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  return input.runTargetIds.some((id) => requestedIds.has(id));
+}
