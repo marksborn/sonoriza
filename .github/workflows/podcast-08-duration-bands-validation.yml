@@ -8,6 +8,7 @@ on:
       - "src/services/playlist-planner/plan-run.ts"
       - "src/jobs/incremental-planning.ts"
       - "src/jobs/generate-playlists-incremental.ts"
+      - "scripts/report-podcast08-work-preview.ts"
       - "src/components/TargetPlaylistForm.tsx"
       - "src/app/dashboard/configuracao/destinos/page.tsx"
       - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
@@ -25,6 +26,7 @@ on:
       - "src/services/playlist-planner/plan-run.ts"
       - "src/jobs/incremental-planning.ts"
       - "src/jobs/generate-playlists-incremental.ts"
+      - "scripts/report-podcast08-work-preview.ts"
       - "src/components/TargetPlaylistForm.tsx"
       - "src/app/dashboard/configuracao/destinos/page.tsx"
       - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
@@ -87,6 +89,7 @@ jobs:
           src/services/playlist-planner/podcast-duration-active-planner.test.ts
           src/services/playlist-planner/podcast-duration-pilot-readiness.test.ts
           src/services/playlist-planner/podcast-duration-pilot-prewrite.test.ts
+          src/services/playlist-planner/podcast-duration-ephemeral-preview.test.ts
       - run: npx tsx --test src/services/configuration-readiness.test.ts
       - run: npm run test:planner
       - run: npm run typecheck
