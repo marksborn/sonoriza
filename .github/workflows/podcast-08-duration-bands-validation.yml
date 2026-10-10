@@ -5,6 +5,9 @@ on:
     paths:
       - "src/services/playlist-planner/podcast-duration-*.ts"
       - "src/services/playlist-planner/planner.ts"
+      - "src/services/playlist-planner/plan-run.ts"
+      - "src/jobs/incremental-planning.ts"
+      - "src/jobs/generate-playlists-incremental.ts"
       - "src/services/configuration-readiness.ts"
       - "prisma/schema.prisma"
       - "prisma/migrations/**"
@@ -16,6 +19,9 @@ on:
     paths:
       - "src/services/playlist-planner/podcast-duration-*.ts"
       - "src/services/playlist-planner/planner.ts"
+      - "src/services/playlist-planner/plan-run.ts"
+      - "src/jobs/incremental-planning.ts"
+      - "src/jobs/generate-playlists-incremental.ts"
       - "src/services/configuration-readiness.ts"
       - "prisma/schema.prisma"
       - "prisma/migrations/**"
@@ -69,6 +75,7 @@ jobs:
           src/services/playlist-planner/podcast-duration-persistence.test.ts
           src/services/playlist-planner/podcast-duration-persistence.integration.test.ts
           src/services/playlist-planner/podcast-duration-shadow.test.ts
+          src/services/playlist-planner/podcast-duration-simulation-shadow.test.ts
       - run: npx tsx --test src/services/configuration-readiness.test.ts
       - run: npm run test:planner
       - run: npm run typecheck
