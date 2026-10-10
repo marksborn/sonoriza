@@ -86,7 +86,10 @@ async function main() {
     where: { id: result.runId },
     select: { id: true, status: true, summary: true },
   });
-  const summary = run?.summary;
+  if (!run) {
+    throw new Error("The simulation GenerationRun was not found.");
+  }
+  const summary = run.summary;
   if (!summary || typeof summary !== "object" || Array.isArray(summary)) {
     throw new Error("Preview simulation did not generate a structured summary.");
   }
