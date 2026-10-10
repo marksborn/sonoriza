@@ -206,3 +206,9 @@ A issue #365 permanece aberta. `REVIEW_CANDIDATE` **não é** `DEPLOY_READY` nem
 - Sem habilitar `PODCAST08_ACTIVE_MODE` e `PODCAST08_DURATION_EDITOR_ENABLED` na VPS.
 - Sem executar migrations produtivas, escrever no Spotify, alterar PM2 ou adicionar cron durante este gate.
 - Nenhum ambiente/flag sozinho remove `canWriteSpotify:false`; o Guard 7A é preparatório e o piloto real requer revisão adicional.
+
+
+### Correção crítica da prontidão Gate 7A
+A prova `evaluatePodcast08PilotPrewriteProof` inicialmente esperava `qualityPassed=true`, o que era contraditório: o Gate 5A **força** `qualityPassed=false` em simulações experimentais para bloquear aprovação automática no CONFIG-04. A validação foi alinhada: exige `simulationOnly=true`, `realRunApprovalEligible=false`, `collectionComplete=true`, `qualityFailuresCount=0` e `qualityPassed=false`. Qualquer falta ou valor divergente abstém; o resultado continua sendo apenas `READY_FOR_REVIEW`, **nunca autorização de escrita**.
+
+Proteção adicional no gerador: uma atualização real não deve publicar uma sequência legacy se o destino tiver `podcastDurationSlotBands` com faixa específica, mesmo quando `PODCAST08_ACTIVE_MODE` estiver desligado. Ela deve falhar fechada até o Gate 7B.
