@@ -264,6 +264,7 @@ function planPlaylistCore({
               musicDiversity,
               step,
               projection.limits,
+              true,
             );
             if (candidate) {
               selectedStep = step;
@@ -306,6 +307,9 @@ function planPlaylistCore({
               rules.maxEpisodesPerProgram,
               Number.POSITIVE_INFINITY,
               musicDiversity,
+              "ANY",
+              DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+              Boolean(projection && slotType === "PODCAST"),
             ),
           );
           sequenceUnfilledSlots = 1;
@@ -510,12 +514,24 @@ function pickCandidate(
   musicDiversity: MusicDiversityState,
   durationBand: PodcastDurationBand = "ANY",
   bandLimits: PodcastDurationBandLimits = DEFAULT_PODCAST_DURATION_BAND_LIMITS,
+  enforceStrictProgramHeadOfLine = false,
 ): Candidate | null {
-  for (const candidate of pool) {
+  for (let index = 0; index < pool.length; index += 1) {
+    const candidate = pool[index]!;
     if (used.has(candidate.uri)) continue;
     if (candidate.durationMs <= 0 || candidate.durationMs > maxDurationMs) continue;
 
     if (candidate.type === "PODCAST") {
+      // #451: simulation-only strict head-of-line protection. A duration-band
+      // match must not leap past an earlier pending episode of the same show.
+      // The input pool is already scoped, ordered and policy-filtered by planRun.
+      // The earlier episode is released only after it was actually placed (used).
+      if (enforceStrictProgramHeadOfLine && candidate.podcastStrictSequence === true &&
+          candidate.programId && pool.slice(0, index).some((earlier) =>
+            earlier.type === "PODCAST" &&
+            earlier.programId === candidate.programId &&
+            earlier.podcastStrictSequence === true &&
+            !used.has(earlier.uri))) continue;
       if (!podcastDurationMatchesBand(candidate.durationMs, durationBand, bandLimits)) continue;
       if (!candidate.programId) continue;
       const count = programCounts.get(candidate.programId) ?? 0;

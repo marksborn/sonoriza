@@ -188,13 +188,98 @@ test("#365 Gate 4: invalid band or divider abstains without modifying legacy sel
   assert.equal(invalidLimit.evidence.status, "ABSTAIN_INVALID_CONFIGURATION");
 });
 
-test("#365 Gate 4: strict-show ordering must abstain rather than skip early episodes", () => {
+test("#451 Gate 4: a single strict head is admissible, with fallback to avoid a skip", () => {
   const strict = {...episode("show-ep-01", 70, "show"),
     podcastStrictSequence: true};
   const data = input({pools:{music:[music("m")],podcasts:[strict]}});
-  const { evidence } = comparePodcastDurationShadow(data, ["SHORT", "ANY", "LONG"]);
+  const { actual, evidence } = comparePodcastDurationShadow(data, ["SHORT", "ANY", "LONG"]);
+  assert.equal(evidence.status, "READY_SHADOW");
+  assert.equal(evidence.projectedUris?.[0], "show-ep-01");
+  assert.equal(evidence.slots[0]?.fallbackStepBand, "ANY");
+  assert.deepEqual(actual.items.map(item => item.uri),
+    ["show-ep-01", "m"]);
+});
+
+test("#451 Gate 4: prioritize another program's SHORT head, never later episode in strict show", () => {
+  const strict = (uri: string, min: number) =>
+    ({ ...episode(uri, min, "ordered-show"), podcastStrictSequence: true });
+  const data = input({
+    rules: { ...input().rules, targetDurationMs: 90 * minute,
+      sequencePattern: ["PODCAST", "MUSIC", "PODCAST"],
+      maxEpisodesPerProgram: 2 },
+    pools: { music: [music("m")], podcasts: [
+      strict("head-long-70", 70),
+      strict("later-short-20", 20),
+      episode("other-show-short-15", 15, "other-show"),
+    ] },
+  });
+  const { evidence } = comparePodcastDurationShadow(data,
+    ["SHORT", "ANY", "ANY"]);
+  assert.equal(evidence.status, "READY_SHADOW");
+  assert.deepEqual(evidence.projectedUris,
+    ["other-show-short-15", "m", "head-long-70"]);
+  assert.notEqual(evidence.projectedUris?.[0], "later-short-20");
+});
+
+test("#451 Gate 4: strict first long episode must precede a later short episode", () => {
+  const data = input({
+    rules: { ...input().rules, targetDurationMs: 90 * minute,
+      sequencePattern: ["PODCAST"], maxEpisodesPerProgram: 2 },
+    pools: { music: [], podcasts: [
+      {...episode("head-long-70", 70, "show"), podcastStrictSequence: true},
+      {...episode("later-short-20", 20, "show"), podcastStrictSequence: true},
+    ] },
+  });
+  const { evidence } = comparePodcastDurationShadow(data, ["SHORT"]);
+  assert.equal(evidence.status, "READY_SHADOW");
+  assert.deepEqual(evidence.projectedUris, ["head-long-70", "later-short-20"]);
+  assert.equal(evidence.slots[0]?.fallbackApplied, true);
+  assert.equal(evidence.slots[0]?.fallbackStepBand, "ANY");
+  assert.equal(evidence.slots[1]?.fallbackApplied, false);
+});
+
+test("#451 Gate 4: preserved strict prefix releases only its immediate successor", () => {
+  const head = {...episode("head-long", 70, "show"), podcastStrictSequence: true};
+  const second = {...episode("second-short", 20, "show"), podcastStrictSequence: true};
+  const data = input({
+    rules: { ...input().rules, targetDurationMs: 90 * minute,
+      sequencePattern: ["PODCAST"], maxEpisodesPerProgram: 2 },
+    preserved: [head],
+    pools: {music:[], podcasts:[head,second]},
+  });
+  const { actual, evidence } = comparePodcastDurationShadow(data, ["SHORT"]);
+  assert.equal(evidence.status, "READY_SHADOW");
+  assert.deepEqual(evidence.projectedUris, ["head-long","second-short"]);
+  assert.deepEqual(actual.items.map(x=>x.uri),["head-long","second-short"]);
+});
+
+test("#451 Gate 4: stateful progress still abstains instead of reordering", () => {
+  const head = {...episode("head", 50, "show"),
+    podcastStrictSequence: true, podcastSequenceStateful: true };
+  const data = input({pools:{music:[],podcasts:[head]}});
+  const {evidence} = comparePodcastDurationShadow(data, ["SHORT","ANY","LONG"]);
   assert.equal(evidence.status, "ABSTAIN_STRICT_SEQUENCE");
-  assert.equal(evidence.projectedUris, null);
+  assert.equal(evidence.reason, "PODCAST_STATEFUL_PROGRESS_REQUIRES_PROOF");
+  assert.equal(evidence.projectedUris,null);
+});
+
+test("#451 Gate 4: inconsistent mixed strict-policy identity abstains", () => {
+  const data = input({pools:{music:[],podcasts:[
+    {...episode("head",50,"show"),podcastStrictSequence:true},
+    {...episode("second",20,"show"),podcastStrictSequence:false},
+  ]}});
+  const {evidence} = comparePodcastDurationShadow(data, ["SHORT","ANY","LONG"]);
+  assert.equal(evidence.status,"ABSTAIN_STRICT_SEQUENCE");
+  assert.equal(evidence.reason,"PODCAST_MIXED_STRICT_SHOW_CONTEXT");
+});
+
+test("#451 Gate 4: strict show without program ID must abstain", () => {
+  const data = input({pools:{music:[],podcasts:[
+    {...episode("unknown",20),programId:undefined,podcastStrictSequence:true},
+  ]}});
+  const {evidence} = comparePodcastDurationShadow(data, ["SHORT","ANY","LONG"]);
+  assert.equal(evidence.status,"ABSTAIN_STRICT_SEQUENCE");
+  assert.equal(evidence.reason,"PODCAST_STRICT_PROGRAM_ID_MISSING");
 });
 
 test("#365 Gate 4: PROPORTION mode abstains because slots do not apply", () => {
