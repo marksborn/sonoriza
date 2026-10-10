@@ -85,6 +85,7 @@ jobs:
           src/services/playlist-planner/podcast-duration-sequence-editor.test.ts
           src/services/playlist-planner/podcast-duration-active-gate.test.ts
           src/services/playlist-planner/podcast-duration-active-planner.test.ts
+          src/services/playlist-planner/podcast-duration-pilot-prewrite.test.ts
       - run: npx tsx --test src/services/configuration-readiness.test.ts
       - run: npm run test:planner
       - run: npm run typecheck
