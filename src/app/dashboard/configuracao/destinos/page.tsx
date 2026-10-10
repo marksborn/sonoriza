@@ -401,6 +401,24 @@ async function saveTarget(formData: FormData) {
     if (!parsed) fail("podcast-bands");
     podcastDurationSlotBands = [...parsed];
   }
+  // Gate 6 preparatory UI remains read-only for specific bands until the
+  // product owner explicitly permits a pilot. Do not allow a stale/malicious
+  // client to opt in while productive selection still uses the legacy planner.
+  if (process.env.PODCAST08_DURATION_EDITOR_ENABLED !== "1") {
+    const persisted = existingTarget?.podcastDurationSlotBands === null ||
+      existingTarget?.podcastDurationSlotBands === undefined
+      ? sequencePattern!.map(() => "ANY")
+      : parsePersistedPodcastDurationSlots(
+          existingTarget.sequencePattern,
+          existingTarget.podcastDurationSlotBands,
+        );
+    if (
+      !persisted ||
+      podcastDurationSlotBands.some((band, index) => band !== persisted[index])
+    ) {
+      fail("podcast-bands-disabled");
+    }
+  }
 
   let normalizedCalendarMode: "LEGACY_GLOBAL" | "SELECTED" | "ALL_QUERYABLE" =
     "LEGACY_GLOBAL";
@@ -976,7 +994,9 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
   }
 
   const errorMessage =
-    params.error === "podcast-bands"
+    params.error === "podcast-bands-disabled"
+      ? "As faixas específicas ainda não estão habilitadas. Mantenha Qualquer duração até a ativação do piloto."
+      : params.error === "podcast-bands"
       ? "As faixas de duração não correspondem aos passos da sequência. Recarregue a página e revise os podcasts antes de salvar."
       : params.error === "calendar"
       ? "Este destino ainda usa compatibilidade global. Habilite ao menos um calendário para duração no CONFIG-01 ou escolha um calendário próprio."
@@ -1230,6 +1250,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 calendarOptions={calendarOptions}
                 sourceOptions={sourceOptions}
                 globalSharingPolicy={globalSharingPolicy}
+                durationBandEditingEnabled={process.env.PODCAST08_DURATION_EDITOR_ENABLED === "1"}
                 initial={{
                   name: "",
                   enabled: true,
@@ -1453,6 +1474,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           calendarOptions={calendarOptions}
                           sourceOptions={sourceOptions}
                           globalSharingPolicy={globalSharingPolicy}
+                          durationBandEditingEnabled={process.env.PODCAST08_DURATION_EDITOR_ENABLED === "1"}
                           initial={{
                             id: target.id,
                             name: target.name,
