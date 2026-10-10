@@ -13,6 +13,7 @@ import {
 } from "@/services/playlist-planner/podcast-duration-bands";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
 import { resolvePodcast08ActiveTargetPolicy } from "@/services/playlist-planner/podcast-duration-active-gate";
+import { podcast08UnapprovedRealPilotTargetIds } from "@/services/playlist-planner/podcast-duration-pilot-readiness";
 import { mustBlockPodcast08RequestedRealWrite } from "@/services/playlist-planner/podcast-duration-pilot-prewrite";
 import {
   evaluatePodcast08FinalSimulationShadow,
@@ -409,6 +410,30 @@ export async function generatePlaylists(
       );
     }
     summary.resolvedTargetIds = targets.map((target) => target.id);
+
+    // PODCAST-08 Gate 7: fail before any provider reads/writes when a real
+    // generation explicitly requests an ACTIVE target. Gate 5A does not yet
+    // have productive approval. Silently falling back to legacy would publish
+    // a playlist that contradicts the user's chosen podcast bands.
+    const unauthorizedPilotTargetIds = podcast08UnapprovedRealPilotTargetIds({
+      simulate,
+      activeMode: process.env.PODCAST08_ACTIVE_MODE,
+      allowlistCsv: process.env.PODCAST08_ACTIVE_TARGET_IDS,
+      runTargetIds: targets.map((target) => target.id),
+    });
+    if (unauthorizedPilotTargetIds.length > 0) {
+      const error =
+        "PODCAST-08: a seleção por faixas ainda não está autorizada para escrever no Spotify. Desative o modo ACTIVE ou execute somente uma simulação controlada.";
+      summary.podcast08PilotPrewriteGuard = {
+        gate: 7,
+        status: "BLOCKED_REAL_PILOT_NOT_APPROVED",
+        targetIds: unauthorizedPilotTargetIds,
+        spotifyWrites: false,
+      };
+      log({level: "ERROR", message: error, data: summary.podcast08PilotPrewriteGuard});
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
 
     // PODCAST-08 Gate 7A: the ACTIVE selector is simulation-only in this PR.
     // A real run explicitly requesting an ACTIVE target MUST fail closed rather
