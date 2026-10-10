@@ -28,7 +28,7 @@ const valid = () => ({
       },
       collectionComplete: true,
       inconclusive: false,
-      qualityFailures: [],
+      qualityFailures: [] as {targetId:string}[],
     },
   },
   simulationSpotifySnapshotId: "snapshot-42",
