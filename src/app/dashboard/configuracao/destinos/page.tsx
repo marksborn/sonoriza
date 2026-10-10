@@ -1511,10 +1511,10 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             ),
                             sequencePattern,
                             podcastDurationSlotBands:
-                              parsePersistedPodcastDurationSlots(
+                              [...(parsePersistedPodcastDurationSlots(
                                 target.sequencePattern,
                                 target.podcastDurationSlotBands,
-                              ) ?? sequencePattern.map(() => "ANY"),
+                              ) ?? sequencePattern.map(() => "ANY"))],
                             maxEpisodesPerProgram: target.maxEpisodesPerProgram,
                             maxTracksPerArtist: target.maxTracksPerArtist,
                             maxTracksPerAlbum: target.maxTracksPerAlbum,
