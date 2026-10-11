@@ -71,6 +71,36 @@ export function scheduleStatus(
   return "BLOCKED";
 }
 
+/** #453: explicit calendar skip evidence, keyed by target ID.
+ * Never infer a no-op from a missing target summary or a zero item count alone.
+ */
+export function calendarSkippedTargetReason(
+  runSummary: unknown,
+  targetPlaylistId: string,
+  targetSummary: Record<string, unknown> | null,
+): "CALENDAR_EMPTY_KEEP" | "CALENDAR_EMPTY_SKIP" | null {
+  if (targetSummary !== null || !targetPlaylistId) return null;
+  if (!runSummary || typeof runSummary !== "object" || Array.isArray(runSummary)) {
+    return null;
+  }
+
+  const skippedTargets = (runSummary as Record<string, unknown>).calendarSkippedTargets;
+  if (!Array.isArray(skippedTargets)) return null;
+  const matches = skippedTargets.filter(
+    (entry) =>
+      entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      (entry as Record<string, unknown>).targetPlaylistId === targetPlaylistId,
+  );
+  // Ambiguous evidence must not silently terminalize a scheduled attempt.
+  if (matches.length !== 1) return null;
+  const reason = (matches[0] as Record<string, unknown>).reason;
+  return reason === "CALENDAR_EMPTY_KEEP" || reason === "CALENDAR_EMPTY_SKIP"
+    ? reason
+    : null;
+}
+
 function retryableBeforeWrite(summary: unknown): boolean {
   return (
     !!summary &&
