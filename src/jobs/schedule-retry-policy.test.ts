@@ -11,6 +11,7 @@ import { SpotifyApiError } from "@/services/spotify/errors";
 
 import {
   DEFAULT_FAILED_RETRY_AFTER_MS,
+  calendarSkippedTargetReason,
   failedRetryAfterMs,
   isProviderReadTimeout,
   isSpotifyWriteTimeout,
@@ -53,6 +54,61 @@ test("#435 Gate 3F SUCCESS, NOOP and PARTIAL mapping is unchanged", () => {
     scheduleStatus("SUCCESS", null, { retryableBeforeWrite: true }),
     "SUCCESS",
   );
+});
+
+test("#453 calendar empty KEEP/SKIP returns explicit target-scoped no-op reason", () => {
+  const summary = {
+    skipped: ["Carro", "Outro"],
+    calendarSkippedTargets: [
+      { targetPlaylistId: "carro", reason: "CALENDAR_EMPTY_KEEP" },
+      { targetPlaylistId: "outro", reason: "CALENDAR_EMPTY_SKIP" },
+    ],
+  };
+
+  assert.equal(calendarSkippedTargetReason(summary, "carro", null), "CALENDAR_EMPTY_KEEP");
+  assert.equal(calendarSkippedTargetReason(summary, "outro", null), "CALENDAR_EMPTY_SKIP");
+  assert.equal(calendarSkippedTargetReason(summary, "desconhecido", null), null);
+  assert.equal(calendarSkippedTargetReason(summary, "carro", { applied: true }), null);
+  assert.equal(calendarSkippedTargetReason(summary, "", null), null);
+});
+
+test("#453 never infers NOOP from missing or contradictory calendar evidence", () => {
+  assert.equal(calendarSkippedTargetReason({ skipped: ["Carro"] }, "carro", null), null);
+  assert.equal(calendarSkippedTargetReason({ targets: [] }, "carro", null), null);
+  assert.equal(calendarSkippedTargetReason(null, "carro", null), null);
+  assert.equal(
+    calendarSkippedTargetReason({
+      calendarSkippedTargets: [{ targetPlaylistId: "carro", reason: "CALENDAR_EMPTY_CLEAR" }],
+    }, "carro", null),
+    null,
+  );
+  assert.equal(
+    calendarSkippedTargetReason({
+      calendarSkippedTargets: [
+        { targetPlaylistId: "carro", reason: "CALENDAR_EMPTY_KEEP" },
+        { targetPlaylistId: "carro", reason: "CALENDAR_EMPTY_SKIP" },
+      ],
+    }, "carro", null),
+    null,
+  );
+  // Legacy success status remains unchanged without explicit evidence.
+  assert.equal(scheduleStatus("SUCCESS", null), "SUCCESS");
+  assert.equal(scheduleStatus("SUCCESS", { maintenanceNoop: true }), "NOOP");
+  assert.equal(scheduleStatus("FAILED", null), "BLOCKED");
+});
+
+test("#453 only the calendar KEEP/SKIP branch can publish structured skip evidence", () => {
+  const generator = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const scheduler = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+  assert.match(
+    generator,
+    /if \(target\.emptyCalendarBehavior === "CLEAR"\)[\s\S]*?runTargets\.push\([\s\S]*?\} else \{[\s\S]*?skipped\.push\(target\);/,
+  );
+  assert.match(generator, /summary\.calendarSkippedTargets = skipped\.map\(\(target\) =>/);
+  assert.match(scheduler, /generated\.status === "SUCCESS" && generation\?\.status === "SUCCESS"/);
+  assert.match(scheduler, /calendarSkippedTargetReason\(\s*generation\.summary,\s*targetId,\s*targetSummary,/);
+  assert.match(scheduler, /const status = calendarSkipReason\s*\? "NOOP"/);
+  assert.match(scheduler, /const reason =\s*calendarSkipReason \?\?/);
 });
 
 test("#435 Gate 3F FAILED retry delay defaults to one cron tick and is bounded", () => {
