@@ -2032,6 +2032,15 @@ export async function generatePlaylists(
     }
 
     summary.skipped = skipped.map((target) => target.name);
+    // #453: canonical, target-scoped evidence for calendar-only skips.
+    // Keep the legacy names array for existing summary consumers.
+    summary.calendarSkippedTargets = skipped.map((target) => ({
+      targetPlaylistId: target.id,
+      reason:
+        target.emptyCalendarBehavior === "KEEP"
+          ? "CALENDAR_EMPTY_KEEP"
+          : "CALENDAR_EMPTY_SKIP",
+    }));
 
     let inferredSkipConsumedCount = 0;
     if (!simulate && inferredSkipSignalIdsToConsume.length > 0) {
