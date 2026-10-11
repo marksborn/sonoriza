@@ -44,6 +44,7 @@ import {
 import { generatePlaylists } from "./generate-playlists";
 import { runIsolated } from "./isolated-execution";
 import {
+  calendarSkippedTargetReason,
   failedRetryAfterMs,
   providerWriteNeverStarted,
   scheduleStatus,
@@ -403,15 +404,28 @@ export async function runScheduledGeneration(
 
           const targetSummary =
             readTargetSummaries(generation?.summary).get(targetId) ?? null;
-          const status = scheduleStatus(
-            generated.status,
-            targetSummary,
-            generation?.summary,
-          );
+          // #453: an intentionally untouched calendar destination is NOOP,
+          // even when its parent GenerationRun completed successfully.
+          const calendarSkipReason =
+            generated.status === "SUCCESS" && generation?.status === "SUCCESS"
+              ? calendarSkippedTargetReason(
+                  generation.summary,
+                  targetId,
+                  targetSummary,
+                )
+              : null;
+          const status = calendarSkipReason
+            ? "NOOP"
+            : scheduleStatus(
+                generated.status,
+                targetSummary,
+                generation?.summary,
+              );
           const reason =
-            typeof targetSummary?.error === "string"
+            calendarSkipReason ??
+            (typeof targetSummary?.error === "string"
               ? targetSummary.error
-              : generation?.error ?? null;
+              : generation?.error ?? null);
 
           await finishOne(entry.audit, status, reason, new Date(), {
             generationRunId: generated.runId,
