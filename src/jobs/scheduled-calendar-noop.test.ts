@@ -50,9 +50,9 @@ test("#442 never skips a run with active/multiple/mismatched destinations", () =
 
 test("#442 source-read fast path is after calendar check and preserves run audit", () => {
   const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
-  const calendarDone = source.indexOf('"CALENDAR_READ_DONE"');
+  const calendarDone = source.indexOf('await persistGenerationCheckpoint(run.id, "CALENDAR_READ_DONE"');
   const fastPath = source.indexOf("if (isScheduledCalendarNoop(");
-  const sourceRead = source.indexOf('"SOURCE_READ_START"');
+  const sourceRead = source.indexOf('await persistGenerationCheckpoint(run.id, "SOURCE_READ_START"');
   assert.ok(calendarDone !== -1 && fastPath > calendarDone && sourceRead > fastPath);
   assert.match(
     source,
