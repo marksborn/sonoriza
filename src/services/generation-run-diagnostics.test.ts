@@ -62,3 +62,107 @@ test("free-text diagnostics reject strings that look sensitive", () => {
     null,
   );
 });
+
+
+test("#456 calendar-empty KEEP is an informational scheduled NOOP, not a failure", () => {
+  const diagnostic = summarizeGenerationRunDiagnostic({
+    runStatus: "SUCCESS",
+    scheduleStatus: "NOOP",
+    scheduleReason: "CALENDAR_EMPTY_KEEP",
+    summary: { skipped: ["Carro"] },
+    error: null,
+  });
+
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.tone, "info");
+  assert.equal(diagnostic.headline, "Sem alterações — calendário vazio");
+  assert.match(diagnostic.detail, /KEEP/);
+  assert.doesNotMatch(diagnostic.headline, /não concluída/i);
+});
+
+test("#456 calendar-empty SKIP is informational; successful updated run has no diagnostic", () => {
+  const skipped = summarizeGenerationRunDiagnostic({
+    runStatus: "SUCCESS",
+    scheduleStatus: "NOOP",
+    scheduleReason: "CALENDAR_EMPTY_SKIP",
+    summary: null,
+    error: null,
+  });
+  assert.equal(skipped?.tone, "info");
+  assert.match(skipped?.detail ?? "", /SKIP/);
+
+  const updated = summarizeGenerationRunDiagnostic({
+    runStatus: "SUCCESS",
+    scheduleStatus: "SUCCESS",
+    scheduleReason: null,
+    summary: { targets: [{ applied: true }] },
+    error: null,
+  });
+  assert.equal(updated, null);
+});
+
+test("#456 unknown successful NOOP reason is neutral and sensitive reasons remain hidden", () => {
+  const diagnostic = summarizeGenerationRunDiagnostic({
+    runStatus: "SUCCESS",
+    scheduleStatus: "NOOP",
+    scheduleReason: "Nothing changed",
+    summary: null,
+    error: null,
+  });
+  assert.equal(diagnostic?.tone, "info");
+  assert.equal(diagnostic?.headline, "Sem alterações");
+
+  const safe = summarizeGenerationRunDiagnostic({
+    runStatus: "SUCCESS",
+    scheduleStatus: "NOOP",
+    scheduleReason: "Authorization: Bearer private-token",
+    summary: null,
+    error: null,
+  });
+  assert.equal(safe?.tone, "info");
+  assert.doesNotMatch(safe?.detail ?? "", /Bearer|private-token/i);
+});
+
+test("#456 genuine FAILED, PARTIAL and BLOCKED remain warnings", () => {
+  const failed = summarizeGenerationRunDiagnostic({
+    runStatus: "FAILED",
+    scheduleStatus: "FAILED",
+    scheduleReason: "Provider unreachable",
+    summary: null,
+    error: null,
+  });
+  assert.equal(failed?.tone, "warning");
+  assert.equal(failed?.headline, "Execução não concluída");
+
+  const partial = summarizeGenerationRunDiagnostic({
+    runStatus: "PARTIAL",
+    scheduleStatus: "PARTIAL",
+    scheduleReason: "Some tracks unavailable",
+    summary: null,
+    error: null,
+  });
+  assert.equal(partial?.tone, "warning");
+  assert.equal(partial?.headline, "Execução parcial");
+
+  const blocked = summarizeGenerationRunDiagnostic({
+    runStatus: "FAILED",
+    scheduleStatus: "BLOCKED",
+    scheduleReason: "Provider backoff",
+    summary: null,
+    error: null,
+  });
+  assert.equal(blocked?.tone, "warning");
+  assert.equal(blocked?.headline, "Execução bloqueada");
+});
+
+test("#456 success with unexpected harmless reason is an observation, not false failure", () => {
+  const result = summarizeGenerationRunDiagnostic({
+    runStatus: "SUCCESS",
+    scheduleStatus: "SUCCESS",
+    scheduleReason: "informational trace",
+    summary: null,
+    error: null,
+  });
+  assert.equal(result?.tone, "info");
+  assert.equal(result?.headline, "Observação da execução");
+});
