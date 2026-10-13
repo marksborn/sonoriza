@@ -32,6 +32,8 @@ function state(
     skippedCandidateCount: 0,
     preWriteRevalidated: false,
     preWriteBlockedCount: 0,
+    preWriteRevalidationCount: 0,
+    preWriteBlockedTotalCount: 0,
     failure: null,
   };
 }
