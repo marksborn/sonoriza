@@ -6,6 +6,7 @@ import { canSimulatePlaybackReserveByCapability } from "./playback-reserve-capab
 const base = {
   simulate: true,
   selectedTargetCount: 1,
+  explicitSingleTargetScope: true,
   targetEnabled: true,
   targetLinkedToSpotify: true,
   updatePolicy: "REBUILD_DAILY",
@@ -29,6 +30,7 @@ test("B1.2 never extends real Spotify generation beyond legacy allowlist", () =>
 test("B1.2 respects single target, enabled, linked and active policy", () => {
   assert.equal(canSimulatePlaybackReserveByCapability({...base,selectedTargetCount:2}), false);
   assert.equal(canSimulatePlaybackReserveByCapability({...base,selectedTargetCount:0}), false);
+  assert.equal(canSimulatePlaybackReserveByCapability({...base,explicitSingleTargetScope:false}), false);
   assert.equal(canSimulatePlaybackReserveByCapability({...base,targetEnabled:false}), false);
   assert.equal(canSimulatePlaybackReserveByCapability({...base,targetLinkedToSpotify:false}), false);
   assert.equal(canSimulatePlaybackReserveByCapability({...base,reserveMode:"NONE"}), false);
