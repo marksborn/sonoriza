@@ -76,7 +76,8 @@ function parse(argv) {
   const obj = {};
   for (const arg of argv.filter(v => v !== "--verify")) {
     const match = /^--(expect-count|expect-hash|expect-runtime)=(.+)$/.exec(arg);
-    if (!match || obj[match[1]] !== undefined) throw new Error("Invalid or duplicate verification argument");
+    if (!match) throw new Error("Invalid verification argument");
+    if (obj[match[1]] !== undefined) throw new Error("Duplicate verification argument");
     obj[match[1]] = match[2];
   }
   if (Object.keys(obj).length !== 3 || !/^(0|[1-9][0-9]*)$/.test(obj["expect-count"] ?? "")) {
