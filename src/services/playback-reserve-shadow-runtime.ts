@@ -360,7 +360,7 @@ export function playbackReserveShadowRuntimeSummary(
     status: state.status ?? "READY_SHADOW",
     targetPlaylistIds: [...(state.targetPlaylistIds ?? [])],
     allowedTargetIds: [...(state.allowedTargetIds ?? new Set<string>())].sort(),
-    authorizationSource: state.authorizationSource ?? "NONE",
+    rolloutSource: state.authorizationSource ?? "NONE",
     maintenanceMode: state.maintenanceMode ?? null,
     keepFilledSnapshotBefore: state.keepFilledSnapshotBefore ?? null,
     keepFilledPreviousRunId: state.keepFilledPreviousRunId ?? null,
