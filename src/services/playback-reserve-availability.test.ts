@@ -15,7 +15,7 @@ const base = {
 test("B1 read model only reports eligibility for runtime validation, never proves ACTIVE", () => {
   const status = resolvePlaybackReserveAvailability(base);
   assert.equal(status.status, "ELIGIBLE_FOR_RUNTIME_VALIDATION");
-  assert.match(status.explanation, /não comprova ACTIVE/);
+  assert.match(status.explanation, /não significa que a margem já foi publicada/);
 });
 
 test("B1 keeps explicit NONE as user choice even when target is allowlisted", () => {
