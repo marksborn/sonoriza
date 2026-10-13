@@ -14,6 +14,8 @@ export type PlaybackReserveAvailabilityStatus =
   | "ROLLOUT_SHADOW"
   | "TARGET_NOT_IN_PILOT"
   | "SIMULATION_AVAILABLE_REAL_NOT_AUTHORIZED"
+  | "PRODUCT_OPT_IN_PENDING_ROLLOUT"
+  | "PRODUCT_AUTHORIZED_FOR_RUNTIME_VALIDATION"
   | "ELIGIBLE_FOR_RUNTIME_VALIDATION";
 
 export type PlaybackReserveAvailability = Readonly<{
@@ -30,6 +32,8 @@ export function resolvePlaybackReserveAvailability(input: Readonly<{
   requestedRuntimeMode?: string | null;
   allowedInPilot: boolean;
   capabilitySimulationEnabled?: boolean;
+  productOptInEnabled?: boolean;
+  productAuthorizationEnabled?: boolean;
 }>): PlaybackReserveAvailability {
   if (!input.enabled) {
     return {
@@ -76,6 +80,20 @@ export function resolvePlaybackReserveAvailability(input: Readonly<{
     };
   }
   if (!input.allowedInPilot) {
+    if (input.productOptInEnabled && input.productAuthorizationEnabled) {
+      return {
+        status: "PRODUCT_AUTHORIZED_FOR_RUNTIME_VALIDATION",
+        title: "Autorização de produto presente",
+        explanation: "Você autorizou e o rollout técnico permite avaliar a Reserva em geração real. Isso ainda exige simulação aprovada, destino único e demais guardas por execução; não comprova aplicação efetiva.",
+      };
+    }
+    if (input.productOptInEnabled) {
+      return {
+        status: "PRODUCT_OPT_IN_PENDING_ROLLOUT",
+        title: "Autorização salva; rollout pendente",
+        explanation: "Sua autorização está salva, mas a liberação técnica para este destino ainda está desligada. Não há permissão nova de escrita real.",
+      };
+    }
     if (input.capabilitySimulationEnabled) {
       return {
         status: "SIMULATION_AVAILABLE_REAL_NOT_AUTHORIZED",
