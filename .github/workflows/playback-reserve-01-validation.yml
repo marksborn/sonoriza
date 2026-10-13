@@ -26,6 +26,8 @@ on:
       - "src/services/playback-reserve-product-activation.ts"
       - "src/services/playback-reserve-product-activation.test.ts"
       - "src/services/playback-reserve-product-activation.integration.test.ts"
+      - "src/services/playback-reserve-product-prewrite.integration.test.ts"
+      - "src/jobs/generate-playlists-incremental.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
@@ -76,6 +78,8 @@ on:
       - "src/services/playback-reserve-product-activation.ts"
       - "src/services/playback-reserve-product-activation.test.ts"
       - "src/services/playback-reserve-product-activation.integration.test.ts"
+      - "src/services/playback-reserve-product-prewrite.integration.test.ts"
+      - "src/jobs/generate-playlists-incremental.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
@@ -157,6 +161,7 @@ jobs:
           src/services/playback-reserve-capability-simulation.integration.test.ts
           src/services/playback-reserve-product-activation.test.ts
           src/services/playback-reserve-product-activation.integration.test.ts
+          src/services/playback-reserve-product-prewrite.integration.test.ts
           src/services/playlist-planner/podcast-fit.test.ts
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/playback-reserve-duration-shadow.test.ts
