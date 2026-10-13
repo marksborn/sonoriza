@@ -29,6 +29,8 @@ on:
       - "src/services/playback-reserve-product-prewrite.integration.test.ts"
       - "scripts/check-playback-reserve-release-readiness.mjs"
       - "scripts/check-playback-reserve-release-readiness.test.mjs"
+      - "scripts/check-playback-reserve-operational-readiness.mjs"
+      - "scripts/check-playback-reserve-operational-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/services/configuration-readiness.ts"
@@ -83,6 +85,8 @@ on:
       - "src/services/playback-reserve-product-prewrite.integration.test.ts"
       - "scripts/check-playback-reserve-release-readiness.mjs"
       - "scripts/check-playback-reserve-release-readiness.test.mjs"
+      - "scripts/check-playback-reserve-operational-readiness.mjs"
+      - "scripts/check-playback-reserve-operational-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/services/configuration-readiness.ts"
@@ -150,6 +154,8 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
+      - name: B1.6 operational preflight query on isolated CI database
+        run: node scripts/check-playback-reserve-operational-readiness.mjs --check
       - name: PLAYBACK-RESERVE-01 Gates 1-8 validation
         run: >-
           npx tsx --test
@@ -175,8 +181,11 @@ jobs:
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts
           src/jobs/sequence-prewrite-guard.test.ts
-      - name: B1.5 read-only release contract tests
-        run: node --test scripts/check-playback-reserve-release-readiness.test.mjs
+      - name: B1.5-B1.6 read-only release and operational contract tests
+        run: >-
+          node --test
+          scripts/check-playback-reserve-release-readiness.test.mjs
+          scripts/check-playback-reserve-operational-readiness.test.mjs
       - name: B1.5 dormant release CLI contract
         run: node scripts/check-playback-reserve-release-readiness.mjs --verify --expect-count=0 --expect-hash=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 --expect-runtime=UNSET
       - run: npm run typecheck
