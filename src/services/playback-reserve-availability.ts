@@ -13,6 +13,7 @@ export type PlaybackReserveAvailabilityStatus =
   | "ROLLOUT_OFF"
   | "ROLLOUT_SHADOW"
   | "TARGET_NOT_IN_PILOT"
+  | "SIMULATION_AVAILABLE_REAL_NOT_AUTHORIZED"
   | "ELIGIBLE_FOR_RUNTIME_VALIDATION";
 
 export type PlaybackReserveAvailability = Readonly<{
@@ -28,6 +29,7 @@ export function resolvePlaybackReserveAvailability(input: Readonly<{
   reserveMode: "NONE" | "DURATION" | "MUSIC_TRACKS" | "PODCAST_EPISODES";
   requestedRuntimeMode?: string | null;
   allowedInPilot: boolean;
+  capabilitySimulationEnabled?: boolean;
 }>): PlaybackReserveAvailability {
   if (!input.enabled) {
     return {
@@ -74,6 +76,13 @@ export function resolvePlaybackReserveAvailability(input: Readonly<{
     };
   }
   if (!input.allowedInPilot) {
+    if (input.capabilitySimulationEnabled) {
+      return {
+        status: "SIMULATION_AVAILABLE_REAL_NOT_AUTHORIZED",
+        title: "Simulação elegível; aplicação real em piloto",
+        explanation: "Este destino pode avaliar a Reserva em simulação isolada, mas ainda não está autorizado a aplicá-la em gerações reais. A simulação não escreve no Spotify; snapshots e validações de contexto continuam obrigatórios.",
+      };
+    }
     return {
       status: "TARGET_NOT_IN_PILOT",
       title: "Ainda fora do piloto",
