@@ -35,6 +35,25 @@ test("B1 distinguishes global OFF and SHADOW from a missing pilot authorization"
   assert.equal(resolvePlaybackReserveAvailability({ ...base, allowedInPilot: false }).status, "TARGET_NOT_IN_PILOT");
 });
 
+test("B1.2 differentiates optional simulation from productive pilot", () => {
+  assert.equal(resolvePlaybackReserveAvailability({
+    ...base,
+    allowedInPilot: false,
+    capabilitySimulationEnabled: true,
+  }).status, "SIMULATION_AVAILABLE_REAL_NOT_AUTHORIZED");
+  assert.equal(resolvePlaybackReserveAvailability({
+    ...base,
+    allowedInPilot: false,
+    capabilitySimulationEnabled: false,
+  }).status, "TARGET_NOT_IN_PILOT");
+  assert.equal(resolvePlaybackReserveAvailability({
+    ...base,
+    reserveMode: "NONE",
+    allowedInPilot: false,
+    capabilitySimulationEnabled: true,
+  }).status, "DISABLED_BY_CHOICE");
+});
+
 test("B1 applies the same evaluation to both supported maintenance modes", () => {
   assert.equal(resolvePlaybackReserveAvailability({ ...base, updatePolicy: "KEEP_FILLED" }).status, "ELIGIBLE_FOR_RUNTIME_VALIDATION");
   assert.equal(resolvePlaybackReserveAvailability({ ...base, updatePolicy: "REBUILD_DAILY" }).status, "ELIGIBLE_FOR_RUNTIME_VALIDATION");
