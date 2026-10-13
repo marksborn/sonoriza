@@ -54,6 +54,27 @@ test("B1.2 differentiates optional simulation from productive pilot", () => {
   }).status, "DISABLED_BY_CHOICE");
 });
 
+test("B1.3 keeps user opt-in and technical product activation separate", () => {
+  const optIn = {
+    ...base,
+    allowedInPilot: false,
+    productOptInEnabled: true,
+    productAuthorizationEnabled: false,
+  };
+  assert.equal(
+    resolvePlaybackReserveAvailability(optIn).status,
+    "PRODUCT_OPT_IN_PENDING_ROLLOUT",
+  );
+  assert.equal(
+    resolvePlaybackReserveAvailability({ ...optIn, productAuthorizationEnabled: true }).status,
+    "PRODUCT_AUTHORIZED_FOR_RUNTIME_VALIDATION",
+  );
+  assert.equal(
+    resolvePlaybackReserveAvailability({ ...optIn, requestedRuntimeMode: "SHADOW" }).status,
+    "ROLLOUT_SHADOW",
+  );
+});
+
 test("B1 applies the same evaluation to both supported maintenance modes", () => {
   assert.equal(resolvePlaybackReserveAvailability({ ...base, updatePolicy: "KEEP_FILLED" }).status, "ELIGIBLE_FOR_RUNTIME_VALIDATION");
   assert.equal(resolvePlaybackReserveAvailability({ ...base, updatePolicy: "REBUILD_DAILY" }).status, "ELIGIBLE_FOR_RUNTIME_VALIDATION");
