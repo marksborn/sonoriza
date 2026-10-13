@@ -18,6 +18,26 @@ on:
       - "src/services/playback-reserve-gate8.ts"
       - "src/services/playback-reserve-gate8.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
+      - "src/services/playback-reserve-availability.ts"
+      - "src/services/playback-reserve-availability.test.ts"
+      - "src/services/playback-reserve-capability-simulation.ts"
+      - "src/services/playback-reserve-capability-simulation.test.ts"
+      - "src/services/playback-reserve-capability-simulation.integration.test.ts"
+      - "src/services/playback-reserve-product-activation.ts"
+      - "src/services/playback-reserve-product-activation.test.ts"
+      - "src/services/playback-reserve-product-activation.integration.test.ts"
+      - "src/services/playback-reserve-product-prewrite.integration.test.ts"
+      - "scripts/check-playback-reserve-release-readiness.mjs"
+      - "scripts/check-playback-reserve-release-readiness.test.mjs"
+      - "scripts/check-playback-reserve-operational-readiness.mjs"
+      - "scripts/check-playback-reserve-operational-readiness.test.mjs"
+      - "src/jobs/generate-playlists-incremental.ts"
+      - "src/app/dashboard/configuracao/reserva/page.tsx"
+      - "src/components/PlaybackReserveTargetConsentForm.tsx"
+      - "src/components/PlaybackReserveTargetConsentForm.test.tsx"
+      - "scripts/render-playback-reserve-ui-fixtures.tsx"
+      - "src/app/globals.css"
+      - "tailwind.config.ts"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
       - "src/services/music-exposure/read-model.ts"
@@ -59,6 +79,26 @@ on:
       - "src/services/playback-reserve-gate8.ts"
       - "src/services/playback-reserve-gate8.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
+      - "src/services/playback-reserve-availability.ts"
+      - "src/services/playback-reserve-availability.test.ts"
+      - "src/services/playback-reserve-capability-simulation.ts"
+      - "src/services/playback-reserve-capability-simulation.test.ts"
+      - "src/services/playback-reserve-capability-simulation.integration.test.ts"
+      - "src/services/playback-reserve-product-activation.ts"
+      - "src/services/playback-reserve-product-activation.test.ts"
+      - "src/services/playback-reserve-product-activation.integration.test.ts"
+      - "src/services/playback-reserve-product-prewrite.integration.test.ts"
+      - "scripts/check-playback-reserve-release-readiness.mjs"
+      - "scripts/check-playback-reserve-release-readiness.test.mjs"
+      - "scripts/check-playback-reserve-operational-readiness.mjs"
+      - "scripts/check-playback-reserve-operational-readiness.test.mjs"
+      - "src/jobs/generate-playlists-incremental.ts"
+      - "src/app/dashboard/configuracao/reserva/page.tsx"
+      - "src/components/PlaybackReserveTargetConsentForm.tsx"
+      - "src/components/PlaybackReserveTargetConsentForm.test.tsx"
+      - "scripts/render-playback-reserve-ui-fixtures.tsx"
+      - "src/app/globals.css"
+      - "tailwind.config.ts"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
       - "src/services/music-exposure/read-model.ts"
@@ -124,6 +164,8 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
+      - name: B1.6 operational preflight query on isolated CI database
+        run: node scripts/check-playback-reserve-operational-readiness.mjs --check
       - name: PLAYBACK-RESERVE-01 Gates 1-8 validation
         run: >-
           npx tsx --test
@@ -134,6 +176,12 @@ jobs:
           src/services/playback-reserve-gate7.test.ts
           src/services/playback-reserve-gate7-persistence.test.ts
           src/services/playback-reserve-gate8.test.ts
+          src/services/playback-reserve-availability.test.ts
+          src/services/playback-reserve-capability-simulation.test.ts
+          src/services/playback-reserve-capability-simulation.integration.test.ts
+          src/services/playback-reserve-product-activation.test.ts
+          src/services/playback-reserve-product-activation.integration.test.ts
+          src/services/playback-reserve-product-prewrite.integration.test.ts
           src/services/playlist-planner/podcast-fit.test.ts
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/playback-reserve-duration-shadow.test.ts
@@ -143,5 +191,26 @@ jobs:
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts
           src/jobs/sequence-prewrite-guard.test.ts
+      - name: B1.7 isolated server-rendered Reserve consent UI contract
+        run: npx tsx --test src/components/PlaybackReserveTargetConsentForm.test.tsx
+      - name: B1.7 build OFFLINE styled QA preview (8 fictional states)
+        run: |
+          mkdir -p /tmp/sonoriza-b17-ui-preview
+          npx tailwindcss -i src/app/globals.css -o /tmp/sonoriza-b17-ui-preview/app.css --minify
+          npx tsx scripts/render-playback-reserve-ui-fixtures.tsx /tmp/sonoriza-b17-ui-preview
+      - name: B1.7 publish offline visual review package
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonoriza-b17-ui-offline-preview
+          path: /tmp/sonoriza-b17-ui-preview/
+          if-no-files-found: error
+          retention-days: 7
+      - name: B1.5-B1.6 read-only release and operational contract tests
+        run: >-
+          node --test
+          scripts/check-playback-reserve-release-readiness.test.mjs
+          scripts/check-playback-reserve-operational-readiness.test.mjs
+      - name: B1.5 dormant release CLI contract
+        run: node scripts/check-playback-reserve-release-readiness.mjs --verify --expect-count=0 --expect-hash=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 --expect-runtime=UNSET
       - run: npm run typecheck
       - run: npm run build

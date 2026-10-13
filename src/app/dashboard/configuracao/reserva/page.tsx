@@ -3,8 +3,14 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { UiIcon } from "@/components/UiIcon";
+import { PlaybackReserveTargetConsentForm } from "@/components/PlaybackReserveTargetConsentForm";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { resolvePlaybackReserveAvailability } from "@/services/playback-reserve-availability";
+import {
+  loadTargetReserveActivation,
+  saveTargetReserveActivation,
+} from "@/services/playback-reserve-product-activation";
 import {
   loadPlaybackReservePolicy,
   loadTargetPlaybackReservePolicy,
@@ -73,6 +79,35 @@ async function saveTargetPolicy(formData: FormData) {
   );
 }
 
+async function saveProductActivation(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+
+  const targetPlaylistId = String(formData.get("targetPlaylistId") ?? "").trim();
+  const action = String(formData.get("activationAction") ?? "");
+  if (!targetPlaylistId || (action !== "enable" && action !== "disable")) {
+    redirect("/dashboard/configuracao/reserva?error=invalid-activation");
+  }
+
+  try {
+    await saveTargetReserveActivation({
+      userId: session.user.id,
+      targetPlaylistId,
+      enabled: action === "enable",
+    });
+  } catch {
+    redirect(
+      `/dashboard/configuracao/reserva?error=invalid-activation&target=${encodeURIComponent(targetPlaylistId)}`,
+    );
+  }
+
+  revalidateConfiguration();
+  redirect(
+    `/dashboard/configuracao/reserva?saved=activation&target=${encodeURIComponent(targetPlaylistId)}`,
+  );
+}
+
 const inputClass =
   "mt-2 w-full rounded-xl border border-line-dark/70 bg-surface-dark px-4 py-3 text-ink-inverse outline-none transition focus:border-accent-400/70 focus:ring-2 focus:ring-accent/15";
 
@@ -95,9 +130,19 @@ export default async function PlaybackReserveConfigurationPage({
         name: true,
         enabled: true,
         updatePolicy: true,
+        spotifyPlaylistId: true,
       },
     }),
   ]);
+
+  const targetActivations = new Map(
+    await Promise.all(
+      targets.map(async (target) => [
+        target.id,
+        await loadTargetReserveActivation(session.user.id, target.id),
+      ] as const),
+    ),
+  );
 
   const targetPolicies = new Map(
     await Promise.all(
@@ -106,6 +151,20 @@ export default async function PlaybackReserveConfigurationPage({
         await loadTargetPlaybackReservePolicy(session.user.id, target.id),
       ] as const),
     ),
+  );
+
+  // Status is explanatory only. Runtime Gate 8 remains the sole authority
+  // for ACTIVE, simulation approval, snapshot requirements and Spotify writes.
+  const productAuthorizationEnabled =
+    process.env.PLAYBACK_RESERVE_PRODUCT_AUTHORIZATION_MODE?.trim().toUpperCase() === "ACTIVE";
+  const runtimeMode = process.env.PLAYBACK_RESERVE_RUNTIME_MODE;
+  const capabilitySimulationEnabled =
+    process.env.PLAYBACK_RESERVE_CAPABILITY_SIMULATION_MODE?.trim().toUpperCase() === "ACTIVE";
+  const pilotTargetIds = new Set(
+    (process.env.PLAYBACK_RESERVE_ACTIVE_TARGET_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
   );
 
   return (
@@ -137,6 +196,12 @@ export default async function PlaybackReserveConfigurationPage({
           <div className="status-success mt-6 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
             <UiIcon name="check" size={17} />
             Regra global salva. A alteração entra no fingerprint e exige uma simulação compatível antes de qualquer ACTIVE real.
+          </div>
+        ) : null}
+        {params.saved === "activation" ? (
+          <div className="status-success mt-6 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
+            <UiIcon name="check" size={17} />
+            Preferência de autorização salva. A liberação real continua protegida pelos gates de rollout e pela simulação aprovada.
           </div>
         ) : null}
         {params.saved === "target" ? (
@@ -287,6 +352,18 @@ export default async function PlaybackReserveConfigurationPage({
                 globalPolicy,
                 targetPolicy,
               );
+              const activation = targetActivations.get(target.id)!;
+              const availability = resolvePlaybackReserveAvailability({
+                enabled: target.enabled,
+                linkedToSpotify: Boolean(target.spotifyPlaylistId),
+                updatePolicy: target.updatePolicy,
+                reserveMode: effective.reserveMode,
+                requestedRuntimeMode: runtimeMode,
+                allowedInPilot: pilotTargetIds.has(target.id),
+                capabilitySimulationEnabled,
+                productOptInEnabled: activation.enabled && Boolean(activation.confirmedAt),
+                productAuthorizationEnabled,
+              });
               const durationSeconds =
                 targetPolicy.durationSeconds ?? globalPolicy.durationSeconds ?? 900;
               const musicTrackCount =
@@ -315,14 +392,29 @@ export default async function PlaybackReserveConfigurationPage({
                         <span className="product-badge">{target.updatePolicy}</span>
                       </div>
                       <p className="mt-2 text-sm text-muted-inverse">
-                        Efetiva: <strong className="text-ink-inverse">{formatPlaybackReservePolicyLabel(effective)}</strong>
+                        Regra configurada: <strong className="text-ink-inverse">{formatPlaybackReservePolicyLabel(effective)}</strong>
                         {" · "}
                         {effective.source === "GLOBAL"
                           ? "seguindo a regra global"
                           : "override deste destino"}
                       </p>
+                      <div className="mt-3 rounded-xl border border-line-dark/60 bg-surface-dark/50 px-3 py-3 text-sm">
+                        <p className="font-bold text-ink-inverse">{availability.title}</p>
+                        <p className="mt-1 leading-5 text-muted-inverse">{availability.explanation}</p>
+                      </div>
                     </div>
                   </div>
+
+                  <PlaybackReserveTargetConsentForm
+                    targetPlaylistId={target.id}
+                    enabled={target.enabled}
+                    spotifyPlaylistId={target.spotifyPlaylistId}
+                    updatePolicy={target.updatePolicy}
+                    reserveMode={effective.reserveMode}
+                    activation={activation}
+                    productAuthorizationEnabled={productAuthorizationEnabled}
+                    action={saveProductActivation}
+                  />
 
                   <details
                     className="mt-5 rounded-2xl border border-line-dark/70 bg-surface-dark/45 p-4"

@@ -61,6 +61,23 @@ model TargetPlaybackReservePolicy {
   @@index([userId, policyMode])
 }
 
+// B1.3: explicit per-destination productive opt-in; missing row = disabled.
+// Independent of global/target sizing policies and technical rollout gates.
+// The compound target FK ensures tenant scoping and cascading cleanup.
+model TargetPlaybackReserveActivation {
+  userId           String
+  targetPlaylistId String
+  enabled          Boolean  @default(false)
+  confirmedAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  target TargetPlaylist @relation(fields: [userId, targetPlaylistId], references: [userId, id], onDelete: Cascade)
+
+  @@id([userId, targetPlaylistId])
+  @@index([userId, enabled])
+}
+
 model GenerationPlanItemRole {
   runId            String
   targetPlaylistId String
