@@ -27,6 +27,16 @@ A automação não simula OAuth, sessão de produção nem efetua uma alteraçã
 
 **Comandos CI:** `npx tsx --test src/components/PlaybackReserveTargetConsentForm.test.tsx`; teste é executado no workflow `PLAYBACK-RESERVE-01 validation` antes de `typecheck` e `build`. Testes de ownership e persistência real continuam sob `src/services/playback-reserve-product-activation.integration.test.ts`, com PostgreSQL isolado.
 
+## 2A. Prévia visual OFFLINE no CI — sem autenticação e sem Spotify
+
+O pipeline da PR #466 gera também um artefato **`sonoriza-b17-ui-offline-preview`**, mantido por 7 dias. Ele inclui `index.html`, `app.css` compilado a partir do **CSS/Tailwind real**, e `LEIA-ME.txt`. O HTML renderiza diretamente o componente React real com **oito cenários fictícios** de opt-in/inelegibilidade/rollback técnico. A política CSP bloqueia formulários e conexões externas.
+
+Para revisar: abrir a PR #466, clicar em `Checks` → workflow `PLAYBACK-RESERVE-01 validation` → execução do SHA **mais recente**, localizar **Artifacts** → baixar `sonoriza-b17-ui-offline-preview`; extrair o ZIP e abrir `index.html` junto com `app.css` no navegador. Usar DevTools em 1440, 1024, 390 e 320 px. Não publicar o pacote como site; ele é uma **prévia estática**.
+
+Esta evidência cobre a aparência do **painel de consentimento extraído**, não substitui o fluxo autenticado, a apresentação da página inteira nem a simulação de acesso por usuário. Um artefato no GitHub não comprova inspeção humana até que o revisor registre o resultado. Nada é enviado ao Spotify.
+
+---
+
 ## 3. Verificação manual necessária, ainda NÃO executada
 
 Somente abrir a tela em staging **privado**, com **usuários e destinos fictícios**, após configurar autenticação de teste separada. Não carregar o dump de produção nem suas tabelas OAuth; não copiar `.env` produtivo; não usar o domínio real Spotify; não usar credenciais de produção.
