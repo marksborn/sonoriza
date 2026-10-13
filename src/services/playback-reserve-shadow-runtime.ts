@@ -428,7 +428,14 @@ export async function assertPlaybackReserveProductAuthorizationBeforeWrite(input
       playbackReserveActivation: { select: { enabled: true, confirmedAt: true } },
     },
   });
-  if (!target) reject();
+  // Keep the non-null proof explicit for TypeScript after the DB read.
+  if (!target) {
+    throw new Error("PLAYBACK_RESERVE_PRODUCT_PREWRITE_BLOCKED: target no longer belongs to this account.");
+  }
+  const productBinding = state.productBinding;
+  if (!productBinding) {
+    throw new Error("PLAYBACK_RESERVE_PRODUCT_PREWRITE_BLOCKED: approved product binding is missing.");
+  }
 
   const maintenanceMode = normalizeMaintenanceMode(target.updatePolicy);
   if (!productReserveAuthorizationRequested({
@@ -446,8 +453,8 @@ export async function assertPlaybackReserveProductAuthorizationBeforeWrite(input
     confirmedAt: target.playbackReserveActivation!.confirmedAt!.toISOString(),
   };
   if (
-    liveBinding.spotifyPlaylistId !== state.productBinding.spotifyPlaylistId ||
-    liveBinding.confirmedAt !== state.productBinding.confirmedAt ||
+    liveBinding.spotifyPlaylistId !== productBinding.spotifyPlaylistId ||
+    liveBinding.confirmedAt !== productBinding.confirmedAt ||
     maintenanceMode !== state.maintenanceMode
   ) reject();
 
