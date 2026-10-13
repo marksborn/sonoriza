@@ -33,6 +33,8 @@ on:
       - "scripts/check-playback-reserve-operational-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
+      - "src/components/PlaybackReserveTargetConsentForm.tsx"
+      - "src/components/PlaybackReserveTargetConsentForm.test.tsx"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
       - "src/services/music-exposure/read-model.ts"
@@ -89,6 +91,8 @@ on:
       - "scripts/check-playback-reserve-operational-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
+      - "src/components/PlaybackReserveTargetConsentForm.tsx"
+      - "src/components/PlaybackReserveTargetConsentForm.test.tsx"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
       - "src/services/music-exposure/read-model.ts"
@@ -181,6 +185,8 @@ jobs:
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts
           src/jobs/sequence-prewrite-guard.test.ts
+      - name: B1.7 isolated server-rendered Reserve consent UI contract
+        run: npx tsx --test src/components/PlaybackReserveTargetConsentForm.test.tsx
       - name: B1.5-B1.6 read-only release and operational contract tests
         run: >-
           node --test
