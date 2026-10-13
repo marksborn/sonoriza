@@ -114,6 +114,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
       canSimulatePlaybackReserveByCapability({
         simulate,
         selectedTargetCount: targetPlaylistIds.length,
+        explicitSingleTargetScope: requestedTargetIds?.length === 1,
         targetEnabled: singleTarget.enabled,
         targetLinkedToSpotify: Boolean(singleTarget.spotifyPlaylistId),
         updatePolicy: singleTarget.updatePolicy,
