@@ -56,7 +56,8 @@ O checker não testa saúde, link real, banco, proteção de scheduler, persist�
 
 - [x] Código e estrutura revisados em B1.1–B1.4.
 - [x] `PLAYBACK-RESERVE-01`, `CALENDAR-127` e `PODCAST-08` no último SHA do #464 passaram em 13/10/2026.
-- [ ] Check B1.5 unitário/CLI no CI e testes incrementais externos aprovados no SHA final.
+- [x] Check B1.5 unitário/CLI e testes incrementais externos no SHA de 13/10/2026 aprovados; revalidar se o SHA do release candidate mudar.
+- [ ] Gate B1.6 operacional no banco real, após migração em janela aprovada, sem qualquer run/attempt pendente e sem opt-in inesperado.
 - [ ] Diff cumulativo `main...B1.5` revisado; nenhuma mudança incidental; análise estática de segredos e migrations concluída.
 - [ ] Plano de backup **testado**: backup do banco PostgreSQL consistente com timestamp, cópia da configuração/código ou release anterior e recuperação verificada; armazenados em local seguro.
 - [ ] Confirmar release window sem geração agendada em execução. Cron/dispatcher só podem ser pausados com aprovação, anotando estado anterior e plano de retomada.
@@ -92,6 +93,33 @@ Conferir em amostras sem publicar dados pessoais: `playbackReserveRuntime.rollou
 **Rollback de código:** se a versão nova causar regressão mesmo com novos modos OFF, parar o rollout, manter o cron sob controle, retornar ao **SHA anterior registrado** por procedimento de release aprovado, reconstruir o aplicativo/cliente compatível e recarregar PM2. Não usar `git reset --hard` cegamente e não apagar estado de produção desconhecido. **Não executar downgrade de migration automaticamente.** A tabela adicional inativa pode permanecer até uma mudança de schema revisada; restaurar DB de backup só por decisão explícita após analisar dados criados desde a cópia.
 
 **Escrita externa ambígua ou parcial:** não fazer retry cego após `PROVIDER_WRITE_START`. Consultar estado real/snapshot Spotify, verificar roles e sequência, classificar `UNKNOWN_TIMEOUT` / `PARTIAL` / `FAILED`, e decidir reconciliação manual ou nova geração somente após autorização. Uma revogação não desfaz escrita já enviada.
+
+## 6A. Gate B1.6 — auditoria operacional read-only pós-migração
+
+**O CI da release candidate #466 passou nos nove workflows** no SHA auditado em 13/10/2026. A conclusão do CI não é aprovação automática de deploy e não substitui inspeção do servidor.
+
+O B1.6 acrescenta o script `scripts/check-playback-reserve-operational-readiness.mjs`, executável **somente em checkout do release revisado depois de aplicar a migração B1.3 e gerar Prisma Client compatível**. O script faz apenas `count` no PostgreSQL e nunca lê/transmite nome de usuário, playlist, ID, histórico, credencial ou log.
+
+```bash
+# EXEMPLO PARA JANELA DE DEPLOY AUTORIZADA E POST-MIGRAÇÃO
+# Executar como usuário CloudPanel da aplicação, após prisma generate:
+cd /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br || exit 1
+node --env-file=.env scripts/check-playback-reserve-operational-readiness.mjs --check
+```
+
+A saída traz somente:
+- `generationRunsRunning` e `generationRunsPending`;
+- `targetScheduleRunsRunning` e `targetScheduleAttemptsRunning`;
+- `productOptInsEnabled` e `productOptInsWithoutConfirmation`;
+- `enabledTargets`, `totalTargets`, `ready` e `blockers`.
+
+É **NO-GO** se existir qualquer run/tentativa em andamento ou pendente, consentimento de produto ON inesperado no baseline dormente, erro de consulta/schema ou contagem inconsistente. Um run `RUNNING` pode ser legado/preso, mas não deve ser declarado seguro sem análise; **não terminalizá-lo automaticamente só para passar na checagem**.
+
+A consulta é uma **fotografia do instante**: uma execução pode começar após a leitura. O operador deve controlar o dispatcher e confirmar ausência de in-flight Spotify writes por fontes operacionais antes de executar build/reload. Executar de novo imediatamente antes do reload. O checker não substitui a verificação de lock/lease cron nem oferece garantia transacional contra concorrência.
+
+O CI verifica a consulta e o contrato num banco isolado; **não houve execução desse script no servidor de produção**.
+
+---
 
 ## 7. Critério para futura ativação de produto (separado do deploy)
 
