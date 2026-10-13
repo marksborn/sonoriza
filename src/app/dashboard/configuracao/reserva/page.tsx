@@ -367,6 +367,8 @@ export default async function PlaybackReserveConfigurationPage({
                 requestedRuntimeMode: runtimeMode,
                 allowedInPilot: pilotTargetIds.has(target.id),
                 capabilitySimulationEnabled,
+                productOptInEnabled: activation.enabled && Boolean(activation.confirmedAt),
+                productAuthorizationEnabled,
               });
               const durationSeconds =
                 targetPolicy.durationSeconds ?? globalPolicy.durationSeconds ?? 900;
