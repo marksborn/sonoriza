@@ -24,6 +24,9 @@ function render(overrides: Partial<Fixture> = {}) {
   );
 }
 
+// Match an actual boolean HTML attribute, not Tailwind "disabled:" classes.
+const disabledAttribute = /\sdisabled(?:="")?(?=\s|>)/;
+
 function submitButton(html: string) {
   const match = html.match(/<button\b[^>]*>/);
   assert.ok(match, "expected visible submit button");
@@ -35,7 +38,7 @@ test("B1.7: eligible REBUILD_DAILY shows explicit opt-in; product flag OFF is ex
   assert.match(html, /Autorização de Reserva por destino/);
   assert.match(html, /Não autorizada/);
   assert.match(html, /Autorizar Reserva neste destino/);
-  assert.doesNotMatch(submitButton(html), /\bdisabled\b/);
+  assert.doesNotMatch(submitButton(html), disabledAttribute);
   assert.match(html, /name="targetPlaylistId" value="fixture-target-001"/);
   assert.match(html, /name="activationAction" value="enable"/);
   assert.doesNotMatch(html, /Nenhuma ativação produtiva/);
@@ -43,7 +46,7 @@ test("B1.7: eligible REBUILD_DAILY shows explicit opt-in; product flag OFF is ex
 
 test("B1.7: eligible KEEP_FILLED also accepts opt-in preference", () => {
   const html = render({ updatePolicy: "KEEP_FILLED", reserveMode: "DURATION" });
-  assert.doesNotMatch(submitButton(html), /\bdisabled\b/);
+  assert.doesNotMatch(submitButton(html), disabledAttribute);
 });
 
 test("B1.7: no new opt-in on disabled, unlinked, MANUAL or NONE destinations", () => {
@@ -54,7 +57,7 @@ test("B1.7: no new opt-in on disabled, unlinked, MANUAL or NONE destinations", (
     { reserveMode: "NONE" as const },
   ]) {
     const html = render(changes);
-    assert.match(submitButton(html), /\bdisabled\b/, JSON.stringify(changes));
+    assert.match(submitButton(html), disabledAttribute, JSON.stringify(changes));
     assert.match(html, /Para autorizar: habilite e vincule o destino/);
     assert.match(html, /name="activationAction" value="enable"/);
   }
@@ -69,7 +72,7 @@ test("B1.7: consent with technical rollout OFF is visibly pending and can be rev
   assert.match(html, /Nenhuma ativação produtiva é permitida/);
   assert.match(html, /Revogar autorização/);
   assert.match(html, /name="activationAction" value="disable"/);
-  assert.doesNotMatch(submitButton(html), /\bdisabled\b/);
+  assert.doesNotMatch(submitButton(html), disabledAttribute);
 });
 
 test("B1.7: technical rollout ACTIVE never claims real execution without simulation", () => {
@@ -88,7 +91,7 @@ test("B1.7: revocation remains operable if target is later disabled or delinked"
     activation: { enabled: true, confirmedAt: new Date("2026-10-13T12:00:00Z") },
   });
   assert.match(html, /Revogar autorização/);
-  assert.doesNotMatch(submitButton(html), /\bdisabled\b/);
+  assert.doesNotMatch(submitButton(html), disabledAttribute);
 });
 
 test("B1.7: target ID is HTML-escaped in the hidden input, no raw markup injection", () => {
