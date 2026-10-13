@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { resolvePlaybackReserveAvailability } from "@/services/playback-reserve-availability";
 import {
   loadPlaybackReservePolicy,
   loadTargetPlaybackReservePolicy,
@@ -95,6 +96,7 @@ export default async function PlaybackReserveConfigurationPage({
         name: true,
         enabled: true,
         updatePolicy: true,
+        spotifyPlaylistId: true,
       },
     }),
   ]);
@@ -106,6 +108,16 @@ export default async function PlaybackReserveConfigurationPage({
         await loadTargetPlaybackReservePolicy(session.user.id, target.id),
       ] as const),
     ),
+  );
+
+  // Status is explanatory only. Runtime Gate 8 remains the sole authority
+  // for ACTIVE, simulation approval, snapshot requirements and Spotify writes.
+  const runtimeMode = process.env.PLAYBACK_RESERVE_RUNTIME_MODE;
+  const pilotTargetIds = new Set(
+    (process.env.PLAYBACK_RESERVE_ACTIVE_TARGET_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
   );
 
   return (
@@ -287,6 +299,14 @@ export default async function PlaybackReserveConfigurationPage({
                 globalPolicy,
                 targetPolicy,
               );
+              const availability = resolvePlaybackReserveAvailability({
+                enabled: target.enabled,
+                linkedToSpotify: Boolean(target.spotifyPlaylistId),
+                updatePolicy: target.updatePolicy,
+                reserveMode: effective.reserveMode,
+                requestedRuntimeMode: runtimeMode,
+                allowedInPilot: pilotTargetIds.has(target.id),
+              });
               const durationSeconds =
                 targetPolicy.durationSeconds ?? globalPolicy.durationSeconds ?? 900;
               const musicTrackCount =
@@ -315,12 +335,16 @@ export default async function PlaybackReserveConfigurationPage({
                         <span className="product-badge">{target.updatePolicy}</span>
                       </div>
                       <p className="mt-2 text-sm text-muted-inverse">
-                        Efetiva: <strong className="text-ink-inverse">{formatPlaybackReservePolicyLabel(effective)}</strong>
+                        Regra configurada: <strong className="text-ink-inverse">{formatPlaybackReservePolicyLabel(effective)}</strong>
                         {" · "}
                         {effective.source === "GLOBAL"
                           ? "seguindo a regra global"
                           : "override deste destino"}
                       </p>
+                      <div className="mt-3 rounded-xl border border-line-dark/60 bg-surface-dark/50 px-3 py-3 text-sm">
+                        <p className="font-bold text-ink-inverse">{availability.title}</p>
+                        <p className="mt-1 leading-5 text-muted-inverse">{availability.explanation}</p>
+                      </div>
                     </div>
                   </div>
 
