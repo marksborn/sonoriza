@@ -364,7 +364,7 @@ export function playbackReserveShadowRuntimeSummary(
     status: state.status ?? "READY_SHADOW",
     targetPlaylistIds: [...(state.targetPlaylistIds ?? [])],
     allowedTargetIds: [...(state.allowedTargetIds ?? new Set<string>())].sort(),
-    authorizationSource: state.authorizationSource ?? "NONE",
+    rolloutSource: state.authorizationSource ?? "NONE",
     productPrewriteChecks: state.productPrewriteChecks ?? 0,
     maintenanceMode: state.maintenanceMode ?? null,
     keepFilledSnapshotBefore: state.keepFilledSnapshotBefore ?? null,
@@ -399,7 +399,7 @@ export async function assertPlaybackReserveProductAuthorizationBeforeWrite(input
 
   const reject = (): never => {
     throw new Error(
-      "PLAYBACK_RESERVE_PRODUCT_PREWRITE_BLOCKED: product authorization changed; no further Spotify mutation was started.",
+      "PLAYBACK_RESERVE_PRODUCT_PREWRITE_BLOCKED: consent or playlist configuration changed; no further Spotify mutation was started.",
     );
   };
 
