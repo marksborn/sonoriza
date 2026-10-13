@@ -99,7 +99,12 @@ export type LastFmFactualCooldownRuntimeState = {
   matchedCandidateCount: number;
   skippedCandidateCount: number;
   preWriteRevalidated: boolean;
+  /** Blocked tracks found by the latest pre-write revalidation. */
   preWriteBlockedCount: number;
+  /** Pre-write revalidations in this run, including those that led to a replan. */
+  preWriteRevalidationCount: number;
+  /** Blocked tracks summed across every pre-write revalidation in this run. */
+  preWriteBlockedTotalCount: number;
   failure: string | null;
 };
 
@@ -278,8 +283,12 @@ export async function revalidateMusicRepeatBeforeRealWrite(
     state?.lastFmFactualCooldown?.effectiveMode === "ACTIVE" &&
     !state.simulate
   ) {
+    const previous = state.lastFmFactualCooldown;
     const refreshed = await prepareLastFmFactualCooldown(state.userId, new Date());
     refreshed.preWriteRevalidated = true;
+    // A bounded replan revalidates again; keep the earlier vetoes as evidence.
+    refreshed.preWriteRevalidationCount = previous.preWriteRevalidationCount + 1;
+    refreshed.preWriteBlockedTotalCount = previous.preWriteBlockedTotalCount;
     state.lastFmFactualCooldown = refreshed;
 
     if (refreshed.effectiveMode !== "ACTIVE") {
@@ -298,6 +307,7 @@ export async function revalidateMusicRepeatBeforeRealWrite(
       }
     }
     refreshed.preWriteBlockedCount = blockedCount;
+    refreshed.preWriteBlockedTotalCount += blockedCount;
     if (blockedCount > 0) {
       throw new LastFmFactualCooldownPreWriteBlockedError(blockedCount);
     }
@@ -590,6 +600,8 @@ function baseLastFmFactualCooldown(input: {
     skippedCandidateCount: 0,
     preWriteRevalidated: false,
     preWriteBlockedCount: 0,
+    preWriteRevalidationCount: 0,
+    preWriteBlockedTotalCount: 0,
     failure: input.failure ?? null,
   };
 }
@@ -654,6 +666,8 @@ function lastFmFactualCooldownSummary(
     skippedCandidateCount: state.skippedCandidateCount,
     preWriteRevalidated: state.preWriteRevalidated,
     preWriteBlockedCount: state.preWriteBlockedCount,
+    preWriteRevalidationCount: state.preWriteRevalidationCount,
+    preWriteBlockedTotalCount: state.preWriteBlockedTotalCount,
     identityMethod: "TRACK_COMPACT_WHITESPACE_ARTIST_NORMALIZED_EXACT",
     failure: state.failure,
   };

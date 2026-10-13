@@ -18,8 +18,12 @@ import {
   type IncrementalSourceKind,
 } from "./incremental-planning";
 import {
+  LastFmFactualCooldownPreWriteBlockedError,
+  LastFmFactualCooldownPreWriteUnavailableError,
+  lastFmMusicIdentityKey,
   MusicRepeatPreWriteBlockedError,
   runWithMusicRepeatState,
+  type LastFmFactualCooldownRuntimeState,
   type MusicRepeatRunState,
 } from "./music-repeat-runtime";
 
@@ -350,4 +354,156 @@ test("authorized playback-history repair seam remains bounded", async () => {
     MusicRepeatPreWriteBlockedError,
   );
   assert.equal(revalidations, 3);
+});
+
+function activeLastFmCooldown(
+  keys: readonly string[],
+): LastFmFactualCooldownRuntimeState {
+  return {
+    configuredMode: "ACTIVE",
+    effectiveMode: "ACTIVE",
+    status: "READY_ACTIVE",
+    productiveInfluenceAllowed: true,
+    windowValue: 6,
+    windowUnit: "MONTHS",
+    cutoff: new Date("2026-04-13T12:00:00.000Z"),
+    asOf: new Date("2026-10-13T12:00:00.000Z"),
+    blockedIdentityKeys: new Set(keys),
+    localScrobbleCount: keys.length,
+    providerScrobbleCount: 0,
+    providerRequestedFrom: null,
+    providerRequestedTo: null,
+    providerPagesFetched: 0,
+    providerTotalPages: 0,
+    providerComplete: true,
+    matchedCandidateCount: 0,
+    skippedCandidateCount: 0,
+    preWriteRevalidated: false,
+    preWriteBlockedCount: 0,
+    preWriteRevalidationCount: 0,
+    preWriteBlockedTotalCount: 0,
+    failure: null,
+  };
+}
+
+function artistTrack(id: string): Candidate {
+  return {
+    ...candidate(id, "MUSIC", 300_000),
+    primaryArtistName: `Artist ${id}`,
+  };
+}
+
+function lastFmKey(id: string): string {
+  const key = lastFmMusicIdentityKey(id, `Artist ${id}`);
+  assert.ok(key);
+  return key;
+}
+
+function musicOnly(): RunTarget {
+  const musicOnlyTarget = target();
+  musicOnlyTarget.rules.targetDurationMs = 300_000;
+  musicOnlyTarget.rules.sequencePattern = ["MUSIC"];
+  musicOnlyTarget.rules.podcastPercent = 0;
+  return musicOnlyTarget;
+}
+
+/** Mirrors the refreshed Last.fm state the real revalidation leaves in run state. */
+function vetoWithLastFm(runtime: MusicRepeatRunState, id: string): void {
+  const current = runtime.lastFmFactualCooldown!;
+  runtime.lastFmFactualCooldown = {
+    ...current,
+    blockedIdentityKeys: new Set([...current.blockedIdentityKeys, lastFmKey(id)]),
+  };
+}
+
+test("#468 Last.fm pre-write veto is replaced by an eligible track read from the source", async () => {
+  const music = source("music-lastfm-replan", "MUSIC", [
+    { candidates: [artistTrack("heard")], done: false },
+    { candidates: [artistTrack("fresh")], done: true },
+  ]);
+  const runtime = state([]);
+  runtime.simulate = false;
+  runtime.lastFmFactualCooldown = activeLastFmCooldown([]);
+
+  let revalidations = 0;
+  const result = await runWithMusicRepeatState(runtime, () =>
+    collectIncrementally({
+      sources: [music],
+      targets: [musicOnly()],
+      async revalidateBeforeWrite(plan) {
+        revalidations += 1;
+        if (revalidations === 1) {
+          assert.deepEqual(
+            plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
+            ["heard"],
+          );
+          vetoWithLastFm(runtime, "heard");
+          throw new LastFmFactualCooldownPreWriteBlockedError(1);
+        }
+      },
+    }),
+  );
+
+  assert.equal(revalidations, 2);
+  assert.equal(music.calls, 2);
+  assert.equal(result.failure, null);
+  assert.deepEqual(
+    result.plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
+    ["fresh"],
+  );
+});
+
+test("#468 Last.fm pre-write repair stays bounded and fail-closed", async () => {
+  const music = source("music-lastfm-replan-limit", "MUSIC", [
+    {
+      candidates: [artistTrack("one"), artistTrack("two"), artistTrack("three")],
+      done: true,
+    },
+  ]);
+  const runtime = state([]);
+  runtime.simulate = false;
+  runtime.lastFmFactualCooldown = activeLastFmCooldown([]);
+
+  let revalidations = 0;
+  await assert.rejects(
+    runWithMusicRepeatState(runtime, () =>
+      collectIncrementally({
+        sources: [music],
+        targets: [musicOnly()],
+        async revalidateBeforeWrite(plan) {
+          revalidations += 1;
+          const selected = plan.targets[0]?.result.items[0]?.spotifyTrackId;
+          if (selected) vetoWithLastFm(runtime, selected);
+          throw new LastFmFactualCooldownPreWriteBlockedError(1);
+        },
+      }),
+    ),
+    LastFmFactualCooldownPreWriteBlockedError,
+  );
+  assert.equal(revalidations, 3);
+});
+
+test("#468 unavailable Last.fm revalidation is never repaired", async () => {
+  const music = source("music-lastfm-unavailable", "MUSIC", [
+    { candidates: [artistTrack("heard"), artistTrack("fresh")], done: true },
+  ]);
+  const runtime = state([]);
+  runtime.simulate = false;
+  runtime.lastFmFactualCooldown = activeLastFmCooldown([]);
+
+  let revalidations = 0;
+  await assert.rejects(
+    runWithMusicRepeatState(runtime, () =>
+      collectIncrementally({
+        sources: [music],
+        targets: [musicOnly()],
+        async revalidateBeforeWrite() {
+          revalidations += 1;
+          throw new LastFmFactualCooldownPreWriteUnavailableError("PROVIDER_UNAVAILABLE");
+        },
+      }),
+    ),
+    LastFmFactualCooldownPreWriteUnavailableError,
+  );
+  assert.equal(revalidations, 1);
 });

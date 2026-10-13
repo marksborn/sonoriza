@@ -30,6 +30,7 @@ import {
 import {
   currentMusicRepeatState,
   filterMusicBatchForCurrentRun,
+  LastFmFactualCooldownPreWriteBlockedError,
   MusicRepeatPreWriteBlockedError,
   revalidateMusicRepeatBeforeRealWrite,
 } from "./music-repeat-runtime";
@@ -115,6 +116,19 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
 };
 
 const MAX_MUSIC_REPEAT_PREWRITE_REPLANS = 2;
+
+/**
+ * Pre-write vetoes that the bounded repair can resolve locally: the refreshed
+ * context is already in run state, so refiltering the pools removes exactly
+ * the vetoed tracks. Unavailable revalidation is not repairable and stays
+ * fail-closed.
+ */
+function isRepairablePreWriteBlock(error: unknown): boolean {
+  return (
+    error instanceof MusicRepeatPreWriteBlockedError ||
+    error instanceof LastFmFactualCooldownPreWriteBlockedError
+  );
+}
 
 export function mergeBlockedMusicTrackIdsByTargetId(
   base: ReadonlyMap<string, ReadonlySet<string>> | undefined,
@@ -444,7 +458,7 @@ export async function collectIncrementally<
       return true;
     } catch (error) {
       if (
-        !(error instanceof MusicRepeatPreWriteBlockedError) ||
+        !isRepairablePreWriteBlock(error) ||
         preWriteReplans >= MAX_MUSIC_REPEAT_PREWRITE_REPLANS
       ) {
         throw error;
