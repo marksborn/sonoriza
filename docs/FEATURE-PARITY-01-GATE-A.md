@@ -79,11 +79,9 @@ umask 077
 read -r -p 'E-mail da conta Sonoriza que deve ser auditada: ' SONORIZA_AUDIT_EMAIL
 export SONORIZA_AUDIT_EMAIL
 REPORT="$(mktemp /tmp/sonoriza-feature-parity-gate-a.XXXXXX.json)"
-gh api 'repos/marksborn/sonoriza/contents/scripts/report-feature-parity-inventory.mjs?ref=docs%2Ffeature-parity-458-gate-a' --jq '.content' \\
-  | base64 -d \\
-  | node --env-file=.env --input-type=module - > "$REPORT"
+gh api 'repos/marksborn/sonoriza/contents/scripts/report-feature-parity-inventory.mjs?ref=docs%2Ffeature-parity-458-gate-a' --jq '.content' | base64 -d | node --env-file=.env --input-type=module - > "$REPORT"
 node -e 'const j=require(process.argv[1]);console.log(JSON.stringify({audit:j.audit,counts:j.counts,targets:j.targets.map(t=>({name:t.name,enabled:t.enabled,composition:t.composition,updatePolicy:t.updatePolicy})),runCount:j.recentRuns.length},null,2))' "$REPORT"
-printf 'Relatório completo (privado): %s\\n' "$REPORT"
+printf 'Relatório completo (privado): %s\n' "$REPORT"
 ```
 
 Pré-requisitos: `gh` funcional no servidor, Node com suporte a `--env-file` e `@prisma/client` instalado no diretório do Sonoriza. O comando **não faz checkout nem executa build**; somente cria um JSON temporário privado em `/tmp`, realiza consultas read-only e exibe um resumo curto. **Não cole o JSON completo na issue/PR pública.** Encaminhe o relatório privadamente para a classificação final da matriz.
