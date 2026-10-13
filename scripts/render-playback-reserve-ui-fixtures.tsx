@@ -8,6 +8,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { PlaybackReserveTargetConsentForm } from "../src/components/PlaybackReserveTargetConsentForm";
