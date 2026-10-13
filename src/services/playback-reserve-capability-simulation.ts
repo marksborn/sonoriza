@@ -11,6 +11,7 @@
 export function canSimulatePlaybackReserveByCapability(input: Readonly<{
   simulate: boolean;
   selectedTargetCount: number;
+  explicitSingleTargetScope: boolean;
   targetEnabled: boolean;
   targetLinkedToSpotify: boolean;
   updatePolicy: string;
@@ -21,6 +22,7 @@ export function canSimulatePlaybackReserveByCapability(input: Readonly<{
   return (
     input.simulate === true &&
     input.selectedTargetCount === 1 &&
+    input.explicitSingleTargetScope === true &&
     input.targetEnabled === true &&
     input.targetLinkedToSpotify === true &&
     (input.updatePolicy === "KEEP_FILLED" ||
