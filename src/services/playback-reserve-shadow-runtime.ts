@@ -47,6 +47,8 @@ export type PlaybackReserveShadowRuntimeState = {
   targetPlaylistIds?: readonly string[];
   allowedTargetIds?: ReadonlySet<string>;
   authorizationSource?: "LEGACY_TARGET_ALLOWLIST" | "PRODUCT_OPT_IN" | "CAPABILITY_SIMULATION" | "NONE";
+  productBinding?: Readonly<{ spotifyPlaylistId: string; confirmedAt: string }> | null;
+  productPrewriteChecks?: number;
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
   maintenanceMode?: PlaybackReserveMaintenanceMode | null;
   keepFilledSnapshotBefore?: string | null;
@@ -174,6 +176,8 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     targetPlaylistIds,
     allowedTargetIds,
     authorizationSource,
+    productBinding,
+    productPrewriteChecks: 0,
     policies: policyMap,
     maintenanceMode,
     keepFilledSnapshotBefore: keepFilledContext?.snapshotBefore ?? null,
@@ -361,6 +365,7 @@ export function playbackReserveShadowRuntimeSummary(
     targetPlaylistIds: [...(state.targetPlaylistIds ?? [])],
     allowedTargetIds: [...(state.allowedTargetIds ?? new Set<string>())].sort(),
     authorizationSource: state.authorizationSource ?? "NONE",
+    productPrewriteChecks: state.productPrewriteChecks ?? 0,
     maintenanceMode: state.maintenanceMode ?? null,
     keepFilledSnapshotBefore: state.keepFilledSnapshotBefore ?? null,
     keepFilledPreviousRunId: state.keepFilledPreviousRunId ?? null,
@@ -375,6 +380,110 @@ export function playbackReserveShadowRuntimeSummary(
     reserveRoleCount: state.reserveRoleCount ?? 0,
     evidence: state.evidence,
   };
+}
+
+/**
+ * Gate B1.4: re-read product authorization immediately before EACH outbound
+ * provider mutation (replace, append, remove and initial playlist creation).
+ * The existing pilot bypasses this new check without changing its behavior.
+ *
+ * A check cannot retract an HTTP request already issued. A revocation observed
+ * before a subsequent mutation prevents that next mutation from starting.
+ */
+export async function assertPlaybackReserveProductAuthorizationBeforeWrite(input: {
+  userId: string;
+  targetPlaylistId: string;
+}): Promise<void> {
+  const state = storage.getStore();
+  if (!state || state.authorizationSource !== "PRODUCT_OPT_IN") return;
+
+  const reject = (): never => {
+    throw new Error(
+      "PLAYBACK_RESERVE_PRODUCT_PREWRITE_BLOCKED: product authorization changed; no further Spotify mutation was started.",
+    );
+  };
+
+  if (
+    state.gate !== 8 ||
+    state.simulate !== false ||
+    state.configuredMode !== "ACTIVE" ||
+    state.effectiveMode !== "ACTIVE" ||
+    state.spotifyWriteInfluence !== true ||
+    state.targetPlaylistIds?.length !== 1 ||
+    state.targetPlaylistIds[0] !== input.targetPlaylistId ||
+    state.simulationApprovedRunId == null ||
+    !state.simulationApprovalKey ||
+    !state.productBinding ||
+    process.env.PLAYBACK_RESERVE_RUNTIME_MODE?.trim().toUpperCase() !== "ACTIVE"
+  ) {
+    reject();
+  }
+
+  const target = await prisma.targetPlaylist.findFirst({
+    where: { userId: input.userId, id: input.targetPlaylistId },
+    select: {
+      enabled: true,
+      updatePolicy: true,
+      spotifyPlaylistId: true,
+      playbackReserveActivation: { select: { enabled: true, confirmedAt: true } },
+    },
+  });
+  if (!target) reject();
+
+  const maintenanceMode = normalizeMaintenanceMode(target.updatePolicy);
+  if (!productReserveAuthorizationRequested({
+    productMode: process.env.PLAYBACK_RESERVE_PRODUCT_AUTHORIZATION_MODE,
+    explicitlyScopedToSingleTarget: true,
+    targetEnabled: target.enabled,
+    targetLinkedToSpotify: Boolean(target.spotifyPlaylistId),
+    policySupportsMaintenance: maintenanceMode !== null,
+    reserveMode: state.policies.get(input.targetPlaylistId)?.reserveMode ?? "NONE",
+    activation: target.playbackReserveActivation,
+  })) reject();
+
+  const liveBinding = {
+    spotifyPlaylistId: target.spotifyPlaylistId!,
+    confirmedAt: target.playbackReserveActivation!.confirmedAt!.toISOString(),
+  };
+  if (
+    liveBinding.spotifyPlaylistId !== state.productBinding.spotifyPlaylistId ||
+    liveBinding.confirmedAt !== state.productBinding.confirmedAt ||
+    maintenanceMode !== state.maintenanceMode
+  ) reject();
+
+  // Also fence in-flight changes to the Reserve rule/fingerprint. A stale
+  // simulation cannot approve a newly edited GLOBAL or target override policy.
+  const currentPolicy = await loadEffectivePlaybackReservePolicy(input.userId, input.targetPlaylistId);
+  const liveKey = approvalKey({
+    targetPlaylistIds: [input.targetPlaylistId],
+    policies: new Map([[input.targetPlaylistId, currentPolicy]]),
+    maintenanceMode,
+    productBinding: liveBinding,
+    keepFilledSnapshotBefore: state.keepFilledSnapshotBefore ?? null,
+  });
+  if (liveKey !== state.simulationApprovalKey) reject();
+
+  // Re-read post-policy-query consent to narrow the window for a revocation
+  // racing with policy evaluation. The next provider mutation repeats the guard.
+  const final = await prisma.targetPlaylist.findFirst({
+    where: { userId: input.userId, id: input.targetPlaylistId },
+    select: {
+      enabled: true,
+      updatePolicy: true,
+      spotifyPlaylistId: true,
+      playbackReserveActivation: { select: { enabled: true, confirmedAt: true } },
+    },
+  });
+  if (
+    !final?.enabled ||
+    final.updatePolicy !== target.updatePolicy ||
+    final.spotifyPlaylistId !== liveBinding.spotifyPlaylistId ||
+    final.playbackReserveActivation?.enabled !== true ||
+    final.playbackReserveActivation.confirmedAt?.toISOString() !== liveBinding.confirmedAt ||
+    process.env.PLAYBACK_RESERVE_PRODUCT_AUTHORIZATION_MODE?.trim().toUpperCase() !== "ACTIVE"
+  ) reject();
+
+  state.productPrewriteChecks = (state.productPrewriteChecks ?? 0) + 1;
 }
 
 export function playbackReserveRuntimeApprovalKey(input: {
