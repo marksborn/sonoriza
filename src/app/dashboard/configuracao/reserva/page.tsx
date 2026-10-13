@@ -184,7 +184,7 @@ export default async function PlaybackReserveConfigurationPage({
 
         <div className="mt-7 max-w-3xl">
           <p className="text-xs font-black uppercase tracking-[0.17em] text-accent-400">
-            PLAYBACK-RESERVE-01
+            CONFIGURAÇÃO DA MARGEM
           </p>
           <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse sm:text-4xl">
             Margem de reprodução
