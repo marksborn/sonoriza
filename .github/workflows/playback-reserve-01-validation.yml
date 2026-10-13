@@ -27,6 +27,8 @@ on:
       - "src/services/playback-reserve-product-activation.test.ts"
       - "src/services/playback-reserve-product-activation.integration.test.ts"
       - "src/services/playback-reserve-product-prewrite.integration.test.ts"
+      - "scripts/check-playback-reserve-release-readiness.mjs"
+      - "scripts/check-playback-reserve-release-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/services/configuration-readiness.ts"
@@ -79,6 +81,8 @@ on:
       - "src/services/playback-reserve-product-activation.test.ts"
       - "src/services/playback-reserve-product-activation.integration.test.ts"
       - "src/services/playback-reserve-product-prewrite.integration.test.ts"
+      - "scripts/check-playback-reserve-release-readiness.mjs"
+      - "scripts/check-playback-reserve-release-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/services/configuration-readiness.ts"
@@ -171,5 +175,9 @@ jobs:
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts
           src/jobs/sequence-prewrite-guard.test.ts
+      - name: B1.5 read-only release contract tests
+        run: node --test scripts/check-playback-reserve-release-readiness.test.mjs
+      - name: B1.5 dormant release CLI contract
+        run: node scripts/check-playback-reserve-release-readiness.mjs --verify --expect-count=0 --expect-hash=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 --expect-runtime=UNSET
       - run: npm run typecheck
       - run: npm run build
