@@ -7,6 +7,7 @@ import {
   type EffectivePlaybackReservePolicySnapshot,
 } from "@/services/playback-reserve-policy";
 import type { PlaybackReserveGate8KeepFilledContext } from "@/services/playback-reserve-gate8";
+import { canSimulatePlaybackReserveByCapability } from "@/services/playback-reserve-capability-simulation";
 import type { PlaybackReserveRunShadowEvidence } from "@/services/playlist-planner/plan-run-playback-reserve";
 
 export type PlaybackReserveRuntimeMode = "OFF" | "SHADOW" | "ACTIVE";
@@ -44,6 +45,7 @@ export type PlaybackReserveShadowRuntimeState = {
   status?: PlaybackReserveRuntimeStatus;
   targetPlaylistIds?: readonly string[];
   allowedTargetIds?: ReadonlySet<string>;
+  authorizationSource?: "LEGACY_TARGET_ALLOWLIST" | "CAPABILITY_SIMULATION" | "NONE";
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
   maintenanceMode?: PlaybackReserveMaintenanceMode | null;
   keepFilledSnapshotBefore?: string | null;
@@ -88,7 +90,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
         : { enabled: true }),
     },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-    select: { id: true, updatePolicy: true },
+    select: { id: true, enabled: true, spotifyPlaylistId: true, updatePolicy: true },
   });
   const targetPlaylistIds = targets.map((target) => target.id);
 
@@ -106,6 +108,25 @@ export async function preparePlaybackReserveShadowRuntime(input: {
   const keepFilledContext = singleTarget
     ? input.keepFilledContextByTargetId?.[singleTarget.id] ?? null
     : null;
+  const hasLegacyPilotAuthorization = Boolean(singleTarget && allowedTargetIds.has(singleTarget.id));
+  const canRunCapabilitySimulation = Boolean(
+    singleTarget &&
+      canSimulatePlaybackReserveByCapability({
+        simulate,
+        selectedTargetCount: targetPlaylistIds.length,
+        targetEnabled: singleTarget.enabled,
+        targetLinkedToSpotify: Boolean(singleTarget.spotifyPlaylistId),
+        updatePolicy: singleTarget.updatePolicy,
+        reserveMode: policyMap.get(singleTarget.id)?.reserveMode ?? "NONE",
+        globalRuntimeMode: configuredMode,
+        capabilitySimulationMode: process.env.PLAYBACK_RESERVE_CAPABILITY_SIMULATION_MODE,
+      }),
+  );
+  const authorizationSource = hasLegacyPilotAuthorization
+    ? "LEGACY_TARGET_ALLOWLIST" as const
+    : canRunCapabilitySimulation
+      ? "CAPABILITY_SIMULATION" as const
+      : "NONE" as const;
   const key = approvalKey({
     targetPlaylistIds,
     policies: policyMap,
@@ -121,6 +142,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     additionalProviderReads: false,
     targetPlaylistIds,
     allowedTargetIds,
+    authorizationSource,
     policies: policyMap,
     maintenanceMode,
     keepFilledSnapshotBefore: keepFilledContext?.snapshotBefore ?? null,
@@ -173,7 +195,9 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     };
   }
 
-  if (!allowedTargetIds.has(singleTarget.id)) {
+  // A capability-based exception is strictly simulation-only. Real runs
+  // remain on the legacy target allowlist; approval and snapshots still apply.
+  if (!hasLegacyPilotAuthorization && !canRunCapabilitySimulation) {
     return {
       ...base,
       effectiveMode: "SHADOW",
@@ -305,6 +329,7 @@ export function playbackReserveShadowRuntimeSummary(
     status: state.status ?? "READY_SHADOW",
     targetPlaylistIds: [...(state.targetPlaylistIds ?? [])],
     allowedTargetIds: [...(state.allowedTargetIds ?? new Set<string>())].sort(),
+    authorizationSource: state.authorizationSource ?? "NONE",
     maintenanceMode: state.maintenanceMode ?? null,
     keepFilledSnapshotBefore: state.keepFilledSnapshotBefore ?? null,
     keepFilledPreviousRunId: state.keepFilledPreviousRunId ?? null,
