@@ -8,6 +8,7 @@ import {
 } from "@/services/playback-reserve-policy";
 import type { PlaybackReserveGate8KeepFilledContext } from "@/services/playback-reserve-gate8";
 import { canSimulatePlaybackReserveByCapability } from "@/services/playback-reserve-capability-simulation";
+import { productReserveAuthorizationRequested } from "@/services/playback-reserve-product-activation";
 import type { PlaybackReserveRunShadowEvidence } from "@/services/playlist-planner/plan-run-playback-reserve";
 
 export type PlaybackReserveRuntimeMode = "OFF" | "SHADOW" | "ACTIVE";
@@ -45,7 +46,7 @@ export type PlaybackReserveShadowRuntimeState = {
   status?: PlaybackReserveRuntimeStatus;
   targetPlaylistIds?: readonly string[];
   allowedTargetIds?: ReadonlySet<string>;
-  authorizationSource?: "LEGACY_TARGET_ALLOWLIST" | "CAPABILITY_SIMULATION" | "NONE";
+  authorizationSource?: "LEGACY_TARGET_ALLOWLIST" | "PRODUCT_OPT_IN" | "CAPABILITY_SIMULATION" | "NONE";
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
   maintenanceMode?: PlaybackReserveMaintenanceMode | null;
   keepFilledSnapshotBefore?: string | null;
@@ -90,7 +91,13 @@ export async function preparePlaybackReserveShadowRuntime(input: {
         : { enabled: true }),
     },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-    select: { id: true, enabled: true, spotifyPlaylistId: true, updatePolicy: true },
+    select: {
+      id: true,
+      enabled: true,
+      spotifyPlaylistId: true,
+      updatePolicy: true,
+      playbackReserveActivation: { select: { enabled: true, confirmedAt: true } },
+    },
   });
   const targetPlaylistIds = targets.map((target) => target.id);
 
@@ -109,6 +116,18 @@ export async function preparePlaybackReserveShadowRuntime(input: {
     ? input.keepFilledContextByTargetId?.[singleTarget.id] ?? null
     : null;
   const hasLegacyPilotAuthorization = Boolean(singleTarget && allowedTargetIds.has(singleTarget.id));
+  const canRunProductOptIn = Boolean(
+    singleTarget &&
+      productReserveAuthorizationRequested({
+        productMode: process.env.PLAYBACK_RESERVE_PRODUCT_AUTHORIZATION_MODE,
+        explicitlyScopedToSingleTarget: requestedTargetIds?.length === 1,
+        targetEnabled: singleTarget.enabled,
+        targetLinkedToSpotify: Boolean(singleTarget.spotifyPlaylistId),
+        policySupportsMaintenance: maintenanceMode !== null,
+        reserveMode: policyMap.get(singleTarget.id)?.reserveMode ?? "NONE",
+        activation: singleTarget.playbackReserveActivation,
+      }),
+  );
   const canRunCapabilitySimulation = Boolean(
     singleTarget &&
       canSimulatePlaybackReserveByCapability({
@@ -125,13 +144,24 @@ export async function preparePlaybackReserveShadowRuntime(input: {
   );
   const authorizationSource = hasLegacyPilotAuthorization
     ? "LEGACY_TARGET_ALLOWLIST" as const
-    : canRunCapabilitySimulation
-      ? "CAPABILITY_SIMULATION" as const
-      : "NONE" as const;
+    : canRunProductOptIn
+      ? "PRODUCT_OPT_IN" as const
+      : canRunCapabilitySimulation
+        ? "CAPABILITY_SIMULATION" as const
+        : "NONE" as const;
+  // New product opt-in approval keys bind to current Spotify destination
+  // and exact consent timestamp. Legacy pilot approvals remain unchanged.
+  const productBinding = authorizationSource === "PRODUCT_OPT_IN" && singleTarget
+    ? {
+        spotifyPlaylistId: singleTarget.spotifyPlaylistId!,
+        confirmedAt: singleTarget.playbackReserveActivation!.confirmedAt!.toISOString(),
+      }
+    : null;
   const key = approvalKey({
     targetPlaylistIds,
     policies: policyMap,
     maintenanceMode,
+    productBinding,
     keepFilledSnapshotBefore:
       maintenanceMode === "KEEP_FILLED" ? keepFilledContext?.snapshotBefore ?? null : null,
   });
@@ -198,7 +228,7 @@ export async function preparePlaybackReserveShadowRuntime(input: {
 
   // A capability-based exception is strictly simulation-only. Real runs
   // remain on the legacy target allowlist; approval and snapshots still apply.
-  if (!hasLegacyPilotAuthorization && !canRunCapabilitySimulation) {
+  if (!hasLegacyPilotAuthorization && !canRunProductOptIn && !canRunCapabilitySimulation) {
     return {
       ...base,
       effectiveMode: "SHADOW",
@@ -352,11 +382,13 @@ export function playbackReserveRuntimeApprovalKey(input: {
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
   maintenanceMode?: PlaybackReserveMaintenanceMode | null;
   keepFilledSnapshotBefore?: string | null;
+  productBinding?: Readonly<{ spotifyPlaylistId: string; confirmedAt: string }> | null;
 }): string {
   return approvalKey({
     targetPlaylistIds: input.targetPlaylistIds,
     policies: input.policies,
     maintenanceMode: input.maintenanceMode ?? null,
+    productBinding: input.productBinding ?? null,
     keepFilledSnapshotBefore: input.keepFilledSnapshotBefore ?? null,
   });
 }
@@ -389,6 +421,7 @@ function approvalKey(input: {
   policies: ReadonlyMap<string, EffectivePlaybackReservePolicySnapshot>;
   maintenanceMode: PlaybackReserveMaintenanceMode | null;
   keepFilledSnapshotBefore: string | null;
+  productBinding?: Readonly<{ spotifyPlaylistId: string; confirmedAt: string }> | null;
 }): string {
   const payload = [...input.targetPlaylistIds]
     .sort()
@@ -396,6 +429,7 @@ function approvalKey(input: {
       targetPlaylistId,
       policy: input.policies.get(targetPlaylistId) ?? null,
       maintenanceMode: input.maintenanceMode,
+      ...(input.productBinding ? { productBinding: input.productBinding } : {}),
       keepFilledSnapshotBefore:
         input.maintenanceMode === "KEEP_FILLED"
           ? input.keepFilledSnapshotBefore
