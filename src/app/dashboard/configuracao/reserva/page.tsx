@@ -113,6 +113,8 @@ export default async function PlaybackReserveConfigurationPage({
   // Status is explanatory only. Runtime Gate 8 remains the sole authority
   // for ACTIVE, simulation approval, snapshot requirements and Spotify writes.
   const runtimeMode = process.env.PLAYBACK_RESERVE_RUNTIME_MODE;
+  const capabilitySimulationEnabled =
+    process.env.PLAYBACK_RESERVE_CAPABILITY_SIMULATION_MODE?.trim().toUpperCase() === "ACTIVE";
   const pilotTargetIds = new Set(
     (process.env.PLAYBACK_RESERVE_ACTIVE_TARGET_IDS ?? "")
       .split(",")
@@ -306,6 +308,7 @@ export default async function PlaybackReserveConfigurationPage({
                 reserveMode: effective.reserveMode,
                 requestedRuntimeMode: runtimeMode,
                 allowedInPilot: pilotTargetIds.has(target.id),
+                capabilitySimulationEnabled,
               });
               const durationSeconds =
                 targetPolicy.durationSeconds ?? globalPolicy.durationSeconds ?? 900;
