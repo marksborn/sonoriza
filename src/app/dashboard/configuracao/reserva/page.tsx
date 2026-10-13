@@ -20,6 +20,8 @@ import {
 } from "@/services/playback-reserve-policy";
 import {
   formatPlaybackReservePolicyLabel,
+  formatPlaybackReserveMinutesInput,
+  formatPlaybackReserveUpdatePolicyLabel,
   parsePlaybackReservePolicyForm,
   parseTargetPlaybackReservePolicyForm,
 } from "@/services/playback-reserve-ui";
@@ -182,26 +184,26 @@ export default async function PlaybackReserveConfigurationPage({
 
         <div className="mt-7 max-w-3xl">
           <p className="text-xs font-black uppercase tracking-[0.17em] text-accent-400">
-            PLAYBACK-RESERVE-01
+            CONFIGURAÇÃO DA MARGEM
           </p>
           <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-ink-inverse sm:text-4xl">
             Margem de reprodução
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-inverse sm:text-base">
-            Publique um sufixo de reserva depois da programação principal para absorver skips sem fazer a playlist acabar cedo. A reserva nunca corrige shortfall do PRIMARY e não vira skip ou exposição só por ter sido publicada.
+            Adicione conteúdo extra ao final da playlist para que ela não termine antes do previsto quando você pular músicas ou episódios. Essa margem não substitui conteúdo da programação principal e não conta como algo ouvido ou pulado só por ter sido incluída.
           </p>
         </div>
 
         {params.saved === "global" ? (
           <div className="status-success mt-6 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
             <UiIcon name="check" size={17} />
-            Regra global salva. A alteração entra no fingerprint e exige uma simulação compatível antes de qualquer ACTIVE real.
+            Regra geral salva. Antes de usar a nova configuração em uma geração, pode ser necessária outra simulação.
           </div>
         ) : null}
         {params.saved === "activation" ? (
           <div className="status-success mt-6 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
             <UiIcon name="check" size={17} />
-            Preferência de autorização salva. A liberação real continua protegida pelos gates de rollout e pela simulação aprovada.
+            Autorização salva. Para aplicar a margem, ainda é necessária a liberação do sistema e uma simulação aprovada.
           </div>
         ) : null}
         {params.saved === "target" ? (
@@ -221,7 +223,7 @@ export default async function PlaybackReserveConfigurationPage({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="max-w-2xl">
               <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
-                Regra global
+                Regra geral
               </p>
               <h2 className="mt-1 text-xl font-black text-ink-inverse">
                 Padrão para todos os destinos
@@ -257,8 +259,8 @@ export default async function PlaybackReserveConfigurationPage({
                   name="durationMinutes"
                   type="number"
                   min="0.02"
-                  step="0.5"
-                  defaultValue={(globalPolicy.durationSeconds ?? 900) / 60}
+                  step="0.01"
+                  defaultValue={formatPlaybackReserveMinutesInput(globalPolicy.durationSeconds ?? 900)}
                   className={inputClass}
                 />
                 <span className="mt-2 block text-xs font-normal leading-5 text-muted-inverse/75">
@@ -310,7 +312,7 @@ export default async function PlaybackReserveConfigurationPage({
                   No modo Tempo adicional, tentar 1 podcast se couber
                 </span>
                 <span className="mt-1 block text-sm leading-6 text-muted-inverse">
-                  A duração é filtro, não ranking. Se nenhum episódio elegível couber, a reserva pode ser completada somente com música.
+                  O Sonoriza pode incluir um podcast que caiba inteiro nesse tempo extra. Caso nenhum episódio caiba, a margem pode ser completada somente com músicas.
                 </span>
               </span>
             </label>
@@ -328,13 +330,13 @@ export default async function PlaybackReserveConfigurationPage({
         <section className="mt-8">
           <div className="max-w-3xl">
             <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">
-              Overrides por destino
+              Configurações por playlist
             </p>
             <h2 className="mt-1 text-2xl font-black text-ink-inverse">
               Ajuste apenas onde fizer sentido
             </h2>
             <p className="mt-2 text-sm leading-6 text-muted-inverse">
-              Cada destino pode seguir a regra global ou usar uma configuração própria, inclusive Sem reserva mesmo quando o padrão global estiver ativo.
+              Cada playlist pode seguir a regra geral ou ter uma margem própria, inclusive Sem reserva.
             </p>
           </div>
 
@@ -389,14 +391,14 @@ export default async function PlaybackReserveConfigurationPage({
                         <span className="product-badge">
                           {target.enabled ? "Ativo" : "Desativado"}
                         </span>
-                        <span className="product-badge">{target.updatePolicy}</span>
+                        <span className="product-badge">{formatPlaybackReserveUpdatePolicyLabel(target.updatePolicy)}</span>
                       </div>
                       <p className="mt-2 text-sm text-muted-inverse">
-                        Regra configurada: <strong className="text-ink-inverse">{formatPlaybackReservePolicyLabel(effective)}</strong>
+                        Margem configurada: <strong className="text-ink-inverse">{formatPlaybackReservePolicyLabel(effective)}</strong>
                         {" · "}
                         {effective.source === "GLOBAL"
-                          ? "seguindo a regra global"
-                          : "override deste destino"}
+                          ? "seguindo a regra geral"
+                          : "personalizada para esta playlist"}
                       </p>
                       <div className="mt-3 rounded-xl border border-line-dark/60 bg-surface-dark/50 px-3 py-3 text-sm">
                         <p className="font-bold text-ink-inverse">{availability.title}</p>
@@ -421,7 +423,7 @@ export default async function PlaybackReserveConfigurationPage({
                     open={params.target === target.id}
                   >
                     <summary className="cursor-pointer select-none text-sm font-black text-ink-inverse">
-                      Editar margem deste destino
+                      Personalizar margem desta playlist
                     </summary>
 
                     <form action={saveTargetPolicy} className="mt-5">
@@ -456,7 +458,7 @@ export default async function PlaybackReserveConfigurationPage({
                       </div>
 
                       <p className="mt-3 text-xs leading-5 text-muted-inverse/75">
-                        Se escolher Seguir configuração global, todos os campos personalizados abaixo são ignorados.
+                        Ao seguir a regra geral, os campos personalizados abaixo não serão usados.
                       </p>
 
                       <div className="mt-4 grid gap-4 md:grid-cols-3">
@@ -466,8 +468,8 @@ export default async function PlaybackReserveConfigurationPage({
                             name="durationMinutes"
                             type="number"
                             min="0.02"
-                            step="0.5"
-                            defaultValue={durationSeconds / 60}
+                            step="0.01"
+                            defaultValue={formatPlaybackReserveMinutesInput(durationSeconds)}
                             className={inputClass}
                           />
                         </label>
@@ -527,9 +529,9 @@ export default async function PlaybackReserveConfigurationPage({
           <div className="flex items-start gap-3">
             <UiIcon name="warning" size={19} />
             <div>
-              <p className="font-black">Configurar não significa ativar o rollout.</p>
+              <p className="font-black">Salvar a margem não a ativa automaticamente.</p>
               <p className="mt-1 text-sm leading-6">
-                Esta tela persiste a policy e altera o fingerprint da configuração. O runtime ACTIVE continua protegido pelos gates de allowlist, simulação aprovada, snapshot e role persistence dos Gates 7–8.
+                Salvar ou autorizar a margem não modifica imediatamente uma playlist no Spotify. Para usar a margem em uma geração, o sistema também precisa permitir seu uso e confirmar uma simulação válida e as verificações de segurança.
               </p>
             </div>
           </div>

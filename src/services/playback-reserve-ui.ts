@@ -67,6 +67,29 @@ export function parseTargetPlaybackReservePolicyForm(
   };
 }
 
+/**
+ * HTML number inputs use "." as the serialized decimal separator.
+ * Two decimal places are enough to round-trip every whole second:
+ * 1/60 minute rounds to 0.02, which parses back to 1 second.
+ * This is presentation only; it never rewrites the stored policy.
+ */
+export function formatPlaybackReserveUpdatePolicyLabel(policy: string): string {
+  switch (policy) {
+    case "KEEP_FILLED":
+      return "Manter completa";
+    case "REBUILD_DAILY":
+      return "Reconstrução diária";
+    case "MANUAL":
+      return "Manual";
+    default:
+      return "Outra forma de atualização";
+  }
+}
+
+export function formatPlaybackReserveMinutesInput(durationSeconds: number): string {
+  return String(Math.round((durationSeconds / 60) * 100) / 100);
+}
+
 export function formatPlaybackReservePolicyLabel(
   policy: Pick<
     PlaybackReservePolicySnapshot,

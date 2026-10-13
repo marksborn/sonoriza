@@ -37,14 +37,14 @@ export function PlaybackReserveTargetConsentForm({
   return (
     <div className="mt-4 rounded-xl border border-line-dark/70 bg-surface-dark/45 p-4">
       <p className="text-sm font-black text-ink-inverse">
-        Autorização de Reserva por destino
+        Permissão para usar a margem
       </p>
       <p className="mt-1 text-sm leading-6 text-muted-inverse">
         {activation.enabled
           ? productAuthorizationEnabled
-            ? "Autorizada por você. A execução real continua dependendo da simulação aprovada e das verificações de segurança."
-            : "Autorizada por você, mas ainda aguardando liberação do sistema. Nenhuma ativação produtiva é permitida por esta preferência isoladamente."
-          : "Não autorizada. Esta opção não interfere na configuração da margem nem no piloto já existente."}
+            ? "Você autorizou esta playlist. A margem só poderá ser aplicada depois de uma simulação aprovada e das verificações de segurança."
+            : "Sua autorização foi salva, mas o sistema ainda não liberou o uso para esta playlist. Essa autorização, sozinha, não altera a reprodução."
+          : "Você ainda não autorizou esta playlist por esta opção. Se ela já participa de um piloto, nada muda."}
       </p>
       <form action={action} className="mt-3">
         <input type="hidden" name="targetPlaylistId" value={targetPlaylistId} />
@@ -54,7 +54,7 @@ export function PlaybackReserveTargetConsentForm({
           disabled={!activation.enabled && !optInEligible}
           className="rounded-lg border border-line-dark px-4 py-2 text-sm font-bold text-ink-inverse disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {activation.enabled ? "Revogar autorização" : "Autorizar Reserva neste destino"}
+          {activation.enabled ? "Revogar autorização" : "Autorizar margem nesta playlist"}
         </button>
       </form>
       {!activation.enabled && !optInEligible ? (

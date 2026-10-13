@@ -35,9 +35,9 @@ function submitButton(html: string) {
 
 test("B1.7: eligible REBUILD_DAILY shows explicit opt-in; product flag OFF is explained", () => {
   const html = render();
-  assert.match(html, /Autorização de Reserva por destino/);
-  assert.match(html, /Não autorizada/);
-  assert.match(html, /Autorizar Reserva neste destino/);
+  assert.match(html, /Permissão para usar a margem/);
+  assert.match(html, /Você ainda não autorizou esta playlist/);
+  assert.match(html, /Autorizar margem nesta playlist/);
   assert.doesNotMatch(submitButton(html), disabledAttribute);
   assert.match(html, /name="targetPlaylistId" value="fixture-target-001"/);
   assert.match(html, /name="activationAction" value="enable"/);
@@ -68,8 +68,8 @@ test("B1.7: consent with technical rollout OFF is visibly pending and can be rev
     activation: { enabled: true, confirmedAt: new Date("2026-10-13T12:00:00Z") },
     productAuthorizationEnabled: false,
   });
-  assert.match(html, /Autorizada por você, mas ainda aguardando liberação do sistema/);
-  assert.match(html, /Nenhuma ativação produtiva é permitida/);
+  assert.match(html, /Sua autorização foi salva, mas o sistema ainda não liberou o uso/);
+  assert.match(html, /Essa autorização, sozinha, não altera a reprodução/);
   assert.match(html, /Revogar autorização/);
   assert.match(html, /name="activationAction" value="disable"/);
   assert.doesNotMatch(submitButton(html), disabledAttribute);
@@ -80,7 +80,7 @@ test("B1.7: technical rollout ACTIVE never claims real execution without simulat
     activation: { enabled: true, confirmedAt: new Date("2026-10-13T12:00:00Z") },
     productAuthorizationEnabled: true,
   });
-  assert.match(html, /continua dependendo da simulação aprovada/);
+  assert.match(html, /depois de uma simulação aprovada/);
   assert.doesNotMatch(html, /Reserva ativada na playlist/);
 });
 

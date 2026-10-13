@@ -60,7 +60,7 @@ export function resolvePlaybackReserveAvailability(input: Readonly<{
     return {
       status: "UNSUPPORTED_UPDATE_POLICY",
       title: "Não disponível para esta atualização",
-      explanation: "O runtime atual de Reserva exige Manter completa ou Reconstrução diária; a geração manual ainda não tem esse contexto de manutenção.",
+      explanation: "A margem está disponível, por enquanto, apenas para playlists que usam Manter completa ou Reconstrução diária.",
     };
   }
 
@@ -68,48 +68,48 @@ export function resolvePlaybackReserveAvailability(input: Readonly<{
   if (mode === "OFF") {
     return {
       status: "ROLLOUT_OFF",
-      title: "Reserva desabilitada no sistema",
-      explanation: "A regra está salva, mas o runtime não pode aplicá-la enquanto o controle global estiver desligado.",
+      title: "Margem temporariamente desativada",
+      explanation: "Você pode salvar a regra, mas o sistema está com a aplicação da margem desligada.",
     };
   }
   if (mode !== "ACTIVE") {
     return {
       status: "ROLLOUT_SHADOW",
-      title: "Reserva em observação",
-      explanation: "A configuração existe, mas o runtime está em SHADOW ou em modo não reconhecido: nenhuma aplicação real é autorizada por este estado.",
+      title: "Margem em avaliação",
+      explanation: "A margem pode ser configurada, mas ainda não está liberada para uso real nesta situação.",
     };
   }
   if (!input.allowedInPilot) {
     if (input.productOptInEnabled && input.productAuthorizationEnabled) {
       return {
         status: "PRODUCT_AUTHORIZED_FOR_RUNTIME_VALIDATION",
-        title: "Autorização de produto presente",
-        explanation: "Você autorizou e o rollout técnico permite avaliar a Reserva em geração real. Isso ainda exige simulação aprovada, destino único e demais guardas por execução; não comprova aplicação efetiva.",
+        title: "Autorização registrada",
+        explanation: "Você autorizou esta playlist e o sistema permite avaliar a margem. Ainda é preciso uma simulação aprovada e verificações de segurança antes de aplicá-la. Isso não significa que já foi publicada.",
       };
     }
     if (input.productOptInEnabled) {
       return {
         status: "PRODUCT_OPT_IN_PENDING_ROLLOUT",
-        title: "Autorização salva; rollout pendente",
-        explanation: "Sua autorização está salva, mas a liberação técnica para este destino ainda está desligada. Não há permissão nova de escrita real.",
+        title: "Autorização salva; aguardando liberação",
+        explanation: "Você autorizou a margem, mas ela ainda não foi liberada para esta playlist. Nenhuma alteração será feita agora.",
       };
     }
     if (input.capabilitySimulationEnabled) {
       return {
         status: "SIMULATION_AVAILABLE_REAL_NOT_AUTHORIZED",
-        title: "Simulação elegível; aplicação real em piloto",
-        explanation: "Este destino pode avaliar a Reserva em simulação isolada, mas ainda não está autorizado a aplicá-la em gerações reais. A simulação não escreve no Spotify; snapshots e validações de contexto continuam obrigatórios.",
+        title: "Simulação disponível",
+        explanation: "Você pode testar a margem em uma simulação sem alterar a playlist. Para incluir a margem de verdade, ainda será necessária a liberação do sistema e uma simulação aprovada.",
       };
     }
     return {
       status: "TARGET_NOT_IN_PILOT",
-      title: "Ainda fora do piloto",
-      explanation: "A política é compatível, mas este destino não está autorizado no rollout atual. A configuração salva não ativa a Reserva.",
+      title: "Aguardando liberação",
+      explanation: "Esta playlist é compatível, mas a margem ainda não foi liberada para ela. Você pode salvar a configuração sem modificar a reprodução.",
     };
   }
   return {
     status: "ELIGIBLE_FOR_RUNTIME_VALIDATION",
-    title: "Elegível para validação do runtime",
-    explanation: "O piloto permite avaliar este destino, mas a Reserva só influencia uma geração quando todos os gates por execução forem aprovados (escopo único, simulação, snapshot e persistência de papéis). Este aviso não comprova ACTIVE.",
+    title: "Incluída no piloto da margem",
+    explanation: "Esta playlist participa do piloto da margem. Ela só recebe conteúdo extra quando uma simulação e as verificações de segurança são aprovadas. Isso não significa que a margem já foi publicada.",
   };
 }
