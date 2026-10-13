@@ -6,6 +6,8 @@ on:
       - "prisma/playback-reserve-policy.prisma"
       - "prisma/migrations/**"
       - "src/services/playback-reserve-policy.ts"
+      - "src/services/playback-reserve-ui.ts"
+      - "src/services/playback-reserve-ui.test.ts"
       - "src/services/playback-reserve-policy.test.ts"
       - "src/services/playback-reserve-policy.integration.test.ts"
       - "src/services/playback-reserve-gate2.ts"
@@ -67,6 +69,8 @@ on:
       - "prisma/playback-reserve-policy.prisma"
       - "prisma/migrations/**"
       - "src/services/playback-reserve-policy.ts"
+      - "src/services/playback-reserve-ui.ts"
+      - "src/services/playback-reserve-ui.test.ts"
       - "src/services/playback-reserve-policy.test.ts"
       - "src/services/playback-reserve-policy.integration.test.ts"
       - "src/services/playback-reserve-gate2.ts"
@@ -170,6 +174,7 @@ jobs:
         run: >-
           npx tsx --test
           src/services/playback-reserve-policy.test.ts
+          src/services/playback-reserve-ui.test.ts
           src/services/playback-reserve-policy.integration.test.ts
           src/services/playback-reserve-gate2.test.ts
           src/services/playback-reserve-gate6.test.ts
