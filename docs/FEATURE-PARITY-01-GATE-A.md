@@ -68,6 +68,28 @@ SONORIZA_AUDIT_EMAIL='EMAIL_DA_CONTA_A_AUDITAR' \
   > /tmp/sonoriza-feature-parity-gate-a.json
 ```
 
+### Execução sem checkout, merge ou deploy (preferida)
+
+Como a PR permanece em draft, **não é necessário nem recomendado trocar o checkout de produção**. Executar via SSH no servidor, a partir da raiz do app, importando o script da própria branch draft apenas pela entrada-padrão do Node (sem gravar código no diretório do aplicativo):
+
+```bash
+cd /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br || exit 1
+set -euo pipefail
+umask 077
+read -r -p 'E-mail da conta Sonoriza que deve ser auditada: ' SONORIZA_AUDIT_EMAIL
+export SONORIZA_AUDIT_EMAIL
+REPORT="$(mktemp /tmp/sonoriza-feature-parity-gate-a.XXXXXX.json)"
+gh api 'repos/marksborn/sonoriza/contents/scripts/report-feature-parity-inventory.mjs?ref=docs%2Ffeature-parity-458-gate-a' --jq '.content' \\
+  | base64 -d \\
+  | node --env-file=.env --input-type=module - > "$REPORT"
+node -e 'const j=require(process.argv[1]);console.log(JSON.stringify({audit:j.audit,counts:j.counts,targets:j.targets.map(t=>({name:t.name,enabled:t.enabled,composition:t.composition,updatePolicy:t.updatePolicy})),runCount:j.recentRuns.length},null,2))' "$REPORT"
+printf 'Relatório completo (privado): %s\\n' "$REPORT"
+```
+
+Pré-requisitos: `gh` funcional no servidor, Node com suporte a `--env-file` e `@prisma/client` instalado no diretório do Sonoriza. O comando **não faz checkout nem executa build**; somente cria um JSON temporário privado em `/tmp`, realiza consultas read-only e exibe um resumo curto. **Não cole o JSON completo na issue/PR pública.** Encaminhe o relatório privadamente para a classificação final da matriz.
+
+> Se `node` no shell root não estiver no PATH correto, execute usando o Node já utilizado pelo usuário do site; não instale ou atualize Node para realizar esta auditoria.
+
 O script realiza apenas `Prisma.findFirst/findMany` e imprime relatório local com nomes dos destinos, dados por capacidade, flags solicitadas sem revelar allowlists e recorte de até 24 últimos runs. **Não chama Spotify/Google/Last.fm, não gera playlist, não grava banco e não altera `.env` ou PM2.** A extração de sumários é conservadora e não deve se passar por prova de paridade se não houver evidência `effectiveMode` individual. O arquivo em `/tmp` deve ser tratado como **privado**; ele contém nomes de playlists e não deve ser colado integralmente em issue pública.
 
 ## 6. Próximos critérios verificáveis
