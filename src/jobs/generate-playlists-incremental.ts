@@ -102,6 +102,7 @@ import { revalidateMusicRepeatBeforeRealWrite } from "./music-repeat-runtime";
 import { isScheduledCalendarNoop } from "./scheduled-calendar-noop";
 import { sequencePrewriteViolations } from "./sequence-prewrite-guard";
 import { isDegradableSpotifySourceFailure } from "./source-failure-policy";
+import { assertPlaybackReserveProductAuthorizationBeforeWrite } from "@/services/playback-reserve-shadow-runtime";
 
 export interface GeneratePlaylistsOptions {
   userId: string;
@@ -265,6 +266,7 @@ async function persistGenerationCheckpoint(
 async function assertGenerationRunWritable(
   runId: string,
   guard?: (runId: string) => void | Promise<void>,
+  productReserveTarget?: Readonly<{ userId: string; targetPlaylistId: string }>,
 ): Promise<void> {
   const current = await prisma.generationRun.findUnique({
     where: { id: runId },
@@ -274,6 +276,11 @@ async function assertGenerationRunWritable(
     throw new Error(`GenerationRun ${runId} is no longer RUNNING before provider write`);
   }
   await guard?.(runId);
+  // B1.4: consent/link/policy fence before every real Spotify mutation.
+  // No effect on legacy pilots or runs without PRODUCT_OPT_IN.
+  if (productReserveTarget) {
+    await assertPlaybackReserveProductAuthorizationBeforeWrite(productReserveTarget);
+  }
 }
 
 export type ResolvedTargetDuration = {
@@ -1854,6 +1861,7 @@ export async function generatePlaylists(
           await assertGenerationRunWritable(
             run.id,
             opts.assertGenerationRunStillActive,
+            { userId, targetPlaylistId: target.id },
           );
           providerWriteStarted = true;
           await persistGenerationCheckpoint(run.id, "PROVIDER_WRITE_START", {
@@ -1875,6 +1883,7 @@ export async function generatePlaylists(
             await assertGenerationRunWritable(
               run.id,
               opts.assertGenerationRunStillActive,
+              { userId, targetPlaylistId: target.id },
             );
             const snapshotAfter = await writer!.replacePlaylistItems(
               playlistId,
@@ -1942,6 +1951,7 @@ export async function generatePlaylists(
               await assertGenerationRunWritable(
                 run.id,
                 opts.assertGenerationRunStillActive,
+                { userId, targetPlaylistId: target.id },
               );
               snapshotAfter = await writer!.replacePlaylistItems(playlistId, finalUris);
               applied = true;
@@ -1950,6 +1960,7 @@ export async function generatePlaylists(
                 await assertGenerationRunWritable(
                   run.id,
                   opts.assertGenerationRunStillActive,
+                  { userId, targetPlaylistId: target.id },
                 );
                 snapshotAfter =
                   (await writer!.appendPlaylistItems(playlistId, addedUris)) ??
@@ -1960,6 +1971,7 @@ export async function generatePlaylists(
                 await assertGenerationRunWritable(
                   run.id,
                   opts.assertGenerationRunStillActive,
+                  { userId, targetPlaylistId: target.id },
                 );
                 snapshotAfter =
                   (await writer!.removePlaylistItems(
