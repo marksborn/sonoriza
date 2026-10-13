@@ -791,6 +791,7 @@ model TargetPlaylist {
   sourceSelections   TargetPlaylistSource[]
   generationItems    GenerationItem[]
   targetScheduleRuns TargetScheduleRun[]
+  playbackReserveActivation TargetPlaybackReserveActivation?
 
   @@unique([userId, id])
   @@index([userId, priority])
