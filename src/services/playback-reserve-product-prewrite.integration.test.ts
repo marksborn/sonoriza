@@ -158,12 +158,29 @@ databaseTest("B1.4: prewrite fence catches revoke, mode OFF, changed Spotify tar
   }
 });
 
-test("B1.4: legacy pilot state is unaffected by new product-only fence", async () => {
-  // No provider writes or DB accesses should happen without PRODUCT_OPT_IN.
-  await assert.doesNotReject(() =>
-    assertPlaybackReserveProductAuthorizationBeforeWrite({
-      userId: "unused",
-      targetPlaylistId: "unused",
-    }),
+test("B1.4: legacy pilot and simulation-only contexts bypass new product-only checks", async () => {
+  const base = {
+    gate: 8 as const,
+    configuredMode: "ACTIVE" as const,
+    effectiveMode: "ACTIVE" as const,
+    simulate: false,
+    plannerInfluence: true,
+    spotifyWriteInfluence: true,
+    additionalProviderReads: false,
+    policies: new Map(),
+    evidence: null,
+  };
+  const checked = { userId: "nonexistent-user", targetPlaylistId: "nonexistent-target" };
+  await assert.doesNotReject(
+    () => runWithPlaybackReserveShadowRuntimeState(
+      { ...base, authorizationSource: "LEGACY_TARGET_ALLOWLIST" },
+      () => assertPlaybackReserveProductAuthorizationBeforeWrite(checked),
+    ),
+  );
+  await assert.doesNotReject(
+    () => runWithPlaybackReserveShadowRuntimeState(
+      { ...base, simulate: true, spotifyWriteInfluence: false, authorizationSource: "CAPABILITY_SIMULATION" },
+      () => assertPlaybackReserveProductAuthorizationBeforeWrite(checked),
+    ),
   );
 });
