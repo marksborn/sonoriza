@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import * as React from "react";
 
 import { canEnableTargetReserveActivation } from "@/services/playback-reserve-product-activation";
 
@@ -25,7 +25,7 @@ export function PlaybackReserveTargetConsentForm({
   reserveMode: "NONE" | "DURATION" | "MUSIC_TRACKS" | "PODCAST_EPISODES";
   activation: Readonly<{ enabled: boolean; confirmedAt: Date | null }>;
   productAuthorizationEnabled: boolean;
-  action: ComponentProps<"form">["action"];
+  action: React.ComponentProps<"form">["action"];
 }>) {
   const optInEligible = canEnableTargetReserveActivation({
     enabled,
