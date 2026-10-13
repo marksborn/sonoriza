@@ -7,6 +7,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { resolvePlaybackReserveAvailability } from "@/services/playback-reserve-availability";
 import {
+  canEnableTargetReserveActivation,
+  loadTargetReserveActivation,
+  saveTargetReserveActivation,
+} from "@/services/playback-reserve-product-activation";
+import {
   loadPlaybackReservePolicy,
   loadTargetPlaybackReservePolicy,
   resolveEffectivePlaybackReservePolicy,
@@ -74,6 +79,35 @@ async function saveTargetPolicy(formData: FormData) {
   );
 }
 
+async function saveProductActivation(formData: FormData) {
+  "use server";
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+
+  const targetPlaylistId = String(formData.get("targetPlaylistId") ?? "").trim();
+  const action = String(formData.get("activationAction") ?? "");
+  if (!targetPlaylistId || (action !== "enable" && action !== "disable")) {
+    redirect("/dashboard/configuracao/reserva?error=invalid-activation");
+  }
+
+  try {
+    await saveTargetReserveActivation({
+      userId: session.user.id,
+      targetPlaylistId,
+      enabled: action === "enable",
+    });
+  } catch {
+    redirect(
+      `/dashboard/configuracao/reserva?error=invalid-activation&target=${encodeURIComponent(targetPlaylistId)}`,
+    );
+  }
+
+  revalidateConfiguration();
+  redirect(
+    `/dashboard/configuracao/reserva?saved=activation&target=${encodeURIComponent(targetPlaylistId)}`,
+  );
+}
+
 const inputClass =
   "mt-2 w-full rounded-xl border border-line-dark/70 bg-surface-dark px-4 py-3 text-ink-inverse outline-none transition focus:border-accent-400/70 focus:ring-2 focus:ring-accent/15";
 
@@ -101,6 +135,15 @@ export default async function PlaybackReserveConfigurationPage({
     }),
   ]);
 
+  const targetActivations = new Map(
+    await Promise.all(
+      targets.map(async (target) => [
+        target.id,
+        await loadTargetReserveActivation(session.user.id, target.id),
+      ] as const),
+    ),
+  );
+
   const targetPolicies = new Map(
     await Promise.all(
       targets.map(async (target) => [
@@ -112,6 +155,8 @@ export default async function PlaybackReserveConfigurationPage({
 
   // Status is explanatory only. Runtime Gate 8 remains the sole authority
   // for ACTIVE, simulation approval, snapshot requirements and Spotify writes.
+  const productAuthorizationEnabled =
+    process.env.PLAYBACK_RESERVE_PRODUCT_AUTHORIZATION_MODE?.trim().toUpperCase() === "ACTIVE";
   const runtimeMode = process.env.PLAYBACK_RESERVE_RUNTIME_MODE;
   const capabilitySimulationEnabled =
     process.env.PLAYBACK_RESERVE_CAPABILITY_SIMULATION_MODE?.trim().toUpperCase() === "ACTIVE";
@@ -151,6 +196,12 @@ export default async function PlaybackReserveConfigurationPage({
           <div className="status-success mt-6 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
             <UiIcon name="check" size={17} />
             Regra global salva. A alteração entra no fingerprint e exige uma simulação compatível antes de qualquer ACTIVE real.
+          </div>
+        ) : null}
+        {params.saved === "activation" ? (
+          <div className="status-success mt-6 flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
+            <UiIcon name="check" size={17} />
+            Preferência de autorização salva. A liberação real continua protegida pelos gates de rollout e pela simulação aprovada.
           </div>
         ) : null}
         {params.saved === "target" ? (
@@ -301,6 +352,13 @@ export default async function PlaybackReserveConfigurationPage({
                 globalPolicy,
                 targetPolicy,
               );
+              const activation = targetActivations.get(target.id)!;
+              const optInEligible = canEnableTargetReserveActivation({
+                enabled: target.enabled,
+                spotifyPlaylistId: target.spotifyPlaylistId,
+                updatePolicy: target.updatePolicy,
+                effectivePolicy: effective,
+              });
               const availability = resolvePlaybackReserveAvailability({
                 enabled: target.enabled,
                 linkedToSpotify: Boolean(target.spotifyPlaylistId),
@@ -349,6 +407,35 @@ export default async function PlaybackReserveConfigurationPage({
                         <p className="mt-1 leading-5 text-muted-inverse">{availability.explanation}</p>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-line-dark/70 bg-surface-dark/45 p-4">
+                    <p className="text-sm font-black text-ink-inverse">
+                      Autorização de Reserva por destino
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-muted-inverse">
+                      {activation.enabled
+                        ? productAuthorizationEnabled
+                          ? "Autorizada por você. A execução real continua dependendo da simulação aprovada e das verificações de segurança."
+                          : "Autorizada por você, mas ainda aguardando liberação do sistema. Nenhuma ativação produtiva é permitida por esta preferência isoladamente."
+                        : "Não autorizada. Esta opção não interfere na configuração da margem nem no piloto já existente."}
+                    </p>
+                    <form action={saveProductActivation} className="mt-3">
+                      <input type="hidden" name="targetPlaylistId" value={target.id} />
+                      <input type="hidden" name="activationAction" value={activation.enabled ? "disable" : "enable"} />
+                      <button
+                        type="submit"
+                        disabled={!activation.enabled && !optInEligible}
+                        className="rounded-lg border border-line-dark px-4 py-2 text-sm font-bold text-ink-inverse disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {activation.enabled ? "Revogar autorização" : "Autorizar Reserva neste destino"}
+                      </button>
+                    </form>
+                    {!activation.enabled && !optInEligible ? (
+                      <p className="mt-2 text-xs text-muted-inverse">
+                        Para autorizar: habilite e vincule o destino, use Manter completa ou Reconstrução diária e configure uma regra diferente de Sem reserva.
+                      </p>
+                    ) : null}
                   </div>
 
                   <details
