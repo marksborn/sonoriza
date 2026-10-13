@@ -1,0 +1,60 @@
+name: Sonoriza operational history UI validation
+
+on:
+  pull_request:
+    paths:
+      - "src/app/dashboard/playlists/[targetId]/page.tsx"
+      - "src/services/generation-run-diagnostics.ts"
+      - "src/services/generation-run-diagnostics.test.ts"
+      - ".github/workflows/history-ui-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/app/dashboard/playlists/[targetId]/page.tsx"
+      - "src/services/generation-run-diagnostics.ts"
+      - "src/services/generation-run-diagnostics.test.ts"
+      - ".github/workflows/history-ui-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_history_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_history_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_history_ci?schema=public
+      NEXTAUTH_SECRET: history-ui-ci-only-not-production
+      AUTH_SECRET: history-ui-ci-only-not-production
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx tsx --test src/services/generation-run-diagnostics.test.ts
+      - run: npm run typecheck
+      - run: npm run build
