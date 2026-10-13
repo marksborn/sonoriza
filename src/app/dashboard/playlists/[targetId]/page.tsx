@@ -254,10 +254,16 @@ export default async function GeneratedPlaylistPage({
             <div className="divide-y divide-line-dark/45">
               {recentRuns.map((recentRun) => {
                 const schedule = recentRun.scheduleRuns[0] ?? null;
+                const displayStatus =
+                  recentRun.status === "SUCCESS" && schedule?.status === "NOOP"
+                    ? "NOOP"
+                    : recentRun.status;
                 const diagnostic = summarizeGenerationRunDiagnostic({
                   summary: recentRun.summary,
                   error: recentRun.error,
                   scheduleReason: schedule?.reason ?? null,
+                  runStatus: recentRun.status,
+                  scheduleStatus: schedule?.status ?? null,
                 });
 
                 return (
@@ -266,13 +272,13 @@ export default async function GeneratedPlaylistPage({
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span
-                            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${runStatusClass(recentRun.status)}`}
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${runStatusClass(displayStatus)}`}
                           >
                             <UiIcon
-                              name={recentRun.status === "SUCCESS" ? "check" : "warning"}
+                              name={displayStatus === "SUCCESS" || displayStatus === "NOOP" ? "check" : "warning"}
                               size={13}
                             />
-                            {runStatusLabel(recentRun.status)}
+                            {runStatusLabel(displayStatus)}
                           </span>
                           <span className="text-xs font-bold text-muted-inverse">
                             {triggerLabel(recentRun.trigger)}
@@ -301,9 +307,11 @@ export default async function GeneratedPlaylistPage({
                     {diagnostic ? (
                       <details
                         className={`mt-4 rounded-2xl border p-4 ${
-                          recentRun.status === "FAILED"
-                            ? "border-red-400/25 bg-red-500/10"
-                            : "border-amber-400/20 bg-amber-400/5"
+                          diagnostic.tone === "info"
+                            ? "border-sky-400/20 bg-sky-400/5"
+                            : recentRun.status === "FAILED"
+                              ? "border-red-400/25 bg-red-500/10"
+                              : "border-amber-400/20 bg-amber-400/5"
                         }`}
                         open={recentRun.status === "FAILED"}
                       >
@@ -360,12 +368,14 @@ export default async function GeneratedPlaylistPage({
 
 function runStatusClass(status: string): string {
   if (status === "SUCCESS") return "status-success";
+  if (status === "NOOP") return "border-sky-400/25 bg-sky-500/10 text-sky-100";
   if (status === "PARTIAL") return "status-warning";
   return "border-red-400/30 bg-red-500/10 text-red-200";
 }
 
 function runStatusLabel(status: string): string {
   if (status === "SUCCESS") return "SUCESSO";
+  if (status === "NOOP") return "SEM ALTERAÇÕES";
   if (status === "PARTIAL") return "PARCIAL";
   if (status === "FAILED") return "FALHA";
   return status;

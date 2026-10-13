@@ -1,4 +1,5 @@
 export type GenerationRunDiagnostic = {
+  tone: "info" | "warning";
   headline: string;
   detail: string;
   source: string | null;
@@ -31,6 +32,8 @@ export function summarizeGenerationRunDiagnostic(input: {
   summary: unknown;
   error: string | null;
   scheduleReason?: string | null;
+  runStatus?: string | null;
+  scheduleStatus?: string | null;
 }): GenerationRunDiagnostic | null {
   const root = asRecord(input.summary);
   const collection = asRecord(root?.sourceCollection);
@@ -61,6 +64,7 @@ export function summarizeGenerationRunDiagnostic(input: {
     const operationPart = operation ? ` durante ${operation}` : "";
 
     return {
+      tone: "warning",
       headline,
       detail: `${subject} retornou${statusPart}${operationPart}.`,
       source,
@@ -72,12 +76,47 @@ export function summarizeGenerationRunDiagnostic(input: {
     };
   }
 
+  // #456: successful generation + scheduled NOOP is an intentional outcome,
+  // not a failed execution. Old runs are interpreted without rewriting history.
+  if (input.runStatus === "SUCCESS" && input.scheduleStatus === "NOOP") {
+    const reason = input.scheduleReason?.trim();
+    const calendarPolicy =
+      reason === "CALENDAR_EMPTY_KEEP"
+        ? "KEEP"
+        : reason === "CALENDAR_EMPTY_SKIP"
+          ? "SKIP"
+          : null;
+    return {
+      tone: "info",
+      headline: calendarPolicy ? "Sem alterações — calendário vazio" : "Sem alterações",
+      detail: calendarPolicy
+        ? `Nenhum evento elegível no calendário. A política ${calendarPolicy} manteve a playlist intacta.`
+        : safeDiagnosticText(input.scheduleReason) ??
+          "Nenhuma atualização foi necessária para este agendamento.",
+      source: null,
+      operation: null,
+      providerStatus: null,
+      pagesRead: null,
+      partialRead: false,
+      retryAfterSeconds: null,
+    };
+  }
+
   const fallback =
     safeDiagnosticText(input.scheduleReason) ?? safeDiagnosticText(input.error);
   if (!fallback) return null;
 
+  const isSuccess = input.runStatus === "SUCCESS" &&
+    (input.scheduleStatus == null || input.scheduleStatus === "SUCCESS");
   return {
-    headline: "Execução não concluída",
+    tone: isSuccess ? "info" : "warning",
+    headline: isSuccess
+      ? "Observação da execução"
+      : input.scheduleStatus === "BLOCKED"
+        ? "Execução bloqueada"
+        : input.runStatus === "PARTIAL"
+          ? "Execução parcial"
+          : "Execução não concluída",
     detail: fallback,
     source: null,
     operation: null,
