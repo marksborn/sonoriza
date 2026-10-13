@@ -99,6 +99,7 @@ import {
   type IncrementalPlanningRound,
 } from "./incremental-planning";
 import { revalidateMusicRepeatBeforeRealWrite } from "./music-repeat-runtime";
+import { isScheduledCalendarNoop } from "./scheduled-calendar-noop";
 import { sequencePrewriteViolations } from "./sequence-prewrite-guard";
 import { isDegradableSpotifySourceFailure } from "./source-failure-policy";
 
@@ -219,6 +220,7 @@ type GenerationCheckpoint =
   | "RUN_CREATED"
   | "CALENDAR_READ_START"
   | "CALENDAR_READ_DONE"
+  | "CALENDAR_NO_ELIGIBLE_TARGETS"
   | "SOURCE_READ_START"
   | "SOURCE_READ_DONE"
   | "PLAN_READY"
@@ -612,6 +614,44 @@ export async function generatePlaylists(
         scope,
       ]),
     );
+
+    // #442: a real, explicitly scoped scheduled run whose only destination
+    // was skipped due to CALENDAR + KEEP/SKIP has nothing to plan or write.
+    // Do not initialize Spotify sources or run the planner/shadow stages.
+    // Preserve the #453 skip evidence so the scheduler maps SUCCESS to NOOP.
+    if (isScheduledCalendarNoop({
+      trigger,
+      simulate,
+      requestedTargetIds: targetScope,
+      resolvedTargetIds: targets.map((target) => target.id),
+      activeTargetIds: runTargets.map((target) => target.targetPlaylistId),
+      calendarSkippedTargetIds: skipped.map((target) => target.id),
+    })) {
+      summary.skipped = skipped.map((target) => target.name);
+      summary.calendarSkippedTargets = skipped.map((target) => ({
+        targetPlaylistId: target.id,
+        reason:
+          target.emptyCalendarBehavior === "KEEP"
+            ? "CALENDAR_EMPTY_KEEP"
+            : "CALENDAR_EMPTY_SKIP",
+      }));
+      summary.noEligibleScheduledTargets = {
+        reason: "CALENDAR_EMPTY_KEEP_OR_SKIP",
+        sourceCollectionSkipped: true,
+        spotifyWrites: false,
+      };
+      log({
+        level: "INFO",
+        message:
+          "Scheduled calendar target intentionally left untouched; " +
+          "source collection and planning skipped.",
+      });
+      await persistGenerationCheckpoint(run.id, "CALENDAR_NO_ELIGIBLE_TARGETS", {
+        skippedTargetCount: skipped.length,
+      });
+      await finalizeRun(run.id, "SUCCESS", logs, summary);
+      return { runId: run.id, status: "SUCCESS" };
+    }
 
     const configuredSources = await prisma.sourcePlaylist.findMany({
       where: { userId },
