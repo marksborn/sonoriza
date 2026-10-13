@@ -35,6 +35,9 @@ on:
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/components/PlaybackReserveTargetConsentForm.tsx"
       - "src/components/PlaybackReserveTargetConsentForm.test.tsx"
+      - "scripts/render-playback-reserve-ui-fixtures.tsx"
+      - "src/app/globals.css"
+      - "tailwind.config.ts"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
       - "src/services/music-exposure/read-model.ts"
@@ -93,6 +96,9 @@ on:
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/components/PlaybackReserveTargetConsentForm.tsx"
       - "src/components/PlaybackReserveTargetConsentForm.test.tsx"
+      - "scripts/render-playback-reserve-ui-fixtures.tsx"
+      - "src/app/globals.css"
+      - "tailwind.config.ts"
       - "src/services/configuration-readiness.ts"
       - "src/services/music-preference/lastfm-coverage-prisma.ts"
       - "src/services/music-exposure/read-model.ts"
@@ -187,6 +193,18 @@ jobs:
           src/jobs/sequence-prewrite-guard.test.ts
       - name: B1.7 isolated server-rendered Reserve consent UI contract
         run: npx tsx --test src/components/PlaybackReserveTargetConsentForm.test.tsx
+      - name: B1.7 build OFFLINE styled QA preview (8 fictional states)
+        run: |
+          mkdir -p /tmp/sonoriza-b17-ui-preview
+          npx tailwindcss -i src/app/globals.css -o /tmp/sonoriza-b17-ui-preview/app.css --minify
+          npx tsx scripts/render-playback-reserve-ui-fixtures.tsx /tmp/sonoriza-b17-ui-preview
+      - name: B1.7 publish offline visual review package
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonoriza-b17-ui-offline-preview
+          path: /tmp/sonoriza-b17-ui-preview/
+          if-no-files-found: error
+          retention-days: 7
       - name: B1.5-B1.6 read-only release and operational contract tests
         run: >-
           node --test
