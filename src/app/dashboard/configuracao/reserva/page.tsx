@@ -3,11 +3,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { UiIcon } from "@/components/UiIcon";
+import { PlaybackReserveTargetConsentForm } from "@/components/PlaybackReserveTargetConsentForm";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { resolvePlaybackReserveAvailability } from "@/services/playback-reserve-availability";
 import {
-  canEnableTargetReserveActivation,
   loadTargetReserveActivation,
   saveTargetReserveActivation,
 } from "@/services/playback-reserve-product-activation";
@@ -353,12 +353,6 @@ export default async function PlaybackReserveConfigurationPage({
                 targetPolicy,
               );
               const activation = targetActivations.get(target.id)!;
-              const optInEligible = canEnableTargetReserveActivation({
-                enabled: target.enabled,
-                spotifyPlaylistId: target.spotifyPlaylistId,
-                updatePolicy: target.updatePolicy,
-                effectivePolicy: effective,
-              });
               const availability = resolvePlaybackReserveAvailability({
                 enabled: target.enabled,
                 linkedToSpotify: Boolean(target.spotifyPlaylistId),
@@ -411,34 +405,16 @@ export default async function PlaybackReserveConfigurationPage({
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-xl border border-line-dark/70 bg-surface-dark/45 p-4">
-                    <p className="text-sm font-black text-ink-inverse">
-                      Autorização de Reserva por destino
-                    </p>
-                    <p className="mt-1 text-sm leading-6 text-muted-inverse">
-                      {activation.enabled
-                        ? productAuthorizationEnabled
-                          ? "Autorizada por você. A execução real continua dependendo da simulação aprovada e das verificações de segurança."
-                          : "Autorizada por você, mas ainda aguardando liberação do sistema. Nenhuma ativação produtiva é permitida por esta preferência isoladamente."
-                        : "Não autorizada. Esta opção não interfere na configuração da margem nem no piloto já existente."}
-                    </p>
-                    <form action={saveProductActivation} className="mt-3">
-                      <input type="hidden" name="targetPlaylistId" value={target.id} />
-                      <input type="hidden" name="activationAction" value={activation.enabled ? "disable" : "enable"} />
-                      <button
-                        type="submit"
-                        disabled={!activation.enabled && !optInEligible}
-                        className="rounded-lg border border-line-dark px-4 py-2 text-sm font-bold text-ink-inverse disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {activation.enabled ? "Revogar autorização" : "Autorizar Reserva neste destino"}
-                      </button>
-                    </form>
-                    {!activation.enabled && !optInEligible ? (
-                      <p className="mt-2 text-xs text-muted-inverse">
-                        Para autorizar: habilite e vincule o destino, use Manter completa ou Reconstrução diária e configure uma regra diferente de Sem reserva.
-                      </p>
-                    ) : null}
-                  </div>
+                  <PlaybackReserveTargetConsentForm
+                    targetPlaylistId={target.id}
+                    enabled={target.enabled}
+                    spotifyPlaylistId={target.spotifyPlaylistId}
+                    updatePolicy={target.updatePolicy}
+                    reserveMode={effective.reserveMode}
+                    activation={activation}
+                    productAuthorizationEnabled={productAuthorizationEnabled}
+                    action={saveProductActivation}
+                  />
 
                   <details
                     className="mt-5 rounded-2xl border border-line-dark/70 bg-surface-dark/45 p-4"
