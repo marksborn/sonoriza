@@ -121,6 +121,14 @@ export type LastFmTopTrackCount = {
   artistMbid: string | null;
 };
 
+export type LastFmPublicArtist = { name: string; mbid: string | null; url: string | null };
+export type LastFmPublicTrack = {
+  name: string;
+  artistName: string;
+  mbid: string | null;
+  url: string | null;
+};
+
 export type LastFmClientOptions = {
   apiKey: string;
   fetchImpl?: typeof fetch;
@@ -279,6 +287,59 @@ export class LastFmClient {
     };
   }
 
+  /**
+   * #473 Gate B: public catalog data by manually selected tag. These endpoints
+   * require only the app's API key, never a Last.fm user login or playback history.
+   */
+  async getPublicTagTopArtists(tag: string, limit = 8): Promise<LastFmPublicArtist[]> {
+    const requestedTag = publicDiscoveryTerm(tag);
+    const pageSize = publicDiscoveryLimit(limit);
+    const payload = await this.getJson<{
+      topartists?: { artist?: Array<{ name?: string; mbid?: string; url?: string }> | { name?: string; mbid?: string; url?: string } };
+    }>({ method: "tag.gettopartists", tag: requestedTag, limit: String(pageSize) });
+    return mapPublicArtists(asArray(payload.topartists?.artist));
+  }
+
+  async getPublicTagTopTracks(tag: string, limit = 8): Promise<LastFmPublicTrack[]> {
+    return this.getPublicTopTracks("tag.gettoptracks", "tag", publicDiscoveryTerm(tag), limit);
+  }
+
+  async getPublicArtistTopTracks(artist: string, limit = 8): Promise<LastFmPublicTrack[]> {
+    return this.getPublicTopTracks("artist.gettoptracks", "artist", publicDiscoveryTerm(artist), limit);
+  }
+
+  async getPublicSimilarArtists(artist: string, limit = 8): Promise<LastFmPublicArtist[]> {
+    const requestedArtist = publicDiscoveryTerm(artist);
+    const pageSize = publicDiscoveryLimit(limit);
+    const payload = await this.getJson<{
+      similarartists?: { artist?: Array<{ name?: string; mbid?: string; url?: string }> | { name?: string; mbid?: string; url?: string } };
+    }>({ method: "artist.getsimilar", artist: requestedArtist, limit: String(pageSize) });
+    return mapPublicArtists(asArray(payload.similarartists?.artist));
+  }
+
+  private async getPublicTopTracks(
+    method: "tag.gettoptracks" | "artist.gettoptracks",
+    termKey: "tag" | "artist",
+    term: string,
+    limit: number,
+  ): Promise<LastFmPublicTrack[]> {
+    const payload = await this.getJson<{
+      toptracks?: { track?: Array<{
+        name?: string; mbid?: string; url?: string; artist?: string | { name?: string };
+      }> | { name?: string; mbid?: string; url?: string; artist?: string | { name?: string } } };
+    }>({ method, [termKey]: term, limit: String(publicDiscoveryLimit(limit)) });
+    const seen = new Set<string>();
+    return asArray(payload.toptracks?.track).flatMap((entry) => {
+      const name = clean(entry.name);
+      const artistName = clean(typeof entry.artist === "string" ? entry.artist : entry.artist?.name);
+      if (!name || !artistName) return [];
+      const key = `${artistName.toLocaleLowerCase("pt-BR")}\0${name.toLocaleLowerCase("pt-BR")}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ name, artistName, mbid: clean(entry.mbid), url: clean(entry.url) }];
+    });
+  }
+
   private async getJson<T>(params: Record<string, string>): Promise<T> {
     const url = new URL(this.apiUrl);
     for (const [key, value] of Object.entries({
@@ -365,6 +426,31 @@ export function lastFmSourceEventKey(input: {
     normalize(input.trackName),
   ].join("\0");
   return `lastfm:${createHash("sha256").update(identity).digest("hex")}`;
+}
+
+function publicDiscoveryTerm(value: string): string {
+  const cleaned = value.trim().replace(/\s+/g, " ");
+  if (!cleaned || cleaned.length > 120) throw new Error("Invalid public Last.fm discovery term");
+  return cleaned;
+}
+
+function publicDiscoveryLimit(limit: number): number {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+    throw new Error("Last.fm public discovery limit must be between 1 and 20");
+  }
+  return limit;
+}
+
+function mapPublicArtists(
+  input: Array<{ name?: string; mbid?: string; url?: string }>,
+): LastFmPublicArtist[] {
+  const seen = new Set<string>();
+  return input.flatMap((artist) => {
+    const name = clean(artist.name);
+    if (!name || seen.has(name.toLocaleLowerCase("pt-BR"))) return [];
+    seen.add(name.toLocaleLowerCase("pt-BR"));
+    return [{ name, mbid: clean(artist.mbid), url: clean(artist.url) }];
+  });
 }
 
 function requiredUsername(value: string): string {

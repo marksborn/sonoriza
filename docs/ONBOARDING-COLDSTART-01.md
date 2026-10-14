@@ -53,3 +53,55 @@ Uma futura política **"Salvar novos episódios automaticamente em Seus episódi
 - Typecheck isolado de `cold-start-contract.ts` com TypeScript: **aprovado localmente**.
 - Testes de contrato com Node 22 (`--experimental-strip-types`) usando uma cópia com extensão explícita no import: **7/7 passaram localmente**.
 - **Ainda não executados na árvore inteira do repositório:** `npm run typecheck`, build, testes de integração com Prisma/Spotify. A PR permanece em rascunho para avançar nesses checkpoints.
+
+
+---
+
+## Gate B — descoberta de catálogos em modo somente leitura (14/10/2026)
+
+**Implementação proposta na branch `feat/473-coldstart-gate-b`, empilhada sobre Gate A, ainda sem integração com as páginas do onboarding.** Não altera produção, configurações existentes, playlists ou biblioteca Spotify.
+
+### Música pública via Last.fm
+
+Foram adicionados ao `LastFmClient` métodos públicos somente leitura:
+
+- `getPublicTagTopArtists(tag, limit)` — `tag.gettopartists`;
+- `getPublicTagTopTracks(tag, limit)` — `tag.gettoptracks`;
+- `getPublicArtistTopTracks(artist, limit)` — `artist.gettoptracks`;
+- `getPublicSimilarArtists(artist, limit)` — `artist.getsimilar`.
+
+Reutilizam `getJson`/API key/User-Agent/tratamento de erro existentes. Não requerem autenticação do usuário, Last.fm username, scrobble ou IA. Inputs validados, limite máximo de 20 itens por consulta, resultados deduplicados por identidade textual, sem fabricar dados históricos. Falhas do provider propagadas.
+
+### Podcasts pelo Spotify
+
+`SpotifyClient.searchShows({ query, market, limit })` usa `GET /search?type=show` com `market=BR` e limite **1 a 10** (Development Mode). `getDiscoveredShow({ id, market })` usa `GET /shows/{id}` com validação de ID. Ambos atravessam o **cliente Spotify já instrumentado** (`request`, timeout, backoff e quota), com memoization por instância. Normalização tipada e conservadora evita resultados sem ID/nome e deduplica IDs.
+
+Este gate **não usa** `GET /shows` em lote, removido para o Development Mode em fevereiro de 2026, nem Spotify Recommendations/Spotify Browse Categories.
+
+### Preview centralizado
+
+`ColdStartPreviewService` implementa:
+
+- `previewGenre(genreId)`: tags curadas do Gate A → artistas + músicas Last.fm;
+- `previewArtist(name)`: faixas e artistas semelhantes;
+- `previewPodcastTopic(topicId)`: tema curado em pt-BR → Spotify show search;
+- `searchPodcasts(query)`: pesquisa livre de podcast;
+- `inspectShow(showId)`: detalhes do show Spotify.
+
+Todos os resultados trazem **proveniência**. Artistas e faixas Last.fm retornam `spotifyResolved=false` — não estão automaticamente disponíveis como músicas reproduzíveis no Spotify. Shows retornam `followed=false` e `episodesSaved=false`; a busca não é inscrição nem prova de existência de um episódio reproduzível. O preview opera sobre interfaces de leitura e **não dispõe de métodos para criar fontes, seguir programas ou salvar episódios**.
+
+Cache público Last.fm em memória: TTL 15 minutos, no máximo 64 chaves, compartilhando pedidos simultâneos da mesma tag/artista e removendo falhas sem cachear erros. Sem Spotify User Data no cache público; chamadas Spotify reaproveitam memoization user-scoped já existente. **Não** introduzir cache persistente de contas Spotify fora dos mecanismos atuais.
+
+### Testes e validação
+
+- Novos testes unitários de composição e separação de leitura de podcasts: `src/services/onboarding/cold-start-preview.test.ts`.
+- Novos testes para query limitada e dados incompletos do Spotify: `src/services/spotify/cold-start-show-search.test.ts`.
+- Testes Last.fm com `fetchImpl` simulado acrescentados a `src/services/lastfm/client.test.ts`.
+- Novo script `npm run test:cold-start`.
+- **Validação runtime real ainda pendente:** executar o script, `npm run test:lastfm`, `npm run typecheck`, `npm run build`, revisar CI, depois um smoke **read-only** autorizado com Spotify do piloto e chave Last.fm configurada. Não inventar resultados reais nem chamar API externa sem ambiente/conta configurados.
+
+### Próximo gate (C)
+
+Adicionar telas/ações de onboarding retomáveis e persistência das preferências first-party, buscar catálogo a pedido (lazy-load), selecionar artista/show e **confirmar** seguir o show no Sonoriza com validação `GET /shows/{id}` sem exigir `listSavedShows`. Criar `SHOW` user-scoped com idempotência e regras atuais, sem fazer `Spotify Follow` nem salvar episódios. Para música, resolver as faixas Last.fm no catálogo Spotify com confiança, sem gravação da playlist antes de simulação/aprovação.
+
+**Observação:** API de catálogo externa e Spotify podem falhar/limitar chamadas (401/403/429, Last.fm erro 29); a UI deverá oferecer recuperação em linguagem amigável, sem mostrar um perfil inventado.

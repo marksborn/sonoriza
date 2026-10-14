@@ -20,6 +20,7 @@
     "test:simulation": "tsx --test src/services/simulation-presentation.test.ts src/services/configuration-readiness.test.ts",
     "test:config-04": "tsx --test src/services/http-api-response.test.ts",
     "test:lastfm": "tsx --test src/services/lastfm/*.test.ts",
+    "test:cold-start": "tsx --test src/services/onboarding/cold-start-contract.test.ts src/services/onboarding/cold-start-preview.test.ts src/services/spotify/cold-start-show-search.test.ts",
     "test:history": "tsx --test src/services/listening-history/*.test.ts",
     "test:music-preference": "tsx --test src/services/music-preference/*.test.ts",
     "test:discovery": "tsx --test src/services/music-discovery/*.test.ts",
