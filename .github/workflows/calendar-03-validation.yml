@@ -121,7 +121,7 @@ jobs:
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/calendar-event-composition-runtime.test.ts
       - run: npm run test:incremental
-      - name: #460 manual KEEP_FILLED calendar and no-op contracts
+      - name: "Manual KEEP_FILLED calendar and no-op contracts (#460)"
         run: npx tsx --test src/services/manual-keep-filled-calendar-scope.test.ts
       - run: npm run typecheck
       - run: npm run build
