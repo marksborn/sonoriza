@@ -6,6 +6,7 @@ import {
   formatPlaybackReservePolicyLabel,
   formatPlaybackReserveUpdatePolicyLabel,
   parsePlaybackReservePolicyForm,
+  readPlaybackReserveSimulationView,
 } from "./playback-reserve-ui";
 
 function durationForm(minutes: string) {
@@ -58,4 +59,67 @@ test("#460: the original duration parser continues rejecting empty and invalid i
   for (const value of ["", "0", "-1", "NaN", "Infinity", "abc"]) {
     assert.throws(() => parsePlaybackReservePolicyForm(durationForm(value)));
   }
+});
+
+function reserveSummary(status: string, targetStatus = "READY_SHADOW") {
+  return {
+    playbackReserveRuntime: { status },
+    playbackReserveShadow: {
+      targets: [
+        {
+          targetPlaylistId: "trabalho",
+          status: targetStatus,
+          reserve: {
+            itemCount: 2,
+            musicCount: 2,
+            podcastCount: 0,
+            plannedDurationMs: 451_000,
+          },
+        },
+      ],
+    },
+  };
+}
+
+test("#470 capability-only simulation presents RESERVE as preview, not included", () => {
+  assert.deepEqual(
+    readPlaybackReserveSimulationView(
+      reserveSummary("READY_PREVIEW_SIMULATION"),
+      "trabalho",
+    ),
+    {
+      kind: "PREVIEW",
+      itemCount: 2,
+      musicCount: 2,
+      podcastCount: 0,
+      plannedMinutes: 8,
+      shortfall: false,
+    },
+  );
+});
+
+test("#470 authorized simulation presents RESERVE as included and flags shortfall", () => {
+  const view = readPlaybackReserveSimulationView(
+    reserveSummary("READY_ACTIVE_SIMULATION", "SHORTFALL"),
+    "trabalho",
+  );
+  assert.equal(view?.kind, "INCLUDED");
+  assert.equal(view?.shortfall, true);
+});
+
+test("#470 abstained, real or foreign-target RESERVE yields no simulation view", () => {
+  for (const status of ["ABSTAIN_TARGET_NOT_ALLOWED", "READY_ACTIVE_REAL", "OFF"]) {
+    assert.equal(
+      readPlaybackReserveSimulationView(reserveSummary(status), "trabalho"),
+      null,
+    );
+  }
+  assert.equal(
+    readPlaybackReserveSimulationView(
+      reserveSummary("READY_PREVIEW_SIMULATION"),
+      "outro-destino",
+    ),
+    null,
+  );
+  assert.equal(readPlaybackReserveSimulationView(null, "trabalho"), null);
 });

@@ -17,6 +17,7 @@ export type PlaybackReserveRuntimeStatus =
   | "OFF"
   | "READY_SHADOW"
   | "READY_ACTIVE_SIMULATION"
+  | "READY_PREVIEW_SIMULATION"
   | "READY_ACTIVE_REAL"
   | "ABSTAIN_ACTIVE_SCOPE_REQUIRED"
   | "ABSTAIN_TARGET_NOT_ALLOWED"
@@ -272,6 +273,24 @@ export async function preparePlaybackReserveShadowRuntime(input: {
         rolePersistenceStatus: "NOT_APPLICABLE",
       };
     }
+  }
+
+  // #470: a capability-only simulation cannot be published with RESERVE, since
+  // real runs stay on the pilot allowlist or product opt-in. Simulating it as
+  // ACTIVE produced a plan the real run could never match. Keep the planner in
+  // SHADOW so the simulated plan and order are exactly what a real run would
+  // publish; the RESERVE projection is still recorded as preview evidence.
+  if (simulate && authorizationSource === "CAPABILITY_SIMULATION") {
+    return {
+      ...base,
+      effectiveMode: "SHADOW",
+      plannerInfluence: false,
+      spotifyWriteInfluence: false,
+      status: "READY_PREVIEW_SIMULATION",
+      simulationApprovalKey: key,
+      simulationApprovedRunId: null,
+      rolePersistenceStatus: "NOT_APPLICABLE",
+    };
   }
 
   if (simulate) {

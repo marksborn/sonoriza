@@ -21,7 +21,7 @@
 1. `PLAYBACK_RESERVE_RUNTIME_MODE` e `PLAYBACK_RESERVE_ACTIVE_TARGET_IDS` devem conservar os valores efetivos do piloto legado: o novo código não pode alterar sua configuração/resultado.
 2. **Novos modos OFF/unset no primeiro deploy:** `PLAYBACK_RESERVE_CAPABILITY_SIMULATION_MODE` e `PLAYBACK_RESERVE_PRODUCT_AUTHORIZATION_MODE`. Se qualquer um estiver `ACTIVE`, abortar o deploy dormente e investigar; nunca mudar valores silenciosamente.
 3. A ausência de `TargetPlaybackReserveActivation` é OFF por design. Não popular linha de opt-in como parte de migração ou instalação.
-4. Simulação por capacidade não autoriza escrita real; `PRODUCT_OPT_IN` necessita opt-in explícito, master ACTIVE, kill switch de produto, destino isolado, política efetiva válida, snapshot/preflight e aprovação de simulação específica.
+4. Simulação por capacidade não autoriza escrita real e, desde #470, roda a Reserva em `SHADOW` (`READY_PREVIEW_SIMULATION`): o plano simulado é exatamente o publicável e a Reserva aparece só como prévia, sem servir de aprovação Gate 8; `PRODUCT_OPT_IN` necessita opt-in explícito, master ACTIVE, kill switch de produto, destino isolado, política efetiva válida, snapshot/preflight e aprovação de simulação específica.
 5. O fingerprint do piloto legado não pode mudar; o novo caminho de produto vincula autorização temporal, política/snapshot e `spotifyPlaylistId`.
 6. A cerca B1.4 bloqueia a **próxima mutação** ao notar revogação/mudança; não cancela a requisição HTTP já enviada. Não prometer rollback atômico ou que uma escrita parcial em KEEP_FILLED será revertida automaticamente.
 7. A funcionalidade não passa a ser aplicável a `MANUAL` por causa desta entrega. Também não se deve usar simulação multi-target como prova de ACTIVE single-target.
