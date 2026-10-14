@@ -98,6 +98,8 @@ export function TargetRunButton({
         status?: string;
         runId?: string;
         error?: string;
+        noop?: boolean;
+        noopReason?: string;
       };
 
       if (!response.ok) {
@@ -106,7 +108,9 @@ export function TargetRunButton({
 
       setRun({
         status: "done",
-        message: `Geração de ${targetName}: ${data.status ?? "concluída"}`,
+        message: data.noop
+          ? `${targetName}: calendário sem programação, playlist preservada sem alterações (${data.noopReason === "CALENDAR_EMPTY_SKIP" ? "ignorar" : "manter"}).`
+          : `Geração de ${targetName}: ${data.status ?? "concluída"}`,
       });
       router.refresh();
     } catch (error) {
