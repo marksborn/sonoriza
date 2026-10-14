@@ -211,3 +211,56 @@ test("read client surfaces Last.fm API errors without attempting authentication"
 
   await assert.rejects(client.getUserInfo("marks"), /Last\.fm API error 10/);
 });
+
+
+test("#473 Gate B fetches genre artists and tracks with app API key only", async () => {
+  const calls: Array<{ method: string | null; tag: string | null; limit: string | null }> = [];
+  const client = new LastFmClient({
+    apiKey: "test-key",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      const method = url.searchParams.get("method");
+      calls.push({ method, tag: url.searchParams.get("tag"), limit: url.searchParams.get("limit") });
+      if (method === "tag.gettopartists") return jsonResponse({
+        topartists: { artist: [{ name: "Pitty", mbid: "a" }, { name: "Pitty" }, { name: "Legião Urbana" }] },
+      });
+      return jsonResponse({ toptracks: { track: [
+        { name: "Equalize", artist: { name: "Pitty" } },
+        { name: "Equalize", artist: { name: "Pitty" } },
+      ] } });
+    },
+  });
+  const artists = await client.getPublicTagTopArtists(" rock ", 8);
+  const tracks = await client.getPublicTagTopTracks("rock", 8);
+  assert.deepEqual(artists.map((x) => x.name), ["Pitty", "Legião Urbana"]);
+  assert.deepEqual(tracks.map((x) => [x.artistName, x.name]), [["Pitty", "Equalize"]]);
+  assert.deepEqual(calls, [
+    { method: "tag.gettopartists", tag: "rock", limit: "8" },
+    { method: "tag.gettoptracks", tag: "rock", limit: "8" },
+  ]);
+});
+
+test("#473 Gate B selects artist-based candidates without personal Last.fm history", async () => {
+  const requested: string[] = [];
+  const client = new LastFmClient({
+    apiKey: "test-key",
+    fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      const method = url.searchParams.get("method") ?? "";
+      requested.push(method);
+      if (method === "artist.getsimilar") return jsonResponse({
+        similarartists: { artist: { name: "Capital Inicial" } },
+      });
+      return jsonResponse({
+        toptracks: { track: [{ name: "Tempo Perdido", artist: { name: "Legião Urbana" } }] },
+      });
+    },
+  });
+  const tracks = await client.getPublicArtistTopTracks("Legião Urbana");
+  const similar = await client.getPublicSimilarArtists("Legião Urbana");
+  assert.equal(tracks[0]?.name, "Tempo Perdido");
+  assert.equal(similar[0]?.name, "Capital Inicial");
+  assert.deepEqual(requested, ["artist.gettoptracks", "artist.getsimilar"]);
+  await assert.rejects(client.getPublicTagTopArtists("rock", 21), /limit/);
+  await assert.rejects(client.getPublicTagTopTracks(" ", 5), /term/);
+});
