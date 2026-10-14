@@ -294,13 +294,18 @@ export async function POST(request: Request) {
     data: {
       summary: {
         ...existingSummary,
-        configurationFingerprint: assessment.fingerprint,
+        // An intentional calendar NOOP is never CONFIG-04 approval evidence.
+        // Without this fingerprint the first-run gate can retain an earlier,
+        // genuinely approved simulation instead of treating NOOP as a failure.
+        ...("noop" in result && result.noop
+          ? {}
+          : { configurationFingerprint: assessment.fingerprint }),
         calendar03PlannerRuntime: calendar03PlannerRuntimeSummary(calendar03State),
       } as Prisma.InputJsonValue,
     },
   });
 
-  if (!simulate) {
+  if (!simulate && !("noop" in result && result.noop)) {
     await dispatchGenerationRunNotificationSafely(result.runId);
   }
 
