@@ -10,8 +10,8 @@ cron.
 **Fonte única para qualquer nova sessão/assistente/Codex:** este documento,
 [`scripts/deploy-cloudpanel.sh`](../scripts/deploy-cloudpanel.sh) e
 [`AGENTS.md`](../AGENTS.md). Não improvisar novos comandos de Node/PM2 a cada
-sessão. **Validado operacionalmente no ambiente Sonoriza; registro do caminho
-comprovado em 11/10/2026.**
+sessão. **Os caminhos do ambiente foram confirmados em operação; o deploy deve ser
+verificado nos logs após cada execução, e não presumido concluído.**
 
 | Configuração | Valor em produção |
 | --- | --- |
@@ -25,20 +25,47 @@ comprovado em 11/10/2026.**
 | Porta interna Next.js | `3005` |
 | Branch de deploy | `main` |
 
-### Deploy em uma linha (a partir da SEGUNDA implantação do runbook)
+### Deploy em uma linha (padrão, independente do SSH)
 
 No terminal **root** do CloudPanel:
 
 ```bash
-bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel.sh
+bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel-managed.sh
 ```
 
-Opcional: passe como argumento um **commit obrigatório que a main precisa
-conter**; o script impede que uma branch errada seja implantada:
+Este lançador usa uma **unidade transitória do systemd**, com `flock` contra
+deploys concorrentes, para que desconectar o SSH **não interrompa o processo**.
+O comando informa o nome da unidade (por exemplo
+`sonoriza-deploy-20261014204500-1234.service`) e o comando de log:
 
 ```bash
-bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel.sh 019c942a4115f2746936625245ffaae4fb99f734
+journalctl -u NOME_DA_UNIDADE.service -f --no-pager
 ```
+
+O deploy só deve ser considerado concluído quando aparecer
+`DEPLOY OK — <sha>`; o launcher ter retornado não significa que terminou.
+Se a unidade falhar, consulte o mesmo log e **não reinicie o deploy às cegas**.
+
+Opcionais: passe um **commit que a main precisa conter** para conferir a
+release. Por exemplo:
+
+```bash
+bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel-managed.sh 019c942a4115f2746936625245ffaae4fb99f734
+```
+
+**Recuperação quando o launcher ainda não foi baixado:** use uma vez o
+`systemd-run` direto, a partir do root, contra o script principal já existente:
+
+```bash
+systemd-run --unit="sonoriza-deploy-bootstrap-$(date +%Y%m%d%H%M%S)" \
+  --property=Type=exec --collect \
+  /bin/bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel.sh \
+  019c942a4115f2746936625245ffaae4fb99f734
+```
+
+Acompanhe usando `journalctl -u <unidade-gerada>.service -f --no-pager`.
+O próprio script atualizará a main, trazendo o launcher para os próximos deploys.
+**Não usar npm/build diretamente na sessão SSH**.
 
 O script executa **automaticamente**: valida Node do site, valida alterações
 Git rastreadas, `git fetch` + `git merge --ff-only origin/main`, `npm ci`,
@@ -220,10 +247,12 @@ per-target schedule slots.
 **Use the [production runbook in section 0](#0-procedimento-oficial--produção-existente-srv914260) instead of copying generic `git pull`/`pm2 reload` commands.**
 
 ```bash
-bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel.sh
+bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel-managed.sh
 ```
 
 Do not run deployment with root-owned Git/npm or switch to system Node 18.
+The launcher returns before completion; confirm the result in the named systemd
+unit's journal.
 
 
 ## 6. Read-only production SQL diagnostics
