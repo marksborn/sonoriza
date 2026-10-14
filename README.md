@@ -57,7 +57,11 @@ conforme `emptyCalendarBehavior`).
 - **Motor de geração isolado da interface** (`src/services/playlist-planner`),
   sem dependência de Next, Prisma, Spotify ou Google — é lógica pura e testável.
 - Execução agendada pelo **cron do servidor**, processo Node gerenciado por
-  **PM2**, implantação em **CloudPanel** (ver [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
+  **PM2**, implantação em **CloudPanel** (ver [runbook oficial de deploy](docs/DEPLOYMENT.md#0-procedimento-oficial--produção-existente-srv914260)).
+- **Deploy de produção em novas sessões:** leia [AGENTS.md](AGENTS.md) e use
+  [scripts/deploy-cloudpanel.sh](scripts/deploy-cloudpanel.sh). Ambiente existente:
+  usuário `itsoft-sonoriza`, Node 24 do site, PM2 `sonoriza`, porta 3005.
+  **Nunca usar Node do sistema, executar npm como root ou apagar backups `.env.backup-*`.**
 
 ```text
 src/
