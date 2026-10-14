@@ -8,7 +8,7 @@ import { preparePlaybackReserveShadowRuntime } from "./playback-reserve-shadow-r
 
 const databaseTest = process.env.PLAYBACK_RESERVE_DB_TEST === "1" ? test : test.skip;
 
-databaseTest("B1.2: capability simulation never authorizes a real run without the legacy target allowlist", async () => {
+databaseTest("B1.2/#470: capability simulation previews RESERVE in SHADOW and never authorizes a real run", async () => {
   const suffix = randomUUID();
   const userId = `reserve-b12-user-${suffix}`;
   const targetId = `reserve-b12-target-${suffix}`;
@@ -46,10 +46,14 @@ databaseTest("B1.2: capability simulation never authorizes a real run without th
       targetPlaylistIds: [targetId],
       simulate: true,
     });
-    assert.equal(preview.effectiveMode, "ACTIVE");
-    assert.equal(preview.status, "READY_ACTIVE_SIMULATION");
+    // #470: capability-only simulation previews RESERVE without changing the
+    // plan, so the simulated order is exactly what a real run can publish.
+    assert.equal(preview.effectiveMode, "SHADOW");
+    assert.equal(preview.status, "READY_PREVIEW_SIMULATION");
     assert.equal(preview.authorizationSource, "CAPABILITY_SIMULATION");
+    assert.equal(preview.plannerInfluence, false);
     assert.equal(preview.spotifyWriteInfluence, false);
+    assert.equal(preview.rolePersistenceStatus, "NOT_APPLICABLE");
 
     const real = await preparePlaybackReserveShadowRuntime({
       userId,
@@ -59,6 +63,7 @@ databaseTest("B1.2: capability simulation never authorizes a real run without th
     assert.equal(real.effectiveMode, "SHADOW");
     assert.equal(real.status, "ABSTAIN_TARGET_NOT_ALLOWED");
     assert.equal(real.spotifyWriteInfluence, false);
+    assert.equal(real.plannerInfluence, preview.plannerInfluence);
 
     // Without an explicit target, this feature does not grant capability simulation.
     const implicit = await preparePlaybackReserveShadowRuntime({

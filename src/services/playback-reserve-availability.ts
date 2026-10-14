@@ -97,8 +97,8 @@ export function resolvePlaybackReserveAvailability(input: Readonly<{
     if (input.capabilitySimulationEnabled) {
       return {
         status: "SIMULATION_AVAILABLE_REAL_NOT_AUTHORIZED",
-        title: "Simulação disponível",
-        explanation: "Você pode testar a margem em uma simulação sem alterar a playlist. Para incluir a margem de verdade, ainda será necessária a liberação do sistema e uma simulação aprovada.",
+        title: "Prévia disponível na simulação",
+        explanation: "A simulação mostra quantos itens a margem acrescentaria, mas a playlist simulada e publicada continua sem eles. Para incluir a margem de verdade, ainda será necessária a liberação do sistema e uma nova simulação aprovada.",
       };
     }
     return {

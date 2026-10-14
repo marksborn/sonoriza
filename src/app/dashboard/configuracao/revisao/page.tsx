@@ -9,6 +9,7 @@ import {
   assessConfiguration,
   getFirstRunGate,
 } from "@/services/configuration-readiness";
+import { readPlaybackReserveSimulationView } from "@/services/playback-reserve-ui";
 import { readInconclusiveSimulation } from "@/services/simulation-presentation";
 
 type PageProps = {
@@ -1005,6 +1006,48 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                               ? ` · ${target.podcastCount} podcasts`
                               : ""}
                           </p>
+                          {(() => {
+                            const reserve = target.targetPlaylistId
+                              ? readPlaybackReserveSimulationView(
+                                  simulation?.summary,
+                                  target.targetPlaylistId,
+                                )
+                              : null;
+                            if (!reserve) return null;
+                            const contents = [
+                              `${reserve.itemCount} ${reserve.itemCount === 1 ? "item" : "itens"}`,
+                              `${reserve.plannedMinutes} min`,
+                              reserve.musicCount > 0 ? `${reserve.musicCount} músicas` : null,
+                              reserve.podcastCount > 0 ? `${reserve.podcastCount} podcasts` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ");
+                            return reserve.kind === "INCLUDED" ? (
+                              <div className="status-info mt-3 rounded-xl border p-3 text-xs leading-5">
+                                <p className="font-black">Reserva incluída nesta simulação</p>
+                                <p className="mt-1 opacity-80">
+                                  {contents}, já contados no total acima.
+                                </p>
+                                {reserve.shortfall && (
+                                  <p className="mt-1 text-warning">
+                                    As fontes não tinham conteúdo suficiente para a reserva completa.
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="status-warning mt-3 rounded-xl border p-3 text-xs leading-5">
+                                <p className="font-black">Prévia da Reserva · não será publicada</p>
+                                <p className="mt-1 opacity-80">
+                                  A Reserva acrescentaria {contents}. Ela ainda não está liberada para publicação nesta playlist, por isso esses itens não entram no total acima nem na geração real.
+                                </p>
+                                {reserve.shortfall && (
+                                  <p className="mt-1">
+                                    As fontes não tinham conteúdo suficiente para a reserva completa.
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
                           {target.musicOrderMode === "RANDOMIZED" && (
                             <div className="status-info mt-3 rounded-xl border p-3 text-xs leading-5">
                               <p className="font-black">Músicas randomizadas nesta simulação</p>

@@ -143,3 +143,61 @@ function positiveInteger(form: PlaybackReserveFormReader, name: string): number 
   }
   return value;
 }
+
+export type PlaybackReserveSimulationView = Readonly<{
+  /** INCLUDED: RESERVE is part of the simulated plan; PREVIEW: projection only. */
+  kind: "INCLUDED" | "PREVIEW";
+  itemCount: number;
+  musicCount: number;
+  podcastCount: number;
+  plannedMinutes: number;
+  shortfall: boolean;
+}>;
+
+/**
+ * #470: reads the RESERVE outcome of one simulated target from
+ * GenerationRun.summary. A capability-only simulation (READY_PREVIEW_SIMULATION)
+ * keeps RESERVE out of the plan so the simulated order matches what a real run
+ * publishes; its projection is presented as a preview, never as included.
+ */
+export function readPlaybackReserveSimulationView(
+  summary: unknown,
+  targetPlaylistId: string,
+): PlaybackReserveSimulationView | null {
+  const root = asRecord(summary);
+  const runtime = asRecord(root?.playbackReserveRuntime);
+  const kind =
+    runtime?.status === "READY_ACTIVE_SIMULATION"
+      ? "INCLUDED"
+      : runtime?.status === "READY_PREVIEW_SIMULATION"
+        ? "PREVIEW"
+        : null;
+  if (!kind) return null;
+
+  const evidence = asRecord(root?.playbackReserveShadow);
+  const targets = Array.isArray(evidence?.targets) ? evidence.targets : [];
+  const target = targets
+    .map(asRecord)
+    .find((entry) => entry?.targetPlaylistId === targetPlaylistId);
+  const reserve = asRecord(target?.reserve);
+  if (!target || !reserve) return null;
+
+  return {
+    kind,
+    itemCount: numberOrZero(reserve.itemCount),
+    musicCount: numberOrZero(reserve.musicCount),
+    podcastCount: numberOrZero(reserve.podcastCount),
+    plannedMinutes: Math.round(numberOrZero(reserve.plannedDurationMs) / 60_000),
+    shortfall: target.status === "SHORTFALL",
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
