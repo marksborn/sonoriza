@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/youtube-music-poc.mjs'
       - 'scripts/youtube-music-poc.test.mjs'
+      - 'scripts/youtube-music-oauth-local.mjs'
       - '.github/workflows/ytm-01-validation.yml'
   push:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'scripts/youtube-music-poc.mjs'
       - 'scripts/youtube-music-poc.test.mjs'
+      - 'scripts/youtube-music-oauth-local.mjs'
       - '.github/workflows/ytm-01-validation.yml'
 
 permissions:
@@ -27,6 +29,8 @@ jobs:
         with:
           node-version: '22'
       - name: Syntax validation
-        run: node --check scripts/youtube-music-poc.mjs
+        run: |
+          node --check scripts/youtube-music-poc.mjs
+          node --check scripts/youtube-music-oauth-local.mjs
       - name: Offline unit tests (no credentials or API calls)
         run: node --test scripts/youtube-music-poc.test.mjs
