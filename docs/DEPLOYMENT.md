@@ -5,6 +5,113 @@ production it runs as a long-lived Node process managed by PM2, behind the
 CloudPanel reverse proxy, and the daily generation is triggered by the server
 cron.
 
+## 0. PROCEDIMENTO OFICIAL — PRODUÇÃO EXISTENTE (srv914260)
+
+**Fonte única para qualquer nova sessão/assistente/Codex:** este documento,
+[`scripts/deploy-cloudpanel.sh`](../scripts/deploy-cloudpanel.sh) e
+[`AGENTS.md`](../AGENTS.md). Não improvisar novos comandos de Node/PM2 a cada
+sessão. **Validado operacionalmente no ambiente Sonoriza; registro do caminho
+comprovado em 11/10/2026.**
+
+| Configuração | Valor em produção |
+| --- | --- |
+| Host/gerenciador | `srv914260`, CloudPanel |
+| Usuário do site (Git/npm/Prisma/PM2) | `itsoft-sonoriza` |
+| Diretório de projeto | `/home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br` |
+| Binários Node 24/npm/PM2 | `/home/itsoft-sonoriza/.nvm/versions/node/v24.19.0/bin` |
+| Ambiente PM2 | `PM2_HOME=/home/itsoft-sonoriza/.pm2` |
+| Processo PM2 | `sonoriza` |
+| Serviço systemd (reiniciar como root) | `pm2-itsoft-sonoriza.service` |
+| Porta interna Next.js | `3005` |
+| Branch de deploy | `main` |
+
+### Deploy em uma linha (a partir da SEGUNDA implantação do runbook)
+
+No terminal **root** do CloudPanel:
+
+```bash
+bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel.sh
+```
+
+Opcional: passe como argumento um **commit obrigatório que a main precisa
+conter**; o script impede que uma branch errada seja implantada:
+
+```bash
+bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel.sh 019c942a4115f2746936625245ffaae4fb99f734
+```
+
+O script executa **automaticamente**: valida Node do site, valida alterações
+Git rastreadas, `git fetch` + `git merge --ff-only origin/main`, `npm ci`,
+`npm run db:deploy`, `npm run typecheck`, `npm run build`, reinicia
+`pm2-itsoft-sonoriza.service`, verifica PM2 e HTTP em `127.0.0.1:3005`.
+É propositalmente conservador: sem `git reset --hard`, sem `stash` automático,
+sem alteração de `.env`, sem trocar flags, sem limpeza de backups.
+
+### Bootstrap UMA ÚNICA VEZ (servidor ainda não possui o script)
+
+Executar como **root**. É necessário apenas para baixar a primeira versão deste
+runbook. Depois, usar a linha acima. O `git fetch`/merge roda como o usuário
+**itsoft-sonoriza**, nunca como root:
+
+```bash
+APP=/home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br
+SITE_HOME=/home/itsoft-sonoriza
+NODE_BIN="$SITE_HOME/.nvm/versions/node/v24.19.0/bin"
+run_site() {
+  runuser -u itsoft-sonoriza -- env -u NVM_DIR -u XDG_CONFIG_HOME -u XDG_CACHE_HOME \
+    HOME="$SITE_HOME" PM2_HOME="$SITE_HOME/.pm2" \
+    PATH="$NODE_BIN:/usr/local/bin:/usr/bin:/bin" "$@"
+}
+
+test -x "$NODE_BIN/node" || { echo "Node 24 do site ausente"; exit 1; }
+run_site git -C "$APP" diff --quiet || { echo "Git com alterações rastreadas"; exit 1; }
+run_site git -C "$APP" diff --cached --quiet || { echo "Git com staged"; exit 1; }
+run_site git -C "$APP" fetch --no-tags origin main
+run_site git -C "$APP" merge --ff-only origin/main
+bash "$APP/scripts/deploy-cloudpanel.sh" 019c942a4115f2746936625245ffaae4fb99f734
+```
+
+O argumento `019c942a...` é o merge de #477; substituí-lo pelo SHA de
+referência de uma release posterior (ou omiti-lo). **Não é obrigatório que esse
+SHA seja exatamente o HEAD**: releases de documentação posteriores podem estar
+à frente dele.
+
+### Falhas já diagnosticadas — NÃO REPETIR
+
+- **`nvm use 24.19.0` relata N/A / `mkdir: /root: Permission denied`**:
+  o shell herda variáveis do root. O Node está no caminho absoluto **do site**.
+  Não usar `runuser ... bash -lc`, nem `source "$HOME/.nvm/nvm.sh"`, nem
+  `nvm ls` sob `set -u` em uma sessão com ambiente herdado.
+- **`node -v` mostra `v18.19.1`**: é o Node *system*, não o Node de produção.
+  Executar com `PATH="$NODE_BIN:..."` e `HOME="$SITE_HOME"` explícitos.
+- **`pm2` não está no PATH**: usar o PM2 em `$NODE_BIN/pm2` com
+  `PM2_HOME=/home/itsoft-sonoriza/.pm2`. Reinício documentado:
+  `systemctl restart pm2-itsoft-sonoriza.service` como root.
+- **`git status --porcelain` mostra `.env.backup-*`**: estes arquivos são
+  *untracked* e podem permanecer. Não os excluir ou mover. Somente alterações
+  em arquivos Git **rastreados** (`git diff --quiet` e
+  `git diff --cached --quiet`) devem bloquear um fast-forward.
+- **Permissões em `node_modules` / `.next`**: não executar npm/Next.js como
+  root; não usar `chown -R` sem diagnóstico.
+- **Deploy versus publicação de playlist**: `npm run build` + reinício de
+  PM2 apenas publica código. Nenhuma feature flag/opt-in da Reserva da
+  Academia deve ser ligada por implicação de deploy.
+
+### Verificação objetiva de resultado
+
+O script imprime `DEPLOY OK — <SHA>` somente quando a `main` correta,
+o PM2 e o HTTP local estiverem confirmados. Para verificar manualmente, no
+terminal root:
+
+```bash
+systemctl is-active pm2-itsoft-sonoriza.service
+curl -sS -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:3005/
+runuser -u itsoft-sonoriza -- env HOME=/home/itsoft-sonoriza \
+  PM2_HOME=/home/itsoft-sonoriza/.pm2 \
+  PATH=/home/itsoft-sonoriza/.nvm/versions/node/v24.19.0/bin:/usr/local/bin:/usr/bin:/bin \
+  /home/itsoft-sonoriza/.nvm/versions/node/v24.19.0/bin/pm2 status sonoriza
+```
+
 ## 1. Database
 
 Create a PostgreSQL database and user in CloudPanel, then set `DATABASE_URL` in
@@ -62,7 +169,7 @@ pm2 start ecosystem.config.cjs
 pm2 save
 ```
 
-Point the CloudPanel site's reverse proxy at `http://127.0.0.1:3000`.
+On this production server, CloudPanel proxies to **`http://127.0.0.1:3005`**. Other installations may use a different port.
 
 ## 4. Scheduled generation (server cron)
 
@@ -110,13 +217,13 @@ per-target schedule slots.
 
 ## 5. Updating
 
+**Use the [production runbook in section 0](#0-procedimento-oficial--produção-existente-srv914260) instead of copying generic `git pull`/`pm2 reload` commands.**
+
 ```bash
-git pull
-npm ci
-npm run db:deploy
-npm run build
-pm2 reload sonoriza
+bash /home/itsoft-sonoriza/htdocs/sonoriza.itsoft.com.br/scripts/deploy-cloudpanel.sh
 ```
+
+Do not run deployment with root-owned Git/npm or switch to system Node 18.
 
 
 ## 6. Read-only production SQL diagnostics
