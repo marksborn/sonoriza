@@ -76,7 +76,7 @@ test("#460 manual endpoint prepares ONLY explicitly selected KEEP_FILLED target"
 
 test("#460 sim and real manual generation both pass server-only snapshots and sharing fences", () => {
   const prep = readFileSync("src/services/manual-keep-filled-generation.ts", "utf8");
-  assert.match(prep, /prepareKeepFilledTarget\(/[\s\S]*?durationCalendarIds/);
+  assert.match(prep, /prepareKeepFilledTarget\([\s\S]*?durationCalendarIds/);
   assert.match(prep, /snapshotBefore/);
   assert.match(prep, /reservedTargetSnapshots\[outside.spotifyPlaylistId\] = state.snapshotId/);
   assert.match(prep, /externalReservationsByUri/);
