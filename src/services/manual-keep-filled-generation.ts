@@ -27,11 +27,6 @@ export type ManualKeepFilledPreflight =
     }>;
 
 /**
- * #460 / CALENDAR-127: align preflight with the generator's target-specific
- * duration calendar rules. Never silently fall back from an invalid SELECTED
- * or ALL_QUERYABLE scope to the legacy global duration calendars.
- */
-/**
  * Individual manual/simulation path. The request never supplies snapshots,
  * preserved URIs or sharing owners: all state is read server-side with the
  * same preservation algorithm used by the scheduled KEEP_FILLED path.
@@ -174,6 +169,7 @@ export async function recordManualKeepFilledNoop(input: {
       trigger: input.simulate ? "SIMULATION" : "MANUAL",
       simulation: input.simulate,
       status: "SUCCESS",
+      finishedAt: new Date(),
       summary: {
         simulate: input.simulate,
         targetScope: [input.targetId],
