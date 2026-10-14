@@ -14,6 +14,7 @@ import type { EpisodePlaybackResponse } from "./podcast-authoritative-state";
 import { spotifyEpisodeIdFromUri } from "./podcast-listening-state";
 import { decodeMusicSourceCache, encodeMusicSourceCache } from "./source-cache";
 import { spotifyRequestAttempt } from "./request";
+import { normalizeShowSearchResponse, normalizeSpotifyShow, spotifyShowSearchPath, type DiscoveredShow } from "./cold-start-show-search";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
@@ -298,6 +299,35 @@ export class SpotifyClient {
     }
 
     return shows;
+  }
+
+  /**
+   * #473 Gate B: read-only catalog discovery for user-selected podcast topics/names.
+   * The query is bounded to 10 in Development Mode; requests pass through
+   * the existing quota/backoff/timeout instrumentation. No library writes.
+   */
+  async searchShows(input: {
+    query: string;
+    market?: string;
+    limit?: number;
+  }): Promise<DiscoveredShow[]> {
+    const path = spotifyShowSearchPath(input);
+    return this.memoizeRead(`cold-start-shows:${path}`, "COLD_START_SHOW_SEARCH", async () => {
+      const payload = await this.request<unknown>(path);
+      return normalizeShowSearchResponse(payload);
+    });
+  }
+
+  /** Preview-only details; validating an episode's playability is a later gate. */
+  async getDiscoveredShow(input: { id: string; market?: string }): Promise<DiscoveredShow | null> {
+    const id = input.id.trim();
+    if (!/^[A-Za-z0-9]{22}$/.test(id)) throw new Error("Invalid Spotify show ID");
+    const market = (input.market ?? "BR").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(market)) throw new Error("Invalid market");
+    const path = `/shows/${id}?market=${market}`;
+    return this.memoizeRead(`cold-start-show:${path}`, "COLD_START_SHOW_DETAILS", async () => {
+      return normalizeSpotifyShow(await this.request<unknown>(path));
+    });
   }
 
   /** Current Spotify version identifier for a playlist. */
