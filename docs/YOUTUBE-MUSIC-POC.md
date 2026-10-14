@@ -119,3 +119,30 @@ Pendente para conclusão da issue:
 - decisão GO / RESTRIÇÕES / NO-GO independente para fonte e destino.
 
 **Nenhuma migração, integração produtiva, chamada real a APIs ou modificação de playlists do usuário foi realizada neste gate.**
+
+
+## Próximo gate — autorização OAuth local e somente leitura
+
+A ferramenta scripts/youtube-music-oauth-local.mjs utiliza o **OAuth Desktop** do Google com PKCE S256 e um callback temporário em 127.0.0.1. Não solicita offline access e não armazena access token nem refresh token. **Não** usa nem modifica o OAuth já existente no Sonoriza.
+
+1. No Google Cloud, crie ou escolha um **projeto de teste**; habilite YouTube Data API v3.
+2. Configure a tela de consentimento do OAuth com o próprio e-mail autorizado como usuário de teste, quando aplicável.
+3. Em Clientes OAuth, crie um cliente do tipo **Aplicativo para computador (Desktop)**. O fluxo de callback local é documentado pelo Google para Windows/macOS/Linux; **não** use cliente OAuth Android/iOS para este fluxo.
+4. No terminal **do computador em que abrirá o navegador**, configure o Client ID e, se requerido pelo projeto, o Client Secret como variáveis de ambiente locais. Não envie nenhum deles pelo chat e não os commite.
+5. Execute um dos comandos abaixo e abra a URL de autorização apresentada no terminal. Autorize apenas o escopo youtube.readonly, verificando o canal YouTube selecionado. Ao terminar, o script lê as playlists e descarta o token da memória do processo.
+
+~~~bash
+export YT_POC_CLIENT_ID="CLIENT_ID_DO_DESKTOP"
+export YT_POC_CLIENT_SECRET="CLIENT_SECRET_DO_DESKTOP"
+node scripts/youtube-music-oauth-local.mjs mine
+node scripts/youtube-music-oauth-local.mjs inspect --playlist-id PLAYLIST_ID
+~~~
+
+No PowerShell (Windows), use as variáveis $env:YT_POC_CLIENT_ID e $env:YT_POC_CLIENT_SECRET.
+
+**Segurança:** a primeira fase usa apenas leitura. O helper **nunca** oferece os comandos de criação/alteração; a ferramenta de escrita permanece separada e bloqueada por opt-in específico. Se a autorização falhar, não cole códigos de callback, URLs completas, tokens nem segredos em tickets. Registre apenas o código HTTP (se houver), o tipo do erro e o contexto genérico.
+
+Fonte do Google para o fluxo OAuth Desktop + PKCE/loopback: https://developers.google.com/identity/protocols/oauth2/native-app
+Fonte do escopo de leitura YouTube: https://developers.google.com/youtube/v3/guides/auth/installed-apps
+
+**Limite deste gate:** mesmo que playlists e itens sejam lidos pela API, a aparição da playlist no YouTube Music e a reprodução mista seguem PENDENTES de verificação no próprio aplicativo.
