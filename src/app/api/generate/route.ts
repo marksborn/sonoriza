@@ -2,6 +2,11 @@ import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { generatePlaylists } from "@/jobs/generate-playlists";
+import {
+  prepareManualKeepFilledTarget,
+  recordManualKeepFilledNoop,
+  type ManualKeepFilledPreflight,
+} from "@/services/manual-keep-filled-generation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
@@ -142,6 +147,7 @@ export async function POST(request: Request) {
     // No / invalid body → preserve the existing default of a real general run.
   }
 
+  let soleKeepFilledTargetId: string | null = null;
   if (targetPlaylistIds) {
     const ownedTargets = await prisma.targetPlaylist.findMany({
       where: {
@@ -149,7 +155,7 @@ export async function POST(request: Request) {
         enabled: true,
         id: { in: targetPlaylistIds },
       },
-      select: { id: true },
+      select: { id: true, updatePolicy: true },
     });
 
     if (ownedTargets.length !== targetPlaylistIds.length) {
@@ -160,6 +166,9 @@ export async function POST(request: Request) {
         },
         { status: 404 },
       );
+    }
+    if (targetPlaylistIds.length === 1 && ownedTargets[0]?.updatePolicy === "KEEP_FILLED") {
+      soleKeepFilledTargetId = ownedTargets[0].id;
     }
   }
 
@@ -195,6 +204,30 @@ export async function POST(request: Request) {
     }
   }
 
+  // #460: Only a single explicitly scoped KEEP_FILLED destination receives
+  // manual maintenance inputs. General runs remain protected by the
+  // fail-closed guard; daily rebuilds retain their existing behavior.
+  const preparationDate = new Date();
+  let manualKeepFilledPreflight: ManualKeepFilledPreflight | null = null;
+  if (soleKeepFilledTargetId) {
+    try {
+      manualKeepFilledPreflight = await prepareManualKeepFilledTarget(
+        session.user.id,
+        soleKeepFilledTargetId,
+        preparationDate,
+      );
+    } catch (error) {
+      console.error("#460 KEEP_FILLED manual preflight failed", error);
+      return NextResponse.json(
+        {
+          error: "Não foi possível confirmar o estado atual e preservar a playlist. Nada foi alterado no Spotify.",
+          code: "KEEP_FILLED_PREPARATION_FAILED",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   const musicOrderSimulationEvidence = simulate
     ? undefined
     : await findReusableSimulationMusicOrderEvidence(
@@ -214,13 +247,23 @@ export async function POST(request: Request) {
   const result = await runWithCalendar03PlannerRuntimeState(
     calendar03State,
     () =>
-      generatePlaylists({
-        userId: session.user.id,
-        trigger: simulate ? "SIMULATION" : "MANUAL",
-        simulate,
-        musicOrderSimulationEvidence,
-        targetPlaylistIds,
-      }),
+      manualKeepFilledPreflight?.kind === "NOOP"
+        ? recordManualKeepFilledNoop({
+            userId: session.user.id,
+            targetId: manualKeepFilledPreflight.targetId,
+            simulate,
+            reason: manualKeepFilledPreflight.reason,
+          })
+        : generatePlaylists({
+            userId: session.user.id,
+            trigger: simulate ? "SIMULATION" : "MANUAL",
+            simulate,
+            musicOrderSimulationEvidence,
+            targetPlaylistIds,
+            ...(manualKeepFilledPreflight?.kind === "READY"
+              ? { ...manualKeepFilledPreflight.options, date: preparationDate }
+              : {}),
+          }),
   );
 
   const run = await prisma.generationRun.findFirst({
