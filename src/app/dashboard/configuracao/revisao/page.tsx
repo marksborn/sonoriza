@@ -10,6 +10,7 @@ import {
   getFirstRunGate,
 } from "@/services/configuration-readiness";
 import { readPlaybackReserveSimulationView } from "@/services/playback-reserve-ui";
+import { readManualKeepFilledNoop } from "@/services/manual-keep-filled-calendar-scope";
 import { readInconclusiveSimulation } from "@/services/simulation-presentation";
 
 type PageProps = {
@@ -471,6 +472,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
     simulatedOrderByTargetId.set(item.targetPlaylistId, current);
   }
   const skippedTargets = readSkipped(simulation?.summary);
+  const manualKeepFilledNoop = readManualKeepFilledNoop(simulation?.summary);
   const simulationQualityPassed = readQualityPassed(simulation?.summary);
   const musicUnavailableSkippedCount = readMusicUnavailableSkippedCount(
     simulation?.summary,
@@ -802,11 +804,11 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
         {simulation && (
           <section
             className={`rounded-[1.75rem] border p-5 sm:p-6 ${
-              healthySimulation ? "status-success" : "status-warning"
+              manualKeepFilledNoop ? "status-info" : healthySimulation ? "status-success" : "status-warning"
             }`}
           >
             <div className="flex items-center gap-2">
-              <UiIcon name={healthySimulation ? "check" : "warning"} size={18} />
+              <UiIcon name={healthySimulation || manualKeepFilledNoop ? "check" : "warning"} size={18} />
               <p className="text-xs font-black uppercase tracking-[0.15em]">
                 Resultado da simulação
               </p>
@@ -815,7 +817,9 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
               <h2 className="text-xl font-black">
                 {inconclusiveSimulation
                   ? inconclusiveSimulation.title
-                  : simulation.status !== "SUCCESS"
+                  : manualKeepFilledNoop
+                    ? "Calendário sem programação · playlist preservada"
+                    : simulation.status !== "SUCCESS"
                     ? `Simulação: ${simulation.status}`
                     : healthySimulation
                       ? "Simulação concluída · regras atendidas"
@@ -941,11 +945,21 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                   </p>
                 )}
 
-                {simulation.status === "SUCCESS" && simulationQualityPassed === false && (
+                {simulation.status === "SUCCESS" && simulationQualityPassed === false && !manualKeepFilledNoop && (
                   <div className="status-warning mt-4 rounded-2xl border p-4">
                     <p className="font-black">Primeira geração real bloqueada</p>
                     <p className="mt-1 text-sm leading-6 opacity-80">
                       O plano conseguiu ser montado, mas ficou materialmente diferente da regra de composição configurada. Ajuste fontes ou limites e simule novamente.
+                    </p>
+                  </div>
+                )}
+
+                {manualKeepFilledNoop && (
+                  <div className="status-info mt-4 rounded-2xl border p-4">
+                    <p className="font-black">Nenhuma alteração era necessária</p>
+                    <p className="mt-1 text-sm leading-6 opacity-80">
+                      A duração do calendário é zero e a política deste destino é {manualKeepFilledNoop === "KEEP" ? "manter" : "ignorar"}.
+                      O Sonoriza não consultou fontes musicais nem alterou a playlist. Esta consulta não autoriza geração real da Reserva.
                     </p>
                   </div>
                 )}
