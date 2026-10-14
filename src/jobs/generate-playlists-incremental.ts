@@ -99,6 +99,7 @@ import {
   type IncrementalPlanningRound,
 } from "./incremental-planning";
 import { revalidateMusicRepeatBeforeRealWrite } from "./music-repeat-runtime";
+import { missingKeepFilledPreparation } from "./keep-filled-context-guard";
 import { isScheduledCalendarNoop } from "./scheduled-calendar-noop";
 import { sequencePrewriteViolations } from "./sequence-prewrite-guard";
 import { isDegradableSpotifySourceFailure } from "./source-failure-policy";
@@ -435,6 +436,31 @@ export async function generatePlaylists(
       );
     }
     summary.resolvedTargetIds = targets.map((target) => target.id);
+
+    // #460: a manual KEEP_FILLED run without live preservation context must
+    // never fall through to replacePlaylistItems(). The same guard prevents an
+    // individual simulation from producing a misleading Reserve approval.
+    // Scheduled KEEP_FILLED and inline simulations already carry these inputs.
+    const unpreparedKeepFilledTargetIds = missingKeepFilledPreparation({
+      simulate,
+      targetScope,
+      targets,
+      preservedByTargetId: opts.preservedByTargetId,
+      keepFilledByTargetId: opts.keepFilledByTargetId,
+      scheduledPolicyByTargetId: opts.scheduledPolicyByTargetId,
+    });
+    if (unpreparedKeepFilledTargetIds.length > 0) {
+      const error =
+        "Geração bloqueada sem alterar o Spotify: a manutenção KEEP_FILLED exige leitura do estado atual, snapshot e plano de preservação. A geração individual ainda não prepara esse contexto.";
+      summary.keepFilledPreparationGuard = {
+        status: "BLOCKED_MISSING_PRESERVATION_CONTEXT",
+        targetIds: unpreparedKeepFilledTargetIds,
+        spotifyWrites: false,
+      };
+      log({ level: "ERROR", message: error });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
     if (opts.podcast08EphemeralPreview && targets.length !== 1) {
       throw new Error("PODCAST-08 preview requires exactly one enabled owned target.");
     }

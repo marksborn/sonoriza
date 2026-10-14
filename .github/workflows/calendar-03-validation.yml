@@ -6,6 +6,12 @@ on:
       - "prisma/calendar-event-composition-policy.prisma"
       - "prisma/migrations/**"
       - "src/app/api/generate/route.ts"
+      - "src/services/manual-keep-filled-generation.ts"
+      - "src/services/manual-keep-filled-calendar-scope.ts"
+      - "src/services/manual-keep-filled-calendar-scope.test.ts"
+      - "src/services/keep-filled-maintenance.ts"
+      - "src/app/dashboard/configuracao/revisao/page.tsx"
+      - "src/components/TargetRunButton.tsx"
       - "src/app/dashboard/configuracao/destinos/composicao-eventos/**"
       - "src/app/dashboard/configuracao/page.tsx"
       - "src/jobs/scheduled-generation.ts"
@@ -33,6 +39,12 @@ on:
       - "prisma/calendar-event-composition-policy.prisma"
       - "prisma/migrations/**"
       - "src/app/api/generate/route.ts"
+      - "src/services/manual-keep-filled-generation.ts"
+      - "src/services/manual-keep-filled-calendar-scope.ts"
+      - "src/services/manual-keep-filled-calendar-scope.test.ts"
+      - "src/services/keep-filled-maintenance.ts"
+      - "src/app/dashboard/configuracao/revisao/page.tsx"
+      - "src/components/TargetRunButton.tsx"
       - "src/app/dashboard/configuracao/destinos/composicao-eventos/**"
       - "src/app/dashboard/configuracao/page.tsx"
       - "src/jobs/scheduled-generation.ts"
@@ -109,5 +121,7 @@ jobs:
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/calendar-event-composition-runtime.test.ts
       - run: npm run test:incremental
+      - name: "Manual KEEP_FILLED calendar and no-op contracts (#460)"
+        run: npx tsx --test src/services/manual-keep-filled-calendar-scope.test.ts
       - run: npm run typecheck
       - run: npm run build

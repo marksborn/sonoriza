@@ -40,17 +40,23 @@ export async function prepareKeepFilledTarget(
   userId: string,
   target: TargetPlaylist,
   date = new Date(),
+  // Manual KEEP_FILLED callers must use the same destination-specific
+  // CALENDAR-127 scope as the final generator. Scheduler callers can retain
+  // the existing default until their scope resolution is migrated.
+  durationCalendarIdsOverride?: readonly string[],
 ): Promise<PreparedKeepFilledTarget> {
   if (!target.spotifyPlaylistId) {
     throw new Error(`Target "${target.name}" has no Spotify playlist`);
   }
 
-  const durationCalendarIds = (
-    await prisma.calendarSelection.findMany({
-      where: { userId, selected: true, usedForDuration: true },
-      select: { googleCalendarId: true },
-    })
-  ).map((entry) => entry.googleCalendarId);
+  const durationCalendarIds = durationCalendarIdsOverride
+    ? [...durationCalendarIdsOverride]
+    : (
+        await prisma.calendarSelection.findMany({
+          where: { userId, selected: true, usedForDuration: true },
+          select: { googleCalendarId: true },
+        })
+      ).map((entry) => entry.googleCalendarId);
   const resolved = await resolveTargetDuration(
     userId,
     target,
