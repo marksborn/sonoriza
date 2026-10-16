@@ -53,7 +53,7 @@ async function main() {
   async function read<T>(path: string, token: string): Promise<T> {
     if (++attempts > 5) throw new Error("GET_BUDGET_EXHAUSTED");
     report.spotifyGetAttempts = attempts;
-    operation = path.split("?")[0];
+    operation = path.split("?")[0] ?? path;
     await assertSpotifyBackoffInactive();
     return spotifyRequestAttempt<T>({ accessToken: token, path, method: "GET", operation: "spotify-api" });
   }
