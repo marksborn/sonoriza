@@ -25,15 +25,13 @@ export function profileId(profile: unknown): string | null {
 }
 export function chapterEligible(value: unknown): boolean {
   const item = asObject(value);
+  const restriction = item?.restrictions;
   return item?.id === GATE1C.chapterId &&
     item.uri === GATE1C.chapterUri &&
     item.is_playable === true &&
-    item.restrictions === undefined || (
-      item?.id === GATE1C.chapterId &&
-      item.uri === GATE1C.chapterUri &&
-      item.is_playable === true &&
-      asObject(item.restrictions)?.reason === undefined
-    );
+    (restriction === null || restriction === undefined ||
+      asObject(restriction)?.reason === null ||
+      asObject(restriction)?.reason === undefined);
 }
 export function playlistOwnedPrivate(value: unknown, ownerId: string): boolean {
   const item = asObject(value);
