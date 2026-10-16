@@ -102,6 +102,8 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Capture the narrowed OAuth token in a stable immutable binding for the callback.
+  const accessToken: string = token;
   let calls = 0;
   async function read(endpoint: string): Promise<GetResult> {
     if (calls >= MAX_CALLS) {
@@ -113,7 +115,7 @@ async function main(): Promise<void> {
     calls += 1;
     try {
       const data = await spotifyRequestAttempt<unknown>({
-        accessToken: token,
+        accessToken,
         path: endpoint,
         method: "GET",
         operation: "spotify-api",
