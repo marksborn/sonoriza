@@ -1,0 +1,64 @@
+name: AUDIOBOOK-01 Gate 1 validation
+
+on:
+  push:
+    branches:
+      - "spike/audiobook-01-gate1b-readonly"
+    paths:
+      - "src/services/spotify/audiobook-gate1.ts"
+      - "src/services/spotify/audiobook-gate1.test.ts"
+      - "scripts/probe-spotify-audiobook.ts"
+      - ".github/workflows/audiobook-01-validation.yml"
+  pull_request:
+    paths:
+      - "src/services/spotify/audiobook-gate1.ts"
+      - "src/services/spotify/audiobook-gate1.test.ts"
+      - "scripts/probe-spotify-audiobook.ts"
+      - ".github/workflows/audiobook-01-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_audiobook_gate1
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_audiobook_gate1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_audiobook_gate1?schema=public
+      AUTH_SECRET: audiobook-gate1-ci-only
+      NEXTAUTH_SECRET: audiobook-gate1-ci-only
+      AUTH_TRUST_HOST: "true"
+      AUTH_SPOTIFY_ID: test
+      AUTH_SPOTIFY_SECRET: test
+      AUTH_GOOGLE_ID: test
+      AUTH_GOOGLE_SECRET: test
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - run: npx tsx --test src/services/spotify/audiobook-gate1.test.ts
+      - run: npm run typecheck
+      - run: npm run build
