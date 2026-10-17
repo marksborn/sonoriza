@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 import { explainAudiobookPreviewFailure } from "@/services/audiobooks/d4-preview-guidance";
 
 export type ExistingAudiobookOverlay = Readonly<{
