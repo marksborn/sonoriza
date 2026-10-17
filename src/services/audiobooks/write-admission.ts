@@ -12,6 +12,10 @@
  */
 import { parseSpotifyPlaylistItemsMutation } from "./playlist-write-guard";
 
+// Transport-level capability token: only the guarded branch may pass this
+// to spotifyRequestAttempt when write fencing is ACTIVE.
+export const audiobookGuardedWriteToken: unique symbol = Symbol("AUDIOBOOK02_WRITE_ADMITTED");
+
 export type AudiobookWriteFenceKey = Readonly<{
   userId: string;
   spotifyPlaylistId: string;
