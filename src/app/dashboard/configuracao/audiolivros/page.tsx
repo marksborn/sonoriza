@@ -170,6 +170,12 @@ export default async function AudiobookConfigurationPage() {
         {process.env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" ? (
           <section className="mt-10">
             <AudiobookSelfReportedPreview
+              // Completion changes the current-book identity; remount the
+              // D.7 editor so stale notebook revision cannot block next book.
+              key={singleReadingEnabled(process.env)
+                ? (manualNotes[0]?.targetPlaylistId ?? "none") + ":" +
+                  (manualNotes[0]?.revision ?? 0)
+                : "legacy"}
               targets={targets}
               notebookEnabled={manualNotebookEnabled(process.env)}
               singleReadingEnabled={singleReadingEnabled(process.env)}
