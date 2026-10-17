@@ -52,7 +52,7 @@ async function main(): Promise<void> {
     gate: "AUDIOBOOK-01/1C",
     audiobookId: GATE1C.audiobookId,
     chapterUri: GATE1C.chapterUri,
-    playlistName: GATE1C.playlistName,
+    playlistName: GATE1C.secondPrivatePlaylistName,
     playlistId: null,
     playlistUrl: null,
     checks: [],
@@ -141,7 +141,7 @@ async function main(): Promise<void> {
     const page = Array.isArray(listed?.items) ? listed.items : [];
     if (page.some((value) => {
       const entry = asObject(value);
-      return entry?.name === GATE1C.playlistName && profileId(entry?.owner) === ownerId;
+      return entry?.name === GATE1C.secondPrivatePlaylistName && profileId(entry?.owner) === ownerId;
     })) {
       report.outcome = "TEST_PLAYLIST_NAME_ALREADY_EXISTS_DO_NOT_REPEAT";
       return;
@@ -152,7 +152,7 @@ async function main(): Promise<void> {
     // NEVER retry automatically; report and inspect Spotify account instead.
     lastOperation = "POST /me/playlists";
     const created = await call<unknown>("POST", "/me/playlists", token, {
-      name: GATE1C.playlistName, public: false, collaborative: false,
+      name: GATE1C.secondPrivatePlaylistName, public: false, collaborative: false,
       description: GATE1C.description,
     });
     const createdObj = asObject(created);
@@ -161,14 +161,14 @@ async function main(): Promise<void> {
       report.playlistId = playlistId;
       report.playlistUrl = `https://open.spotify.com/playlist/${playlistId}`;
     }
-    if (!playlistId || !playlistOwnedPrivate(created, ownerId)) {
+    if (!playlistId || !playlistOwnedPrivate(created, ownerId, GATE1C.secondPrivatePlaylistName)) {
       report.outcome = "CREATE_RESPONSE_NOT_VERIFIED_PRIVATE_STOP_NO_INSERT";
       return;
     }
     report.checks.push("CREATE_RESPONSE_PRIVATE_OWNER_OK");
 
     const playlist = await call<unknown>("GET", `/playlists/${playlistId}`, token);
-    if (!playlistOwnedPrivate(playlist, ownerId)) {
+    if (!playlistOwnedPrivate(playlist, ownerId, GATE1C.secondPrivatePlaylistName)) {
       report.outcome = "POST_CREATE_PLAYLIST_NOT_PRIVATE_STOP_NO_INSERT";
       return;
     }
