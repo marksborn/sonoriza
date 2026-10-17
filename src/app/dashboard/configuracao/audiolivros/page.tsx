@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { AudiobookManualBindWizard } from "@/components/AudiobookManualBindWizard";
+import { AudiobookChapterChangeEditor } from "@/components/AudiobookChapterChangeEditor";
+import { audiobookChapterUpdateEnabled } from "@/services/audiobooks/manual-chapter-change-contract";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -44,6 +46,44 @@ export default async function AudiobookConfigurationPage() {
     durationMs: t.fixedDurationSeconds! * 1000,
   }));
 
+  const existing = await prisma.targetAudiobookOverlay.findMany({
+    where: { userId: session.user.id },
+    select: {
+      targetPlaylistId: true,
+      spotifyPlaylistId: true,
+      spotifyAudiobookId: true,
+      selectedChapterId: true,
+      chapterDurationMs: true,
+      manualConsumedMs: true,
+      selectionMode: true,
+      revision: true,
+      target: { select: {
+        name: true,
+        spotifyPlaylistId: true,
+        durationMode: true,
+        fixedDurationSeconds: true,
+      } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  const updateCandidates = existing.filter(row =>
+    row.target.spotifyPlaylistId === row.spotifyPlaylistId &&
+    row.target.durationMode === "FIXED" &&
+    typeof row.target.fixedDurationSeconds === "number" &&
+    row.target.fixedDurationSeconds > 0,
+  ).map(row => ({
+    targetPlaylistId: row.targetPlaylistId,
+    targetName: row.target.name,
+    spotifyPlaylistId: row.spotifyPlaylistId,
+    spotifyAudiobookId: row.spotifyAudiobookId,
+    selectedChapterId: row.selectedChapterId,
+    chapterDurationMs: row.chapterDurationMs,
+    manualConsumedMs: row.manualConsumedMs,
+    selectionMode: row.selectionMode,
+    revision: row.revision,
+    targetDurationMs: row.target.fixedDurationSeconds! * 1000,
+  }));
+
   return (
     <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
       <div className="product-ambient" />
@@ -65,6 +105,23 @@ export default async function AudiobookConfigurationPage() {
           targets={targets}
           bindingEnabled={audiobookBindEnabled(process.env)}
         />
+        {updateCandidates.length ? (
+          <section className="mt-10 space-y-5">
+            <div>
+              <h2 className="text-2xl font-black text-ink-inverse">Livros já vinculados</h2>
+              <p className="mt-2 text-sm text-muted-inverse">
+                Troque o capítulo contado pelo Sonoriza sem mudar o livro ou a playlist no Spotify.
+              </p>
+            </div>
+            {updateCandidates.map(row => (
+              <AudiobookChapterChangeEditor
+                key={row.targetPlaylistId}
+                overlay={row}
+                changeEnabled={audiobookChapterUpdateEnabled(process.env)}
+              />
+            ))}
+          </section>
+        ) : null}
       </div>
     </main>
   );
