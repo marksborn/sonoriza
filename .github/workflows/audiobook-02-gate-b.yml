@@ -7,6 +7,8 @@ on:
       - "src/services/audiobooks/**"
       - "src/services/spotify/client.ts"
       - "src/services/spotify/request.ts"
+      - "src/services/spotify/music-ingestion.ts"
+      - "src/services/spotify/source-cleanup.ts"
       - "prisma/schema.prisma"
       - "prisma/migrations/20261017094000_audiobook_overlay_gate_b/**"
       - "prisma/migrations/20261017100500_audiobook_write_fence_gate_b2/**"
