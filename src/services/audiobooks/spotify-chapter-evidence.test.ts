@@ -74,6 +74,8 @@ test("#489 B.3: absent, unknown, unplayable, restricted or zero-length chapter i
     { ...chapter, type: "track" },
     { ...chapter, name: null },
     { ...chapter, is_playable: false },
+    { ...chapter, is_playable: undefined },
+    { ...chapter, audiobook: { id: bookId, type: "episode" } },
     { ...chapter, restrictions: { reason: "payment_required" } },
     { ...chapter, duration_ms: 0 },
     { ...chapter, duration_ms: null },
