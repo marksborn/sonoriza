@@ -458,6 +458,35 @@ export async function generatePlaylists(
         revision: true,
       },
     });
+    const manualNotebookTargets = await prisma.targetAudiobookManualNotebook.findMany({
+      where: {
+        userId,
+        target: {
+          spotifyPlaylistId: { in: targets.map(t => t.spotifyPlaylistId).filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          ) },
+        },
+      },
+      select: { targetPlaylistId: true },
+    });
+    // D.7: the notebook is a conservative indication of possible opaque
+    // content. Preserve the original overlay guard below unchanged.
+    if (!simulate && manualNotebookTargets.length > 0) {
+      const error =
+        "Geração real bloqueada antes de escrever: caderno manual de audiolivro " +
+        "no destino (conteúdo remoto não verificável).";
+      summary.audiobookManualNotebookGate = {
+        mode: "REAL_WRITE_BLOCKED",
+        targetIds: manualNotebookTargets.map(row => row.targetPlaylistId),
+        approvalEligible: false,
+        spotifyWrites: false,
+        plannerInfluence: false,
+      };
+      summary.qualityPassed = false;
+      log({ level: "ERROR", message: error });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
     if (!simulate && audiobookOverlays.length > 0) {
       const error =
         "A geração real foi bloqueada antes de qualquer escrita Spotify: " +
@@ -1239,7 +1268,8 @@ export async function generatePlaylists(
           };
         })
       : [];
-    const audiobookGateDApprovalBlocked = simulate && audiobookOverlays.length > 0;
+    const audiobookGateDApprovalBlocked = simulate &&
+      (audiobookOverlays.length > 0 || manualNotebookTargets.length > 0);
     if (audiobookGateDShadow) {
       summary.audiobookGateD = {
         mode: "SHADOW",

@@ -185,7 +185,15 @@ export class SpotifyClient {
               where: { userId_spotifyPlaylistId: { userId, spotifyPlaylistId } },
               select: { id: true },
             });
-            return overlay !== null;
+            if (overlay) return true;
+            // Gate D.7: conservative read fence. A USER_DECLARED_UNVERIFIED
+            // note does not verify a Spotify book, but we must not overwrite
+            // that user's potentially opaque remote audiobook by accident.
+            const note = await prisma.targetAudiobookManualNotebook.findFirst({
+              where: { userId, target: { spotifyPlaylistId } },
+              select: { id: true },
+            });
+            return note !== null;
           },
         );
         // Dormant until explicitly approved. The first phase's read-only
