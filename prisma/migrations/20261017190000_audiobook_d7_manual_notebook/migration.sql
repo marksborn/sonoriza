@@ -77,8 +77,8 @@ ALTER TABLE "TargetAudiobookManualEntry"
     FOREIGN KEY ("notebookId") REFERENCES "TargetAudiobookManualNotebook"("id")
     ON DELETE CASCADE ON UPDATE CASCADE;
 
--- The audit rows must be immutable, including during Prisma/raw SQL updates.
--- Cascading target/notebook deletion is allowed and deletes the entire notebook.
+-- Audit rows cannot be modified in place. Individual deletes are not exposed
+-- by app routes; cascading notebook/target deletion must remain possible.
 CREATE FUNCTION "prevent_manual_audiobook_entry_change"()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -86,6 +86,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER "TargetAudiobookManualEntry_no_update_delete"
-  BEFORE UPDATE OR DELETE ON "TargetAudiobookManualEntry"
+CREATE TRIGGER "TargetAudiobookManualEntry_no_update"
+  BEFORE UPDATE ON "TargetAudiobookManualEntry"
   FOR EACH ROW EXECUTE FUNCTION "prevent_manual_audiobook_entry_change"();
