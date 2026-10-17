@@ -22,6 +22,18 @@ test("#489 Gate B: all playlist item writes map to the same protected Spotify id
   );
 });
 
+test("#489 Gate B: legacy /tracks endpoint also cannot bypass audiobook protection", async () => {
+  const path = "/playlists/4kYizEAtQhFsrrwD3tFphP/tracks";
+  assert.equal(parseSpotifyPlaylistItemsMutation(path, "PUT")?.spotifyPlaylistId, "4kYizEAtQhFsrrwD3tFphP");
+  await assert.rejects(
+    assertAudiobookPlaylistMutationAllowed(
+      { userId: "owner", path, method: "DELETE" },
+      async () => true,
+    ),
+    /AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_PROTECTED_TARGET/,
+  );
+});
+
 test("#489 Gate B: provider reads and unrelated writes remain untouched", async () => {
   for (const request of [
     { userId: null, method: "GET", path: TARGET },
