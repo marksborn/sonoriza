@@ -443,24 +443,21 @@ export async function generatePlaylists(
     // real batch before collecting sources or writing ANY destination, even if
     // the preview flag is OFF. Never silently apply earlier targets first.
     // A simulation with this overlay is also NOT a CONFIG-04 real-run approval.
-    const audiobookOverlays =
-      (!simulate || process.env.AUDIOBOOK02_PLANNER_MODE === "SHADOW")
-        ? await prisma.targetAudiobookOverlay.findMany({
-            where: { userId, targetPlaylistId: { in: targets.map(target => target.id) } },
-            select: {
-              userId: true,
-              targetPlaylistId: true,
-              spotifyPlaylistId: true,
-              spotifyAudiobookId: true,
-              selectedChapterId: true,
-              chapterDurationMs: true,
-              providerDurationMs: true,
-              manualConsumedMs: true,
-              selectionMode: true,
-              revision: true,
-            },
-          })
-        : [];
+    const audiobookOverlays = await prisma.targetAudiobookOverlay.findMany({
+      where: { userId, targetPlaylistId: { in: targets.map(target => target.id) } },
+      select: {
+        userId: true,
+        targetPlaylistId: true,
+        spotifyPlaylistId: true,
+        spotifyAudiobookId: true,
+        selectedChapterId: true,
+        chapterDurationMs: true,
+        providerDurationMs: true,
+        manualConsumedMs: true,
+        selectionMode: true,
+        revision: true,
+      },
+    });
     if (!simulate && audiobookOverlays.length > 0) {
       const error =
         "A geração real foi bloqueada antes de qualquer escrita Spotify: " +
