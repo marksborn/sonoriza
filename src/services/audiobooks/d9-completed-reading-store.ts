@@ -130,3 +130,34 @@ export async function listCompletedManualReadings(ownerId: string) {
     spotifyWrites: false as const,
   }));
 }
+
+/** Complete, owner-scoped archived chapter history. Never changes Spotify. */
+export async function readCompletedManualReading(ownerId: string, archiveId: string) {
+  if (!ownerId || !/^[A-Za-z0-9_-]{4,80}$/.test(archiveId)) {
+    fail("INVALID_ARCHIVE_ID");
+  }
+  const row = await prisma.userAudiobookCompletedReading.findFirst({
+    where: { id: archiveId, userId: ownerId },
+    include: { entries: { orderBy: { revision: "asc" } } },
+  });
+  if (!row) fail("ARCHIVE_NOT_FOUND");
+  if (row.evidenceSource !== "USER_DECLARED_UNVERIFIED" ||
+      row.entries.some(e => e.evidenceSource !== "USER_DECLARED_UNVERIFIED")) {
+    fail("INVALID_ARCHIVE_PROVENANCE");
+  }
+  return {
+    id: row.id,
+    bookTitle: row.bookTitle,
+    completedAt: row.completedAt.toISOString(),
+    finalRevision: row.finalRevision,
+    chapters: row.entries.map(e => ({
+      revision: e.revision,
+      chapterLabel: e.chapterLabel,
+      chapterDurationMs: e.chapterDurationMs,
+      consumedMs: e.consumedMs,
+      recordedAt: e.recordedAt.toISOString(),
+    })),
+    evidenceSource: "USER_DECLARED_UNVERIFIED" as const,
+    spotifyWrites: false as const,
+  };
+}
