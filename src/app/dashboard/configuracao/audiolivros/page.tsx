@@ -10,6 +10,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { audiobookBindEnabled } from "@/services/audiobooks/manual-bind-contract";
 import { manualNotebookEnabled } from "@/services/audiobooks/d7-manual-notebook-contract";
+import { projectSingleReadingPreview } from "@/services/audiobooks/d9-single-reading-preview";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +48,27 @@ export default async function AudiobookConfigurationPage() {
     spotifyPlaylistId: t.spotifyPlaylistId!,
     durationMs: t.fixedDurationSeconds! * 1000,
   }));
+
+  // D.9.1 is strictly read-only and requires an already-enabled D.7 notebook.
+  // The legacy schema permits more than one notebook per owner: never infer
+  // that the first one is the current book.
+  const manualNotes = manualNotebookEnabled(process.env)
+    ? await prisma.targetAudiobookManualNotebook.findMany({
+        where: { userId: session.user.id },
+        take: 2,
+        select: {
+          userId: true, targetPlaylistId: true,
+          bookTitle: true, chapterLabel: true,
+          chapterDurationMs: true, consumedMs: true, evidenceSource: true,
+          target: { select: { name: true } },
+        },
+      })
+    : [];
+  const currentReading = projectSingleReadingPreview(session.user.id,
+    manualNotes.map(note => ({
+      ...note,
+      targetName: note.target.name,
+    })));
 
   const existing = await prisma.targetAudiobookOverlay.findMany({
     where: { userId: session.user.id },
@@ -103,6 +125,35 @@ export default async function AudiobookConfigurationPage() {
             Um audiolivro colocado manualmente no Spotify pode entrar no orçamento de uma playlist com a duração virtual do capítulo escolhido. A seleção, a reprodução e a troca de capítulos continuam manuais.
           </p>
         </header>
+        <section className="mb-6 rounded-2xl border border-line-dark p-5 text-ink-inverse">
+          <h2 className="text-lg font-black">Um livro por vez</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-inverse">
+            Escolha um audiolivro em andamento e atualize o capítulo manualmente.
+            Ao concluir ou trocar de livro, o histórico deve ser preservado.
+            Nenhuma dessas ações controla a reprodução no Spotify.
+          </p>
+          {currentReading.status === "SINGLE_NOTEBOOK" ? (
+            <div className="mt-4 space-y-1 text-sm">
+              <p className="font-bold">Anotação atual: {currentReading.bookTitle}</p>
+              <p>Capítulo: {currentReading.chapterLabel}</p>
+              <p className="text-muted-inverse">
+                Destino: {currentReading.targetName} ·
+                {Math.floor(currentReading.chapterRemainingMs / 60000)}min
+                {" "}{((currentReading.chapterRemainingMs % 60000) / 1000).toFixed(3)}s restantes (informados manualmente)
+              </p>
+              <p className="text-xs text-muted-inverse">
+                Ainda não é possível concluir/arquivar o livro: esta etapa apenas exibe
+                a anotação existente sem criar ou modificar registros.
+              </p>
+            </div>
+          ) : null}
+          {currentReading.status === "REVIEW_REQUIRED" ? (
+            <p role="alert" className="mt-4 text-sm font-bold">
+              Existem anotações que não permitem identificar com segurança um único
+              livro em andamento. Revise seus cadernos antes de continuar.
+            </p>
+          ) : null}
+        </section>
         <AudiobookManualBindWizard
           targets={targets}
           bindingEnabled={audiobookBindEnabled(process.env)}
