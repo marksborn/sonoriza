@@ -127,3 +127,34 @@ Uma alternativa para progresso **informado pelo usuário**, nunca inferido da po
 **Testes:** `manual-bind-contract.test.ts`, `spotify-chapter-evidence.test.ts`, `bind-manual-audiobook.test.ts` (com PostgreSQL descartável e mock GET Spotify). Não usar conta Spotify real na suíte.
 
 Documentação dos endpoints individuais: [Get Audiobook](https://developer.spotify.com/documentation/web-api/reference/get-an-audiobook) e [Get Chapter](https://developer.spotify.com/documentation/web-api/reference/get-a-chapter).
+
+
+## Gate B.4 — interface de seleção e prévia, desativada por padrão
+
+**Objetivo:** permitir visualizar no navegador a seleção de playlist, livro, capítulo e tempo virtual, sem ativar a geração de audiolivros ou comandar Spotify.
+
+- Nova página: \`/dashboard/configuracao/audiolivros\`, protegida pelo wrapper \`auth()\` e pelo layout de dashboard existente.
+- **Flag padrão OFF:** a página, a opção de menu e os endpoints de leitura existem apenas quando \`AUDIOBOOK02_BIND_UI_MODE=PREVIEW\` é configurado explicitamente. Nenhum ambiente de produção foi modificado.
+- A página mostra somente destinos \`FIXED\` com playlist Spotify já associada, duração positiva e sem overlay de audiolivro existente.
+- O usuário cola o link/ID de um audiolivro existente no Spotify; não se usa o catálogo genérico de música nem se classifica o livro como podcast.
+- \`POST /api/audiobooks/catalog\` busca por GET o livro e as páginas do catálogo \`GET /audiobooks/{id}/chapters\` (até 200 capítulos, páginas de 50). Respostas inválidas, acesso negado ou lacunas nas páginas resultam em erro visível. Apenas capítulos explicitamente reproduzíveis são selecionáveis. A UI informa quando a listagem é parcial.
+- \`POST /api/audiobooks/manual-preview\` revalida por GET os IDs de livro/capítulo na conta conectada, calcula o orçamento via função pura do Gate A e **não faz INSERT nem chamadas Spotify com método não-GET**.
+- O resumo mostra o título oficial, nome de capítulo e tempos (alvo, tempo virtual, saldo). Duas caixas de confirmação exigem que o usuário afirme que inseriu manualmente o livro completo na playlist Spotify e entenda que a troca/controle de capítulos é manual.
+- O botão de confirmação chama \`POST /api/audiobooks/manual-bind\` somente quando a UI recebe \`bindingEnabled=true\`. No estado atual, o botão está desabilitado; a API de bind requer as duas flags separadas \`AUDIOBOOK02_BIND_MODE=ACTIVE\` e \`AUDIOBOOK02_WRITE_FENCE_MODE=ACTIVE\`.
+- O destino e as durações do capítulo continuam revalidados **no servidor** antes de gravar; a prévia não funciona como token de autorização.
+- Formatação e componentes seguem o tema atual do Sonoriza; não exibir telas fictícias ou prometer controle do Spotify.
+
+**Limites:** a API de audiobooks do Spotify informa disponibilidade oficial apenas nos mercados US, UK, CA, IE, NZ e AU. Uma conta fora dos mercados suportados, ou com bloqueio do catálogo, deve receber erro legível e nenhum vínculo. No experimento com a obra já adicionada à playlist, um item opaco \`null\` não confirma automaticamente qual livro está presente.
+
+**Critérios de aceite do Gate B.4:**
+- [x] Página + entrada condicional na Configuração.
+- [x] Lista de capítulos limitada, guardada e paginada sem comandos de escrita.
+- [x] Preview server-side com revalidação e estados de erro.
+- [x] Confirmação textual e botão indisponível em modo prévia.
+- [x] Testes unitários de catálogos, regras e gate UI incluídos.
+- [ ] CI final: confirmar testes, typecheck e regressões após alterações de interface.
+- [ ] Teste de interface num ambiente de homologação sem credenciais produtivas.
+- [ ] Planejar reconciliação de alterações de ID de playlist, desbloqueio auditado de writes incertos e liberação do bind.
+- [ ] Gates C/D para cálculo no planner e playback manual, separados desta interface.
+
+**Sem merge, deploy, alteração na base produtiva ou Spotify.**
