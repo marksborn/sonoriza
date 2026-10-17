@@ -173,12 +173,8 @@ export default async function AudiobookConfigurationPage() {
           O país BR não possui a mesma disponibilidade de API de audiolivros
           dos mercados documentados.
         </p>
-        <AudiobookManualBindWizard
-          targets={targets}
-          bindingEnabled={audiobookBindEnabled(process.env)}
-        />
         {process.env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" ? (
-          <section className="mt-10">
+          <section id="audiobook-manual" className="mt-10 scroll-mt-6">
             <AudiobookSelfReportedPreview
               // Completion changes the current-book identity; remount the
               // D.7 editor so stale notebook revision cannot block next book.
@@ -194,6 +190,20 @@ export default async function AudiobookConfigurationPage() {
             />
           </section>
         ) : null}
+        <section className="mt-10 space-y-3">
+          <h2 className="text-xl font-black text-ink-inverse">
+            Consulta avançada de audiolivros via catálogo
+          </h2>
+          <p className="text-sm text-muted-inverse">
+            Somente para links Spotify /audiobook/ e contas cujo catálogo
+            disponibiliza capítulos. Livros publicados como /show/
+            utilizam o formulário manual acima.
+          </p>
+          <AudiobookManualBindWizard
+            targets={targets}
+            bindingEnabled={audiobookBindEnabled(process.env)}
+          />
+        </section>
         {updateCandidates.length ? (
           <section className="mt-10 space-y-5">
             <div>
