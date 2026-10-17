@@ -60,7 +60,7 @@ export default async function AudiobookConfigurationPage() {
         take: 2,
         select: {
           userId: true, targetPlaylistId: true, revision: true,
-          bookTitle: true, chapterLabel: true,
+          bookTitle: true, spotifyShowId: true, chapterLabel: true,
           chapterDurationMs: true, consumedMs: true, evidenceSource: true,
           target: { select: { name: true } },
         },
@@ -130,7 +130,10 @@ export default async function AudiobookConfigurationPage() {
         {singleReadingEnabled(process.env) && currentReading.status !== "REVIEW_REQUIRED" ? (
           <AudiobookReadingManager
             active={currentReading.status === "SINGLE_NOTEBOOK" && manualNotes.length === 1
-              ? { ...currentReading, revision: manualNotes[0]?.revision ?? 0 } : null}
+              ? { ...currentReading, revision: manualNotes[0]?.revision ?? 0,
+                  spotifyShowUrl: manualNotes[0]?.spotifyShowId
+                    ? "https://open.spotify.com/show/" + manualNotes[0].spotifyShowId : null,
+                } : null}
           />
         ) : (
         <section className="mb-6 rounded-2xl border border-line-dark p-5 text-ink-inverse">
@@ -163,6 +166,13 @@ export default async function AudiobookConfigurationPage() {
           ) : null}
         </section>
         )}
+        <p className="mb-3 text-sm text-muted-inverse">
+          Se o seu livro é publicado como <code>/show/</code> no Spotify, não
+          utilize a busca de audiolivros por catálogo abaixo. Use a alternativa
+          manual para registrar a referência, o capítulo e sua duração.
+          O país BR não possui a mesma disponibilidade de API de audiolivros
+          dos mercados documentados.
+        </p>
         <AudiobookManualBindWizard
           targets={targets}
           bindingEnabled={audiobookBindEnabled(process.env)}
