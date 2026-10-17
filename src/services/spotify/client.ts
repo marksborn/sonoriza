@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import type { Candidate } from "@/services/playlist-planner";
 import { assertAudiobookPlaylistMutationAllowed } from "@/services/audiobooks/playlist-write-guard";
 import { parseSpotifyPlaylistItemsMutation } from "@/services/audiobooks/playlist-write-guard";
-import { withAudiobookWriteAdmission } from "@/services/audiobooks/write-admission";
+import { audiobookGuardedWriteToken, withAudiobookWriteAdmission } from "@/services/audiobooks/write-admission";
 import { prismaAudiobookWriteFenceStore } from "@/services/audiobooks/write-admission-store";
 
 import {
@@ -204,6 +204,7 @@ export class SpotifyClient {
               method,
               operation,
               init,
+              writeAdmissionToken: audiobookGuardedWriteToken,
             }),
           );
         }
