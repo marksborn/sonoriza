@@ -184,8 +184,12 @@ test("#489 D.6: new preview never accesses DB, Spotify or real planner; separate
   assert.match(binder, /AUDIOBOOK/);
   assert.match(planner, /if \(!simulate && audiobookOverlays.length > 0\)/);
   assert.match(pure, /USER_DECLARED_UNVERIFIED/);
-  for (const body of [pure, ui]) {
-    assert.doesNotMatch(body,
-      /SpotifyClient|spotifyRequestAttempt|readSpotifyAudiobook|prisma|localStorage|sessionStorage|fetch\(|navigator\.clipboard|\.appendPlaylistItems\(|\.replacePlaylistItems\(|\.create\(|\.update\(/);
-  }
+  // Gate D.6 arithmetic is still pure. The optional, independently gated
+  // Gate D.7 notebook adds same-origin fetch to the UI only when enabled.
+  assert.doesNotMatch(pure,
+    /SpotifyClient|spotifyRequestAttempt|readSpotifyAudiobook|prisma|localStorage|sessionStorage|fetch\(|navigator\.clipboard|\.appendPlaylistItems\(|\.replacePlaylistItems\(|\.create\(|\.update\(/);
+  assert.doesNotMatch(ui,
+    /SpotifyClient|spotifyRequestAttempt|readSpotifyAudiobook|prisma|localStorage|sessionStorage|\.appendPlaylistItems\(|\.replacePlaylistItems\(/);
+  assert.match(ui, /notebookEnabled/);
+  assert.match(page, /manualNotebookEnabled\(process\.env\)/);
 });
