@@ -77,3 +77,53 @@ O inventário estático executado em CI inicialmente encontrou chamadas ao clien
 O guard geral já intercepta `/playlists/{id}/items` e a forma legada `/playlists/{id}/tracks`. A revisão de grep é uma fotografia: chamadas HTTP construídas dinamicamente, fluxos externos, scripts de experimentos ainda em Draft, código fora de `src`/`scripts` e outros providers não podem ser declarados cobertos só por essa busca.
 
 **Importante:** testes automatizados e grep não substituem auditoria de identidade, per-user authorization ou do momento da mutação. O Gate B.2 permanece **não ativado** enquanto não existir registro confirmado de audiobook, avaliação da política de reconciliação de write ambíguo e teste completo do CI atual.
+
+
+## Gate B.3 — vínculo manual explícito, autenticação e evidência de catálogo
+
+Implementação de backend/contrato criada na branch Draft **#491**, sem disponibilizar UI nem configurar flags de produção.
+
+### API dormente
+
+`POST /api/audiobooks/manual-bind` responde `404 AUDIOBOOK_BIND_DISABLED` por padrão. Só pode operar se **ambas** as flags forem `ACTIVE`:
+
+- `AUDIOBOOK02_BIND_MODE=ACTIVE`
+- `AUDIOBOOK02_WRITE_FENCE_MODE=ACTIVE`
+
+Exige sessão Sonoriza permitida pelo wrapper `auth()`, header `Origin` da própria aplicação, `Host` correspondente, payload JSON válido, seleção de capítulo e confirmação literal explícita. O endpoint **não lê nem aceita `spotifyPlaylistId` como entrada**; esse ID é carregado da `TargetPlaylist` pertencente à conta autenticada.
+
+Modelo de corpo (apenas documentação, não ativar em produção):
+
+```json
+{
+  "targetPlaylistId": "<id do destino no Sonoriza>",
+  "spotifyAudiobookId": "5E76EUAq7or1ncd4QNyHjI",
+  "selectedChapterId": "71PKNrJrxgaYwUY6srGQ3L",
+  "selection": { "mode": "FULL_CHAPTER" },
+  "confirmation": "CONFIRMAR_VINCULO_AUDIOLIVRO"
+}
+```
+
+Uma alternativa para progresso **informado pelo usuário**, nunca inferido da posição no player, é `"selection": {"mode": "MANUAL_REMAINDER", "consumedMs": 10000}`. A API rejeita campos inesperados, duração ou `spotifyPlaylistId` fornecidos pelo caller, IDs fora do formato Spotify e tempos incompatíveis.
+
+### Comprovação e escrita local
+
+1. Busca o destino por `(session.user.id, targetPlaylistId)`. Gate B.3, conservadoramente, só permite destinos **FIXED** com duração explícita e Spotify playlist já associada, sem criação de destino remoto.
+2. Faz apenas `GET /audiobooks/{id}` e `GET /chapters/{id}` pelo token da conta conectada, verificando IDs, tipos, `chapter.audiobook.id`, duração positiva real, status/restrições de reprodução e título válido. Se o catálogo negar 401/403/404/429 ou faltar algum campo, **não cria overlay**. Falha fechada é especialmente importante em mercados em que o Spotify não oferece audiobooks via Web API.
+3. Executa o cálculo puro do Gate A com a duração real do capítulo e o orçamento FIXED do destino. Rejeita progresso terminado ou capítulo excedente. O `providerDurationMs` do livro permanece `null` — o endpoint de audiobook não fornece duração total autoritativa; não preencher artificialmente 15h22.
+4. Cria `TargetAudiobookOverlay` no banco **dentro da mesma transação que adquire `TargetAudiobookWriteFence`**. Se houver escrita ativa ou resultado remoto incerto, muda destino, houver vínculo anterior ou a chave única colidir, aborta sem escrita.
+5. Responde `LINKED_LOCAL_ONLY` e dados de planejamento, reforçando que a seleção e a troca de capítulo no player Spotify são manuais. **Não faz nenhuma requisição Spotify POST/PUT/DELETE.**
+
+### Não declarar pronto para rollout
+
+- A entrada ainda não é exibida em UI, nem deve ser ligada por operador em produção; a flag é OFF por padrão.
+- A confirmação literal em API não substitui uma UI de consentimento visível e clara, que precisa ser criada e testada antes da liberação.
+- A playlist de destino pode ter um item opaco `null`; **isso não prova** que a obra selecionada realmente está naquela playlist. A identidade remota só é uma **declaração manual** explícita do usuário; a API valida o destino e o capítulo no catálogo, não a presença do livro.
+- Não foi demonstrado catálogo Spotify disponível para a conta/mercado atual; qualquer negação deve bloquear.
+- Mudanças posteriores de `TargetPlaylist.spotifyPlaylistId` precisam ser auditadas/impedidas enquanto houver vínculo. Apagar ou liberar vínculos exigirá protocolo de transação e reconciliação, não criar um DELETE permissivo.
+- Todas as instâncias e escritores (inclusive crons e scripts externos) deverão usar a mesma configuração de fence ACTIVE antes de permitir binding. Ativação parcial criaria nova corrida.
+- O modo B.3 não muda a composição automática da playlist, que continua sem suporte a audiolivros; o Gate C/D será separado.
+
+**Testes:** `manual-bind-contract.test.ts`, `spotify-chapter-evidence.test.ts`, `bind-manual-audiobook.test.ts` (com PostgreSQL descartável e mock GET Spotify). Não usar conta Spotify real na suíte.
+
+Documentação dos endpoints individuais: [Get Audiobook](https://developer.spotify.com/documentation/web-api/reference/get-an-audiobook) e [Get Chapter](https://developer.spotify.com/documentation/web-api/reference/get-a-chapter).
