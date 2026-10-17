@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import type { Candidate } from "@/services/playlist-planner";
+import { assertAudiobookPlaylistMutationAllowed } from "@/services/audiobooks/playlist-write-guard";
 
 import {
   inferSpotifyOperation,
@@ -171,6 +172,19 @@ export class SpotifyClient {
 
       let error: SpotifyApiError;
       try {
+        // AUDIOBOOK-02: guard at the last shared Spotify write boundary, on
+        // every attempt, including retries and calls outside generation jobs.
+        // A database error fails closed; there is no permissive fallback.
+        await assertAudiobookPlaylistMutationAllowed(
+          { userId: this.userId, path, method },
+          async (userId, spotifyPlaylistId) => {
+            const overlay = await prisma.targetAudiobookOverlay.findUnique({
+              where: { userId_spotifyPlaylistId: { userId, spotifyPlaylistId } },
+              select: { id: true },
+            });
+            return overlay !== null;
+          },
+        );
         return await spotifyRequestAttempt<T>({
           accessToken: this.accessToken,
           path,
