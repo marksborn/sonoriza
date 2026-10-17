@@ -1,6 +1,6 @@
 # AUDIOBOOK-01 — Gate 1D: capítulos de audiolivros vs episódios e playlists
 
-**Status:** IMPLEMENTADO PARA INSPEÇÃO READ-ONLY — aguardando CI e execução controlada.
+**Status:** DIAGNÓSTICO AUTENTICADO EXECUTADO E RECONCILIADO — Gate 1D read-only completo; decisão conservadora sobre escrita de capítulos mantida.
 **Issue:** [#485](https://github.com/marksborn/sonoriza/issues/485) · **Gate original:** [#482](https://github.com/marksborn/sonoriza/issues/482) · **Gate 1C:** [PR #484](https://github.com/marksborn/sonoriza/pull/484).
 
 ## Pergunta
@@ -17,6 +17,51 @@ Um objeto `chapter` de audiobook, embora devolva URI de aparência `spotify:epis
 | Mesmo POST para episódio comum `spotify:episode:28WCykrOJqzTpUKSrABWwk` | **sucesso**, snapshot, GET total 1, `type=episode`, matched true | reprodução audível não comprovada pelo screenshot |
 | Android para controle | episódio visível na playlist **privada**, título verde, pausa no player | UI indica reprodução ativa, não comprova som |
 | Estado atual da segunda playlist | privada e **contém exatamente um episódio de controle** | qualquer script antigo que exige total=0 não deve ser reexecutado |
+
+## Resultado autenticado do Gate 1D — 16/10/2026, conta Spotify BR
+
+**Comando executado com commit `d3a9d4aa4d10770c10f1f674ad26ade0b38f04a1`** (PR #486; CI anterior aprovado), resultado:
+
+`outcome=GATE1D_READONLY_COMPLETE_INTERPRET_WITH_CARE`, **9 GET, 0 POST, 0 PUT, 0 DELETE, 0 playlist writes, 0 OAuth refresh, 0 player commands, 0 retries**.
+
+### Matriz de endpoints — o mesmo ID apresenta duas representações
+
+| Endpoint (market=BR) | HTTP | `type` | `uri` | `playable` | Relação |
+| --- | --- | --- | --- | --- | --- |
+| `GET /chapters/71PKNrJrxgaYwUY6srGQ3L` | 200 | **`chapter`** | `spotify:episode:71PKNrJrxgaYwUY6srGQ3L` | true | `audiobook.id=5E76EUAq7or1ncd4QNyHjI`, nenhum `show` |
+| `GET /episodes/71PKNrJrxgaYwUY6srGQ3L` | 200 | **`episode`** | **mesma URI** | true | `show.type=show`, sem `audiobook` |
+| `GET /episodes/28WCykrOJqzTpUKSrABWwk` | 200 | `episode` | `spotify:episode:28WCykrOJqzTpUKSrABWwk` | true | `show.type=show` (podcast controle) |
+| `GET /audiobooks/5E76EUAq7or1ncd4QNyHjI` | 200 | `audiobook` | não avaliada | — | 35 capítulos |
+
+Todas as consultas de capítulo e episódio tiveram `restrictionReasonPresent=false`. Esse campo não garante elegibilidade de inclusão na playlist.
+
+**Achado crítico:** o mesmo ID/URI de capítulo tem **representações distintas conforme o endpoint**. O Spotify o fornece tanto como `chapter` associado a audiobook quanto como `episode` associado a `show`. Portanto, é **incorreto** afirmar que o erro HTTP 502 do Gate 1C decorre necessariamente de o capítulo ser irreconhecível pelo endpoint de episódios comuns. Por outro lado, um GET bem-sucedido de episódio **não garante** a validade da mesma URI para o POST de playlist. A causa do 502 permanece **não determinada**.
+
+O classificador do código retornou corretamente:
+`BOTH_ENDPOINTS_RESOLVE_ID_BUT_PLAYLIST_COMPATIBILITY_UNPROVEN`.
+
+### Reconciliação de playlists (GET somente leitura)
+
+| Playlist | Visibilidade por API | Total | Itens retornados | Conteúdo observado |
+| --- | --- | --- | --- | --- |
+| Segunda experimental privada `1tsFauBmlMXWJLNKTCQFQE` | `public=false` | **1** | 1 | `episode` do podcast controle, URI exata reconhecida, `opaqueCount=0` |
+| Primeira manual com livro completo `4kYizEAtQhFsrrwD3tFphP` | `public=true` | **1** | 1 | objeto `item=null`/tipo ausente, `opaqueCount=1` |
+
+Ambas passaram na validação de ID, proprietário e nome, `collaborative=false`. **A segunda playlist NÃO está vazia**; não reutilizar scripts de inserção que exigem `total=0`. A primeira playlist mostra um item inteiro opaco e não pode ser interpretada como vazia só porque o objeto é `null`.
+
+### Consequências técnicas
+
+1. **Não existe uma equivalência direta entre tipo de catálogo e tipo de playlist:** manter `AudiobookChapter` e `PodcastEpisode` como conceitos distintos, mas registrar as representações `chapter` e `episode` possíveis para a mesma URI.
+2. **Viabilidade de leitura confirmada para este livro e conta BR**: ambos endpoints e livro responderam HTTP 200; não generalizar por mercado ou títulos.
+3. **Inserção de capítulo continua não demonstrada:** única tentativa do Gate 1C retornou **HTTP 502** e subsequente reconciliação encontrou **0 itens**. Controle de podcast no mesmo endpoint funcionou (POST aceito, GET item presente, Android mostrando reprodução ativa).
+4. **Sem novos POSTs como conclusão deste Gate:** qualquer investigação de escrita futura deve justificar hipótese delimitada, desenhar limpeza sem afetar o controle, exigir aprovação própria, 1 tentativa sem retentativas e reconciliação obrigatória, e considerar rate limits/5xx.
+5. **Decisão:** GO-LIMITED para estante/navegação/abrir no Spotify; NO-GO provisório apenas para *automatizar a inclusão de capítulos em playlists* sem demonstração de compatibilidade. O 502 isolado **não é prova de impossibilidade definitiva**.
+
+### Evidências e classificação
+
+- A saída é um relatório local de 9 GETs autenticados, não uma resposta de autorização de escrita.
+- Exemplo de duas representações sob o mesmo ID é agora coberto por teste de regressão na PR #486.
+- Não houve alterações de conteúdo, playlists, banco ou player.
 
 ## Documentação oficial do Spotify (verificação em 16/10/2026)
 
@@ -67,8 +112,8 @@ IDs de playlist, audiobook e capítulo são fixos no código; verificação de n
 
 - [x] Evidências e divergências de documentação catalogadas.
 - [x] Contrato do inspetor GET-only documentado, sem mutações de conta/playlist.
-- [ ] CI para os helpers, teste, Prisma, typecheck e build aprovado.
-- [ ] Execução autenticada read-only com saída JSON saneada compartilhada.
-- [ ] Revisar resultado e decidir fechamento do Gate 1D / eventuais experimentos posteriores.
+- [x] CI inicial para helpers, teste, Prisma, typecheck e build aprovado (run #38989498425, commit d3a9d4aa); CI do update documental/testes executará separadamente.
+- [x] Execução autenticada read-only com saída JSON saneada compartilhada (9 GET, zero alterações).
+- [x] Resultado revisado: tipo dual de catálogo confirmado, compatibilidade de POST **não demonstrada**, GO-LIMITED leitura / NO-GO provisório inclusão automática; eventual novo Gate de escrita requer aprovação.
 
-**Não concluir o Gate 1D apenas porque o CI passou:** a evidência autenticada ainda é necessária.
+**Gate 1D read-only cumpriu os critérios de investigação, com evidência autenticada.** Esta conclusão **não implica** aprovação para novos POSTs, refresh OAuth, limpeza das playlists, merge ou deploy. PR permanece Draft até decisão de integração.
