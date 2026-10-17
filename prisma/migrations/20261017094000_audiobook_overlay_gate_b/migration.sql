@@ -22,6 +22,8 @@ CREATE UNIQUE INDEX "TargetAudiobookOverlay_targetPlaylistId_key"
     ON "TargetAudiobookOverlay"("targetPlaylistId");
 CREATE UNIQUE INDEX "TargetAudiobookOverlay_userId_spotifyPlaylistId_key"
     ON "TargetAudiobookOverlay"("userId", "spotifyPlaylistId");
+CREATE UNIQUE INDEX "TargetAudiobookOverlay_userId_targetPlaylistId_key"
+    ON "TargetAudiobookOverlay"("userId", "targetPlaylistId");
 CREATE INDEX "TargetAudiobookOverlay_userId_spotifyAudiobookId_idx"
     ON "TargetAudiobookOverlay"("userId", "spotifyAudiobookId");
 
