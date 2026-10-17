@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AudiobookCapabilityInspector } from "@/components/AudiobookCapabilityInspector";
+import { parseManualSpotifyShowReference } from "@/services/audiobooks/d10-manual-show-reference";
 
 type Target = Readonly<{
   id: string;
@@ -97,6 +98,7 @@ export function AudiobookManualBindWizard({
 
   const selected = targets.find(target => target.id === targetId);
   const parsedBookId = spotifyId(bookReference);
+  const declaredShowReference = parseManualSpotifyShowReference(bookReference);
   function resetPreview() {
     setPreview(null);
     setConfirmPresence(false);
@@ -216,6 +218,18 @@ export function AudiobookManualBindWizard({
           <input id="audiobook-reference" value={bookReference} className={fieldClass}
             placeholder="https://open.spotify.com/audiobook/..."
             onChange={event => changeBook(event.target.value)} />
+          {declaredShowReference ? (
+            <div role="status" className="mt-3 space-y-2 rounded-xl border border-line-dark p-3 text-sm text-ink-inverse">
+              <p className="font-bold">
+                Este link é um show Spotify. Se ele contém um livro narrado,
+                registre como audiolivro pela alternativa manual, sem exigir
+                catálogo de /audiobook/ nem inventar capítulos.
+              </p>
+              <a className="underline" href="#audiobook-manual">
+                Ir para o livro e capítulos manuais ↑
+              </a>
+            </div>
+          ) : null}
         </div>
         <AudiobookCapabilityInspector key={parsedBookId ?? "no-book"} audiobookId={parsedBookId} />
         <button type="button" className="secondary-button" onClick={loadChapters}

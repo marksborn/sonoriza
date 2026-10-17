@@ -10,6 +10,7 @@ export type ManualNotebookView = Readonly<{
   targetPlaylistId: string;
   revision: number;
   bookTitle: string;
+  spotifyShowUrl: string | null;
   chapterLabel: string;
   chapterDurationMs: number;
   consumedMs: number;
@@ -27,6 +28,7 @@ export type ManualNotebookView = Readonly<{
 export type ManualNotebookHistoryItem = Readonly<{
   revision: number;
   bookTitle: string;
+  spotifyShowUrl: string | null;
   chapterLabel: string;
   chapterDurationMs: number;
   consumedMs: number;
@@ -39,7 +41,8 @@ function fail(code: string): never { throw new Error("AUDIOBOOK_NOTEBOOK_" + cod
 
 function toView(row: {
   id: string; targetPlaylistId: string; revision: number;
-  bookTitle: string; chapterLabel: string; chapterDurationMs: number;
+  bookTitle: string; spotifyShowId: string | null;
+  chapterLabel: string; chapterDurationMs: number;
   consumedMs: number; targetDurationMs: number; evidenceSource: string; updatedAt: Date;
 }): ManualNotebookView {
   if (row.evidenceSource !== "USER_DECLARED_UNVERIFIED") fail("INVALID_PROVENANCE");
@@ -48,6 +51,8 @@ function toView(row: {
     targetPlaylistId: row.targetPlaylistId,
     revision: row.revision,
     bookTitle: row.bookTitle,
+    spotifyShowUrl: row.spotifyShowId
+      ? "https://open.spotify.com/show/" + row.spotifyShowId : null,
     chapterLabel: row.chapterLabel,
     chapterDurationMs: row.chapterDurationMs,
     consumedMs: row.consumedMs,
@@ -155,13 +160,22 @@ export async function saveUserDeclaredAudiobookNotebook(
       where: { userId_targetPlaylistId: {
         userId: ownerId, targetPlaylistId: target.id,
       } },
-      select: { id: true, revision: true },
+      select: { id: true, revision: true, spotifyShowId: true },
     });
     if (!current && input.expectedRevision !== 0) fail("REVISION_CONFLICT");
     if (current && current.revision !== input.expectedRevision) fail("REVISION_CONFLICT");
+    if (current?.spotifyShowId && input.spotifyShowId &&
+        current.spotifyShowId !== input.spotifyShowId) {
+      fail("SHOW_REFERENCE_CHANGE_REQUIRES_COMPLETION");
+    }
+    // An omitted URL on later chapter changes preserves the existing book
+    // reference; it is never silently detached or replaced.
+    const spotifyShowId = input.spotifyShowId ?? current?.spotifyShowId ?? null;
+
 
     const changes = {
       bookTitle: calculated.bookTitle,
+      spotifyShowId,
       chapterLabel: calculated.chapterLabel,
       chapterDurationMs: calculated.declaredChapterDurationMs,
       consumedMs: calculated.declaredConsumedMs,
@@ -219,6 +233,8 @@ export async function readUserDeclaredAudiobookNotebook(
     history: current.entries.map(e => ({
       revision: e.revision,
       bookTitle: e.bookTitle,
+      spotifyShowUrl: e.spotifyShowId
+        ? "https://open.spotify.com/show/" + e.spotifyShowId : null,
       chapterLabel: e.chapterLabel,
       chapterDurationMs: e.chapterDurationMs,
       consumedMs: e.consumedMs,

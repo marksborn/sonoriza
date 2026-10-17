@@ -60,7 +60,7 @@ export default async function AudiobookConfigurationPage() {
         take: 2,
         select: {
           userId: true, targetPlaylistId: true, revision: true,
-          bookTitle: true, chapterLabel: true,
+          bookTitle: true, spotifyShowId: true, chapterLabel: true,
           chapterDurationMs: true, consumedMs: true, evidenceSource: true,
           target: { select: { name: true } },
         },
@@ -130,7 +130,10 @@ export default async function AudiobookConfigurationPage() {
         {singleReadingEnabled(process.env) && currentReading.status !== "REVIEW_REQUIRED" ? (
           <AudiobookReadingManager
             active={currentReading.status === "SINGLE_NOTEBOOK" && manualNotes.length === 1
-              ? { ...currentReading, revision: manualNotes[0]?.revision ?? 0 } : null}
+              ? { ...currentReading, revision: manualNotes[0]?.revision ?? 0,
+                  spotifyShowUrl: manualNotes[0]?.spotifyShowId
+                    ? "https://open.spotify.com/show/" + manualNotes[0].spotifyShowId : null,
+                } : null}
           />
         ) : (
         <section className="mb-6 rounded-2xl border border-line-dark p-5 text-ink-inverse">
@@ -163,12 +166,15 @@ export default async function AudiobookConfigurationPage() {
           ) : null}
         </section>
         )}
-        <AudiobookManualBindWizard
-          targets={targets}
-          bindingEnabled={audiobookBindEnabled(process.env)}
-        />
+        <p className="mb-3 text-sm text-muted-inverse">
+          Se o seu livro é publicado como <code>/show/</code> no Spotify, não
+          utilize a busca de audiolivros por catálogo abaixo. Use a alternativa
+          manual para registrar a referência, o capítulo e sua duração.
+          O país BR não possui a mesma disponibilidade de API de audiolivros
+          dos mercados documentados.
+        </p>
         {process.env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" ? (
-          <section className="mt-10">
+          <section id="audiobook-manual" className="mt-10 scroll-mt-6">
             <AudiobookSelfReportedPreview
               // Completion changes the current-book identity; remount the
               // D.7 editor so stale notebook revision cannot block next book.
@@ -184,6 +190,20 @@ export default async function AudiobookConfigurationPage() {
             />
           </section>
         ) : null}
+        <section className="mt-10 space-y-3">
+          <h2 className="text-xl font-black text-ink-inverse">
+            Consulta avançada de audiolivros via catálogo
+          </h2>
+          <p className="text-sm text-muted-inverse">
+            Somente para links Spotify /audiobook/ e contas cujo catálogo
+            disponibiliza capítulos. Livros publicados como /show/
+            utilizam o formulário manual acima.
+          </p>
+          <AudiobookManualBindWizard
+            targets={targets}
+            bindingEnabled={audiobookBindEnabled(process.env)}
+          />
+        </section>
         {updateCandidates.length ? (
           <section className="mt-10 space-y-5">
             <div>

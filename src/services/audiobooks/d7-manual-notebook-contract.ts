@@ -1,3 +1,4 @@
+import { parseManualSpotifyShowReference } from "./d10-manual-show-reference";
 import {
   previewUserDeclaredChapterDuration,
   type UserDeclaredChapterInput,
@@ -13,6 +14,7 @@ export type SaveManualNotebookRequest = Readonly<{
   targetPlaylistId: string;
   expectedRevision: number;
   bookTitle: string;
+  spotifyShowId?: string | null;
   chapterLabel: string;
   chapterDurationMs: number;
   selection: UserDeclaredChapterInput["selection"];
@@ -37,9 +39,17 @@ export function parseSaveManualNotebookRequest(raw: unknown):
   const obj = raw as Record<string, unknown>;
   const permitted = ["targetPlaylistId", "expectedRevision", "bookTitle",
     "chapterLabel", "chapterDurationMs", "selection", "confirmation"];
-  if (Object.keys(obj).length !== permitted.length ||
-      Object.keys(obj).some(k => !permitted.includes(k))) {
+  // The show reference is optional for existing clients; when supplied it
+  // must be a Spotify /show/ URL, never an opaque audiobook catalogue ID.
+  const showSupplied = Object.prototype.hasOwnProperty.call(obj, "spotifyShowUrl");
+  if (Object.keys(obj).length !== permitted.length + (showSupplied ? 1 : 0) ||
+      Object.keys(obj).some(k => !permitted.includes(k) && k !== "spotifyShowUrl")) {
     return { ok: false, code: "INVALID_BODY" };
+  }
+  const show = showSupplied
+    ? parseManualSpotifyShowReference(obj.spotifyShowUrl) : null;
+  if (showSupplied && !show) {
+    return { ok: false, code: "INVALID_SPOTIFY_SHOW_REFERENCE" };
   }
   if (typeof obj.targetPlaylistId !== "string" ||
       !/^[A-Za-z0-9_-]{4,80}$/.test(obj.targetPlaylistId)) {
@@ -84,6 +94,7 @@ export function parseSaveManualNotebookRequest(raw: unknown):
     targetPlaylistId: obj.targetPlaylistId,
     expectedRevision: obj.expectedRevision,
     bookTitle: preflight.bookTitle,
+    ...(show ? { spotifyShowId: show.spotifyShowId } : {}),
     chapterLabel: preflight.chapterLabel,
     chapterDurationMs: preflight.declaredChapterDurationMs,
     selection: record as UserDeclaredChapterInput["selection"],

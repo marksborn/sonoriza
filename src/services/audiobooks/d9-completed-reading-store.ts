@@ -69,12 +69,14 @@ export async function completeManualReading(
         targetPlaylistId: note.targetPlaylistId,
         spotifyPlaylistId,
         bookTitle: note.bookTitle,
+        spotifyShowId: note.spotifyShowId,
         finalRevision: note.revision,
         evidenceSource: "USER_DECLARED_UNVERIFIED",
         entries: {
           create: note.entries.map(e => ({
             revision: e.revision,
             bookTitle: e.bookTitle,
+            spotifyShowId: e.spotifyShowId,
             chapterLabel: e.chapterLabel,
             chapterDurationMs: e.chapterDurationMs,
             consumedMs: e.consumedMs,
@@ -85,7 +87,7 @@ export async function completeManualReading(
         },
       },
       select: {
-        id: true, bookTitle: true, finalRevision: true,
+        id: true, bookTitle: true, spotifyShowId: true, finalRevision: true,
         completedAt: true, targetPlaylistId: true,
       },
     });
@@ -116,13 +118,16 @@ export async function listCompletedManualReadings(ownerId: string) {
     orderBy: [{ completedAt: "desc" }, { id: "desc" }],
     take: 20,
     select: {
-      id: true, bookTitle: true, completedAt: true, finalRevision: true,
+      id: true, bookTitle: true, spotifyShowId: true,
+      completedAt: true, finalRevision: true,
       targetPlaylistId: true, _count: { select: { entries: true } },
     },
   });
   return rows.map(row => ({
     id: row.id,
     bookTitle: row.bookTitle,
+    spotifyShowUrl: row.spotifyShowId
+      ? "https://open.spotify.com/show/" + row.spotifyShowId : null,
     completedAt: row.completedAt.toISOString(),
     finalRevision: row.finalRevision,
     targetPlaylistId: row.targetPlaylistId,
@@ -149,11 +154,15 @@ export async function readCompletedManualReading(ownerId: string, archiveId: str
   return {
     id: row.id,
     bookTitle: row.bookTitle,
+    spotifyShowUrl: row.spotifyShowId
+      ? "https://open.spotify.com/show/" + row.spotifyShowId : null,
     completedAt: row.completedAt.toISOString(),
     finalRevision: row.finalRevision,
     chapters: row.entries.map(e => ({
       revision: e.revision,
       chapterLabel: e.chapterLabel,
+      spotifyShowUrl: e.spotifyShowId
+        ? "https://open.spotify.com/show/" + e.spotifyShowId : null,
       chapterDurationMs: e.chapterDurationMs,
       consumedMs: e.consumedMs,
       recordedAt: e.recordedAt.toISOString(),
