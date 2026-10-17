@@ -36,6 +36,7 @@ export async function completeManualReading(
       fail(notes.length === 0 ? "NO_ACTIVE_BOOK" : "MULTIPLE_ACTIVE_BOOKS_REVIEW_REQUIRED");
     }
     const note = notes[0];
+    if (!note) fail("NO_ACTIVE_BOOK");
     if (note.targetPlaylistId !== input.targetPlaylistId ||
         note.revision !== input.expectedRevision) fail("REVISION_CONFLICT");
     if (note.evidenceSource !== "USER_DECLARED_UNVERIFIED" ||
