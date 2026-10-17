@@ -469,21 +469,32 @@ export async function generatePlaylists(
       },
       select: { targetPlaylistId: true },
     });
-    // Conservative protection for user-declared (NOT verified) book notes.
-    // This is NOT validation, planner evidence or a write permit.
-    if (!simulate && (audiobookOverlays.length > 0 || manualNotebookTargets.length > 0)) {
+    // D.7: the notebook is a conservative indication of possible opaque
+    // content. Preserve the original overlay guard below unchanged.
+    if (!simulate && manualNotebookTargets.length > 0) {
+      const error =
+        "Geração real bloqueada antes de escrever: caderno manual de audiolivro " +
+        "no destino (conteúdo remoto não verificável).";
+      summary.audiobookManualNotebookGate = {
+        mode: "REAL_WRITE_BLOCKED",
+        targetIds: manualNotebookTargets.map(row => row.targetPlaylistId),
+        approvalEligible: false,
+        spotifyWrites: false,
+        plannerInfluence: false,
+      };
+      summary.qualityPassed = false;
+      log({ level: "ERROR", message: error });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
+    if (!simulate && audiobookOverlays.length > 0) {
       const error =
         "A geração real foi bloqueada antes de qualquer escrita Spotify: " +
-        "há um destino com vínculo de audiolivro ou caderno manual protegido. " +
-        "A presença do livro remoto não pode ser inferida; use somente prévia.";
+        "há um destino com audiolivro protegido e item remoto opaco. " +
+        "Use somente prévia; o Gate D não autoriza alterar essa playlist.";
       summary.audiobookGateD = {
         mode: "REAL_WRITE_BLOCKED",
-        targetIds: [
-          ...new Set([
-            ...audiobookOverlays.map(overlay => overlay.targetPlaylistId),
-            ...manualNotebookTargets.map(note => note.targetPlaylistId),
-          ]),
-        ],
+        targetIds: audiobookOverlays.map(overlay => overlay.targetPlaylistId),
         plannerInfluence: false,
         spotifyWrites: false,
         approvalEligible: false,
@@ -1257,7 +1268,8 @@ export async function generatePlaylists(
           };
         })
       : [];
-    const audiobookGateDApprovalBlocked = simulate && audiobookOverlays.length > 0;
+    const audiobookGateDApprovalBlocked = simulate &&
+      (audiobookOverlays.length > 0 || manualNotebookTargets.length > 0);
     if (audiobookGateDShadow) {
       summary.audiobookGateD = {
         mode: "SHADOW",
