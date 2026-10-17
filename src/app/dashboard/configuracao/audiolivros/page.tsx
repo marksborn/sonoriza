@@ -109,7 +109,12 @@ export default async function AudiobookConfigurationPage() {
         />
         {process.env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" ? (
           <section className="mt-10">
-            <AudiobookSelfReportedPreview targets={targets} notebookEnabled={manualNotebookEnabled(process.env)} />
+            <AudiobookSelfReportedPreview
+              targets={targets}
+              notebookEnabled={manualNotebookEnabled(process.env)}
+              advisoryEnabled={manualNotebookEnabled(process.env) &&
+                process.env.AUDIOBOOK02_MANUAL_SHADOW_MODE === "PREVIEW"}
+            />
           </section>
         ) : null}
         {updateCandidates.length ? (
