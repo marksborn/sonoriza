@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { explainAudiobookPreviewFailure } from "@/services/audiobooks/d4-preview-guidance";
 
 export type ExistingAudiobookOverlay = Readonly<{
   targetPlaylistId: string;
@@ -99,7 +100,11 @@ async function requestJson<T>(path: string, payload: Record<string, unknown>): P
     cache: "no-store",
   });
   const data = await response.json() as T & { code?: string; error?: string };
-  if (!response.ok) throw new Error(data.error ?? data.code ?? "Serviço indisponível.");
+  if (!response.ok) {
+    const error = new Error(data.error ?? data.code ?? "Serviço indisponível.") as Error & { code?: string };
+    error.code = data.code;
+    throw error;
+  }
   return data;
 }
 
@@ -177,7 +182,9 @@ export function AudiobookChapterChangeEditor({
       );
       setHandoff(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Prévia manual indisponível.");
+      const code = e instanceof Error ? (e as Error & { code?: string }).code : undefined;
+      setError(code ? explainAudiobookPreviewFailure(code)
+        : e instanceof Error ? e.message : "Prévia manual indisponível.");
     } finally {
       setPending(false);
     }
@@ -197,7 +204,9 @@ export function AudiobookChapterChangeEditor({
       }
     } catch (e) {
       setCatalogue(null);
-      setError(e instanceof Error ? e.message : "Não foi possível consultar os capítulos.");
+      const code = e instanceof Error ? (e as Error & { code?: string }).code : undefined;
+      setError(code ? explainAudiobookPreviewFailure(code)
+        : e instanceof Error ? e.message : "Não foi possível consultar os capítulos.");
     } finally {
       setPending(false);
     }
@@ -294,6 +303,9 @@ export function AudiobookChapterChangeEditor({
             A partir de uma simulação SHADOW recente, confira músicas ou episódios
             que poderiam completar o orçamento virtual. O Sonoriza não os enviará
             ao Spotify e não pode comprovar qual dos itens opacos é o audiolivro.
+            Se sua conta Spotify estiver no mercado BR, a API de capítulos pode estar
+            indisponível mesmo que o livro apareça no aplicativo. Nenhuma duração
+            será inventada para contornar a restrição.
           </p>
           <button type="button" className="secondary-button"
             onClick={assessManualHandoff} disabled={pending}>
