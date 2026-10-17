@@ -54,7 +54,8 @@ export async function assertSpotifyAudiobookChapterEvidence(
     chapter?.id !== ids.selectedChapterId ||
     chapter?.type !== "episode" ||
     chapter?.audiobook?.id !== ids.spotifyAudiobookId ||
-    chapter.is_playable === false ||
+    chapter.audiobook.type !== "audiobook" ||
+    chapter.is_playable !== true ||
     Boolean(chapter.restrictions?.reason) ||
     typeof chapter.name !== "string" ||
     !chapter.name.trim() ||
