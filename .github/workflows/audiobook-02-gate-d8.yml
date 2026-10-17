@@ -43,6 +43,11 @@ jobs:
       AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE: "OFF"
       AUDIOBOOK02_MANUAL_NOTEBOOK_MODE: "OFF"
       AUDIOBOOK02_MANUAL_SHADOW_MODE: "OFF"
+      AUTH_SECRET: audiobook-d8-ci-only-not-production
+      AUTH_GOOGLE_ID: audiobook-d8-ci
+      AUTH_GOOGLE_SECRET: audiobook-d8-ci
+      AUTH_SPOTIFY_ID: audiobook-d8-ci
+      AUTH_SPOTIFY_SECRET: audiobook-d8-ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,3 +66,5 @@ jobs:
         run: npx tsx --test src/services/audiobooks/*.test.ts
       - name: Full project typecheck
         run: npm run typecheck
+      - name: Production Next.js build (route export contract)
+        run: npm run build
