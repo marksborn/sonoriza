@@ -144,7 +144,7 @@ export async function rehearseAudiobookManualFlowOffline(
   const selected = catalog.chapters.filter(chapter =>
     chapter.id === evidence.selectedChapterId && chapter.playable);
   if (selected.length !== 1) return blocked("CHAPTER_NOT_IN_CATALOG");
-  if (selected[0].durationMs !== evidence.chapterDurationMs ||
+  if (selected[0]?.durationMs !== evidence.chapterDurationMs ||
       input.overlay.chapterDurationMs !== evidence.chapterDurationMs ||
       input.overlay.spotifyAudiobookId !== evidence.spotifyAudiobookId) {
     return blocked("CHAPTER_EVIDENCE_DRIFT");
