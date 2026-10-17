@@ -825,6 +825,8 @@ model TargetAudiobookOverlay {
 
   // At most one local audiobook claim for any user/Spotify playlist pair.
   @@unique([userId, spotifyPlaylistId])
+  // Prisma requires uniqueness of all referencing fields for composite 1:1.
+  @@unique([userId, targetPlaylistId])
   @@index([userId, spotifyAudiobookId])
 }
 
