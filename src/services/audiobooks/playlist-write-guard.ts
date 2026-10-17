@@ -35,7 +35,8 @@ export function parseSpotifyPlaylistItemsMutation(
     normalizedMethod !== "PATCH"
   ) return null;
   if (typeof path !== "string") return null;
-  const match = /^\/playlists\/([^/?#]+)\/items(?:[?#]|$)/.exec(path);
+  // Cover both the current /items endpoint and older /tracks calls.
+  const match = /^\/playlists\/([^/?#]+)\/(?:items|tracks)(?:[?#]|$)/.exec(path);
   if (!match || !match[1]) return null;
   const spotifyPlaylistId = match[1];
   // Real Spotify IDs are alphanumeric; allow unambiguous fixture IDs using
