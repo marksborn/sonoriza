@@ -1,0 +1,35 @@
+# AUDIOBOOK-02 Gate A: isolated, no provider credentials, DB writes or deploy.
+name: Audiobook Gate A validation
+
+on:
+  pull_request:
+    paths:
+      - "src/services/audiobooks/virtual-chapter-duration.ts"
+      - "src/services/audiobooks/virtual-chapter-duration.test.ts"
+      - "docs/AUDIOBOOK-02-GATE-A.md"
+      - ".github/workflows/audiobook-02-gate-a.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  virtual-duration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://unused:unused@127.0.0.1:5432/sonoriza_validation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Generate Prisma client offline
+        run: npx prisma generate
+      - name: Virtual duration unit tests
+        run: npx tsx --test src/services/audiobooks/virtual-chapter-duration.test.ts
+      - name: Typecheck
+        run: npm run typecheck
