@@ -1283,6 +1283,10 @@ export async function generatePlaylists(
       singleReadingEnabled(process.env) &&
       process.env.AUDIOBOOK02_MANUAL_PLANNER_MODE === "SHADOW";
     if (manualShowShadow) {
+      // A scoped target query cannot establish single-book exclusivity:
+      // check the owner's ENTIRE set, including unrelated playlists.
+      const activeManualBooksForOwner =
+        await prisma.targetAudiobookManualNotebook.count({ where: { userId } });
       const manualProjections = manualNotebookTargets.map(notebook => {
         const target = targets.find(t => t.id === notebook.targetPlaylistId);
         const runTarget = runTargets.find(t =>
@@ -1309,7 +1313,7 @@ export async function generatePlaylists(
           effectiveSourceIds: sourceIdsByTargetId.get(target.id) ?? new Set(),
           blockedSpotifyMusicTrackIds: blockedMusicTrackIdsByTargetId.get(target.id),
           hasDurationBlocks: Boolean(runTarget.durationBlocks?.length),
-          hasOtherActiveNotebook: manualNotebookTargets.length !== 1,
+          hasOtherActiveNotebook: activeManualBooksForOwner !== 1,
         });
       });
       summary.audiobookD10ManualShadow = {
