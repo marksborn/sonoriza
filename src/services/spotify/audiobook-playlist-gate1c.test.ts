@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   GATE1C, chapterEligible, playlistOwnedPrivate, containsChapter, safeId,
   mayChangeSecondPlaylistToPrivate,
+  mayInsertChapterIntoExistingSecondPlaylist,
 } from "./audiobook-playlist-gate1c";
 
 const owner = "spotify-user";
@@ -69,4 +70,23 @@ test("privacy correction only for exactly the new empty public playlist", () => 
   assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, collaborative: true }, id, owner), false);
   assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, items: { total: 1 } }, id, owner), false);
   assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, items: undefined }, id, owner), false);
+});
+
+test("existing playlist writer rejects manual playlist, wrong owner or nonempty state", () => {
+  const id = "1tsFauBmlMXWJLNKTCQFQE";
+  const p = {
+    id, name: GATE1C.secondPrivatePlaylistName, owner: { id: owner },
+    collaborative: false, public: true, items: { total: 0 }, snapshot_id: "old",
+  };
+  // User confirmed privacy via Android app; API public field may still show true.
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist(p, owner, id), true);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist({ ...p, public: false }, owner, id), true);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist({ ...p, public: null }, owner, id), true);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist({ ...p, id: "4kYizEAtQhFsrrwD3tFphP" }, owner, id), false);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist({ ...p, name: GATE1C.playlistName }, owner, id), false);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist({ ...p, owner: { id: "other" } }, owner, id), false);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist({ ...p, collaborative: true }, owner, id), false);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist({ ...p, items: { total: 1 } }, owner, id), false);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist({ ...p, items: undefined }, owner, id), false);
+  assert.equal(mayInsertChapterIntoExistingSecondPlaylist(p, owner, "4kYizEAtQhFsrrwD3tFphP"), false);
 });
