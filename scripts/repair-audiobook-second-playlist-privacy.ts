@@ -101,12 +101,21 @@ async function main(): Promise<void> {
     method = `PUT /playlists/${TARGET_ID}`;
     await assertSpotifyBackoffInactive();
     report.PUT = 1;
-    await spotifyRequestAttempt<unknown>({
-      accessToken: token, path: `/playlists/${TARGET_ID}`,
-      method: "PUT", operation: "playlist-write",
-      init: { method: "PUT", body: JSON.stringify({ public: false }) },
-    });
-    report.outcome = "PUT_ACCEPTED_CONFIRMATION_PENDING";
+    try {
+      await spotifyRequestAttempt<unknown>({
+        accessToken: token, path: `/playlists/${TARGET_ID}`,
+        method: "PUT", operation: "playlist-write",
+        init: { method: "PUT", body: JSON.stringify({ public: false }) },
+      });
+    } catch (error) {
+      // The shared Spotify request helper expects JSON on success, while this
+      // Spotify PUT can return HTTP 200 with an EMPTY body. A SyntaxError
+      // parsing that empty successful body is NOT a request failure.
+      // Never resend the PUT: reconcile once via GET instead.
+      if (!(error instanceof SyntaxError)) throw error;
+      report.putResponse = "EMPTY_OR_NON_JSON_BODY_CHECKING_WITH_GET";
+    }
+    report.outcome = "PUT_SENT_CONFIRMATION_PENDING";
     const after = asObject(await get<unknown>(detailsPath, token));
     report.after = {
       exactId: after?.id === TARGET_ID,
