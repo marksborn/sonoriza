@@ -5,6 +5,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { prisma } from "@/lib/prisma";
+import { prismaAudiobookWriteFenceStore } from "./write-admission-store";
 import { AudiobookSelfReportedPreview } from "@/components/AudiobookSelfReportedPreview";
 import {
   MANUAL_NOTEBOOK_CONFIRMATION,
@@ -149,6 +150,13 @@ dbTest("#489 D.7: database isolates owner, appends revisions, CAS and deletion c
     assert.equal(first.eligibleForBinding, false);
     assert.equal(first.eligibleForShadowPlanner, false);
     assert.equal(first.automaticPlaylistWritesAllowed, false);
+    await assert.rejects(
+      () => prismaAudiobookWriteFenceStore.begin({
+        userId: owner.id,
+        spotifyPlaylistId: "4kYizEAtQhFsrrwD3tFphP",
+      }),
+      /AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_USER_DECLARED_NOTEBOOK/,
+    );
 
     await assert.rejects(
       () => saveUserDeclaredAudiobookNotebook(stranger.id, firstInput),
