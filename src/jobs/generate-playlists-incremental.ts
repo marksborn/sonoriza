@@ -7,6 +7,8 @@ import {
 } from "@/jobs/schedule-retry-policy";
 import { processMemorySnapshot } from "@/services/process-memory";
 import { projectAudiobookVirtualChapterPlan } from "@/services/audiobooks/gate-d-shadow-planner";
+import { projectManualShowChapterPlan } from "@/services/audiobooks/d10-manual-shadow-plan";
+import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading-contract";
 import {
   DEFAULT_PODCAST_DURATION_BAND_LIMITS,
   parsePodcastDurationBandLimits,
@@ -467,7 +469,12 @@ export async function generatePlaylists(
           ) },
         },
       },
-      select: { targetPlaylistId: true },
+      select: {
+        userId: true, targetPlaylistId: true, spotifyShowId: true,
+        bookTitle: true, chapterLabel: true, chapterDurationMs: true,
+        consumedMs: true, targetDurationMs: true, revision: true,
+        evidenceSource: true,
+      },
     });
     // D.7: the notebook is a conservative indication of possible opaque
     // content. Preserve the original overlay guard below unchanged.
@@ -1268,6 +1275,53 @@ export async function generatePlaylists(
           };
         })
       : [];
+    // D.10: real target-scoped candidates, but an isolated counterfactual.
+    // No change to incremental.plan, GenerationItem, source reservations or
+    // Spotify writer. Already-protected targets keep the REAL_WRITE_BLOCKED
+    // admission above regardless of these flags.
+    const manualShowShadow = simulate &&
+      singleReadingEnabled(process.env) &&
+      process.env.AUDIOBOOK02_MANUAL_PLANNER_MODE === "SHADOW";
+    if (manualShowShadow) {
+      const manualProjections = manualNotebookTargets.map(notebook => {
+        const target = targets.find(t => t.id === notebook.targetPlaylistId);
+        const runTarget = runTargets.find(t =>
+          t.targetPlaylistId === notebook.targetPlaylistId);
+        if (!target || !runTarget) {
+          return { status: "ABSTAIN" as const,
+            reason: "TARGET_MISSING_OR_SKIPPED",
+            plannerInfluence: false as const,
+            spotifyWrites: false as const,
+            approvalEligible: false as const };
+        }
+        return projectManualShowChapterPlan({
+          userId,
+          notebook,
+          target: {
+            id: target.id, userId: target.userId,
+            spotifyPlaylistId: target.spotifyPlaylistId,
+            durationMode: target.durationMode,
+            fixedDurationSeconds: target.fixedDurationSeconds,
+            updatePolicy: target.updatePolicy,
+          },
+          rules: runTarget.rules,
+          pools: incremental.pools,
+          effectiveSourceIds: sourceIdsByTargetId.get(target.id) ?? new Set(),
+          blockedSpotifyMusicTrackIds: blockedMusicTrackIdsByTargetId.get(target.id),
+          hasDurationBlocks: Boolean(runTarget.durationBlocks?.length),
+          hasOtherActiveNotebook: manualNotebookTargets.length !== 1,
+        });
+      });
+      summary.audiobookD10ManualShadow = {
+        mode: "SIMULATION_ONLY",
+        unverifiedShow: true,
+        plannerInfluence: false,
+        spotifyWrites: false,
+        approvalEligible: false,
+        targetCount: manualNotebookTargets.length,
+        projections: manualProjections,
+      };
+    }
     const audiobookGateDApprovalBlocked = simulate &&
       (audiobookOverlays.length > 0 || manualNotebookTargets.length > 0);
     if (audiobookGateDShadow) {
