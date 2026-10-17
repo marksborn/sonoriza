@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { AudiobookManualAdvisory } from "@/components/AudiobookManualAdvisory";
 import {
   formatManualDuration,
   formatUserDeclaredChapterNotes,
@@ -46,9 +47,12 @@ type NotebookHistory = Readonly<{
   createdAt: string;
 }>;
 
-export function AudiobookSelfReportedPreview({ targets, notebookEnabled = false }: Readonly<{
+export function AudiobookSelfReportedPreview({
+  targets, notebookEnabled = false, advisoryEnabled = false,
+}: Readonly<{
   targets: readonly ManualTarget[];
   notebookEnabled?: boolean;
+  advisoryEnabled?: boolean;
 }>) {
   const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
   const [bookTitle, setBookTitle] = useState("");
@@ -340,6 +344,13 @@ export function AudiobookSelfReportedPreview({ targets, notebookEnabled = false 
               já ouvido: {formatManualDuration(notebook.consumedMs)}.
             </p>
           ) : <p className="text-sm text-muted-inverse">Nenhuma anotação salva para este destino.</p>}
+          {advisoryEnabled && notebook && selected ? (
+            <AudiobookManualAdvisory
+              key={selected.id + ":" + notebook.revision}
+              targetPlaylistId={selected.id}
+              expectedRevision={notebook.revision}
+            />
+          ) : null}
           {result?.status === "READY_MANUAL_PREVIEW" && selected ? (
             <div className="space-y-2">
               <label className="flex items-start gap-2 text-sm text-ink-inverse">
