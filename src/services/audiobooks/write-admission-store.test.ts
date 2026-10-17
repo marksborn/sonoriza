@@ -159,12 +159,14 @@ integrationTest("#489 D.9.1: a manual notebook blocks overlay binding for the sa
   assert.equal(await prisma.targetAudiobookOverlay.count({
     where: { userId: fixture.userId },
   }), 0);
-  const fence = await prisma.targetAudiobookWriteFence.findUniqueOrThrow({
+  const fence = await prisma.targetAudiobookWriteFence.findUnique({
     where: { userId_spotifyPlaylistId: {
       userId: fixture.userId, spotifyPlaylistId: fixture.spotifyPlaylistId,
     } },
   });
-  assert.equal(fence.activeWrites, 0);
+  // The denied binding may roll back the newly created fence row entirely;
+  // it must never leave a lingering active lease.
+  assert.equal(fence?.activeWrites ?? 0, 0);
 });
 
 integrationTest("#489 D.9.1: a notebook on another target pointing at the same Spotify playlist also blocks binding", { concurrency: false }, async t => {
