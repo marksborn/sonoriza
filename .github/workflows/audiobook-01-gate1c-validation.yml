@@ -8,12 +8,14 @@ on:
       - "src/services/spotify/audiobook-playlist-gate1c*"
       - "scripts/probe-audiobook-playlist-gate1c.ts"
       - "scripts/inspect-audiobook-test-playlist.ts"
+      - "scripts/inspect-audiobook-second-playlist.ts"
       - ".github/workflows/audiobook-01-gate1c-validation.yml"
   pull_request:
     paths:
       - "src/services/spotify/audiobook-playlist-gate1c*"
       - "scripts/probe-audiobook-playlist-gate1c.ts"
       - "scripts/inspect-audiobook-test-playlist.ts"
+      - "scripts/inspect-audiobook-second-playlist.ts"
       - ".github/workflows/audiobook-01-gate1c-validation.yml"
 
 permissions:
