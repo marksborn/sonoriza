@@ -9,6 +9,7 @@ import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { audiobookBindEnabled } from "@/services/audiobooks/manual-bind-contract";
+import { manualNotebookEnabled } from "@/services/audiobooks/d7-manual-notebook-contract";
 
 export const dynamic = "force-dynamic";
 
@@ -108,7 +109,7 @@ export default async function AudiobookConfigurationPage() {
         />
         {process.env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" ? (
           <section className="mt-10">
-            <AudiobookSelfReportedPreview targets={targets} />
+            <AudiobookSelfReportedPreview targets={targets} notebookEnabled={manualNotebookEnabled(process.env)} />
           </section>
         ) : null}
         {updateCandidates.length ? (
