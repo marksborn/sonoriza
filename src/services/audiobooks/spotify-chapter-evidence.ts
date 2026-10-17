@@ -58,8 +58,8 @@ export async function assertSpotifyAudiobookChapterEvidence(
     Boolean(chapter.restrictions?.reason) ||
     typeof chapter.name !== "string" ||
     !chapter.name.trim() ||
-    !Number.isInteger(chapter.duration_ms) ||
     typeof chapter.duration_ms !== "number" ||
+    !Number.isInteger(chapter.duration_ms) ||
     chapter.duration_ms <= 0 ||
     chapter.duration_ms > 2147483647
   ) {
