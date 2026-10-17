@@ -18,6 +18,15 @@ test("playlist policy is private, owned, named, non-collaborative", () => {
   assert.equal(safeId("bad"), null);
 });
 
+test("second playlist remains distinct from the manually created first one", () => {
+  assert.notEqual(GATE1C.secondPrivatePlaylistName, GATE1C.playlistName);
+  const candidate = { id: "a".repeat(22), owner: { id: owner },
+    name: GATE1C.secondPrivatePlaylistName, public: false, collaborative: false };
+  assert.equal(playlistOwnedPrivate(candidate, owner, GATE1C.secondPrivatePlaylistName), true);
+  assert.equal(playlistOwnedPrivate({ ...candidate, name: GATE1C.playlistName }, owner, GATE1C.secondPrivatePlaylistName), false);
+  assert.equal(playlistOwnedPrivate({ ...candidate, public: true }, owner, GATE1C.secondPrivatePlaylistName), false);
+});
+
 test("only confirmed chapter and allowed restrictions can progress to write", () => {
   const chapter = {
     id: GATE1C.chapterId, uri: GATE1C.chapterUri, type: "chapter",
