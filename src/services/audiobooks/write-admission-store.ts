@@ -39,6 +39,13 @@ export const prismaAudiobookWriteFenceStore: AudiobookWriteFenceStore = {
       if (overlay) {
         throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_PROTECTED_TARGET");
       }
+      const notebook = await tx.targetAudiobookManualNotebook.findFirst({
+        where: { userId, target: { spotifyPlaylistId } },
+        select: { id: true },
+      });
+      if (notebook) {
+        throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_USER_DECLARED_NOTEBOOK");
+      }
     });
   },
 
@@ -147,6 +154,13 @@ export async function withAudiobookTargetSettingsAdmission<T>(
     });
     if (bound) {
       throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_PROTECTED_OVERLAY");
+    }
+    const manual = await tx.targetAudiobookManualNotebook.findFirst({
+      where: { userId, targetPlaylistId },
+      select: { id: true },
+    });
+    if (manual) {
+      throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_MANUAL_NOTEBOOK");
     }
     return commit(tx);
   });
