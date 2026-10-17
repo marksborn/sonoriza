@@ -193,6 +193,18 @@ export default async function ConfigurationHubPage() {
             action="Configurar destinos"
           />
 
+          {process.env.AUDIOBOOK02_BIND_UI_MODE === "PREVIEW" ? (
+            <ConfigCard
+              href="/dashboard/configuracao/audiolivros"
+              icon="list"
+              badge="Prévia experimental"
+              code="AUDIOBOOK-02"
+              title="Audiolivros por capítulo"
+              description="Escolha livro e capítulo de uma playlist existente e revise seu orçamento virtual, sem controlar o Spotify."
+              action="Ver prévia de audiolivros"
+            />
+          ) : null}
+
           <ConfigCard
             href="/dashboard/configuracao/reserva"
             icon="plus"

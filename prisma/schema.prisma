@@ -31,6 +31,8 @@ model User {
   calendarSelections               CalendarSelection[]
   sourcePlaylists                  SourcePlaylist[]
   targetPlaylists                  TargetPlaylist[]
+  audiobookOverlays                TargetAudiobookOverlay[]
+  audiobookWriteFences             TargetAudiobookWriteFence[]
   podcastDurationBandSettings      PodcastDurationBandSettings?
   generationRuns                   GenerationRun[]
   musicPlaybackPolicy              MusicPlaybackPolicy?
@@ -790,11 +792,57 @@ model TargetPlaylist {
   calendarSelections TargetPlaylistCalendar[]
   sourceSelections   TargetPlaylistSource[]
   generationItems    GenerationItem[]
+  audiobookOverlay   TargetAudiobookOverlay?
   targetScheduleRuns TargetScheduleRun[]
   playbackReserveActivation TargetPlaybackReserveActivation?
 
   @@unique([userId, id])
   @@index([userId, priority])
+}
+
+// AUDIOBOOK-02 Gate B: local-only manual audiobook-to-target overlay.
+enum AudiobookPlanningMode {
+  FULL_CHAPTER
+  MANUAL_REMAINDER
+}
+
+model TargetAudiobookOverlay {
+  id                  String                @id @default(cuid())
+  userId              String
+  targetPlaylistId    String                @unique
+  // Preserve the explicit remote identity even if the target changes later.
+  spotifyPlaylistId   String
+  spotifyAudiobookId  String
+  selectedChapterId   String
+  chapterDurationMs   Int
+  providerDurationMs  Int?
+  manualConsumedMs    Int                   @default(0)
+  selectionMode       AudiobookPlanningMode @default(FULL_CHAPTER)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target TargetPlaylist @relation(fields: [userId, targetPlaylistId], references: [userId, id], onDelete: Cascade)
+
+  // At most one local audiobook claim for any user/Spotify playlist pair.
+  @@unique([userId, spotifyPlaylistId])
+  // Prisma requires uniqueness of all referencing fields for composite 1:1.
+  @@unique([userId, targetPlaylistId])
+  @@index([userId, spotifyAudiobookId])
+}
+
+// AUDIOBOOK-02 Gate B.2: durable write admission/ambiguity fence.
+// A stale in-flight write is intentionally fail-closed until manual reconciliation.
+model TargetAudiobookWriteFence {
+  userId             String   // Sonoriza account owner
+  spotifyPlaylistId  String   // exact provider destination ID
+  activeWrites       Int      @default(0)
+  reviewRequired     Boolean  @default(false)
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, spotifyPlaylistId])
 }
 
 // PODCAST-08 Gate 3: dormant per-user global thresholds. No runtime planner

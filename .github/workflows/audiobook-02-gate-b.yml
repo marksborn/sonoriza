@@ -1,0 +1,68 @@
+# AUDIOBOOK-02 Gate B: temporary, isolated validation; no production secrets or deploy.
+name: Audiobook Gate B validation
+
+on:
+  pull_request:
+    paths:
+      - "src/services/audiobooks/**"
+      - "src/app/api/audiobooks/**"
+      - "src/components/AudiobookManualBindWizard.tsx"
+      - "src/app/dashboard/configuracao/audiolivros/**"
+      - "src/app/dashboard/configuracao/page.tsx"
+      - "src/services/spotify/client.ts"
+      - "src/services/spotify/request.ts"
+      - "src/services/spotify/music-ingestion.ts"
+      - "src/services/spotify/source-cleanup.ts"
+      - "prisma/schema.prisma"
+      - "prisma/migrations/20261017094000_audiobook_overlay_gate_b/**"
+      - "prisma/migrations/20261017100500_audiobook_write_fence_gate_b2/**"
+      - "docs/AUDIOBOOK-02-GATE-B.md"
+      - ".github/workflows/audiobook-02-gate-b.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-overlay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sonoriza_test
+          POSTGRES_PASSWORD: sonoriza_test
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonoriza_test -d sonoriza_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sonoriza_test:sonoriza_test@127.0.0.1:5432/sonoriza_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Validate Prisma schema
+        run: npx prisma validate
+      - name: Apply migrations to disposable PostgreSQL
+        run: npx prisma migrate deploy
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Audiobook unit tests
+        run: npx tsx --test src/services/audiobooks/*.test.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Inventory static Spotify write entrypoints (review-required)
+        run: |
+          echo 'Potential direct transport and playlist mutation callers:'
+          git grep -l -E 'spotifyRequestAttempt|api\\.spotify\\.com|/playlists/.*/(items|tracks)|replacePlaylistItems|appendPlaylistItems|removePlaylistItems' -- src scripts 2>/dev/null || true
+
