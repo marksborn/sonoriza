@@ -901,6 +901,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
       where: { userId },
       orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
       include: {
+        audiobookOverlay: { select: { id: true, selectedChapterId: true } },
         targetScheduleRuns: {
           orderBy: { startedAt: "desc" },
           take: 1,
@@ -1366,6 +1367,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           >
                             {target.enabled ? "Ativa" : "Inativa"}
                           </span>
+                          {target.audiobookOverlay ? (
+                            <span className="inline-flex rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-black text-accent-400">
+                              Audiolivro protegido
+                            </span>
+                          ) : null}
                         </div>
                         <h3 className="mt-3 text-lg font-black text-ink-inverse">{target.name}</h3>
                         <p className="mt-1 text-sm leading-6 text-muted-inverse">
@@ -1472,7 +1478,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           <input type="hidden" name="enabled" value={String(!target.enabled)} />
                           <button
                             type="submit"
-                            className="inline-flex items-center rounded-full border border-line-dark/60 bg-surface-elevated/65 px-3 py-2 text-xs font-black text-ink-inverse transition hover:border-brand-400/45 hover:bg-surface-elevated"
+                            disabled={Boolean(target.audiobookOverlay) && !target.enabled}
+                            className="inline-flex items-center rounded-full border border-line-dark/60 bg-surface-elevated/65 px-3 py-2 text-xs font-black text-ink-inverse transition hover:border-brand-400/45 hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-30"
                           >
                             {target.enabled ? "Desativar" : "Ativar"}
                           </button>
@@ -1480,6 +1487,15 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                       </div>
                     </div>
 
+                    {target.audiobookOverlay ? (
+                      <div className="mt-4 space-y-2 rounded-2xl border border-accent/25 bg-accent/10 p-4 text-sm leading-6 text-ink-inverse">
+                        <p className="font-black">Configuração bloqueada por audiolivro</p>
+                        <p>Não é seguro trocar o destino ou suas regras enquanto o livro inteiro estiver associado. Você pode desativar o destino, sem apagar nada do Spotify.</p>
+                        <Link href="/dashboard/configuracao/audiolivros" className="text-accent-400 underline">
+                          Revisar capítulo e estado da playlist
+                        </Link>
+                      </div>
+                    ) : (
                     <details className="mt-4 rounded-2xl border border-line-dark/55 bg-surface-dark/60 p-4">
                       <summary className="cursor-pointer text-sm font-black text-ink-inverse">
                         Editar regras e destino
@@ -1564,6 +1580,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                         </div>
                       </div>
                     </details>
+                    )}
                   </article>
                 );
               })}
