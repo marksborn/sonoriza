@@ -167,8 +167,8 @@ export function AudiobookManualBindWizard({
       });
       setLinked(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Não foi possível criar o vínculo.");
       resetPreview();
+      setError(e instanceof Error ? e.message : "Não foi possível criar o vínculo.");
     } finally {
       setPending(false);
     }
