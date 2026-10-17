@@ -198,16 +198,19 @@ export function assessAudiobookManualHandoff(input: Readonly<{
   for (const key of budgetFields) {
     if (!nonNegativeInteger(shadow[key])) return block("CORRUPT_SHADOW_BUDGET");
   }
+  const shadowTotal = shadow.totalProjectedVirtualDurationMs as number;
+  const shadowChapter = shadow.virtualChapterDurationMs as number;
+  const shadowExtras = shadow.projectedExtraDurationMs as number;
+  const shadowRemaining = shadow.remainingBudgetMs as number;
+  const shadowLeftover = shadow.leftoverAfterProjectedExtrasMs as number;
   if (shadow.targetDurationMs !== virtual.targetDurationMs ||
       shadow.virtualChapterDurationMs !== virtual.effectivePlanningDurationMs ||
       shadow.remainingBudgetMs !== virtual.remainingPlanningDurationMs ||
       shadow.chapterDurationMs !== overlay.chapterDurationMs ||
       shadow.manualConsumedMs !== virtual.manualConsumedMs ||
-      shadow.totalProjectedVirtualDurationMs !==
-        shadow.virtualChapterDurationMs + shadow.projectedExtraDurationMs ||
-      shadow.remainingBudgetMs !==
-        shadow.projectedExtraDurationMs + shadow.leftoverAfterProjectedExtrasMs ||
-      shadow.totalProjectedVirtualDurationMs > shadow.targetDurationMs) {
+      shadowTotal !== shadowChapter + shadowExtras ||
+      shadowRemaining !== shadowExtras + shadowLeftover ||
+      shadowTotal > virtual.targetDurationMs) {
     return block("BUDGET_OR_PROGRESS_DRIFT");
   }
   if (!Array.isArray(shadow.projectedContentUris) ||
