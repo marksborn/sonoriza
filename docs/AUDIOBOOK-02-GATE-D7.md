@@ -25,10 +25,10 @@ Migration: `prisma/migrations/20261017190000_audiobook_d7_manual_notebook/migrat
 2. Repete cálculo puro do D.6 com o orçamento **lido do banco**, nunca com duração escolhida pelo cliente.
 3. Novo notebook exige `expectedRevision=0`; revisão inicial vira 1. Atualizar exige revisão exata, `updateMany` com CAS atômico e increment; stale/replay falha.
 4. Na MESMA transação, insere no histórico um snapshot para a nova revision. Erro em qualquer etapa desfaz toda a operação.
-5. GET só consulta dados do usuário e devolve últimas 50 revisões, nunca dados da conta Spotify.
+5. GET só consulta dados do usuário e devolve últimas 50 revisões, nunca dados da conta Spotify. Antes da transação de criação/edição, o notebook **adquire o mesmo lock de write fence** que o escritor de playlist utiliza. Escrita remota em andamento ou incerta bloqueia registro de nota; escritor remoto revalida existência de notas já sob lock.
 6. Exclusão inteira exige revisão atual e consentimento `EXCLUIR_CADERNO_MANUAL_E_HISTORICO`; não tem método de delete parcial nem alcance de outras contas.
 
-As restrições de provenance e budget são protegidas no SQL contra gravações acidentais/manuais que ignorem o serviço. O fluxo não tenta calcular orçamento em plano real, nem ativa a escrita de músicas do Spotify.
+As restrições de provenance e budget são protegidas no SQL contra gravações acidentais/manuais que ignorem o serviço. O fluxo não tenta calcular orçamento em plano real, nem ativa a escrita de músicas do Spotify. **Conservadoramente, a existência do notebook bloqueia geração real de qualquer lote que incluir sua playlist antes de escrever, e também barra chamadas diretas de playlist-items e mudanças de configuração de destino**. A anotação nunca é prova remota de presença do livro; é um aviso de risco para proteger a playlist.
 
 ## API
 
@@ -40,12 +40,13 @@ As restrições de provenance e budget são protegidas no SQL contra gravações
 
 ## Flags: TODAS OFF por padrão
 
-O endpoint e o botão de salvar só existem se três condições forem verdadeiras simultaneamente:
+O endpoint e o botão de salvar só existem se **quatro** condições forem verdadeiras simultaneamente:
 - `AUDIOBOOK02_BIND_UI_MODE=PREVIEW`
 - `AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE=PREVIEW`
 - `AUDIOBOOK02_MANUAL_NOTEBOOK_MODE=ACTIVE`
+- `AUDIOBOOK02_WRITE_FENCE_MODE=ACTIVE` — obrigatório para serializar gravação local e admissões de escritas remotas
 
-A flag de notebook é **independente** de `AUDIOBOOK02_BIND_MODE`, `AUDIOBOOK02_WRITE_FENCE_MODE` e `AUDIOBOOK02_PLANNER_MODE`; não as altera nem concede permissão de escrita Spotify. Não configurar em produção sem autorização expressa, nem rodar migrations no banco produtivo nesta fase.
+A flag de notebook **não exige ativar** `AUDIOBOOK02_BIND_MODE` nem `AUDIOBOOK02_PLANNER_MODE`. Contudo, **exige o write fence durável em ACTIVE**, e isso não concede permissão de escrita Spotify. O serviço cria/atualiza uma linha de fence local para serializar o registro do notebook com mutações remotas potencialmente concorrentes. Nunca ligar só a flag do notebook ignorando o fence. Não configurar em produção sem autorização expressa, nem rodar migrations no banco produtivo nesta fase.
 
 ## Interface
 
@@ -66,7 +67,7 @@ Quando flag de notebook OFF, a experiência D.6 conserva a mensagem “não salv
 - [x] UI opt-in com consentimento para salvar e para excluir.
 - [x] Testes unitários de payload, flag, SSR e write isolation.
 - [ ] CI migração em PostgreSQL descartável + validação real de create, update revision 2, histórico 2→1, acesso de outro usuário, concorrência obsoleta, constraints, imutabilidade e exclusão em cascata.
-- [ ] Typecheck completo e oito workflows herdados.
+- [ ] Typecheck completo e workflows herdados/relacionados (schema, geração, playlists).
 - [ ] Teste visual/browser Chrome e Android, contas Spotify reais, **não executados**.
 - [ ] Revisão, aprovação do deploy/migration/flags; **NÃO AUTORIZADOS**.
 
