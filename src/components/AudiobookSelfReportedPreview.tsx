@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { AudiobookManualAdvisory } from "@/components/AudiobookManualAdvisory";
+import { parseManualSpotifyShowReference } from "@/services/audiobooks/d10-manual-show-reference";
 import {
   formatManualDuration,
   formatUserDeclaredChapterNotes,
@@ -32,6 +33,7 @@ const fieldClass = "w-full rounded-xl border border-line-dark bg-surface-subtle 
 type StoredNotebook = Readonly<{
   revision: number;
   bookTitle: string;
+  spotifyShowUrl?: string | null;
   chapterLabel: string;
   chapterDurationMs: number;
   consumedMs: number;
@@ -58,6 +60,7 @@ export function AudiobookSelfReportedPreview({
 }>) {
   const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
   const [bookTitle, setBookTitle] = useState("");
+  const [spotifyShowUrl, setSpotifyShowUrl] = useState("");
   const [chapterLabel, setChapterLabel] = useState("");
   const [chapterSeconds, setChapterSeconds] = useState("");
   const [mode, setMode] = useState<"FULL_CHAPTER" | "MANUAL_REMAINDER">("FULL_CHAPTER");
@@ -98,6 +101,7 @@ export function AudiobookSelfReportedPreview({
           // Editing the current chapter should not force the user to type the
           // same book again; all values remain manually editable/unverified.
           setBookTitle(data.notebook.bookTitle);
+          setSpotifyShowUrl(data.notebook.spotifyShowUrl ?? "");
           setChapterLabel(data.notebook.chapterLabel);
           setChapterSeconds((data.notebook.chapterDurationMs / 1000).toFixed(3));
           setConsumedSeconds((data.notebook.consumedMs / 1000).toFixed(3));
@@ -156,7 +160,8 @@ export function AudiobookSelfReportedPreview({
   async function saveNotebook() {
     if (!notebookEnabled || notebookPending || !confirmedSave ||
         result?.status !== "READY_MANUAL_PREVIEW" || !selected ||
-        notebookError) return;
+        notebookError ||
+        (spotifyShowUrl.trim() && !parseManualSpotifyShowReference(spotifyShowUrl))) return;
     setNotebookPending(true);
     setNotebookSuccess("");
     setNotebookError("");
@@ -169,6 +174,7 @@ export function AudiobookSelfReportedPreview({
           targetPlaylistId: selected.id,
           expectedRevision: notebook?.revision ?? 0,
           bookTitle: result.bookTitle,
+          ...(spotifyShowUrl.trim() ? { spotifyShowUrl: spotifyShowUrl.trim() } : {}),
           chapterLabel: result.chapterLabel,
           chapterDurationMs: result.declaredChapterDurationMs,
           selection: mode === "FULL_CHAPTER"
@@ -264,6 +270,23 @@ export function AudiobookSelfReportedPreview({
           <input className={"mt-2 " + fieldClass} value={bookTitle} maxLength={120}
             placeholder="Ex.: 1984" onChange={event => change(() => setBookTitle(event.target.value))} />
         </label>
+        <label className="text-sm font-bold text-ink-inverse sm:col-span-2">
+          Referência do livro no Spotify (opcional, link /show/)
+          <input type="url" className={"mt-2 " + fieldClass} value={spotifyShowUrl}
+            maxLength={512}
+            placeholder="https://open.spotify.com/show/5E76EUAq7or1ncd4QNyHjI"
+            onChange={event => change(() => setSpotifyShowUrl(event.target.value))} />
+          <span className="mt-1 block text-xs font-normal text-muted-inverse">
+            Este link pode representar um livro narrado publicado como show.
+            Será guardado somente como referência informada por você;
+            não consultamos o catálogo nem deduzimos seus capítulos.
+          </span>
+          {spotifyShowUrl.trim() && !parseManualSpotifyShowReference(spotifyShowUrl)
+            ? <span role="alert" className="mt-1 block text-xs font-normal">
+                Informe um link HTTPS de show em open.spotify.com/show/... .
+              </span>
+            : null}
+        </label>
         <label className="text-sm font-bold text-ink-inverse">
           Capítulo (informado por você)
           <input className={"mt-2 " + fieldClass} value={chapterLabel} maxLength={120}
@@ -354,6 +377,10 @@ export function AudiobookSelfReportedPreview({
               Última anotação — revisão {notebook.revision}: {notebook.bookTitle} /
               {notebook.chapterLabel}, duração informada: {formatManualDuration(notebook.chapterDurationMs)},
               já ouvido: {formatManualDuration(notebook.consumedMs)}.
+              {notebook.spotifyShowUrl
+                ? <a href={notebook.spotifyShowUrl} target="_blank" rel="noopener noreferrer"
+                    className="mt-1 block underline">Abrir referência do livro no Spotify ↗</a>
+                : null}
             </p>
           ) : <p className="text-sm text-muted-inverse">Nenhuma anotação salva para este destino.</p>}
           {advisoryEnabled && notebook && selected ? (
