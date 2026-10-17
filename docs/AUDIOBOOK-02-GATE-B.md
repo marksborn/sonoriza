@@ -32,3 +32,32 @@ npm run typecheck
 ```
 
 Este Gate B permanece **PARCIAL**, mesmo que testes passem: ainda faltam fluxo seguro para criar vínculo manual, provas de concorrência e auditoria dos writers. Sem alterar Spotify, motor do planner nem regras existentes de música/podcast. A issue principal permanece aberta: [#489](https://github.com/marksborn/sonoriza/issues/489).
+
+ 
+## Gate B.2 — durable admission, default OFF
+
+**Status:** implementação experimental, sem endpoint de vínculo e **sem ativação da flag** `AUDIOBOOK02_WRITE_FENCE_MODE=ACTIVE`. Não fazer merge/deploy da migração sem aprovação.
+
+O problema do check simples era uma corrida (TOCTOU): a geração podia ler "sem overlay", e logo depois um usuário vincular o livro enquanto o write remoto ainda estava começando. A estratégia B.2 é persistente e usa linha única `TargetAudiobookWriteFence(userId, spotifyPlaylistId)` para serializar admissão:
+
+1. O writer em modo ACTIVE faz `upsert(activeWrites+1)` numa transação, que segura o row lock enquanto confirma ausência de overlay e de `reviewRequired`.
+2. Só após o COMMIT da reserva o writer chama o Spotify. A reserva fica **persistida**, não limitada à vida de um lock de memória ou ao tempo de uma transação externa.
+3. Ao completar a chamada com resultado conhecido, reduz `activeWrites`. Em erro ambíguo (WRITE_TIMEOUT, 502, falha de rede, 408 etc.) define `reviewRequired=true`, exigindo reconciliação **manual** antes de permitir futuro vínculo ou outras escritas quando o modo ACTIVE estiver ligado.
+4. O futuro fluxo de vínculo chama `withAudiobookOverlayBindAdmission`, que faz um `upsert` no **mesmo registro**, mantém o row lock, exige `activeWrites=0`, `reviewRequired=false`, verifica `TargetPlaylist(userId,id,spotifyPlaylistId)` e só então executa a criação do overlay **na própria transação**. A validação de catálogo/seleção/consentimento deve ocorrer no endpoint autenticado antes dessa transação; o endpoint ainda não existe.
+5. Reinício inesperado entre a reserva e a baixa pode deixar `activeWrites>0`; isto bloqueia o vínculo por segurança, **sem expiração automática**. Recuperação exige investigação/reconciliação e ação auditada futura, que NÃO está implementada.
+
+**Fronteiras e riscos ainda abertos:**
+
+- `AUDIOBOOK02_WRITE_FENCE_MODE` é OFF por padrão. O guard antigo continua com bloqueio para overlays existentes mesmo fora do modo ACTIVE. A interface de vínculo não está disponível; portanto ainda não é possível ao usuário proteger destinos automaticamente.
+- A estratégia intercepta somente `SpotifyClient.request`; pode existir transporte direto em scripts/runners/API alternativos. O workflow lista candidatos estáticos em `src`/`scripts`, mas essa busca **não constitui prova de cobertura universal**. É necessária revisão humana do inventário.
+- A associação e a solicitação ao Spotify devem usar a **mesma identidade usuário + playlist** em todas as rotas. Apenas validar o ID no preview não protege a playlist.
+- `reviewRequired` não é confirmação de alteração real; só registra **incerteza**, não transforma 502 em sucesso. Não inventar um procedimento automático de limpeza.
+- A base já pode conter um livro inserido manualmente **sem overlay**. Não executar gerador nesse destino até haver vínculo seguro.
+- Ainda sem validação real em conta Spotify, sem escrita externa autorizada, sem concluir a auditoria de writers.
+- Dependendo da latência/retry remoto, duas escritas simultâneas ficam contadas separadamente; o contador serve para proteger o vínculo, não para ordenar resultados entre writers.
+- O modo ACTIVE introduz consultas e escrita adicionais no banco para todos os destinos mutáveis. Avaliar performance, quota e política de retry antes de qualquer rollout.
+- O tratamento de falha de liberação da reserva é conservador: pode reter um registro pendente, e deverá existir ferramenta administrativa segura de reconciliação.
+
+**Testes adicionais:** `write-admission.test.ts` (ordem begin→Spotify→finish, desconhecido, 4xx, falha de liberação, usuário desconhecido), `write-admission-store.test.ts` (integração com PostgreSQL descartável, vincular durante escrita deve falhar, write após vínculo deve falhar, resultado incerto bloqueia, destino incorreto falha).
+
+**Atenção:** a proteção da concorrência é candidata técnica em revisão. Não considerar pronta para produção até validação do CI e implementação/autenticação da gravação de vínculos por usuário, e até confirmar ausência de bypass dos writers.
