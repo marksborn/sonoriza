@@ -78,3 +78,22 @@ export function mayChangeSecondPlaylistToPrivate(
     playlist.collaborative === false &&
     itemCollection?.total === 0;
 }
+
+/**
+ * Existing second-playlist chapter insertion preflight.
+ * Spotify's Web API public flag is NOT the same as the app's manual
+ * "Tornar particular" control. A separate explicit CLI opt-in records
+ * the user's manual app confirmation; do not infer privacy from this GET.
+ */
+export function mayInsertChapterIntoExistingSecondPlaylist(
+  raw: unknown, ownerId: string, playlistId: string,
+): boolean {
+  const p = asObject(raw);
+  const items = asObject(p?.items);
+  return playlistId === "1tsFauBmlMXWJLNKTCQFQE" &&
+    p?.id === playlistId &&
+    p.name === GATE1C.secondPrivatePlaylistName &&
+    profileId(p.owner) === ownerId &&
+    p.collaborative === false &&
+    items?.total === 0;
+}
