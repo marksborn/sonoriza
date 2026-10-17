@@ -88,6 +88,20 @@ export async function saveUserDeclaredAudiobookNotebook(
         !Number.isSafeInteger(target.fixedDurationSeconds * 1000)) {
       fail("UNSUPPORTED_TARGET");
     }
+    // Use the same durable per-playlist row lock as Spotify writer admission.
+    // If a provider mutation started first, activeWrites prevents declaring
+    // a protected notebook mid-flight. If this lock commits first, writer
+    // admission rechecks notebook existence before any provider mutation.
+    const fence = await tx.targetAudiobookWriteFence.upsert({
+      where: { userId_spotifyPlaylistId: {
+        userId: ownerId, spotifyPlaylistId: target.spotifyPlaylistId,
+      } },
+      create: { userId: ownerId, spotifyPlaylistId: target.spotifyPlaylistId },
+      update: { updatedAt: new Date() },
+    });
+    if (fence.activeWrites !== 0 || fence.reviewRequired) {
+      fail("WRITE_IN_FLIGHT_OR_UNCERTAIN");
+    }
     const calculated = previewUserDeclaredChapterDuration({
       targetDurationMs: target.fixedDurationSeconds * 1000,
       bookTitle: input.bookTitle,
