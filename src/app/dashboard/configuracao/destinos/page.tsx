@@ -13,6 +13,7 @@ import { TargetDiscoveryForm } from "@/components/TargetDiscoveryForm";
 import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { withAudiobookTargetSettingsAdmission } from "@/services/audiobooks/write-admission-store";
 import {
   parseSequencePattern,
   type ContentType,
@@ -369,6 +370,7 @@ async function saveTarget(formData: FormData) {
     ? await prisma.targetPlaylist.findFirst({
         where: { id, userId },
         include: {
+          audiobookOverlay: { select: { id: true } },
           sourceSelections: {
           select: { sourcePlaylistId: true },
         },
@@ -380,6 +382,9 @@ async function saveTarget(formData: FormData) {
     : null;
 
   if (id && !existingTarget) fail("invalid");
+  // Avoid even creating a new unused remote Spotify playlist if the destination
+  // is already bound to an opaque audiobook.
+  if (existingTarget?.audiobookOverlay) fail("audiobook-protected");
 
   // PODCAST-08 Gate 6: validate both JSON arrays as a unit. Older/stale
   // forms cannot silently discard non-ANY metadata while editing a target.
@@ -560,7 +565,12 @@ async function saveTarget(formData: FormData) {
   } as const;
 
   if (existingTarget) {
-    await prisma.$transaction(async (tx) => {
+    try {
+      await withAudiobookTargetSettingsAdmission({
+        userId,
+        targetPlaylistId: existingTarget.id,
+        expectedSpotifyPlaylistId: existingTarget.spotifyPlaylistId,
+      }, async tx => {
       await tx.targetPlaylist.update({
         where: { id: existingTarget.id },
         data,
@@ -596,7 +606,13 @@ async function saveTarget(formData: FormData) {
           })),
         });
       }
-    });
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("AUDIOBOOK_TARGET_CONFIG_BLOCKED_")) {
+        fail("audiobook-protected");
+      }
+      throw error;
+    }
   } else {
     const maxPriority = await prisma.targetPlaylist.aggregate({
       where: { userId },
@@ -676,7 +692,13 @@ async function toggleTarget(formData: FormData) {
   if (!id) fail("invalid");
 
   const result = await prisma.targetPlaylist.updateMany({
-    where: { id, userId: session.user.id },
+    // Disabling is safe; enabling an audiobook-bound destination requires
+    // separate reconciliation and cannot be approved through a legacy form.
+    where: {
+      id,
+      userId: session.user.id,
+      ...(enabled ? { audiobookOverlay: { is: null } } : {}),
+    },
     data: { enabled },
   });
   if (result.count !== 1) fail("invalid");
@@ -993,6 +1015,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
       ? "As faixas específicas ainda não estão habilitadas. Mantenha Qualquer duração até a ativação do piloto."
       : params.error === "podcast-bands"
       ? "As faixas de duração não correspondem aos passos da sequência. Recarregue a página e revise os podcasts antes de salvar."
+      : params.error === "audiobook-protected"
+        ? "Este destino possui um audiolivro vinculado. Para preservar o livro e o planejamento, as alterações completas estão bloqueadas. Você ainda pode desativar o destino."
       : params.error === "calendar"
       ? "Este destino ainda usa compatibilidade global. Habilite ao menos um calendário para duração no CONFIG-01 ou escolha um calendário próprio."
       : params.error === "calendar-selection"
