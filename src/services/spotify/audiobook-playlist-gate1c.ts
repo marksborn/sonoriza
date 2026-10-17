@@ -34,7 +34,7 @@ export function chapterEligible(value: unknown): boolean {
       asObject(restriction)?.reason === null ||
       asObject(restriction)?.reason === undefined);
 }
-export function playlistOwnedPrivate(value: unknown, ownerId: string, expectedName = GATE1C.playlistName): boolean {
+export function playlistOwnedPrivate(value: unknown, ownerId: string, expectedName: string = GATE1C.playlistName): boolean {
   const item = asObject(value);
   return safeId(item?.id) !== null &&
     item?.public === false &&
