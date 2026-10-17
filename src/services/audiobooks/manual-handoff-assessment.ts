@@ -114,10 +114,12 @@ function parseUri(uri: unknown): AudiobookD3Item | null {
 function findShadow(summary: unknown, targetId: string): Record<string, unknown> | null {
   if (!record(summary) || summary.simulate !== true ||
       summary.collectionComplete !== true || summary.inconclusive !== false ||
+      summary.qualityPassed !== false ||
       summary.audiobookGateDSimulationOnly !== true ||
       !record(summary.audiobookGateD)) return null;
   const gate = summary.audiobookGateD;
-  if (gate.mode !== "SHADOW" || gate.approvalEligible !== false ||
+  if (gate.mode !== "SHADOW" || gate.simulationOnly !== true ||
+      gate.approvalEligible !== false ||
       gate.plannerInfluence !== false || gate.spotifyWrites !== false ||
       !Array.isArray(gate.targets)) return null;
   const matches = gate.targets.filter((target: unknown) =>
@@ -148,6 +150,9 @@ export function assessAudiobookManualHandoff(input: Readonly<{
       run.userId !== userId || target.id !== overlay.targetPlaylistId ||
       !target.spotifyPlaylistId || overlay.spotifyPlaylistId !== target.spotifyPlaylistId) {
     return block("DESTINATION_OR_OWNER_MISMATCH");
+  }
+  if (overlay.selectionMode === "FULL_CHAPTER" && overlay.manualConsumedMs !== 0) {
+    return block("INVALID_CURRENT_CHAPTER_BUDGET");
   }
   if (target.durationMode !== "FIXED" || target.updatePolicy !== "MANUAL" ||
       target.compositionMode !== "PROPORTION" ||
