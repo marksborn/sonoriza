@@ -58,7 +58,7 @@ export async function POST(request: Request) {
     const decision = await probeSpotifyAudiobookAccountCapability({
       spotifyConnected: Boolean(linked),
       profileScopeGranted:
-        Boolean(linked?.scope?.split(/\\s+/).includes("user-read-private")),
+        Boolean(linked?.scope?.split(/\s+/).includes("user-read-private")),
       requestedAudiobookId: typeof body.spotifyAudiobookId === "string"
         ? body.spotifyAudiobookId
         : null,
