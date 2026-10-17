@@ -46,14 +46,14 @@ function spotifyId(input: string): string | null {
   const value = input.trim();
   if (/^[A-Za-z0-9]{22}$/.test(value)) return value;
   const uri = /^spotify:audiobook:([A-Za-z0-9]{22})$/.exec(value);
-  if (uri) return uri[1];
+  if (uri?.[1]) return uri[1];
   try {
     const url = new URL(value);
     if (url.protocol !== "https:" ||
       (url.hostname !== "open.spotify.com" && url.hostname !== "play.spotify.com")) return null;
     const parts = url.pathname.split("/").filter(Boolean);
-    if (parts.length === 2 && parts[0] === "audiobook" && /^[A-Za-z0-9]{22}$/.test(parts[1])) {
-      return parts[1];
+    if (parts.length === 2 && parts[0] === "audiobook" && /^[A-Za-z0-9]{22}$/.test(parts[1] ?? "")) {
+      return parts[1] ?? null;
     }
   } catch { /* Not a URL. */ }
   return null;
