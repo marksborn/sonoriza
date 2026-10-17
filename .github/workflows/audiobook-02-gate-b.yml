@@ -6,6 +6,9 @@ on:
     paths:
       - "src/services/audiobooks/**"
       - "src/app/api/audiobooks/**"
+      - "src/components/AudiobookManualBindWizard.tsx"
+      - "src/app/dashboard/configuracao/audiolivros/**"
+      - "src/app/dashboard/configuracao/page.tsx"
       - "src/services/spotify/client.ts"
       - "src/services/spotify/request.ts"
       - "src/services/spotify/music-ingestion.ts"
