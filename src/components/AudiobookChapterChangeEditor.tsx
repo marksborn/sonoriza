@@ -45,6 +45,34 @@ type Preview = Readonly<{
   manualSpotifyControlRequired: true;
 }>;
 type Updated = Preview & Readonly<{ revision: number }>;
+type ManualHandoffResult =
+  | Readonly<{
+      status: "BLOCKED";
+      reason: string;
+      spotifyWrites: false;
+      authorizedForAutomaticWrite: false;
+    }>
+  | Readonly<{
+      status: "MANUAL_HANDOFF_ONLY";
+      runId: string;
+      spotifyPlaylistUrl: string;
+      snapshotId: string;
+      virtualChapterDurationMs: number;
+      remainingBudgetMs: number;
+      extraDurationMs: number;
+      projectedTotalMs: number;
+      leftoverMs: number;
+      itemCount: number;
+      audiobookIdentityVerified: false;
+      spotifyWrites: false;
+      authorizedForAutomaticWrite: false;
+      items: readonly Readonly<{
+        uri: string;
+        spotifyUrl: string;
+        contentType: "MUSIC" | "PODCAST";
+      }>[];
+    }>;
+
 type RemoteObservation = Readonly<{
   status: "BOOK_ID_UNVERIFIABLE";
   snapshotId: string;
@@ -78,7 +106,12 @@ async function requestJson<T>(path: string, payload: Record<string, unknown>): P
 export function AudiobookChapterChangeEditor({
   overlay,
   changeEnabled,
-}: Readonly<{ overlay: ExistingAudiobookOverlay; changeEnabled: boolean }>) {
+  handoffPreviewEnabled,
+}: Readonly<{
+  overlay: ExistingAudiobookOverlay;
+  changeEnabled: boolean;
+  handoffPreviewEnabled: boolean;
+}>) {
   const [revision, setRevision] = useState(overlay.revision);
   const [currentChapterId, setCurrentChapterId] = useState(overlay.selectedChapterId);
   const [chapterId, setChapterId] = useState(overlay.selectedChapterId);
@@ -90,6 +123,7 @@ export function AudiobookChapterChangeEditor({
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [remoteEvidence, setRemoteEvidence] = useState<RemoteObservation | null>(null);
+  const [handoff, setHandoff] = useState<ManualHandoffResult | null>(null);
   const [previewInput, setPreviewInput] = useState<ChangeInput | null>(null);
   const [confirmed, setConfirmed] = useState(false);
 
@@ -124,6 +158,26 @@ export function AudiobookChapterChangeEditor({
       ));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Estado remoto indisponível.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function assessManualHandoff() {
+    if (pending || !handoffPreviewEnabled) return;
+    setPending(true);
+    setHandoff(null);
+    setError("");
+    try {
+      const result = await requestJson<ManualHandoffResult>(
+        "/api/audiobooks/manual-handoff", {
+          targetPlaylistId: overlay.targetPlaylistId,
+          expectedRevision: revision,
+        },
+      );
+      setHandoff(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Prévia manual indisponível.");
     } finally {
       setPending(false);
     }
@@ -182,6 +236,8 @@ export function AudiobookChapterChangeEditor({
         },
       );
       setRevision(result.revision);
+      setHandoff(null);
+      setRemoteEvidence(null);
       setCurrentChapterId(result.selectedChapterId);
       setChapterId(result.selectedChapterId);
       setMessage("Capítulo atualizado apenas no planejamento local. A reprodução e o capítulo no Spotify continuam sob seu controle.");
@@ -231,6 +287,58 @@ export function AudiobookChapterChangeEditor({
           </div>
         ) : null}
       </div>
+      {handoffPreviewEnabled ? (
+        <div className="space-y-3 rounded-2xl border border-line-dark/55 p-4">
+          <h3 className="font-bold text-ink-inverse">Gate D.3 · Lista para inclusão manual</h3>
+          <p className="text-sm leading-6 text-muted-inverse">
+            A partir de uma simulação SHADOW recente, confira músicas ou episódios
+            que poderiam completar o orçamento virtual. O Sonoriza não os enviará
+            ao Spotify e não pode comprovar qual dos itens opacos é o audiolivro.
+          </p>
+          <button type="button" className="secondary-button"
+            onClick={assessManualHandoff} disabled={pending}>
+            Avaliar lista manual da simulação
+          </button>
+          {handoff?.status === "BLOCKED" ? (
+            <p role="status" className="text-sm text-ink-inverse">
+              Lista não disponível: {handoff.reason}. Gere ou revise a simulação
+              e confira o livro no Spotify. Nenhum item foi adicionado.
+            </p>
+          ) : null}
+          {handoff?.status === "MANUAL_HANDOFF_ONLY" ? (
+            <div className="space-y-3 text-sm leading-6 text-ink-inverse" role="status">
+              <p>Capítulo virtual: {fmt(handoff.virtualChapterDurationMs)} ·
+                Músicas/episódios projetados: {fmt(handoff.extraDurationMs)} ·
+                Saldo: {fmt(handoff.leftoverMs)}.</p>
+              <p>Snapshot consultado: <code>{handoff.snapshotId}</code>.
+                Não é uma garantia de identidade ou preservação do audiolivro.</p>
+              <p className="font-bold">
+                Procedimento manual: abra a playlist no Spotify, confirme pessoalmente
+                que o livro inteiro está presente e mantenha-o intacto. Depois,
+                adicione individualmente os itens desejados e controle o capítulo
+                e a reprodução manualmente.
+              </p>
+              <a href={handoff.spotifyPlaylistUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-block text-accent-400 underline">
+                Abrir playlist no Spotify
+              </a>
+              <ol className="list-decimal space-y-2 pl-6">
+                {handoff.items.map(item => (
+                  <li key={item.uri}>
+                    <a href={item.spotifyUrl} target="_blank" rel="noopener noreferrer"
+                      className="text-accent-400 underline">
+                      {item.contentType === "MUSIC" ? "Música" : "Podcast"} · {item.uri}
+                    </a>
+                  </li>
+                ))}
+              </ol>
+              <p className="font-bold">
+                Nenhuma escrita automática foi autorizada ou realizada.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <button type="button" className="secondary-button"
         disabled={pending} onClick={load}>
         {pending ? "Consultando..." : "Consultar capítulos deste livro"}
