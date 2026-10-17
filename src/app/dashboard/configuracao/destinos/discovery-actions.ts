@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { withAudiobookTargetSettingsAdmission } from "@/services/audiobooks/write-admission-store";
 import { targetDiscoveryPolicyFromForm } from "@/services/music-discovery/target-discovery-form";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
@@ -42,14 +43,30 @@ export async function saveTargetDiscoveryPolicy(formData: FormData) {
     redirect(`${CONFIG_PATH}?error=discovery`);
   }
 
-  const result = await prisma.targetPlaylist.updateMany({
-    where: {
-      id: targetId,
-      userId: session.user.id,
-    },
-    data,
+  // Even "discovery only" policies affect the planned content; protect them
+  // with the same durable fence used when an audiobook is bound.
+  const existing = await prisma.targetPlaylist.findFirst({
+    where: { id: targetId, userId: session.user.id },
+    select: { id: true, spotifyPlaylistId: true },
   });
+  if (!existing) redirect(`${CONFIG_PATH}?error=invalid`);
 
+  let result;
+  try {
+    result = await withAudiobookTargetSettingsAdmission({
+      userId: session.user.id,
+      targetPlaylistId: targetId,
+      expectedSpotifyPlaylistId: existing.spotifyPlaylistId,
+    }, tx => tx.targetPlaylist.updateMany({
+      where: { id: targetId, userId: session.user.id },
+      data,
+    }));
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("AUDIOBOOK_TARGET_CONFIG_BLOCKED_")) {
+      redirect(`${CONFIG_PATH}?error=audiobook-protected`);
+    }
+    throw error;
+  }
   if (result.count !== 1) redirect(`${CONFIG_PATH}?error=invalid`);
 
   revalidatePath(CONFIG_PATH);
