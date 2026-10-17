@@ -1,0 +1,60 @@
+name: Audiobook Gate D.4 offline homologation validation
+
+on:
+  pull_request:
+    paths:
+      - "src/services/audiobooks/**"
+      - "src/services/playlist-planner/**"
+      - "src/app/api/audiobooks/**"
+      - "src/app/dashboard/configuracao/audiolivros/**"
+      - "src/components/AudiobookChapterChangeEditor.tsx"
+      - "docs/AUDIOBOOK-02-GATE-D4.md"
+      - ".github/workflows/audiobook-02-gate-d4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-offline-rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sonoriza_test
+          POSTGRES_PASSWORD: sonoriza_test
+          POSTGRES_DB: sonoriza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonoriza_test -d sonoriza_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sonoriza_test:sonoriza_test@127.0.0.1:5432/sonoriza_test
+      AUDIOBOOK02_BIND_MODE: "OFF"
+      AUDIOBOOK02_WRITE_FENCE_MODE: "OFF"
+      AUDIOBOOK02_BIND_UI_MODE: "OFF"
+      AUDIOBOOK02_CHAPTER_UPDATE_MODE: "OFF"
+      AUDIOBOOK02_PLANNER_MODE: "OFF"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Validate Prisma schema
+        run: npx prisma validate
+      - name: Apply all migrations to disposable PostgreSQL
+        run: npx prisma migrate deploy
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Gates A/B/C/D/D.2/D.3/D.4 tests including offline full-flow and SSR
+        run: npx tsx --test src/services/audiobooks/*.test.ts
+      - name: Typecheck full application
+        run: npm run typecheck
