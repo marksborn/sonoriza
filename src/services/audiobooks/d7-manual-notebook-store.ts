@@ -28,6 +28,7 @@ export type ManualNotebookView = Readonly<{
 export type ManualNotebookHistoryItem = Readonly<{
   revision: number;
   bookTitle: string;
+  spotifyShowUrl: string | null;
   chapterLabel: string;
   chapterDurationMs: number;
   consumedMs: number;
