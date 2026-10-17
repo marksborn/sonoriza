@@ -43,6 +43,18 @@ test("#489 B.3: remote IDs must be valid Spotify identifiers", () => {
   }
 });
 
+test("#489 B.3: fabricated remote playlist ID or chapter duration cannot enter bind request", () => {
+  for (const forged of [
+    { spotifyPlaylistId: "4kYizEAtQhFsrrwD3tFphP" },
+    { chapterDurationMs: 20_039 },
+    { providerDurationMs: 55_320_000 },
+  ]) {
+    assert.deepEqual(parseManualAudiobookBindRequest({ ...base, ...forged }), {
+      ok: false, code: "INVALID_BODY",
+    });
+  }
+});
+
 test("#489 B.3: progress must be declared explicitly in milliseconds", () => {
   assert.deepEqual(
     parseManualAudiobookBindRequest({
