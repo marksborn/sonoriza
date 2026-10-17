@@ -93,6 +93,23 @@ export async function withAudiobookOverlayBindAdmission<T>(
       select: { id: true },
     });
     if (!target) throw new Error("AUDIOBOOK_BIND_BLOCKED_TARGET_OWNERSHIP_OR_IDENTITY");
+    // Mutual exclusion with D.7. Notebook writes acquire THIS same fence row
+    // lock, so no manual note can appear between this check and the overlay
+    // creation callback. Also cover another target mapped to the same Spotify
+    // playlist; the fence belongs to that remote playlist, not only the target.
+    const manual = await tx.targetAudiobookManualNotebook.findFirst({
+      where: {
+        userId,
+        OR: [
+          { targetPlaylistId },
+          { target: { spotifyPlaylistId } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (manual) {
+      throw new Error("AUDIOBOOK_BIND_BLOCKED_USER_DECLARED_NOTEBOOK");
+    }
     return commit(tx);
   });
 }
