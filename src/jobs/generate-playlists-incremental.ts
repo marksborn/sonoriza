@@ -458,14 +458,32 @@ export async function generatePlaylists(
         revision: true,
       },
     });
-    if (!simulate && audiobookOverlays.length > 0) {
+    const manualNotebookTargets = await prisma.targetAudiobookManualNotebook.findMany({
+      where: {
+        userId,
+        target: {
+          spotifyPlaylistId: { in: targets.map(t => t.spotifyPlaylistId).filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          ) },
+        },
+      },
+      select: { targetPlaylistId: true },
+    });
+    // Conservative protection for user-declared (NOT verified) book notes.
+    // This is NOT validation, planner evidence or a write permit.
+    if (!simulate && (audiobookOverlays.length > 0 || manualNotebookTargets.length > 0)) {
       const error =
         "A geração real foi bloqueada antes de qualquer escrita Spotify: " +
-        "há um destino com audiolivro protegido e item remoto opaco. " +
-        "Use somente prévia; o Gate D não autoriza alterar essa playlist.";
+        "há um destino com vínculo de audiolivro ou caderno manual protegido. " +
+        "A presença do livro remoto não pode ser inferida; use somente prévia.";
       summary.audiobookGateD = {
         mode: "REAL_WRITE_BLOCKED",
-        targetIds: audiobookOverlays.map(overlay => overlay.targetPlaylistId),
+        targetIds: [
+          ...new Set([
+            ...audiobookOverlays.map(overlay => overlay.targetPlaylistId),
+            ...manualNotebookTargets.map(note => note.targetPlaylistId),
+          ]),
+        ],
         plannerInfluence: false,
         spotifyWrites: false,
         approvalEligible: false,
