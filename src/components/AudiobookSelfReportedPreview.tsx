@@ -49,10 +49,12 @@ type NotebookHistory = Readonly<{
 
 export function AudiobookSelfReportedPreview({
   targets, notebookEnabled = false, advisoryEnabled = false,
+  singleReadingEnabled = false,
 }: Readonly<{
   targets: readonly ManualTarget[];
   notebookEnabled?: boolean;
   advisoryEnabled?: boolean;
+  singleReadingEnabled?: boolean;
 }>) {
   const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
   const [bookTitle, setBookTitle] = useState("");
@@ -380,7 +382,7 @@ export function AudiobookSelfReportedPreview({
               </ol>
             </div>
           ) : null}
-          {notebook ? (
+          {notebook && !singleReadingEnabled ? (
             <div className="space-y-2 border-t border-line-dark pt-3">
               <label className="flex items-start gap-2 text-sm text-ink-inverse">
                 <input type="checkbox" checked={confirmedDelete}
