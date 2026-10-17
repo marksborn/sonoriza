@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AudiobookCapabilityInspector } from "@/components/AudiobookCapabilityInspector";
 
 import {
   assessSpotifyAudiobookAccountCapability,
@@ -209,4 +212,13 @@ test("#489 D.5: UI and route use owner-scoped account and read-only Spotify APIs
     assert.doesNotMatch(file,
       /appendPlaylistItems|replacePlaylistItems|removePlaylistItems|\.create\(|\.update\(|\.delete\(/);
   }
+});
+
+test("#489 D.5: preview SSR describes read-only diagnosis without provider-apply button", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(AudiobookCapabilityInspector, { audiobookId: bookId }),
+  );
+  assert.match(html, /Diagnosticar conta e catálogo/);
+  assert.match(html, /Não altera seus livros, a reprodução ou a playlist/);
+  assert.doesNotMatch(html, /Aplicar no Spotify/);
 });
