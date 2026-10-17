@@ -67,6 +67,7 @@ const summary = {
   audiobookGateDSimulationOnly: true,
   audiobookGateD: {
     mode: "SHADOW",
+    simulationOnly: true,
     plannerInfluence: false,
     spotifyWrites: false,
     approvalEligible: false,
