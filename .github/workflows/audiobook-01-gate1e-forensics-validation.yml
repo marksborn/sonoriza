@@ -1,0 +1,61 @@
+name: AUDIOBOOK-01 Gate 1E forensics validation
+
+on:
+  push:
+    branches:
+      - "spike/audiobook-01-gate1e-502-forensics-readonly"
+    paths:
+      - "src/services/spotify/audiobook-gate1e-forensics*"
+      - "scripts/inspect-audiobook-gate1e-502-readonly.ts"
+      - "docs/spikes/AUDIOBOOK-01-GATE1E-502.md"
+      - ".github/workflows/audiobook-01-gate1e-forensics-validation.yml"
+  pull_request:
+    paths:
+      - "src/services/spotify/audiobook-gate1e-forensics*"
+      - "scripts/inspect-audiobook-gate1e-502-readonly.ts"
+      - "docs/spikes/AUDIOBOOK-01-GATE1E-502.md"
+      - ".github/workflows/audiobook-01-gate1e-forensics-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_audiobook_gate1e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_audiobook_gate1e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_audiobook_gate1e?schema=public
+      AUTH_SECRET: audiobook-gate1e-ci-only
+      NEXTAUTH_SECRET: audiobook-gate1e-ci-only
+      AUTH_TRUST_HOST: "true"
+      AUTH_SPOTIFY_ID: test
+      AUTH_SPOTIFY_SECRET: test
+      AUTH_GOOGLE_ID: test
+      AUTH_GOOGLE_SECRET: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - run: npx prisma generate
+      - run: npx tsx --test src/services/spotify/audiobook-gate1e-forensics.test.ts
+      - run: npm run typecheck
+      - run: npm run build
