@@ -866,6 +866,7 @@ model TargetAudiobookManualNotebook {
   userId           String
   targetPlaylistId String   @unique
   revision         Int      @default(0)
+  spotifyShowId     String?  @db.VarChar(22) // USER_DECLARED_UNVERIFIED /show reference
   bookTitle        String   @db.VarChar(120)
   chapterLabel     String   @db.VarChar(120)
   chapterDurationMs Int
@@ -890,6 +891,7 @@ model TargetAudiobookManualEntry {
   userId            String
   notebookId        String
   revision          Int
+  spotifyShowId     String?  @db.VarChar(22) // USER_DECLARED_UNVERIFIED /show reference
   bookTitle         String   @db.VarChar(120)
   chapterLabel      String   @db.VarChar(120)
   chapterDurationMs Int
@@ -914,6 +916,7 @@ model UserAudiobookCompletedReading {
   originalNotebookId  String   @unique
   targetPlaylistId    String
   spotifyPlaylistId   String
+  spotifyShowId     String?  @db.VarChar(22) // USER_DECLARED_UNVERIFIED /show reference
   bookTitle           String   @db.VarChar(120)
   finalRevision       Int
   evidenceSource      String   @default("USER_DECLARED_UNVERIFIED") @db.VarChar(40)
@@ -930,6 +933,7 @@ model UserAudiobookCompletedChapter {
   id                String   @id @default(cuid())
   readingId         String
   revision          Int
+  spotifyShowId     String?  @db.VarChar(22) // USER_DECLARED_UNVERIFIED /show reference
   bookTitle         String   @db.VarChar(120)
   chapterLabel      String   @db.VarChar(120)
   chapterDurationMs Int
