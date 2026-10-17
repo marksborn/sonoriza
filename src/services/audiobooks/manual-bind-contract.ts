@@ -29,6 +29,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function parseManualAudiobookBindRequest(raw: unknown): BindValidation {
   if (!isRecord(raw)) return { ok: false, code: "INVALID_BODY" };
+  const allowedFields = new Set([
+    "targetPlaylistId", "spotifyAudiobookId", "selectedChapterId",
+    "selection", "confirmation",
+  ]);
+  if (Object.keys(raw).some(field => !allowedFields.has(field))) {
+    return { ok: false, code: "INVALID_BODY" };
+  }
   if (typeof raw.targetPlaylistId !== "string" || !/^[A-Za-z0-9_-]{4,80}$/.test(raw.targetPlaylistId)) {
     return { ok: false, code: "INVALID_TARGET_ID" };
   }
