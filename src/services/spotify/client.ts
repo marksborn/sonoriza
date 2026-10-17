@@ -3,6 +3,9 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { Candidate } from "@/services/playlist-planner";
 import { assertAudiobookPlaylistMutationAllowed } from "@/services/audiobooks/playlist-write-guard";
+import { parseSpotifyPlaylistItemsMutation } from "@/services/audiobooks/playlist-write-guard";
+import { withAudiobookWriteAdmission } from "@/services/audiobooks/write-admission";
+import { prismaAudiobookWriteFenceStore } from "@/services/audiobooks/write-admission-store";
 
 import {
   inferSpotifyOperation,
@@ -185,6 +188,25 @@ export class SpotifyClient {
             return overlay !== null;
           },
         );
+        // Dormant until explicitly approved. The first phase's read-only
+        // guard remains active even if the gate is disabled after migration.
+        // ACTIVE serializes remote writes against manual audiobook linking.
+        if (
+          process.env.AUDIOBOOK02_WRITE_FENCE_MODE === "ACTIVE" &&
+          parseSpotifyPlaylistItemsMutation(path, method)
+        ) {
+          return await withAudiobookWriteAdmission(
+            { userId: this.userId, path, method },
+            prismaAudiobookWriteFenceStore,
+            () => spotifyRequestAttempt<T>({
+              accessToken: this.accessToken,
+              path,
+              method,
+              operation,
+              init,
+            }),
+          );
+        }
         return await spotifyRequestAttempt<T>({
           accessToken: this.accessToken,
           path,
