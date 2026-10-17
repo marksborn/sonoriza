@@ -1,12 +1,9 @@
 /** AUDIOBOOK-02 D.8: read-only, separately flagged advisory route. */
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
 import { manualAudiobookOriginAllowed } from "@/services/audiobooks/manual-bind-contract";
 import { manualNotebookEnabled } from "@/services/audiobooks/d7-manual-notebook-contract";
-import {
-  projectUserDeclaredAudiobookAdvisory,
-} from "@/services/audiobooks/d8-manual-advisory-shadow";
+import { readManualAdvisoryForOwner } from "@/services/audiobooks/d8-manual-advisory-store";
 
 export const dynamic = "force-dynamic";
 const noStore = { "Cache-Control": "no-store" };
@@ -80,41 +77,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ code: "INVALID_BODY" }, { status: 400, headers: noStore });
   }
   try {
-    // Single owner-scoped snapshot: no file/user/provider writes, and no real
-    // GenerationRun or API client instance is ever created.
-    const notebook = await prisma.targetAudiobookManualNotebook.findFirst({
-      where: {
-        targetPlaylistId: payload.targetPlaylistId,
-        userId: session.user.id,
-      },
-      include: {
-        target: {
-          select: {
-            id: true, userId: true, spotifyPlaylistId: true,
-            durationMode: true, fixedDurationSeconds: true,
-            compositionMode: true, updatePolicy: true,
-            podcastPercent: true,
-            audiobookOverlay: { select: { id: true } },
-          },
-        },
-      },
-    });
-    if (!notebook) {
-      return NextResponse.json({ status: "ABSTAIN", reason: "NOTEBOOK_NOT_FOUND_OR_FOREIGN",
-        plannerInfluence: false, spotifyWrites: false, approvalEligible: false },
-      { status: 404, headers: noStore });
-    }
-    const result = projectUserDeclaredAudiobookAdvisory({
+    const result = await readManualAdvisoryForOwner({
       ownerId: session.user.id,
+      targetPlaylistId: payload.targetPlaylistId,
       expectedRevision: payload.expectedRevision,
-      notebook,
-      target: {
-        ...notebook.target,
-        hasVerifiedOverlay: notebook.target.audiobookOverlay !== null,
-      },
       sampleMusicDurationsMs: payload.sampleMusicDurationsMs,
       samplePodcastDurationsMs: payload.samplePodcastDurationsMs,
     });
+    if (!result) {
+      return NextResponse.json({
+        status: "ABSTAIN", reason: "NOTEBOOK_NOT_FOUND_OR_FOREIGN",
+        plannerInfluence: false, spotifyWrites: false, approvalEligible: false,
+      }, { status: 404, headers: noStore });
+    }
     return NextResponse.json(result, {
       status: result.status === "ABSTAIN" ? 409 : 200,
       headers: noStore,
