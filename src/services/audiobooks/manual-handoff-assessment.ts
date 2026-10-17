@@ -127,6 +127,14 @@ function findShadow(summary: unknown, targetId: string): Record<string, unknown>
   return matches[0];
 }
 
+/** Used only to find recent shadow evidence; returns no write permission. */
+export function hasAudiobookManualHandoffShadow(
+  summary: unknown,
+  targetId: string,
+): boolean {
+  return findShadow(summary, targetId) !== null;
+}
+
 export function assessAudiobookManualHandoff(input: Readonly<{
   userId: string;
   target: AudiobookD3Target;
