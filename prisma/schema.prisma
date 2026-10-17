@@ -32,6 +32,7 @@ model User {
   sourcePlaylists                  SourcePlaylist[]
   targetPlaylists                  TargetPlaylist[]
   audiobookOverlays                TargetAudiobookOverlay[]
+  audiobookWriteFences             TargetAudiobookWriteFence[]
   podcastDurationBandSettings      PodcastDurationBandSettings?
   generationRuns                   GenerationRun[]
   musicPlaybackPolicy              MusicPlaybackPolicy?
@@ -828,6 +829,20 @@ model TargetAudiobookOverlay {
   // Prisma requires uniqueness of all referencing fields for composite 1:1.
   @@unique([userId, targetPlaylistId])
   @@index([userId, spotifyAudiobookId])
+}
+
+// AUDIOBOOK-02 Gate B.2: durable write admission/ambiguity fence.
+// A stale in-flight write is intentionally fail-closed until manual reconciliation.
+model TargetAudiobookWriteFence {
+  userId             String   // Sonoriza account owner
+  spotifyPlaylistId  String   // exact provider destination ID
+  activeWrites       Int      @default(0)
+  reviewRequired     Boolean  @default(false)
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, spotifyPlaylistId])
 }
 
 // PODCAST-08 Gate 3: dormant per-user global thresholds. No runtime planner
