@@ -75,7 +75,7 @@ export async function loadAudiobookChapterList(
         id: raw.id,
         name: raw.name.trim(),
         durationMs: raw.duration_ms,
-        playable: raw.is_playable !== false && !Boolean(raw.restrictions?.reason),
+        playable: raw.is_playable === true && !Boolean(raw.restrictions?.reason),
       });
     }
     if (chapters.length >= total) break;
