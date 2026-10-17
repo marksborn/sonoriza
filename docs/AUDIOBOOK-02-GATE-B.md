@@ -61,3 +61,19 @@ O problema do check simples era uma corrida (TOCTOU): a geração podia ler "sem
 **Testes adicionais:** `write-admission.test.ts` (ordem begin→Spotify→finish, desconhecido, 4xx, falha de liberação, usuário desconhecido), `write-admission-store.test.ts` (integração com PostgreSQL descartável, vincular durante escrita deve falhar, write após vínculo deve falhar, resultado incerto bloqueia, destino incorreto falha).
 
 **Atenção:** a proteção da concorrência é candidata técnica em revisão. Não considerar pronta para produção até validação do CI e implementação/autenticação da gravação de vínculos por usuário, e até confirmar ausência de bypass dos writers.
+
+
+## Auditoria de transportes legados — Gate B.2
+
+O inventário estático executado em CI inicialmente encontrou chamadas ao cliente e transportes alternativos:
+
+- `src/jobs/generate-playlists-incremental.ts`: geração manual/agendada usa `SpotifyClient`, já protegida na camada compartilhada de request.
+- `src/services/album-discovery/queue-operation.ts`: usa `writer.appendPlaylistItems` (via `SpotifyClient`), sem novo bypass identificado.
+- `src/services/spotify/music-ingestion.ts`: **POST direto** em `/playlists/{id}/items`, não usava `SpotifyClient` nem `spotifyRequestAttempt`. O POST foi envolvido em `guardedSpotifyPlaylistWrite` com o userId original.
+- `src/services/spotify/source-cleanup.ts`: **dois DELETEs diretos** em `/playlists/{id}/items` (limpeza manual e periódica). Ambos passaram a usar o mesmo guard.
+- `src/services/spotify/album-catalog.ts`, `catalog-search.ts`, `incremental-reader.ts`, `recently-played.ts`: usam transporte comum `spotifyRequestAttempt` e devem ser revisados quanto a método/path; em ACTIVE, novas escritas diretas em `/items` ou `/tracks` são negadas sem token de admissão.
+- `src/services/spotify/album-queue-preview.ts` tem leitura `GET`, não um write de playlist.
+
+O guard geral já intercepta `/playlists/{id}/items` e a forma legada `/playlists/{id}/tracks`. A revisão de grep é uma fotografia: chamadas HTTP construídas dinamicamente, fluxos externos, scripts de experimentos ainda em Draft, código fora de `src`/`scripts` e outros providers não podem ser declarados cobertos só por essa busca.
+
+**Importante:** testes automatizados e grep não substituem auditoria de identidade, per-user authorization ou do momento da mutação. O Gate B.2 permanece **não ativado** enquanto não existir registro confirmado de audiobook, avaliação da política de reconciliação de write ambíguo e teste completo do CI atual.
