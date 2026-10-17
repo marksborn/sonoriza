@@ -94,6 +94,16 @@ export function AudiobookSelfReportedPreview({
       if (!controller.signal.aborted) {
         setNotebook(data.notebook);
         setHistory(data.history);
+        if (singleReadingEnabled && data.notebook) {
+          // Editing the current chapter should not force the user to type the
+          // same book again; all values remain manually editable/unverified.
+          setBookTitle(data.notebook.bookTitle);
+          setChapterLabel(data.notebook.chapterLabel);
+          setChapterSeconds((data.notebook.chapterDurationMs / 1000).toFixed(3));
+          setConsumedSeconds((data.notebook.consumedMs / 1000).toFixed(3));
+          setMode(data.notebook.consumedMs > 0
+            ? "MANUAL_REMAINDER" : "FULL_CHAPTER");
+        }
       }
     }).catch(() => {
       if (!controller.signal.aborted) {
@@ -101,7 +111,7 @@ export function AudiobookSelfReportedPreview({
       }
     });
     return () => controller.abort();
-  }, [notebookEnabled, targetId]);
+  }, [notebookEnabled, singleReadingEnabled, targetId]);
 
   const selected = targets.find(target => target.id === targetId);
   const chapterMs = parseManualSecondsToMs(chapterSeconds);
