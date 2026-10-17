@@ -36,6 +36,7 @@ model User {
   audiobookChapterChanges          TargetAudiobookChapterChange[]
   audiobookManualNotebooks          TargetAudiobookManualNotebook[]
   audiobookManualEntries            TargetAudiobookManualEntry[]
+  audiobookCompletedReadings        UserAudiobookCompletedReading[]
   podcastDurationBandSettings      PodcastDurationBandSettings?
   generationRuns                   GenerationRun[]
   musicPlaybackPolicy              MusicPlaybackPolicy?
@@ -902,6 +903,44 @@ model TargetAudiobookManualEntry {
 
   @@unique([notebookId, revision])
   @@index([userId, createdAt])
+}
+
+// AUDIOBOOK-02 D.9.2: immutable book-completion archive, independent from the
+// active notebook and target lifecycle. Full chapter revisions are copied before
+// the D.7 notebook is removed; archive rows keep the Spotify write fence closed.
+model UserAudiobookCompletedReading {
+  id                  String   @id @default(cuid())
+  userId              String
+  originalNotebookId  String   @unique
+  targetPlaylistId    String
+  spotifyPlaylistId   String
+  bookTitle           String   @db.VarChar(120)
+  finalRevision       Int
+  evidenceSource      String   @default("USER_DECLARED_UNVERIFIED") @db.VarChar(40)
+  completedAt         DateTime @default(now())
+
+  user    User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries UserAudiobookCompletedChapter[]
+
+  @@index([userId, completedAt])
+  @@index([userId, spotifyPlaylistId])
+}
+
+model UserAudiobookCompletedChapter {
+  id                String   @id @default(cuid())
+  readingId         String
+  revision          Int
+  bookTitle         String   @db.VarChar(120)
+  chapterLabel      String   @db.VarChar(120)
+  chapterDurationMs Int
+  consumedMs        Int
+  targetDurationMs  Int
+  evidenceSource    String   @default("USER_DECLARED_UNVERIFIED") @db.VarChar(40)
+  recordedAt        DateTime
+
+  reading UserAudiobookCompletedReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
+
+  @@unique([readingId, revision])
 }
 
 // AUDIOBOOK-02 Gate B.2: durable write admission/ambiguity fence.
