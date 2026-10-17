@@ -10,6 +10,7 @@ on:
       - "scripts/inspect-audiobook-test-playlist.ts"
       - "scripts/inspect-audiobook-second-playlist.ts"
       - "scripts/repair-audiobook-second-playlist-privacy.ts"
+      - "scripts/probe-audiobook-existing-second-playlist-chapter.ts"
       - ".github/workflows/audiobook-01-gate1c-validation.yml"
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - "scripts/inspect-audiobook-test-playlist.ts"
       - "scripts/inspect-audiobook-second-playlist.ts"
       - "scripts/repair-audiobook-second-playlist-privacy.ts"
+      - "scripts/probe-audiobook-existing-second-playlist-chapter.ts"
       - ".github/workflows/audiobook-01-gate1c-validation.yml"
 
 permissions:
