@@ -1491,9 +1491,11 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                       <div className="mt-4 space-y-2 rounded-2xl border border-accent/25 bg-accent/10 p-4 text-sm leading-6 text-ink-inverse">
                         <p className="font-black">Configuração bloqueada por audiolivro</p>
                         <p>Não é seguro trocar o destino ou suas regras enquanto o livro inteiro estiver associado. Você pode desativar o destino, sem apagar nada do Spotify.</p>
-                        <Link href="/dashboard/configuracao/audiolivros" className="text-accent-400 underline">
-                          Revisar capítulo e estado da playlist
-                        </Link>
+                        {process.env.AUDIOBOOK02_BIND_UI_MODE === "PREVIEW" ? (
+                          <Link href="/dashboard/configuracao/audiolivros" className="text-accent-400 underline">
+                            Revisar capítulo e estado da playlist
+                          </Link>
+                        ) : null}
                       </div>
                     ) : (
                     <details className="mt-4 rounded-2xl border border-line-dark/55 bg-surface-dark/60 p-4">
