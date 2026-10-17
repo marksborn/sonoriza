@@ -212,5 +212,8 @@ test("#489 D.2: all main configuration write paths are fenced", async () => {
   assert.match(page, /withAudiobookTargetSettingsAdmission/);
   assert.match(page, /existingTarget\?\.audiobookOverlay/);
   assert.match(page, /audiobook-protected/);
+  assert.match(page, /Audiolivro protegido/);
+  assert.match(page, /Configuração bloqueada por audiolivro/);
+  assert.match(page, /AUDIOBOOK02_BIND_UI_MODE/);
   assert.match(discovery, /withAudiobookTargetSettingsAdmission/);
 });
