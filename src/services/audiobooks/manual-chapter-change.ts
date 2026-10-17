@@ -109,7 +109,7 @@ export async function previewManualChapterChange(
   };
 }
 
-export type ManualChapterChangeResult = ManualChapterChangePreview & Readonly<{
+export type ManualChapterChangeResult = Omit<ManualChapterChangePreview, "status"> & Readonly<{
   status: "UPDATED_LOCAL_ONLY";
   revision: number;
 }>;
