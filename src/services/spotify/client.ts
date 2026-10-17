@@ -193,7 +193,14 @@ export class SpotifyClient {
               where: { userId, target: { spotifyPlaylistId } },
               select: { id: true },
             });
-            return note !== null;
+            if (note) return true;
+            // D.9.2: an archived reading remains a durable remote no-write
+            // marker even when rollout flags are later disabled. Completion
+            // is local and never proves the opaque Spotify item was removed.
+            const archived = await prisma.userAudiobookCompletedReading.findFirst({
+              where: { userId, spotifyPlaylistId }, select: { id: true },
+            });
+            return archived !== null;
           },
         );
         // Dormant until explicitly approved. The first phase's read-only
