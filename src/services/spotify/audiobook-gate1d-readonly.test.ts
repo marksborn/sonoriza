@@ -71,3 +71,52 @@ test("hypothesis classification never asserts playlist support", () => {
   assert.equal(gate1dHypothesis("episode", 200, "episode", "episode"),
     "INCONCLUSIVE_READ_ONLY_SHAPES");
 });
+
+
+test("live-observed audiobook chapter has dual endpoint representations with identical URI", () => {
+  // Gate 1D, 16/10/2026, Brazil OAuth: sanitized observations, no API calls.
+  const asChapter = contentShape({
+    id: GATE1D.chapterId,
+    uri: GATE1D.chapterUri,
+    type: "chapter",
+    is_playable: true,
+    audiobook: { id: GATE1D.bookId, type: "audiobook" },
+  }, GATE1D.chapterId);
+  const asEpisode = contentShape({
+    id: GATE1D.chapterId,
+    uri: GATE1D.chapterUri,
+    type: "episode",
+    is_playable: true,
+    show: { type: "show" },
+  }, GATE1D.chapterId);
+  assert.equal(asChapter.idMatches, true);
+  assert.equal(asEpisode.idMatches, true);
+  assert.equal(asChapter.uriMatches, true);
+  assert.equal(asEpisode.uriMatches, true);
+  assert.equal(asChapter.type, "chapter");
+  assert.equal(asChapter.hasAudiobook, true);
+  assert.equal(asChapter.hasShow, false);
+  assert.equal(asEpisode.type, "episode");
+  assert.equal(asEpisode.hasAudiobook, false);
+  assert.equal(asEpisode.hasShow, true);
+  assert.equal(asEpisode.showType, "show");
+  assert.equal(gate1dHypothesis(asChapter.type, 200, asEpisode.type, "episode"),
+    "BOTH_ENDPOINTS_RESOLVE_ID_BUT_PLAYLIST_COMPATIBILITY_UNPROVEN");
+});
+
+test("live-observed playlists: control episode persists, manually added full audiobook opaque", () => {
+  const ordinaryControl = playlistItemsShape({
+    total: 1,
+    items: [{ item: { uri: GATE1D.controlEpisodeUri, type: "episode" } }],
+  }, GATE1D.chapterUri, GATE1D.controlEpisodeUri);
+  const manualBook = playlistItemsShape({
+    total: 1, items: [{ item: null }],
+  }, GATE1D.chapterUri, GATE1D.controlEpisodeUri);
+  assert.equal(ordinaryControl.total, 1);
+  assert.equal(ordinaryControl.controlEpisodeUriMatches, 1);
+  assert.equal(ordinaryControl.opaqueCount, 0);
+  assert.equal(manualBook.total, 1);
+  assert.equal(manualBook.opaqueCount, 1);
+  assert.equal(manualBook.chapterUriMatches, 0);
+  // 0 observable chapter URIs does NOT imply the full book item is absent.
+});
