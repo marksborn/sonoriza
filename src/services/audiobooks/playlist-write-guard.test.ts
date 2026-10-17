@@ -96,6 +96,24 @@ test("#489 Gate B: user identity is mandatory for playlist mutations", async () 
   }
 });
 
+test("#489 Gate B: legacy synthetic playlist IDs with hyphens remain checkable", async () => {
+  const fixtureId = "playlist-target-0-123456-abcdef";
+  const path = `/playlists/${fixtureId}/items`;
+  assert.deepEqual(parseSpotifyPlaylistItemsMutation(path, "PUT"), {
+    spotifyPlaylistId: fixtureId,
+    method: "PUT",
+  });
+  let observed = "";
+  await assert.doesNotReject(() => assertAudiobookPlaylistMutationAllowed(
+    { userId: "fixture-owner", path, method: "PUT" },
+    async (_userId, playlistId) => {
+      observed = playlistId;
+      return false;
+    },
+  ));
+  assert.equal(observed, fixtureId);
+});
+
 test("#489 Gate B: malformed playlist IDs never bypass guard", () => {
   assert.throws(
     () => parseSpotifyPlaylistItemsMutation("/playlists/%20/items", "PUT"),
