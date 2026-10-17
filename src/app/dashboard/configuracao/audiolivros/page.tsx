@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { AudiobookManualBindWizard } from "@/components/AudiobookManualBindWizard";
 import { AudiobookChapterChangeEditor } from "@/components/AudiobookChapterChangeEditor";
+import { AudiobookSelfReportedPreview } from "@/components/AudiobookSelfReportedPreview";
 import { audiobookChapterUpdateEnabled } from "@/services/audiobooks/manual-chapter-change-contract";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
@@ -105,6 +106,11 @@ export default async function AudiobookConfigurationPage() {
           targets={targets}
           bindingEnabled={audiobookBindEnabled(process.env)}
         />
+        {process.env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" ? (
+          <section className="mt-10">
+            <AudiobookSelfReportedPreview targets={targets} />
+          </section>
+        ) : null}
         {updateCandidates.length ? (
           <section className="mt-10 space-y-5">
             <div>
