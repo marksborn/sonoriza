@@ -6,11 +6,14 @@
  *
  * Allowed: <= 5 Spotify GETs, <= 1 Spotify POST to exact fixed playlist.
  * Never create, delete, rename, change visibility, remove items or play.
- * No OAuth refresh, no retries of Spotify writes. Do not run twice after POST.
+ * OAuth refresh is available ONLY through explicit --allow-token-refresh opt-in
+ * and may update Account OAuth credential fields in the database.
+ * No retries of Spotify writes. Do not run twice after POST.
  */
 import { prisma } from "@/lib/prisma";
 import { assertSpotifyBackoffInactive } from "@/services/spotify/backoff";
 import { SpotifyApiError } from "@/services/spotify/errors";
+import { getSpotifyAccessToken } from "@/services/spotify/token";
 import { spotifyRequestAttempt } from "@/services/spotify/request";
 import {
   GATE1C, asObject, profileId, chapterEligible, containsChapter,
@@ -29,6 +32,7 @@ function boolStatus(value: unknown): string {
   return value === true ? "true" : value === false ? "false" : value === null ? "null" : "absent_or_other";
 }
 async function main(): Promise<void> {
+  const allowTokenRefresh = process.argv.includes("--allow-token-refresh");
   const report: Record<string, unknown> = {
     gate: "AUDIOBOOK-01/1C_EXISTING_SECOND_CHAPTER_WRITE",
     outcome: "NOT_STARTED",
@@ -42,7 +46,7 @@ async function main(): Promise<void> {
     spotifyPlaylistCreates: 0,
     spotifyOtherPlaylistWrites: 0,
     spotifyPlayerCommands: 0,
-    oauthRefresh: false,
+    oauthRefresh: allowTokenRefresh,
     appPrivateUserConfirmed: false,
     noAutomaticWriteRetries: true,
   };
@@ -87,11 +91,17 @@ async function main(): Promise<void> {
       report.outcome = "PRIVATE_PLAYLIST_SCOPES_MISSING";
       return;
     }
-    if (!account.expires_at || account.expires_at <= Math.floor(Date.now() / 1000) + 60) {
+    const tokenExpiresSoon = !account.expires_at ||
+      account.expires_at <= Math.floor(Date.now() / 1000) + 60;
+    if (tokenExpiresSoon && !allowTokenRefresh) {
       report.outcome = "TOKEN_EXPIRED_NO_REFRESH";
       return;
     }
-    const token = account.access_token;
+    // This is the ONLY OAuth credential mutation permitted by this probe.
+    // It is opt-in and occurs before ANY Spotify playlist write.
+    const token = tokenExpiresSoon
+      ? await getSpotifyAccessToken(user.id)
+      : account.access_token;
     if (!token) { report.outcome = "NO_ACCESS_TOKEN"; return; }
 
     const me = asObject(await read<unknown>("/me", token));
