@@ -11,6 +11,8 @@ on:
       - "scripts/inspect-audiobook-second-playlist.ts"
       - "scripts/repair-audiobook-second-playlist-privacy.ts"
       - "scripts/probe-audiobook-existing-second-playlist-chapter.ts"
+      - "scripts/probe-podcast-control-gate1c.ts"
+      - "src/services/spotify/podcast-control-gate1c*"
       - ".github/workflows/audiobook-01-gate1c-validation.yml"
   pull_request:
     paths:
@@ -20,6 +22,8 @@ on:
       - "scripts/inspect-audiobook-second-playlist.ts"
       - "scripts/repair-audiobook-second-playlist-privacy.ts"
       - "scripts/probe-audiobook-existing-second-playlist-chapter.ts"
+      - "scripts/probe-podcast-control-gate1c.ts"
+      - "src/services/spotify/podcast-control-gate1c*"
       - ".github/workflows/audiobook-01-gate1c-validation.yml"
 
 permissions:
@@ -63,5 +67,6 @@ jobs:
       - run: npx prisma migrate deploy
       - run: npx prisma generate
       - run: npx tsx --test src/services/spotify/audiobook-playlist-gate1c.test.ts
+      - run: npx tsx --test src/services/spotify/podcast-control-gate1c.test.ts
       - run: npm run typecheck
       - run: npm run build
