@@ -173,7 +173,10 @@ test("#489 D.4: controlled fixture exercises catalogue → verified chapter → 
   assert.equal(result.remoteAudiobookIdentityVerified, false);
   assert.equal(result.productionApproved, false);
   assert.equal(result.spotifyWrites, false);
+  // The catalogue and ownership validators intentionally perform separate
+  // GETs for the same book; this is correct and does not imply mutation.
   assert.deepEqual(reader.paths.sort(), [
+    "/audiobooks/" + bookId,
     "/audiobooks/" + bookId,
     "/audiobooks/" + bookId + "/chapters?limit=50&offset=0",
     "/chapters/" + chapterId,
