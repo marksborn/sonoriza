@@ -24,7 +24,8 @@ export function manualNotebookEnabled(
 ): boolean {
   return env.AUDIOBOOK02_BIND_UI_MODE === "PREVIEW" &&
     env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" &&
-    env.AUDIOBOOK02_MANUAL_NOTEBOOK_MODE === "ACTIVE";
+    env.AUDIOBOOK02_MANUAL_NOTEBOOK_MODE === "ACTIVE" &&
+    env.AUDIOBOOK02_WRITE_FENCE_MODE === "ACTIVE";
 }
 
 export function parseSaveManualNotebookRequest(raw: unknown):
