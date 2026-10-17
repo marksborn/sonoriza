@@ -31,9 +31,10 @@ const flags = {
   AUDIOBOOK02_BIND_UI_MODE: "PREVIEW",
   AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE: "PREVIEW",
   AUDIOBOOK02_MANUAL_NOTEBOOK_MODE: "ACTIVE",
+  AUDIOBOOK02_WRITE_FENCE_MODE: "ACTIVE",
 };
 
-test("#489 D.7: notebook saves require 3 explicit feature conditions", () => {
+test("#489 D.7: notebook saves require four conditions including active write fence", () => {
   assert.equal(manualNotebookEnabled(flags), true);
   for (const key of Object.keys(flags)) {
     assert.equal(manualNotebookEnabled({ ...flags, [key]: "OFF" }), false);
@@ -103,6 +104,12 @@ test("#489 D.7: storage has no Spotify imports, and writer/planner remain separa
   assert.match(schema, /model TargetAudiobookManualEntry/);
   assert.match(migration, /USER_DECLARED_UNVERIFIED/);
   assert.match(migration, /prevent_manual_audiobook_entry_change/);
+  const writer = readFileSync("src/services/audiobooks/write-admission-store.ts", "utf8");
+  const spotifyClient = readFileSync("src/services/spotify/client.ts", "utf8");
+  assert.match(writer, /AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_USER_DECLARED_NOTEBOOK/);
+  assert.match(writer, /AUDIOBOOK_TARGET_CONFIG_BLOCKED_MANUAL_NOTEBOOK/);
+  assert.match(spotifyClient, /targetAudiobookManualNotebook/);
+  assert.match(planner, /manualNotebookTargets/);
   assert.match(planner, /if \(!simulate && audiobookOverlays.length > 0\)/);
   for (const source of [pure, store, route]) {
     assert.doesNotMatch(source,
@@ -171,6 +178,39 @@ dbTest("#489 D.7: database isolates owner, appends revisions, CAS and deletion c
       where: { userId: owner.id, targetPlaylistId: target.id },
     })), 0);
     assert.equal((await prisma.generationRun.count({ where: { userId: owner.id } })), 0);
+    // A remote Spotify writer is admitted only through the same durable fence
+    // row in ACTIVE mode; notebook updates fail closed while it is held.
+    const fenceKey = { userId_spotifyPlaylistId: {
+      userId: owner.id, spotifyPlaylistId: "4kYizEAtQhFsrrwD3tFphP",
+    } };
+    const fence = await prisma.targetAudiobookWriteFence.findUniqueOrThrow({
+      where: fenceKey,
+    });
+    assert.equal(fence.activeWrites, 0);
+    await prisma.targetAudiobookWriteFence.update({
+      where: fenceKey, data: { activeWrites: 1 },
+    });
+    await assert.rejects(
+      () => saveUserDeclaredAudiobookNotebook(owner.id, {
+        ...firstInput, expectedRevision: 2, chapterLabel: "Capítulo 3",
+      }),
+      /AUDIOBOOK_NOTEBOOK_WRITE_IN_FLIGHT_OR_UNCERTAIN/,
+    );
+    await prisma.targetAudiobookWriteFence.update({
+      where: fenceKey, data: { activeWrites: 0, reviewRequired: true },
+    });
+    await assert.rejects(
+      () => saveUserDeclaredAudiobookNotebook(owner.id, {
+        ...firstInput, expectedRevision: 2, chapterLabel: "Capítulo 3",
+      }),
+      /AUDIOBOOK_NOTEBOOK_WRITE_IN_FLIGHT_OR_UNCERTAIN/,
+    );
+    await prisma.targetAudiobookWriteFence.update({
+      where: fenceKey, data: { reviewRequired: false },
+    });
+    assert.equal((await prisma.targetAudiobookManualEntry.count({ where: {
+      userId: owner.id,
+    } })), 2);
 
     await assert.rejects(
       () => deleteUserDeclaredAudiobookNotebook(owner.id, target.id, 1),
