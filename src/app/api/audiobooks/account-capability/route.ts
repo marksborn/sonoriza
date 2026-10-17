@@ -3,9 +3,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { manualAudiobookOriginAllowed } from "@/services/audiobooks/manual-bind-contract";
 import {
-  assessSpotifyAudiobookAccountCapability,
-  type AudiobookCapabilityEvidence,
-} from "@/services/audiobooks/d5-account-capability";
+  probeSpotifyAudiobookAccountCapability,
+} from "@/services/audiobooks/d5-account-capability-probe";
 import { getSpotifyAccessToken } from "@/services/spotify/token";
 import { spotifyRequestAttempt } from "@/services/spotify/request";
 import { readSpotifyAudiobookChapters } from "@/services/audiobooks/spotify-chapter-list";
@@ -51,89 +50,35 @@ export async function POST(request: Request) {
   }
 
   const ownerId = session.user.id;
-  const evidence: AudiobookCapabilityEvidence = {
-    spotifyConnected: false,
-    profileScopeGranted: false,
-    profileRead: "NOT_ATTEMPTED",
-    accountCountry: null,
-    catalogRead: "NOT_ATTEMPTED",
-    checkedAudiobookId: null,
-    readableChapterCount: null,
-    playableChapterCount: null,
-  };
-  let connected = false;
-  let privateScope = false;
-  let profileRead: AudiobookCapabilityEvidence["profileRead"] = "NOT_ATTEMPTED";
-  let accountCountry: unknown = null;
-  let catalogRead: AudiobookCapabilityEvidence["catalogRead"] = "NOT_ATTEMPTED";
-  let checkedAudiobookId: string | null = null;
-  let readableChapterCount: number | null = null;
-  let playableChapterCount: number | null = null;
   try {
     const linked = await prisma.account.findFirst({
       where: { userId: ownerId, provider: "spotify" },
       select: { id: true, scope: true },
     });
-    connected = Boolean(linked);
-    privateScope = Boolean(linked?.scope?.split(/\s+/).includes("user-read-private"));
-    if (connected && privateScope) {
-      try {
+    const decision = await probeSpotifyAudiobookAccountCapability({
+      spotifyConnected: Boolean(linked),
+      profileScopeGranted:
+        Boolean(linked?.scope?.split(/\\s+/).includes("user-read-private")),
+      requestedAudiobookId: typeof body.spotifyAudiobookId === "string"
+        ? body.spotifyAudiobookId
+        : null,
+      readProfile: async () => {
         const token = await getSpotifyAccessToken(ownerId);
-        const profile = await spotifyRequestAttempt<unknown>({
+        return spotifyRequestAttempt<unknown>({
           accessToken: token,
           path: "/me",
           method: "GET",
           operation: "current-user",
         });
-        if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
-          throw new Error("AUDIOBOOK_PROFILE_INVALID");
-        }
-        const data = profile as Record<string, unknown>;
-        profileRead = "SUCCESS";
-        accountCountry = data.country;
-      } catch {
-        profileRead = "ERROR";
-      }
-
-      const country = typeof accountCountry === "string" ? accountCountry : null;
-      const supportedCountry = [
-        "US", "GB", "CA", "IE", "NZ", "AU",
-      ].includes(country ?? "");
-      if (profileRead === "SUCCESS" && supportedCountry &&
-          typeof body.spotifyAudiobookId === "string") {
-        try {
-          const catalogue = await readSpotifyAudiobookChapters(
-            ownerId, body.spotifyAudiobookId,
-          );
-          if (catalogue.truncated) {
-            throw new Error("AUDIOBOOK_CATALOG_INCOMPLETE");
-          }
-          catalogRead = "SUCCESS";
-          checkedAudiobookId = catalogue.audiobookId;
-          readableChapterCount = catalogue.chapters.length;
-          playableChapterCount = catalogue.chapters.filter(ch => ch.playable).length;
-        } catch {
-          catalogRead = "ERROR";
-        }
-      }
-    }
+      },
+      readCatalog: id => readSpotifyAudiobookChapters(ownerId, id),
+    });
+    return NextResponse.json(decision, { headers: { "Cache-Control": "no-store" } });
   } catch {
-    // Database or grant read unknown: fail closed and do not guess a market.
+    // Database identity lookup failure is distinct from provider denial.
     return NextResponse.json({
       code: "AUDIOBOOK_ACCOUNT_DIAGNOSTIC_UNAVAILABLE",
       error: "Não foi possível consultar com segurança os dados desta conta.",
     }, { status: 422, headers: { "Cache-Control": "no-store" } });
   }
-  const decision = assessSpotifyAudiobookAccountCapability({
-    ...evidence,
-    spotifyConnected: connected,
-    profileScopeGranted: privateScope,
-    profileRead,
-    accountCountry,
-    catalogRead,
-    checkedAudiobookId,
-    readableChapterCount,
-    playableChapterCount,
-  });
-  return NextResponse.json(decision, { headers: { "Cache-Control": "no-store" } });
 }
