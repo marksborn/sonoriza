@@ -13,6 +13,7 @@ import {
 
 import { prisma } from "@/lib/prisma";
 import { SpotifyClient } from "@/services/spotify/client";
+import { guardedSpotifyPlaylistWrite } from "@/services/audiobooks/guard-direct-spotify-write";
 
 import {
   createPlaylistRuleState,
@@ -125,10 +126,13 @@ export class MusicIngestionPartialWriteError extends Error {
 }
 
 class MusicIngestionSpotifyApi {
-  private constructor(private readonly accessToken: string) {}
+  private constructor(
+    private readonly accessToken: string,
+    private readonly userId: string,
+  ) {}
 
   static async forUser(userId: string): Promise<MusicIngestionSpotifyApi> {
-    return new MusicIngestionSpotifyApi(await getSpotifyAccessToken(userId));
+    return new MusicIngestionSpotifyApi(await getSpotifyAccessToken(userId), userId);
   }
 
   private async request<T>(
@@ -397,10 +401,14 @@ class MusicIngestionSpotifyApi {
     let snapshotId: string | null = null;
     for (const batch of chunk(uris, 100)) {
       try {
-        const result = await this.request<{ snapshot_id?: string | null }>(
-          `/playlists/${encodeURIComponent(playlistId)}/items`,
-          { method: "POST", body: JSON.stringify({ uris: batch }) },
-          "playlist-write",
+        const path = `/playlists/${encodeURIComponent(playlistId)}/items`;
+        const result = await guardedSpotifyPlaylistWrite(
+          { userId: this.userId, path, method: "POST" },
+          () => this.request<{ snapshot_id?: string | null }>(
+            path,
+            { method: "POST", body: JSON.stringify({ uris: batch }) },
+            "playlist-write",
+          ),
         );
         acceptedUris.push(...batch);
         snapshotId = result.snapshot_id ?? snapshotId;
