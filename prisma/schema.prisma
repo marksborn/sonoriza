@@ -31,6 +31,7 @@ model User {
   calendarSelections               CalendarSelection[]
   sourcePlaylists                  SourcePlaylist[]
   targetPlaylists                  TargetPlaylist[]
+  audiobookOverlays                TargetAudiobookOverlay[]
   podcastDurationBandSettings      PodcastDurationBandSettings?
   generationRuns                   GenerationRun[]
   musicPlaybackPolicy              MusicPlaybackPolicy?
@@ -790,11 +791,41 @@ model TargetPlaylist {
   calendarSelections TargetPlaylistCalendar[]
   sourceSelections   TargetPlaylistSource[]
   generationItems    GenerationItem[]
+  audiobookOverlay   TargetAudiobookOverlay?
   targetScheduleRuns TargetScheduleRun[]
   playbackReserveActivation TargetPlaybackReserveActivation?
 
   @@unique([userId, id])
   @@index([userId, priority])
+}
+
+// AUDIOBOOK-02 Gate B: local-only manual audiobook-to-target overlay.
+enum AudiobookPlanningMode {
+  FULL_CHAPTER
+  MANUAL_REMAINDER
+}
+
+model TargetAudiobookOverlay {
+  id                  String                @id @default(cuid())
+  userId              String
+  targetPlaylistId    String                @unique
+  // Preserve the explicit remote identity even if the target changes later.
+  spotifyPlaylistId   String
+  spotifyAudiobookId  String
+  selectedChapterId   String
+  chapterDurationMs   Int
+  providerDurationMs  Int?
+  manualConsumedMs    Int                   @default(0)
+  selectionMode       AudiobookPlanningMode @default(FULL_CHAPTER)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  target TargetPlaylist @relation(fields: [userId, targetPlaylistId], references: [userId, id], onDelete: Cascade)
+
+  // At most one local audiobook claim for any user/Spotify playlist pair.
+  @@unique([userId, spotifyPlaylistId])
+  @@index([userId, spotifyAudiobookId])
 }
 
 // PODCAST-08 Gate 3: dormant per-user global thresholds. No runtime planner
