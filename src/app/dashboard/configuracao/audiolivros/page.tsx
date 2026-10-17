@@ -130,7 +130,7 @@ export default async function AudiobookConfigurationPage() {
         {singleReadingEnabled(process.env) && currentReading.status !== "REVIEW_REQUIRED" ? (
           <AudiobookReadingManager
             active={currentReading.status === "SINGLE_NOTEBOOK" && manualNotes.length === 1
-              ? { ...currentReading, revision: manualNotes[0].revision } : null}
+              ? { ...currentReading, revision: manualNotes[0]?.revision ?? 0 } : null}
           />
         ) : (
         <section className="mb-6 rounded-2xl border border-line-dark p-5 text-ink-inverse">
