@@ -101,7 +101,8 @@ dbTest("#489 D.9.2: complete preserves ALL chapters, retains remote fence, allow
     sequencePattern: ["MUSIC"],
   } });
   const req = { targetPlaylistId: target.id, bookTitle: "1984",
-    chapterLabel: "Apresentação", chapterDurationMs: 20_039, selection,
+    chapterLabel: "Apresentação", chapterDurationMs: 20_039,
+    spotifyShowId: "5E76EUAq7or1ncd4QNyHjI", selection,
     confirmation: "SALVAR_ANOTACAO_NAO_VERIFICADA" as const,
     expectedRevision: 0,
   };
@@ -152,6 +153,8 @@ dbTest("#489 D.9.2: complete preserves ALL chapters, retains remote fence, allow
     where: { id: completed.id },
     include: { entries: { orderBy: { revision: "asc" } } },
   });
+  assert.equal(history.spotifyShowId, "5E76EUAq7or1ncd4QNyHjI");
+  assert.equal(history.entries.every(e => e.spotifyShowId === history.spotifyShowId), true);
   assert.deepEqual(history.entries.map(e => [e.revision, e.chapterLabel]), [
     [1, "Apresentação"], [2, "Capítulo 2"],
   ]);
