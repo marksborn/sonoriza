@@ -26,6 +26,12 @@ export function AudiobookReadingManager({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [archive, setArchive] = useState<readonly Archived[]>([]);
+  const [openedArchiveId, setOpenedArchiveId] = useState<string | null>(null);
+  const [chapters, setChapters] = useState<readonly {
+    revision: number; chapterLabel: string;
+    chapterDurationMs: number; consumedMs: number;
+  }[]>([]);
+  const [archivePending, setArchivePending] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -41,6 +47,33 @@ export function AudiobookReadingManager({
     });
     return () => controller.abort();
   }, [success]);
+
+  async function openArchive(id: string) {
+    if (archivePending) return;
+    if (openedArchiveId === id) {
+      setOpenedArchiveId(null);
+      setChapters([]);
+      return;
+    }
+    setArchivePending(true);
+    setError("");
+    try {
+      const response = await fetch(
+        "/api/audiobooks/manual-reading?archiveId=" + encodeURIComponent(id),
+        { cache: "no-store" },
+      );
+      if (!response.ok) throw Error("Histórico detalhado indisponível.");
+      const data = await response.json() as {
+        archived: { chapters: typeof chapters };
+      };
+      setChapters(data.archived.chapters);
+      setOpenedArchiveId(id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao carregar capítulos.");
+    } finally {
+      setArchivePending(false);
+    }
+  }
 
   async function complete() {
     if (!active || !ack || pending) return;
@@ -115,9 +148,24 @@ export function AudiobookReadingManager({
         {archive.length ? (
           <ol className="space-y-2 text-sm text-muted-inverse">
             {archive.map(item => (
-              <li key={item.id}>
-                {item.bookTitle} — {item.chaptersRecorded} anotações,
-                concluído em {new Date(item.completedAt).toLocaleDateString("pt-BR")}
+              <li key={item.id} className="space-y-1">
+                <button type="button" className="text-left underline"
+                  onClick={() => openArchive(item.id)} disabled={archivePending}>
+                  {item.bookTitle} — {item.chaptersRecorded} anotações,
+                  concluído em {new Date(item.completedAt).toLocaleDateString("pt-BR")}
+                </button>
+                {openedArchiveId === item.id ? (
+                  <ol className="ml-4 list-decimal space-y-1">
+                    {chapters.map(chapter => (
+                      <li key={chapter.revision}>
+                        {chapter.chapterLabel} — {Math.floor(
+                          (chapter.chapterDurationMs - chapter.consumedMs) / 60000,
+                        )}min {((chapter.chapterDurationMs -
+                          chapter.consumedMs) % 60000 / 1000).toFixed(3)}s
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
               </li>
             ))}
           </ol>
