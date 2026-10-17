@@ -11,6 +11,8 @@ import { prisma } from "@/lib/prisma";
 import { audiobookBindEnabled } from "@/services/audiobooks/manual-bind-contract";
 import { manualNotebookEnabled } from "@/services/audiobooks/d7-manual-notebook-contract";
 import { projectSingleReadingPreview } from "@/services/audiobooks/d9-single-reading-preview";
+import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading-contract";
+import { AudiobookReadingManager } from "@/components/AudiobookReadingManager";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +59,7 @@ export default async function AudiobookConfigurationPage() {
         where: { userId: session.user.id },
         take: 2,
         select: {
-          userId: true, targetPlaylistId: true,
+          userId: true, targetPlaylistId: true, revision: true,
           bookTitle: true, chapterLabel: true,
           chapterDurationMs: true, consumedMs: true, evidenceSource: true,
           target: { select: { name: true } },
@@ -125,6 +127,12 @@ export default async function AudiobookConfigurationPage() {
             Um audiolivro colocado manualmente no Spotify pode entrar no orçamento de uma playlist com a duração virtual do capítulo escolhido. A seleção, a reprodução e a troca de capítulos continuam manuais.
           </p>
         </header>
+        {singleReadingEnabled(process.env) && currentReading.status !== "REVIEW_REQUIRED" ? (
+          <AudiobookReadingManager
+            active={currentReading.status === "SINGLE_NOTEBOOK" && manualNotes.length === 1
+              ? { ...currentReading, revision: manualNotes[0]?.revision ?? 0 } : null}
+          />
+        ) : (
         <section className="mb-6 rounded-2xl border border-line-dark p-5 text-ink-inverse">
           <h2 className="text-lg font-black">Um livro por vez</h2>
           <p className="mt-2 text-sm leading-6 text-muted-inverse">
@@ -142,8 +150,8 @@ export default async function AudiobookConfigurationPage() {
                 {" "}{((currentReading.chapterRemainingMs % 60000) / 1000).toFixed(3)}s restantes (informados manualmente)
               </p>
               <p className="text-xs text-muted-inverse">
-                Ainda não é possível concluir/arquivar o livro: esta etapa apenas exibe
-                a anotação existente sem criar ou modificar registros.
+                Concluir e iniciar o próximo livro exige a ativação controlada
+                do modo de leitura única, com proteção permanente da playlist.
               </p>
             </div>
           ) : null}
@@ -154,6 +162,7 @@ export default async function AudiobookConfigurationPage() {
             </p>
           ) : null}
         </section>
+        )}
         <AudiobookManualBindWizard
           targets={targets}
           bindingEnabled={audiobookBindEnabled(process.env)}
@@ -161,8 +170,15 @@ export default async function AudiobookConfigurationPage() {
         {process.env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" ? (
           <section className="mt-10">
             <AudiobookSelfReportedPreview
+              // Completion changes the current-book identity; remount the
+              // D.7 editor so stale notebook revision cannot block next book.
+              key={singleReadingEnabled(process.env)
+                ? (manualNotes[0]?.targetPlaylistId ?? "none") + ":" +
+                  (manualNotes[0]?.revision ?? 0)
+                : "legacy"}
               targets={targets}
               notebookEnabled={manualNotebookEnabled(process.env)}
+              singleReadingEnabled={singleReadingEnabled(process.env)}
               advisoryEnabled={manualNotebookEnabled(process.env) &&
                 process.env.AUDIOBOOK02_MANUAL_SHADOW_MODE === "PREVIEW"}
             />

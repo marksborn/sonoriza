@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { previewUserDeclaredChapterDuration } from "./d6-self-reported-preview";
+import { singleReadingEnabled } from "./d9-completed-reading-contract";
 import {
   type SaveManualNotebookRequest,
 } from "./d7-manual-notebook-contract";
@@ -73,6 +74,33 @@ export async function saveUserDeclaredAudiobookNotebook(
 ): Promise<ManualNotebookView> {
   if (!ownerId) fail("OWNER_REQUIRED");
   return prisma.$transaction(async tx => {
+    if (singleReadingEnabled(process.env)) {
+      // Serialize all new/updated readings for this owner, independent of
+      // destination. The finish operation takes this same row lock first.
+      const owner = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "User" WHERE "id" = ${ownerId} FOR UPDATE
+      `;
+      if (owner.length !== 1) fail("OWNER_REQUIRED");
+      const active = await tx.targetAudiobookManualNotebook.findMany({
+        where: { userId: ownerId },
+        take: 2, select: {
+          targetPlaylistId: true, bookTitle: true,
+        },
+      });
+      const currentReading = active[0];
+      if (active.length > 1 ||
+          (currentReading &&
+            currentReading.targetPlaylistId !== input.targetPlaylistId)) {
+        fail("SINGLE_ACTIVE_BOOK_REQUIRED");
+      }
+      if (currentReading && currentReading.bookTitle !== input.bookTitle.trim()) {
+        fail("BOOK_CHANGE_REQUIRES_COMPLETION");
+      }
+      const verified = await tx.targetAudiobookOverlay.findFirst({
+        where: { userId: ownerId }, select: { id: true },
+      });
+      if (verified) fail("VERIFIED_BOOK_REVIEW_REQUIRED");
+    }
     const target = await tx.targetPlaylist.findFirst({
       where: { id: input.targetPlaylistId, userId: ownerId },
       select: {
@@ -210,6 +238,9 @@ export async function deleteUserDeclaredAudiobookNotebook(
   if (!ownerId || !/^[A-Za-z0-9_-]{4,80}$/.test(targetPlaylistId) ||
       !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
     fail("INVALID_DELETE_INPUT");
+  }
+  if (singleReadingEnabled(process.env)) {
+    fail("COMPLETE_INSTEAD_OF_DELETE");
   }
   const outcome = await prisma.targetAudiobookManualNotebook.deleteMany({
     where: { userId: ownerId, targetPlaylistId, revision: expectedRevision },

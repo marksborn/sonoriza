@@ -46,6 +46,13 @@ export const prismaAudiobookWriteFenceStore: AudiobookWriteFenceStore = {
       if (notebook) {
         throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_USER_DECLARED_NOTEBOOK");
       }
+      const archived = await tx.userAudiobookCompletedReading.findFirst({
+        where: { userId, spotifyPlaylistId },
+        select: { id: true },
+      });
+      if (archived) {
+        throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_ARCHIVED_BOOK");
+      }
     });
   },
 
@@ -109,6 +116,12 @@ export async function withAudiobookOverlayBindAdmission<T>(
     });
     if (manual) {
       throw new Error("AUDIOBOOK_BIND_BLOCKED_USER_DECLARED_NOTEBOOK");
+    }
+    const archived = await tx.userAudiobookCompletedReading.findFirst({
+      where: { userId, spotifyPlaylistId }, select: { id: true },
+    });
+    if (archived) {
+      throw new Error("AUDIOBOOK_BIND_BLOCKED_ARCHIVED_BOOK_PROTECTED");
     }
     return commit(tx);
   });
@@ -178,6 +191,17 @@ export async function withAudiobookTargetSettingsAdmission<T>(
     });
     if (manual) {
       throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_MANUAL_NOTEBOOK");
+    }
+    // Preserve the remote playlist protection even after the active notebook
+    // is archived. No automatic inference that the Spotify book was removed.
+    if (expectedSpotifyPlaylistId) {
+      const archived = await tx.userAudiobookCompletedReading.findFirst({
+        where: { userId, spotifyPlaylistId: expectedSpotifyPlaylistId },
+        select: { id: true },
+      });
+      if (archived) {
+        throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_ARCHIVED_BOOK");
+      }
     }
     return commit(tx);
   });
