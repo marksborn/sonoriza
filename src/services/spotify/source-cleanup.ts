@@ -348,7 +348,7 @@ export async function executeMusicSourceCleanupPreview(
       const accessToken = await getSpotifyAccessToken(userId);
       for (const uris of chunk(plannedUris, MAX_DELETE_ITEMS)) {
         const path = `/playlists/${preview.source.spotifyId}/items`;
-        const result: { snapshot_id?: string | null } = await guardedSpotifyPlaylistWrite(
+        const result: { snapshot_id?: string | null } = await guardedSpotifyPlaylistWrite<{ snapshot_id?: string | null }>(
           { userId, path, method: "DELETE" },
           () => spotifyRequest(
             accessToken,
@@ -558,7 +558,7 @@ export async function executeAutomaticMusicSourceCleanup(
   for (const uris of chunk(plan.removableUris, MAX_DELETE_ITEMS)) {
     try {
       const path = `/playlists/${source.spotifyId}/items`;
-        const result: { snapshot_id?: string | null } = await guardedSpotifyPlaylistWrite(
+        const result: { snapshot_id?: string | null } = await guardedSpotifyPlaylistWrite<{ snapshot_id?: string | null }>(
           { userId, path, method: "DELETE" },
           () => spotifyRequest(
             accessToken,
