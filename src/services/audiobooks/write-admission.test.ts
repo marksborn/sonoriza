@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spotifyRequestAttempt } from "@/services/spotify/request";
 
 import {
   requiresAudiobookPlaylistReconciliation,
@@ -108,6 +109,34 @@ test("#489 B.2: a failed fence release must never report successful delivery", a
     }, async () => "provider-ok"),
     /FENCE_RELEASE_FAILED/,
   );
+});
+
+test("#489 B.2: transport forbids direct writes without durable admission when enabled", { concurrency: false }, async () => {
+  const before = process.env.AUDIOBOOK02_WRITE_FENCE_MODE;
+  const fetchBefore = globalThis.fetch;
+  let called = false;
+  process.env.AUDIOBOOK02_WRITE_FENCE_MODE = "ACTIVE";
+  globalThis.fetch = (async () => {
+    called = true;
+    throw new Error("unexpected network request");
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      spotifyRequestAttempt({
+        accessToken: "dummy-test-token",
+        path,
+        method: "PUT",
+        operation: "playlist-write",
+        init: { method: "PUT", body: JSON.stringify({ uris: [] }) },
+      }),
+      /AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_DIRECT_TRANSPORT/,
+    );
+    assert.equal(called, false, "no external Spotify request may be sent");
+  } finally {
+    globalThis.fetch = fetchBefore;
+    if (before === undefined) delete process.env.AUDIOBOOK02_WRITE_FENCE_MODE;
+    else process.env.AUDIOBOOK02_WRITE_FENCE_MODE = before;
+  }
 });
 
 test("#489 B.2: missing user is blocked before acquiring or sending", async () => {
