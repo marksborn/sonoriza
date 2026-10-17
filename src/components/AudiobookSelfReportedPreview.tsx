@@ -216,7 +216,7 @@ export function AudiobookSelfReportedPreview({ targets, notebookEnabled = false 
           Para quando o Spotify não disponibiliza o catálogo ou os capítulos
           para a sua conta. Informe você mesmo a duração que aparece no aplicativo.
           <strong> O Sonoriza não verificará o livro, o capítulo nem a duração informada.</strong>
-          {" "}A prévia não cria vínculo nem alimenta a geração de playlists.
+          {" "}A prévia não cria vínculo e não alimenta a geração de playlists.
           {notebookEnabled
             ? " Você pode salvar uma anotação separada e não verificada com confirmação explícita."
             : " Ela é temporária no navegador e não salva nada no banco."}
