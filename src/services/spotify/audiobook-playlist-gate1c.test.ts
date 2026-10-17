@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   GATE1C, chapterEligible, playlistOwnedPrivate, containsChapter, safeId,
+  mayChangeSecondPlaylistToPrivate,
 } from "./audiobook-playlist-gate1c";
 
 const owner = "spotify-user";
@@ -51,4 +52,21 @@ test("playlist re-read distinguishes confirmed inclusion from successful POST", 
   assert.equal(state.firstItemType, "chapter");
   assert.equal(containsChapter({ total: 1, items: [{ item: null }] }).chapterFound, false);
   assert.equal(containsChapter({ total: 1, items: [{ item: { uri: "spotify:track:x" } }] }).chapterFound, false);
+});
+
+test("privacy correction only for exactly the new empty public playlist", () => {
+  const id = "1tsFauBmlMXWJLNKTCQFQE";
+  const payload = {
+    id, owner: { id: owner }, name: GATE1C.secondPrivatePlaylistName,
+    public: true, collaborative: false, items: { total: 0 },
+  };
+  assert.equal(mayChangeSecondPlaylistToPrivate(payload, id, owner), true);
+  assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, name: GATE1C.playlistName }, id, owner), false);
+  assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, id: "4kYizEAtQhFsrrwD3tFphP" }, id, owner), false);
+  assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, owner: { id: "other" } }, id, owner), false);
+  assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, public: false }, id, owner), false);
+  assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, public: null }, id, owner), false);
+  assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, collaborative: true }, id, owner), false);
+  assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, items: { total: 1 } }, id, owner), false);
+  assert.equal(mayChangeSecondPlaylistToPrivate({ ...payload, items: undefined }, id, owner), false);
 });
