@@ -60,6 +60,61 @@ O script rejeita `--execute-post`, `--confirm=`, `--write*` e `--allow-token-ref
 
 **Limite epistemológico:** dois episódios cujos metadados coincidam podem ter elegibilidade de playlist diferente. Esta inspeção GET-only nunca atesta a escrita de capítulo, mesmo que encontre `media_type` semelhante.
 
+## Resultado autenticado da fase A — 16/10/2026
+
+Execução do usuário no CloudPanel sobre o commit certificado `d191093edf6279ffa93f7d398aee50fa1d4a1950`:
+
+`outcome=GATE1E_METADATA_FORENSICS_COMPLETE_NO_WRITES`, **5 GET, zero POST/PUT/DELETE, zero refresh OAuth, zero playlist writes, zero player commands, zero retries**.
+
+### Matriz real de episódios via `GET /episodes/{id}?market=BR`
+
+| Campo sanitizado | Capítulo do audiobook consultado como episode | Podcast de controle |
+| --- | --- | --- |
+| ID e URI esperados | true / true | true / true |
+| `type` | episode | episode |
+| `isPlayable` | true | true |
+| `hasRestrictionReason` | false | false |
+| `showType` | show | show |
+| `nestedShowMediaType` | audio | audio |
+| `isExternallyHosted` | false | false |
+| `durationMs` | **20.039** | **1.361.096** |
+| `showAvailableMarketsCount` | **null (não informado)** | **null (não informado)** |
+| `showPublisherPresent` | false | false |
+| `showExplicit` | false | false |
+| `resumePointPresent` | true | true |
+
+**O ID de `show` é diferente**, como esperado: cada episódio pertence a um programa distinto. Os campos `available_markets` ausentes **não** comprovam indisponibilidade nem equivalência regional. `publisherPresent=false` apenas informa que esse campo não foi retornado, e **não** implica que os shows não tenham editora.
+
+### Matriz real de programas via `GET /shows/{showId}?market=BR`
+
+| Campo sanitizado | Show associado ao capítulo *1984* | Show do podcast comum |
+| --- | --- | --- |
+| HTTP | 200 | 200 |
+| ID verificado / `type` | true / show | true / show |
+| `mediaType` | audio | audio |
+| `isExternallyHosted` | false | false |
+| `episodesTotal` | **35** | **237** |
+| `languagesCount` | 1 | 1 |
+| `availableMarketsCount` | null (não informado) | null (não informado) |
+| `publisherPresent` | false | false |
+| `explicit` | false | false |
+| `episodesReferencePresent` | true | true |
+
+Comparador: `bothResolveAsEpisode=true`, `bothPlayable=true`, `bothHaveShows=true`, `sameExternalHostingFlag=true`, `sameNestedShowMediaType=true`, `sameShowId=false` e `sameDurationMs=false`.
+
+### Interpretação forense
+
+- Não há **diferença observável nos atributos comuns consultados** que determine por que o POST de capítulo retornou HTTP 502 enquanto o POST de podcast funcionou.
+- Portanto, a hipótese de que o problema decorre de `type`, `media_type`, `is_playable`, hosting externo ou estrutura JSON divergir está **enfraquecida** para estes exemplos.
+- **H1 (falha transitória)** e **H2 (tratamento especial da escrita de conteúdos originados em audiolivro)** permanecem **abertas**. **H3 (entitlement/mercado)** não pode ser excluída porque flags GET e mercados não informados não estabelecem elegibilidade de playlist; **H4 (erro de JSON/escopos/rota)** permanece pouco provável; **H5 (ausência de logs e IDs de correlação do 502 original)** continua uma lacuna.
+- O campo do próprio relatório `playlistWriteCompatibility=NOT_PROVEN_BY_GET_ONLY` é a conclusão correta. **Nenhum GET isolado confirma capacidade de POST** nem o HTTP 502 comprova impossibilidade permanente.
+
+### Encaminhamento recomendado
+
+**Encerrar a fase de diagnósticos GET-only e não criar uma sucessão infinita de consultas equivalentes.** A próxima evidência discriminante depende de feedback do Spotify (Developer Community/suporte) ou de **outro experimento de escrita em gate separado**, cuidadosamente autorizado, não automático e com reconciliação mesmo diante de HTTP 5xx/timeouts. Se este último for solicitado, elaborar primeiro desenho de segurança que trate a playlist privada como **não vazia** (1 episódio controle), sem remover esse episódio por padrão; qualquer remoção ou nova playlist exige aprovação explícita.
+
+**Produto:** GO-LIMITED para estante/catálogo/links para o Spotify e NO-GO provisório para inclusão automática de capítulos em playlists, até POST+GET+reprodução do capítulo ser demonstrado. Nenhum deploy, merge ou mudança em produção decorre deste relatório.
+
 ## Próxima decisão — sem autorização de escrita neste Gate
 
 Se persistir a ambiguidade, pode ser pertinente:
@@ -72,6 +127,6 @@ Se persistir a ambiguidade, pode ser pertinente:
 ## Check de saída
 - [x] Forense estática de endpoint, JSON, token/preflight e tratamento de erros documentada.
 - [x] Instrumentação GET-only, no máximo 5 consultas, sem OAuth refresh, sem playlist writes.
-- [ ] CI dos helpers, testes, typecheck e build.
-- [ ] Execução autenticada GET-only e análise de saída JSON sanitizada.
-- [ ] Registrar achados e plano de investigação seguinte no GitHub, sem extrapolar resultado.
+- [x] CI original (PR #38991555270 e push #38991534580) para helpers, testes, typecheck e build aprovado.
+- [x] Execução autenticada GET-only em CloudPanel: 5 GET, 0 writes, comparação dos episódios e shows registrada acima.
+- [x] Achados, incertezas e próximos passos documentados, sem alegar suporte de POST ou causa confirmada de HTTP 502.
