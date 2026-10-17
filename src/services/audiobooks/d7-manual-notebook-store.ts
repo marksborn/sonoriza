@@ -102,6 +102,17 @@ export async function saveUserDeclaredAudiobookNotebook(
     if (fence.activeWrites !== 0 || fence.reviewRequired) {
       fail("WRITE_IN_FLIGHT_OR_UNCERTAIN");
     }
+    // Re-read configuration AFTER obtaining the same fence lock as target
+    // settings admission. Reject a concurrent destination/budget edit.
+    const stableTarget = await tx.targetPlaylist.findFirst({
+      where: {
+        id: target.id, userId: ownerId, spotifyPlaylistId: target.spotifyPlaylistId,
+        durationMode: "FIXED", fixedDurationSeconds: target.fixedDurationSeconds,
+        audiobookOverlay: { is: null },
+      },
+      select: { id: true },
+    });
+    if (!stableTarget) fail("TARGET_CHANGED_DURING_ADMISSION");
     const calculated = previewUserDeclaredChapterDuration({
       targetDurationMs: target.fixedDurationSeconds * 1000,
       bookTitle: input.bookTitle,
