@@ -130,3 +130,73 @@ test("#489 B.2: schema guarantees per-user/playlist persistent write admission r
   );
   assert.match(migration, /CHECK \("activeWrites" >= 0\)/);
 });
+
+integrationTest("#489 D.9.1: a manual notebook blocks overlay binding for the same destination", { concurrency: false }, async t => {
+  const fixture = await createFixture();
+  t.after(async () => { await prisma.user.delete({ where: { id: fixture.userId } }); });
+  await prisma.targetAudiobookManualNotebook.create({
+    data: {
+      userId: fixture.userId,
+      targetPlaylistId: fixture.targetPlaylistId,
+      revision: 1,
+      bookTitle: "1984",
+      chapterLabel: "Apresentação",
+      chapterDurationMs: 20_039,
+      consumedMs: 0,
+      targetDurationMs: 300_000,
+      evidenceSource: "USER_DECLARED_UNVERIFIED",
+    },
+  });
+  let invoked = false;
+  await assert.rejects(
+    withAudiobookOverlayBindAdmission(fixture, async () => {
+      invoked = true;
+      throw Error("must not execute");
+    }),
+    /AUDIOBOOK_BIND_BLOCKED_USER_DECLARED_NOTEBOOK/,
+  );
+  assert.equal(invoked, false);
+  assert.equal(await prisma.targetAudiobookOverlay.count({
+    where: { userId: fixture.userId },
+  }), 0);
+  const fence = await prisma.targetAudiobookWriteFence.findUniqueOrThrow({
+    where: { userId_spotifyPlaylistId: {
+      userId: fixture.userId, spotifyPlaylistId: fixture.spotifyPlaylistId,
+    } },
+  });
+  assert.equal(fence.activeWrites, 0);
+});
+
+integrationTest("#489 D.9.1: a notebook on another target pointing at the same Spotify playlist also blocks binding", { concurrency: false }, async t => {
+  const fixture = await createFixture();
+  t.after(async () => { await prisma.user.delete({ where: { id: fixture.userId } }); });
+  const twin = await prisma.targetPlaylist.create({
+    data: {
+      userId: fixture.userId,
+      name: "Segundo destino da mesma playlist remota",
+      spotifyPlaylistId: fixture.spotifyPlaylistId,
+      durationMode: "FIXED",
+      fixedDurationSeconds: 300,
+      sequencePattern: ["MUSIC"],
+    },
+  });
+  await prisma.targetAudiobookManualNotebook.create({
+    data: {
+      userId: fixture.userId,
+      targetPlaylistId: twin.id,
+      revision: 1,
+      bookTitle: "1984",
+      chapterLabel: "Apresentação",
+      chapterDurationMs: 20_039,
+      consumedMs: 0,
+      targetDurationMs: 300_000,
+      evidenceSource: "USER_DECLARED_UNVERIFIED",
+    },
+  });
+  await assert.rejects(
+    withAudiobookOverlayBindAdmission(fixture, async () => {
+      throw Error("must not execute");
+    }),
+    /AUDIOBOOK_BIND_BLOCKED_USER_DECLARED_NOTEBOOK/,
+  );
+});
