@@ -87,12 +87,13 @@ export async function saveUserDeclaredAudiobookNotebook(
           targetPlaylistId: true, bookTitle: true,
         },
       });
+      const currentReading = active[0];
       if (active.length > 1 ||
-          (active.length === 1 &&
-            active[0].targetPlaylistId !== input.targetPlaylistId)) {
+          (currentReading &&
+            currentReading.targetPlaylistId !== input.targetPlaylistId)) {
         fail("SINGLE_ACTIVE_BOOK_REQUIRED");
       }
-      if (active.length === 1 && active[0].bookTitle !== input.bookTitle.trim()) {
+      if (currentReading && currentReading.bookTitle !== input.bookTitle.trim()) {
         fail("BOOK_CHANGE_REQUIRES_COMPLETION");
       }
       const verified = await tx.targetAudiobookOverlay.findFirst({
