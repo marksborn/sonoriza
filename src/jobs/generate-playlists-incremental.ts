@@ -6,6 +6,7 @@ import {
   isSpotifyWriteTimeout,
 } from "@/jobs/schedule-retry-policy";
 import { processMemorySnapshot } from "@/services/process-memory";
+import { projectAudiobookVirtualChapterPlan } from "@/services/audiobooks/gate-d-shadow-planner";
 import {
   DEFAULT_PODCAST_DURATION_BAND_LIMITS,
   parsePodcastDurationBandLimits,
@@ -436,6 +437,44 @@ export async function generatePlaylists(
       );
     }
     summary.resolvedTargetIds = targets.map((target) => target.id);
+
+    // AUDIOBOOK-02 Gate D: an attached opaque whole-book item cannot safely
+    // pass the existing provider replace/append/remove writer. Fail the ENTIRE
+    // real batch before collecting sources or writing ANY destination, even if
+    // the preview flag is OFF. Never silently apply earlier targets first.
+    // A simulation with this overlay is also NOT a CONFIG-04 real-run approval.
+    const audiobookOverlays = await prisma.targetAudiobookOverlay.findMany({
+      where: { userId, targetPlaylistId: { in: targets.map(target => target.id) } },
+      select: {
+        userId: true,
+        targetPlaylistId: true,
+        spotifyPlaylistId: true,
+        spotifyAudiobookId: true,
+        selectedChapterId: true,
+        chapterDurationMs: true,
+        providerDurationMs: true,
+        manualConsumedMs: true,
+        selectionMode: true,
+        revision: true,
+      },
+    });
+    if (!simulate && audiobookOverlays.length > 0) {
+      const error =
+        "A geração real foi bloqueada antes de qualquer escrita Spotify: " +
+        "há um destino com audiolivro protegido e item remoto opaco. " +
+        "Use somente prévia; o Gate D não autoriza alterar essa playlist.";
+      summary.audiobookGateD = {
+        mode: "REAL_WRITE_BLOCKED",
+        targetIds: audiobookOverlays.map(overlay => overlay.targetPlaylistId),
+        plannerInfluence: false,
+        spotifyWrites: false,
+        approvalEligible: false,
+      };
+      summary.qualityPassed = false;
+      log({ level: "ERROR", message: error });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
 
     // #460: a manual KEEP_FILLED run without live preservation context must
     // never fall through to replacePlaylistItems(). The same guard prevents an
@@ -1158,6 +1197,61 @@ export async function generatePlaylists(
       return { runId: run.id, status: "FAILED" };
     }
 
+    // AUDIOBOOK-02 Gate D: simulate a counterfactual for only supported
+    // single-block destinations, using already collected target-scoped pools.
+    // Never alter incremental.plan, provider items, sharing state or approval.
+    // No extra provider call; remote opaque audiobook presence is NOT proven.
+    const audiobookGateDShadow = simulate &&
+      process.env.AUDIOBOOK02_PLANNER_MODE === "SHADOW";
+    const audiobookGateDTargets = audiobookGateDShadow
+      ? audiobookOverlays.map(overlay => {
+          const target = targets.find(value => value.id === overlay.targetPlaylistId);
+          const runTarget = runTargets.find(value =>
+            value.targetPlaylistId === overlay.targetPlaylistId);
+          if (!target || !runTarget || runTarget.durationBlocks?.length) {
+            return {
+              status: "ABSTAIN",
+              reason: "TARGET_MISSING_OR_MULTI_BLOCK",
+              targetPlaylistId: overlay.targetPlaylistId,
+              plannerInfluence: false,
+              spotifyWrites: false,
+              approvalEligible: false,
+            };
+          }
+          return {
+            ...projectAudiobookVirtualChapterPlan({
+              userId,
+              target: {
+                id: target.id,
+                userId: target.userId,
+                spotifyPlaylistId: target.spotifyPlaylistId,
+                durationMode: target.durationMode,
+                fixedDurationSeconds: target.fixedDurationSeconds,
+                updatePolicy: target.updatePolicy,
+              },
+              overlay,
+              rules: runTarget.rules,
+              pools: incremental.pools,
+              effectiveSourceIds: sourceIdsByTargetId.get(target.id) ?? new Set(),
+              blockedSpotifyMusicTrackIds: blockedMusicTrackIdsByTargetId.get(target.id),
+            }),
+            targetPlaylistId: overlay.targetPlaylistId,
+          };
+        })
+      : [];
+    const audiobookGateDApprovalBlocked = simulate && audiobookOverlays.length > 0;
+    if (audiobookGateDShadow) {
+      summary.audiobookGateD = {
+        mode: "SHADOW",
+        plannerInfluence: false,
+        spotifyWrites: false,
+        approvalEligible: false,
+        simulationOnly: true,
+        overlayCount: audiobookOverlays.length,
+        targets: audiobookGateDTargets,
+      };
+    }
+
     let plan = incremental.plan;
     // A simulation with an active PODCAST-08 selection is an experimental
     // counterfactual. It MUST NOT grant CONFIG-04 approval for a productive
@@ -1231,7 +1325,15 @@ export async function generatePlaylists(
     const qualityFailures = incremental.qualityFailures;
     summary.qualityPassed =
       qualityFailures.length === 0 && !podcast08ExperimentalSelectionApplied &&
-      !Boolean(opts.podcast08EphemeralPreview);
+      !Boolean(opts.podcast08EphemeralPreview) &&
+      !audiobookGateDApprovalBlocked;
+    if (audiobookGateDApprovalBlocked) {
+      summary.audiobookGateDSimulationOnly = true;
+      log({
+        level: "INFO",
+        message: "AUDIOBOOK-02: simulação com overlay protegido não aprova geração real; duração virtual apenas em SHADOW.",
+      });
+    }
     if (podcast08ExperimentalSelectionApplied) {
       summary.podcast08SimulationOnly = true;
       log({
