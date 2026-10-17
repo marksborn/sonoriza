@@ -60,3 +60,21 @@ export function containsChapter(itemsPage: unknown): {
     firstItemType: stringField(item?.type),
   };
 }
+
+/**
+ * Fail-closed permission to change only the API-created empty test playlist's
+ * visibility, never any existing/manual/production playlist.
+ */
+export function mayChangeSecondPlaylistToPrivate(
+  raw: unknown, expectedId: string, ownerId: string,
+): boolean {
+  const playlist = asObject(raw);
+  const itemCollection = asObject(playlist?.items);
+  return safeId(expectedId) !== null &&
+    playlist?.id === expectedId &&
+    playlist.name === GATE1C.secondPrivatePlaylistName &&
+    profileId(playlist.owner) === ownerId &&
+    playlist.public === true &&
+    playlist.collaborative === false &&
+    itemCollection?.total === 0;
+}
