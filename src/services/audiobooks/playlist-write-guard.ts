@@ -38,7 +38,9 @@ export function parseSpotifyPlaylistItemsMutation(
   const match = /^\/playlists\/([^/?#]+)\/items(?:[?#]|$)/.exec(path);
   if (!match || !match[1]) return null;
   const spotifyPlaylistId = match[1];
-  if (!/^[a-zA-Z0-9]+$/.test(spotifyPlaylistId)) {
+  // Real Spotify IDs are alphanumeric; allow unambiguous fixture IDs using
+  // '-' and '_' so existing test destinations exercise the actual writer.
+  if (!/^[a-zA-Z0-9_-]+$/.test(spotifyPlaylistId)) {
     // An unrecognized write path cannot be confidently checked against the
     // Spotify playlist identity; never send it to the provider.
     throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_INVALID_PLAYLIST_ID");
