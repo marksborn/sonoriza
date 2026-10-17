@@ -8,7 +8,7 @@ import { readManualAdvisoryForOwner } from "@/services/audiobooks/d8-manual-advi
 export const dynamic = "force-dynamic";
 const noStore = { "Cache-Control": "no-store" };
 
-export function manualAdvisoryEnabled(env: Record<string, string | undefined>) {
+function manualAdvisoryEnabled(env: Record<string, string | undefined>) {
   return manualNotebookEnabled(env) &&
     env.AUDIOBOOK02_MANUAL_SHADOW_MODE === "PREVIEW";
 }
