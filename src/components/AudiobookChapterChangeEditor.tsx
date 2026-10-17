@@ -45,6 +45,16 @@ type Preview = Readonly<{
   manualSpotifyControlRequired: true;
 }>;
 type Updated = Preview & Readonly<{ revision: number }>;
+type RemoteObservation = Readonly<{
+  status: "BOOK_ID_UNVERIFIABLE";
+  snapshotId: string;
+  stableSnapshotRead: true;
+  listedItemCount: number;
+  opaqueItemCount: number;
+  opaquePositions: readonly number[];
+  remoteBookPresenceVerified: false;
+  safeToMutatePlaylist: false;
+}>;
 
 const fieldClass =
   "w-full rounded-xl border border-line-dark bg-surface-subtle px-4 py-3 text-sm text-ink-inverse";
@@ -79,6 +89,7 @@ export function AudiobookChapterChangeEditor({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [remoteEvidence, setRemoteEvidence] = useState<RemoteObservation | null>(null);
   const [previewInput, setPreviewInput] = useState<ChangeInput | null>(null);
   const [confirmed, setConfirmed] = useState(false);
 
@@ -99,6 +110,25 @@ export function AudiobookChapterChangeEditor({
         : { mode: "MANUAL_REMAINDER", consumedMs: Math.round(Number(seconds) * 1000) },
     };
   }
+  async function observeRemote() {
+    if (pending) return;
+    setPending(true);
+    setError("");
+    setRemoteEvidence(null);
+    try {
+      setRemoteEvidence(await requestJson<RemoteObservation>(
+        "/api/audiobooks/remote-observation", {
+          targetPlaylistId: overlay.targetPlaylistId,
+          expectedRevision: revision,
+        },
+      ));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Estado remoto indisponível.");
+    } finally {
+      setPending(false);
+    }
+  }
+
   async function load() {
     setPending(true);
     resetPreview();
@@ -176,6 +206,30 @@ export function AudiobookChapterChangeEditor({
           {" "}<code>{currentChapterId}</code> (revisão {revision}).
           O livro e a playlist permanecem os mesmos.
         </p>
+      </div>
+      <div className="space-y-3 rounded-2xl border border-line-dark/55 p-4">
+        <h3 className="font-bold text-ink-inverse">Estado da playlist Spotify (somente leitura)</h3>
+        <p className="text-sm leading-6 text-muted-inverse">
+          O snapshot da playlist não identifica com segurança qual audiolivro está no item opaco.
+          Esta consulta não libera a inclusão, remoção ou reorganização de músicas.
+        </p>
+        <button type="button" className="secondary-button" disabled={pending}
+          onClick={observeRemote}>Consultar snapshot remoto</button>
+        {remoteEvidence ? (
+          <div className="space-y-2 text-sm text-ink-inverse" role="status">
+            <p>Snapshot estável: <code>{remoteEvidence.snapshotId}</code></p>
+            <p>Itens observados: {remoteEvidence.listedItemCount}.
+              Itens sem identidade verificável: {remoteEvidence.opaqueItemCount}.</p>
+            <p>
+              {remoteEvidence.opaqueItemCount === 0
+                ? "Nenhum item opaco foi reconhecido. Isso não comprova que o livro foi removido."
+                : "Itens opacos encontrados; nenhum deles comprova a identidade do livro associado."}
+            </p>
+            <p className="font-bold">
+              Escrita automática no Spotify: bloqueada. Conferência manual continua necessária.
+            </p>
+          </div>
+        ) : null}
       </div>
       <button type="button" className="secondary-button"
         disabled={pending} onClick={load}>
