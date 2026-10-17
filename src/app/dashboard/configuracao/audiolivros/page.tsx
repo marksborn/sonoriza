@@ -118,6 +118,7 @@ export default async function AudiobookConfigurationPage() {
                 key={row.targetPlaylistId}
                 overlay={row}
                 changeEnabled={audiobookChapterUpdateEnabled(process.env)}
+                handoffPreviewEnabled={process.env.AUDIOBOOK02_PLANNER_MODE === "SHADOW"}
               />
             ))}
           </section>
