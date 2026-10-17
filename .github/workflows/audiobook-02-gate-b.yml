@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "src/services/audiobooks/**"
+      - "src/app/api/audiobooks/**"
       - "src/services/spotify/client.ts"
       - "src/services/spotify/request.ts"
       - "src/services/spotify/music-ingestion.ts"
