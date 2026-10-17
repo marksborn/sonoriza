@@ -85,8 +85,8 @@ test("#489 Gate C: UI and endpoints are gated, with no Spotify mutation", () => 
   assert.match(page, /AUDIOBOOK02_BIND_UI_MODE/);
   assert.match(page, /audiobookChapterUpdateEnabled/);
   assert.match(wizard, /Confirmar novo capítulo local/);
-  assert.match(wizard, //api/audiobooks/manual-chapter-preview/);
-  assert.match(wizard, //api/audiobooks/manual-chapter-update/);
+  assert.ok(wizard.includes("/api/audiobooks/manual-chapter-preview"));
+  assert.ok(wizard.includes("/api/audiobooks/manual-chapter-update"));
   assert.match(preview, /AUDIOBOOK02_BIND_UI_MODE/);
   assert.match(update, /audiobookChapterUpdateEnabled/);
   for (const content of [wizard, preview, update]) {
