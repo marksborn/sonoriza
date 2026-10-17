@@ -217,7 +217,7 @@ export function AudiobookManualBindWizard({
             placeholder="https://open.spotify.com/audiobook/..."
             onChange={event => changeBook(event.target.value)} />
         </div>
-        <AudiobookCapabilityInspector audiobookId={parsedBookId} />
+        <AudiobookCapabilityInspector key={parsedBookId ?? "no-book"} audiobookId={parsedBookId} />
         <button type="button" className="secondary-button" onClick={loadChapters}
           disabled={!selected || !parsedBookId || pending}>
           {pending ? "Consultando..." : "Buscar capítulos no Spotify"}
