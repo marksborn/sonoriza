@@ -1,3 +1,6 @@
+import { audiobookGuardedWriteToken } from "@/services/audiobooks/write-admission";
+import { parseSpotifyPlaylistItemsMutation } from "@/services/audiobooks/playlist-write-guard";
+
 import {
   ProviderReadTimeoutError,
   spotifyWriteTimeoutMs,
@@ -18,7 +21,18 @@ export async function spotifyRequestAttempt<T>(input: {
   method: string;
   operation: SpotifyOperation;
   init?: RequestInit;
+  /** Internal proof supplied only after the durable write lease commits. */
+  writeAdmissionToken?: typeof audiobookGuardedWriteToken;
 }): Promise<T> {
+  // Last-resort guard: in ACTIVE mode scripts calling transport directly may
+  // not bypass per-playlist admission by omitting the SpotifyClient wrapper.
+  if (
+    process.env.AUDIOBOOK02_WRITE_FENCE_MODE === "ACTIVE" &&
+    parseSpotifyPlaylistItemsMutation(input.path, input.method) &&
+    input.writeAdmissionToken !== audiobookGuardedWriteToken
+  ) {
+    throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_DIRECT_TRANSPORT");
+  }
   const execute = async (signal?: AbortSignal): Promise<T> => {
     const response = await fetch(`${API}${input.path}`, {
       ...input.init,
