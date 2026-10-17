@@ -89,3 +89,65 @@ export async function withAudiobookOverlayBindAdmission<T>(
     return commit(tx);
   });
 }
+
+/**
+ * Gate D.2: serialize edits of a destination configuration against both
+ * an in-flight provider write and the creation of an audiobook overlay.
+ *
+ * All configuration writes must be inside the callback. Holding the same
+ * fence row lock as withAudiobookOverlayBindAdmission means the two operations
+ * cannot each pass the other's "no overlay"/"same target" check concurrently.
+ * Config edits are deliberately BLOCKED for already bound destinations
+ * (including innocuous rename) until a reviewed edit policy exists.
+ *
+ * Disabling a target is a separate, safe, no-playlist-write escape route.
+ */
+export async function withAudiobookTargetSettingsAdmission<T>(
+  input: {
+    userId: string;
+    targetPlaylistId: string;
+    expectedSpotifyPlaylistId: string | null;
+  },
+  commit: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  const { userId, targetPlaylistId, expectedSpotifyPlaylistId } = input;
+  if (!userId?.trim() || !targetPlaylistId?.trim()) {
+    throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_MISSING_IDENTITY");
+  }
+  return prisma.$transaction(async tx => {
+    if (expectedSpotifyPlaylistId) {
+      const fence = await tx.targetAudiobookWriteFence.upsert({
+        where: {
+          userId_spotifyPlaylistId: {
+            userId,
+            spotifyPlaylistId: expectedSpotifyPlaylistId,
+          },
+        },
+        create: { userId, spotifyPlaylistId: expectedSpotifyPlaylistId },
+        update: { updatedAt: new Date() },
+      });
+      if (fence.activeWrites !== 0 || fence.reviewRequired) {
+        throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_REMOTE_WRITE_UNCERTAIN");
+      }
+    }
+    const current = await tx.targetPlaylist.findFirst({
+      where: {
+        id: targetPlaylistId,
+        userId,
+        spotifyPlaylistId: expectedSpotifyPlaylistId,
+      },
+      select: { id: true },
+    });
+    if (!current) {
+      throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_STALE_OR_FOREIGN_TARGET");
+    }
+    const bound = await tx.targetAudiobookOverlay.findFirst({
+      where: { userId, targetPlaylistId },
+      select: { id: true },
+    });
+    if (bound) {
+      throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_PROTECTED_OVERLAY");
+    }
+    return commit(tx);
+  });
+}
