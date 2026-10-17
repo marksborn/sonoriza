@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { guardedSpotifyPlaylistWrite } from "@/services/audiobooks/guard-direct-spotify-write";
 
 import { spotifyApiErrorFromResponse } from "./errors";
 import {
@@ -346,16 +347,20 @@ export async function executeMusicSourceCleanupPreview(
     if (plannedUris.length > 0) {
       const accessToken = await getSpotifyAccessToken(userId);
       for (const uris of chunk(plannedUris, MAX_DELETE_ITEMS)) {
-        const result: { snapshot_id?: string | null } = await spotifyRequest(
-          accessToken,
-          `/playlists/${preview.source.spotifyId}/items`,
-          {
-            method: "DELETE",
-            body: JSON.stringify({
-              items: uris.map((uri) => ({ uri })),
-              snapshot_id: snapshotAfter,
-            }),
-          },
+        const path = `/playlists/${preview.source.spotifyId}/items`;
+        const result: { snapshot_id?: string | null } = await guardedSpotifyPlaylistWrite(
+          { userId, path, method: "DELETE" },
+          () => spotifyRequest(
+            accessToken,
+            path,
+            {
+              method: "DELETE",
+              body: JSON.stringify({
+                items: uris.map((uri) => ({ uri })),
+                snapshot_id: snapshotAfter,
+              }),
+            },
+          ),
         );
         acceptedDeleteUris.push(...uris);
         snapshotAfter = result.snapshot_id ?? snapshotAfter;
@@ -552,17 +557,21 @@ export async function executeAutomaticMusicSourceCleanup(
 
   for (const uris of chunk(plan.removableUris, MAX_DELETE_ITEMS)) {
     try {
-      const result: { snapshot_id?: string | null } = await spotifyRequest(
-        accessToken,
-        `/playlists/${source.spotifyId}/items`,
-        {
-          method: "DELETE",
-          body: JSON.stringify({
-            items: uris.map((uri) => ({ uri })),
-            snapshot_id: snapshotAfter,
-          }),
-        },
-      );
+      const path = `/playlists/${source.spotifyId}/items`;
+        const result: { snapshot_id?: string | null } = await guardedSpotifyPlaylistWrite(
+          { userId, path, method: "DELETE" },
+          () => spotifyRequest(
+            accessToken,
+            path,
+            {
+              method: "DELETE",
+              body: JSON.stringify({
+                items: uris.map((uri) => ({ uri })),
+                snapshot_id: snapshotAfter,
+              }),
+            },
+          ),
+        );
       if (!result.snapshot_id) {
         throw new MusicSourceCleanupError(
           "O Spotify aceitou a limpeza sem retornar o novo snapshot da playlist.",
