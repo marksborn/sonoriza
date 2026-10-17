@@ -7,11 +7,13 @@ import { COMPLETE_READING_CONFIRMATION } from "@/services/audiobooks/d9-complete
 
 type Active = Extract<SingleReadingPreview, { status: "SINGLE_NOTEBOOK" }> & {
   revision: number;
+  spotifyShowUrl: string | null;
 };
 
 type Archived = Readonly<{
   id: string;
   bookTitle: string;
+  spotifyShowUrl: string | null;
   completedAt: string;
   chaptersRecorded: number;
   finalRevision: number;
@@ -113,6 +115,9 @@ export function AudiobookReadingManager({
         <>
           <div className="space-y-1 text-sm">
             <p className="font-bold">{active.bookTitle}</p>
+            {active.spotifyShowUrl ? <a href={active.spotifyShowUrl}
+              target="_blank" rel="noopener noreferrer" className="underline">
+              Abrir referência no Spotify ↗</a> : null}
             <p>Capítulo atual: {active.chapterLabel}</p>
             <p className="text-muted-inverse">Destino: {active.targetName}</p>
             <p className="text-muted-inverse">
@@ -154,6 +159,9 @@ export function AudiobookReadingManager({
                   {item.bookTitle} — {item.chaptersRecorded} anotações,
                   concluído em {new Date(item.completedAt).toLocaleDateString("pt-BR")}
                 </button>
+                {item.spotifyShowUrl ? <a href={item.spotifyShowUrl}
+                  target="_blank" rel="noopener noreferrer"
+                  className="ml-2 text-xs underline">Abrir referência ↗</a> : null}
                 {openedArchiveId === item.id ? (
                   <ol className="ml-4 list-decimal space-y-1">
                     {chapters.map(chapter => (
