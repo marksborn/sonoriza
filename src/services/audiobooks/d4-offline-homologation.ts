@@ -25,9 +25,10 @@ import {
   type AudiobookD3Simulation,
 } from "./manual-handoff-assessment";
 
-const DOCUMENTED_AUDIOBOOK_MARKETS = new Set([
-  "US", "GB", "CA", "IE", "NZ", "AU",
-] as const);
+import { DOCUMENTED_SPOTIFY_AUDIOBOOK_MARKETS } from "./d5-account-capability";
+const DOCUMENTED_AUDIOBOOK_MARKETS = new Set<string>(
+  DOCUMENTED_SPOTIFY_AUDIOBOOK_MARKETS,
+);
 
 /** Verdicts all mean "not approved for production", even when the dry run passes. */
 export type D4HomologationReason =
@@ -100,7 +101,7 @@ export function documentedAudiobookMarketStatus(country: string | null) {
   if (!country || !/^[A-Z]{2}$/.test(country)) {
     return "ACCOUNT_MARKET_UNVERIFIED" as const;
   }
-  return DOCUMENTED_AUDIOBOOK_MARKETS.has(country as "US" | "GB" | "CA" | "IE" | "NZ" | "AU")
+  return DOCUMENTED_AUDIOBOOK_MARKETS.has(country)
     ? "DOCUMENTED_MARKET" as const
     : "AUDIOBOOK_CATALOG_MARKET_NOT_DOCUMENTED" as const;
 }
