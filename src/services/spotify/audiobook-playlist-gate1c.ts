@@ -4,6 +4,7 @@ export const GATE1C = {
   chapterId: "71PKNrJrxgaYwUY6srGQ3L",
   chapterUri: "spotify:episode:71PKNrJrxgaYwUY6srGQ3L",
   playlistName: "Sonoriza Teste Audiolivros — AUDIOBOOK-01",
+  secondPrivatePlaylistName: "Sonoriza Teste Capitulo 1984 - AUDIOBOOK-01",
   description: "Experimento isolado e privado AUDIOBOOK-01 Gate 1C (#482): capítulo de 1984. Não usar como playlist produtiva.",
   confirm: "AUDIOBOOK-01-CRIAR-E-ADICIONAR",
 } as const;
@@ -33,11 +34,11 @@ export function chapterEligible(value: unknown): boolean {
       asObject(restriction)?.reason === null ||
       asObject(restriction)?.reason === undefined);
 }
-export function playlistOwnedPrivate(value: unknown, ownerId: string): boolean {
+export function playlistOwnedPrivate(value: unknown, ownerId: string, expectedName = GATE1C.playlistName): boolean {
   const item = asObject(value);
   return safeId(item?.id) !== null &&
     item?.public === false &&
-    item?.name === GATE1C.playlistName &&
+    item?.name === expectedName &&
     item?.collaborative === false &&
     profileId(item?.owner) === ownerId;
 }
