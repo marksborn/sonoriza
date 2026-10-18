@@ -200,7 +200,13 @@ export class SpotifyClient {
             const archived = await prisma.userAudiobookCompletedReading.findFirst({
               where: { userId, spotifyPlaylistId }, select: { id: true },
             });
-            return archived !== null;
+            if (archived) return true;
+            // D.12: library associations survive book completion, and are
+            // protective independent of feature-flag rollback.
+            const linked = await prisma.userAudiobookLibraryTarget.findFirst({
+              where: { userId, spotifyPlaylistId }, select: { id: true },
+            });
+            return linked !== null;
           },
         );
         // Dormant until explicitly approved. The first phase's read-only
