@@ -573,6 +573,51 @@ function approvalKey(input: {
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
+/**
+ * Gate 8 normally requires a successful inline simulation. A PARTIAL result
+ * may also be approved only when it reflects isolated, source-scoped Spotify
+ * 502/404 reads that the incremental planner safely excluded, with a
+ * conclusive quality-passing simulation. A failed/ambiguous run, quota,
+ * authentication or a missing source diagnostic is never approval evidence.
+ */
+export function playbackReserveGate8SimulationEligible(
+  status: string,
+  summary: unknown,
+): boolean {
+  if (status === "SUCCESS") return true; // Preserve existing SUCCESS contract.
+  if (status !== "PARTIAL") return false;
+
+  const run = asRecord(summary);
+  const collection = asRecord(run?.sourceCollection);
+  const failures = collection?.failures;
+  if (
+    run?.simulate !== true ||
+    run?.inconclusive !== false ||
+    run?.qualityPassed !== true ||
+    run?.collectionComplete !== false ||
+    run?.podcast08SimulationOnly === true ||
+    run?.podcast08PreviewNotForApproval === true ||
+    run?.audiobookGateDSimulationOnly === true ||
+    !Array.isArray(run.qualityFailures) ||
+    run.qualityFailures.length !== 0 ||
+    !Array.isArray(failures) ||
+    failures.length === 0 ||
+    collection?.degradedSourceCount !== failures.length
+  ) return false;
+
+  return failures.every((failure) => {
+    const detail = asRecord(failure);
+    if (detail?.errorKind !== "HTTP_ERROR") return false;
+    if (detail.status === 502) return true;
+    return (
+      detail.status === 404 &&
+      (detail.operation === "show-episodes" ||
+        detail.operation === "playlist-items" ||
+        detail.operation === "playlist-metadata")
+    );
+  });
+}
+
 async function findApprovedGate8Simulation(input: {
   userId: string;
   targetPlaylistId: string;
@@ -582,14 +627,15 @@ async function findApprovedGate8Simulation(input: {
     where: {
       userId: input.userId,
       simulation: true,
-      status: "SUCCESS",
+      status: { in: ["SUCCESS", "PARTIAL"] },
     },
     orderBy: { startedAt: "desc" },
     take: 30,
-    select: { id: true, summary: true },
+    select: { id: true, status: true, summary: true },
   });
 
   for (const run of runs) {
+    if (!playbackReserveGate8SimulationEligible(run.status, run.summary)) continue;
     const summary = asRecord(run.summary);
     const runtime = asRecord(summary?.playbackReserveRuntime);
     if (!runtime) continue;
