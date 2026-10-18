@@ -350,6 +350,40 @@ databaseTest("Gate 8 KEEP_FILLED ACTIVE approval is bound to the exact playlist 
     assert.equal(approved.status, "READY_ACTIVE_REAL");
     assert.equal(approved.simulationApprovedRunId, approval.id);
 
+    const partialApproval = await prisma.generationRun.create({
+      data: {
+        userId,
+        trigger: "SIMULATION",
+        simulation: true,
+        status: "PARTIAL",
+        startedAt: new Date(Date.now() + 1000),
+        summary: {
+          simulate: true,
+          inconclusive: false,
+          qualityPassed: true,
+          qualityFailures: [],
+          collectionComplete: false,
+          sourceCollection: {
+            degradedSourceCount: 1,
+            failures: [
+              { errorKind: "HTTP_ERROR", status: 404, operation: "show-episodes" },
+            ],
+          },
+          playbackReserveRuntime: playbackReserveShadowRuntimeSummary(simulation),
+        },
+      },
+    });
+    const approvedPartial = await preparePlaybackReserveShadowRuntime({
+      userId,
+      targetPlaylistIds: [targetId],
+      simulate: false,
+      scheduledPolicyByTargetId: { [targetId]: "KEEP_FILLED" },
+      keepFilledContextByTargetId: { [targetId]: contextA },
+    });
+    assert.equal(approvedPartial.effectiveMode, "ACTIVE");
+    assert.equal(approvedPartial.status, "READY_ACTIVE_REAL");
+    assert.equal(approvedPartial.simulationApprovedRunId, partialApproval.id);
+
     const changedSnapshot = await preparePlaybackReserveShadowRuntime({
       userId,
       targetPlaylistIds: [targetId],
