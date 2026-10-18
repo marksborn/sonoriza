@@ -1216,7 +1216,7 @@ export async function generatePlaylists(
       log({
         level: "WARN",
         message:
-          `Continuing with ${degradedFailures.length} source(s) degraded by HTTP 502; ` +
+          `Continuing with ${degradedFailures.length} source(s) degraded by isolated Spotify HTTP 502/404; ` +
           "all candidates previously read from those sources were discarded.",
         data: degradedFailures,
       });

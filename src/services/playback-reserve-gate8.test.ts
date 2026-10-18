@@ -15,6 +15,7 @@ import {
 import { savePlaybackReservePolicy } from "./playback-reserve-policy";
 import {
   playbackReserveKeepFilledNeedsInlineSimulation,
+  playbackReserveGate8SimulationEligible,
   playbackReserveShadowRuntimeSummary,
   preparePlaybackReserveShadowRuntime,
 } from "./playback-reserve-shadow-runtime";
@@ -55,6 +56,54 @@ test("Gate 8 behavioral fail-closed also covers ACTIVE Gate 8 summaries", () => 
     }),
     true,
   );
+});
+
+test("Gate 8 allows a quality-approved PARTIAL simulation only for isolated source 404/502", () => {
+  const approval = {
+    simulate: true,
+    inconclusive: false,
+    qualityPassed: true,
+    qualityFailures: [],
+    collectionComplete: false,
+    sourceCollection: {
+      degradedSourceCount: 1,
+      failures: [
+        { errorKind: "HTTP_ERROR", status: 404, operation: "show-episodes" },
+      ],
+    },
+  };
+  assert.equal(playbackReserveGate8SimulationEligible("PARTIAL", approval), true);
+  assert.equal(playbackReserveGate8SimulationEligible("FAILED", approval), false);
+  assert.equal(playbackReserveGate8SimulationEligible("PARTIAL", {
+    ...approval, qualityPassed: false,
+  }), false);
+  assert.equal(playbackReserveGate8SimulationEligible("PARTIAL", {
+    ...approval, inconclusive: true,
+  }), false);
+  assert.equal(playbackReserveGate8SimulationEligible("PARTIAL", {
+    ...approval, podcast08SimulationOnly: true,
+  }), false);
+  assert.equal(playbackReserveGate8SimulationEligible("PARTIAL", {
+    ...approval, sourceCollection: {
+      degradedSourceCount: 1,
+      failures: [{ errorKind: "HTTP_ERROR", status: 404, operation: "saved-episodes" }],
+    },
+  }), false);
+  assert.equal(playbackReserveGate8SimulationEligible("PARTIAL", {
+    ...approval, sourceCollection: {
+      degradedSourceCount: 1,
+      failures: [{ errorKind: "RATE_LIMITED", status: 429, operation: "show-episodes" }],
+    },
+  }), false);
+  assert.equal(playbackReserveGate8SimulationEligible("PARTIAL", {
+    ...approval, sourceCollection: { degradedSourceCount: 2, failures: approval.sourceCollection.failures },
+  }), false);
+  assert.equal(playbackReserveGate8SimulationEligible("PARTIAL", {
+    ...approval, sourceCollection: {
+      degradedSourceCount: 1,
+      failures: [{ errorKind: "HTTP_ERROR", status: 502, operation: "show-episodes" }],
+    },
+  }), true);
 });
 
 databaseTest("Gate 8 removes previous RESERVE from KEEP_FILLED PRIMARY preservation", async () => {
@@ -300,6 +349,40 @@ databaseTest("Gate 8 KEEP_FILLED ACTIVE approval is bound to the exact playlist 
     assert.equal(approved.effectiveMode, "ACTIVE");
     assert.equal(approved.status, "READY_ACTIVE_REAL");
     assert.equal(approved.simulationApprovedRunId, approval.id);
+
+    const partialApproval = await prisma.generationRun.create({
+      data: {
+        userId,
+        trigger: "SIMULATION",
+        simulation: true,
+        status: "PARTIAL",
+        startedAt: new Date(Date.now() + 1000),
+        summary: {
+          simulate: true,
+          inconclusive: false,
+          qualityPassed: true,
+          qualityFailures: [],
+          collectionComplete: false,
+          sourceCollection: {
+            degradedSourceCount: 1,
+            failures: [
+              { errorKind: "HTTP_ERROR", status: 404, operation: "show-episodes" },
+            ],
+          },
+          playbackReserveRuntime: playbackReserveShadowRuntimeSummary(simulation),
+        },
+      },
+    });
+    const approvedPartial = await preparePlaybackReserveShadowRuntime({
+      userId,
+      targetPlaylistIds: [targetId],
+      simulate: false,
+      scheduledPolicyByTargetId: { [targetId]: "KEEP_FILLED" },
+      keepFilledContextByTargetId: { [targetId]: contextA },
+    });
+    assert.equal(approvedPartial.effectiveMode, "ACTIVE");
+    assert.equal(approvedPartial.status, "READY_ACTIVE_REAL");
+    assert.equal(approvedPartial.simulationApprovedRunId, partialApproval.id);
 
     const changedSnapshot = await preparePlaybackReserveShadowRuntime({
       userId,

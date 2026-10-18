@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Candidate, RunTarget } from "@/services/playlist-planner";
+import { SpotifyApiError } from "@/services/spotify/errors";
+import { isDegradableSpotifySourceFailure } from "./source-failure-policy";
 
 import {
   collectIncrementally,
@@ -223,6 +225,54 @@ test("recoverable source failure discards its partial pool and continues with su
     result.pools.podcasts.some((item) => item.uri === "spotify:episode:must-disappear"),
     false,
   );
+  assert.equal(result.qualityFailures.length, 0);
+});
+
+test("source-scoped Spotify GET 404 discards partial podcast data and uses safe substitutes", async () => {
+  const notFound = new SpotifyApiError({
+    kind: "HTTP_ERROR",
+    status: 404,
+    method: "GET",
+    operation: "show-episodes",
+    retryable: false,
+    message: "Spotify source unavailable",
+  });
+  const music = fakeSource({
+    id: "music",
+    kind: "MUSIC",
+    batches: [
+      { candidates: [candidate("spotify:track:available", "MUSIC", 600_000)], done: true },
+    ],
+  });
+  const unavailable = fakeSource({
+    id: "podcast-unavailable",
+    kind: "PODCAST",
+    batches: [
+      { candidates: [candidate("spotify:episode:partial-404", "PODCAST", 100_000, "show-unavailable")], done: false },
+      notFound,
+    ],
+  });
+  const alternative = fakeSource({
+    id: "podcast-alternative",
+    kind: "PODCAST",
+    batches: [
+      { candidates: [candidate("spotify:episode:alternative-1", "PODCAST", 100_000, "show-ok-1")], done: false },
+      { candidates: [candidate("spotify:episode:alternative-2", "PODCAST", 500_000, "show-ok-2")], done: true },
+    ],
+  });
+
+  const result = await collectIncrementally({
+    sources: [music, unavailable, alternative],
+    targets: [target(1_200_000)],
+    recoverSourceFailure: (_source, error) => isDegradableSpotifySourceFailure(error),
+  });
+
+  assert.equal(result.failure, null);
+  assert.equal(result.degradedFailures.length, 1);
+  assert.equal(result.degradedFailures[0]?.source.id, "podcast-unavailable");
+  assert.equal(unavailable.calls, 2);
+  assert.equal(alternative.calls, 2);
+  assert.equal(result.pools.podcasts.some((item) => item.uri === "spotify:episode:partial-404"), false);
   assert.equal(result.qualityFailures.length, 0);
 });
 

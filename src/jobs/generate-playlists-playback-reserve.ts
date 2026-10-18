@@ -5,6 +5,7 @@ import { persistPlaybackReserveRolesAfterGeneration } from "@/services/playback-
 import { preparePlaybackReserveGate8KeepFilledInput } from "@/services/playback-reserve-gate8";
 import {
   playbackReserveKeepFilledNeedsInlineSimulation,
+  playbackReserveGate8SimulationEligible,
   playbackReserveShadowRuntimeSummary,
   preparePlaybackReserveShadowRuntime,
   runWithPlaybackReserveShadowRuntimeState,
@@ -95,8 +96,23 @@ export async function generatePlaylists(
     state.inlineSimulationStatus = simulationResult.status;
     state.additionalProviderReads = true;
 
+    // PARTIAL may only approve Gate 8 when the persisted simulation proves
+    // that its sole degradation was safely excluded source-scoped HTTP 502/404
+    // and all quality checks passed. Never infer approval from status alone.
+    const partialRun = simulationResult.status === "PARTIAL"
+      ? await prisma.generationRun.findUnique({
+          where: { id: simulationResult.runId },
+          select: { status: true, simulation: true, summary: true },
+        })
+      : null;
+    const simulationEligible =
+      simulationResult.status === "SUCCESS" ||
+      (partialRun?.simulation === true &&
+        partialRun.status === simulationResult.status &&
+        playbackReserveGate8SimulationEligible(partialRun.status, partialRun.summary));
+
     if (
-      simulationResult.status !== "SUCCESS" ||
+      !simulationEligible ||
       simulationState.rolePersistenceStatus !== "PERSISTED"
     ) {
       return createBlockedRealRun(
