@@ -164,8 +164,9 @@ test("#489 D.6: SSR exposes non-persisted manual fallback and never an Apply Spo
       durationMs: 300_000,
     }],
   }));
-  assert.match(html, /Gate D.6/);
-  assert.match(html, /Planejar um capítulo sem a API de audiolivros/);
+  assert.match(html, /Audiolivro · Registro manual/);
+  assert.match(html, /Livro e capítulos manuais/);
+  assert.match(html, /Preencher exemplo 1984 \(sem salvar\)/);
   assert.match(html, /Calcular prévia manual \(sem salvar\)/);
   assert.match(html, /não salva nada no banco/);
   assert.match(html, /não alimenta a geração de playlists/);
