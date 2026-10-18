@@ -13,12 +13,17 @@ import { manualNotebookEnabled } from "@/services/audiobooks/d7-manual-notebook-
 import { projectSingleReadingPreview } from "@/services/audiobooks/d9-single-reading-preview";
 import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading-contract";
 import { AudiobookReadingManager } from "@/components/AudiobookReadingManager";
+import { canonicalManualShowHandoff } from "@/services/audiobooks/d11-manual-ux";
 
 export const dynamic = "force-dynamic";
 
 /** Gate B.4: OFF by default. Read-only preview in explicit developer mode. */
-export default async function AudiobookConfigurationPage() {
+export default async function AudiobookConfigurationPage({
+  searchParams,
+}: Readonly<{ searchParams: Promise<{ showReference?: string | string[] }> }>) {
   if (process.env.AUDIOBOOK02_BIND_UI_MODE !== "PREVIEW") notFound();
+  const query = await searchParams;
+  const handedOffShowUrl = canonicalManualShowHandoff(query?.showReference);
 
   const session = await auth();
   if (!session?.user?.id) redirect("/");
@@ -111,7 +116,7 @@ export default async function AudiobookConfigurationPage() {
   }));
 
   return (
-    <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
+    <main className="product-shell px-5 py-8 pb-36 sm:px-8 lg:px-10">
       <div className="product-ambient" />
       <div className="relative mx-auto max-w-4xl">
         <Link href="/dashboard/configuracao" className="inline-flex items-center gap-2 text-sm font-bold text-muted-inverse hover:text-ink-inverse">
@@ -124,7 +129,7 @@ export default async function AudiobookConfigurationPage() {
             Audiolivro inteiro, tempo de um capítulo.
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-inverse">
-            Um audiolivro colocado manualmente no Spotify pode entrar no orçamento de uma playlist com a duração virtual do capítulo escolhido. A seleção, a reprodução e a troca de capítulos continuam manuais.
+            Registre o livro publicado como /show/ e calcule a duração virtual do capítulo escolhido. O caderno é local: a composição automática da playlist protegida ainda não está liberada. A seleção e a reprodução no Spotify continuam manuais.
           </p>
         </header>
         {singleReadingEnabled(process.env) && currentReading.status !== "REVIEW_REQUIRED" ? (
@@ -170,11 +175,11 @@ export default async function AudiobookConfigurationPage() {
           Se o seu livro é publicado como <code>/show/</code> no Spotify, não
           utilize a busca de audiolivros por catálogo abaixo. Use a alternativa
           manual para registrar a referência, o capítulo e sua duração.
-          O país BR não possui a mesma disponibilidade de API de audiolivros
-          dos mercados documentados.
+          O diagnóstico de mercado da API oficial não é necessário para cadastrar
+          um livro publicado como /show/.
         </p>
         {process.env.AUDIOBOOK02_SELF_REPORTED_PREVIEW_MODE === "PREVIEW" ? (
-          <section id="audiobook-manual" className="mt-10 scroll-mt-6">
+          <section id="audiobook-manual" className="mt-10 scroll-mt-24">
             <AudiobookSelfReportedPreview
               // Completion changes the current-book identity; remount the
               // D.7 editor so stale notebook revision cannot block next book.
@@ -183,6 +188,7 @@ export default async function AudiobookConfigurationPage() {
                   (manualNotes[0]?.revision ?? 0)
                 : "legacy"}
               targets={targets}
+              initialSpotifyShowUrl={handedOffShowUrl ?? ""}
               notebookEnabled={manualNotebookEnabled(process.env)}
               singleReadingEnabled={singleReadingEnabled(process.env)}
               advisoryEnabled={manualNotebookEnabled(process.env) &&
@@ -190,20 +196,22 @@ export default async function AudiobookConfigurationPage() {
             />
           </section>
         ) : null}
-        <section className="mt-10 space-y-3">
-          <h2 className="text-xl font-black text-ink-inverse">
-            Consulta avançada de audiolivros via catálogo
-          </h2>
-          <p className="text-sm text-muted-inverse">
-            Somente para links Spotify /audiobook/ e contas cujo catálogo
-            disponibiliza capítulos. Livros publicados como /show/
-            utilizam o formulário manual acima.
-          </p>
-          <AudiobookManualBindWizard
-            targets={targets}
-            bindingEnabled={audiobookBindEnabled(process.env)}
-          />
-        </section>
+        <details className="mt-10 rounded-2xl border border-line-dark p-5 text-ink-inverse">
+          <summary className="cursor-pointer text-lg font-black">
+            Consulta avançada por catálogo oficial (/audiobook/)
+          </summary>
+          <div className="mt-5 space-y-3">
+            <p className="text-sm text-muted-inverse">
+              Somente para links /audiobook/ em mercados compatíveis.
+              Livros narrados publicados como /show/ são registrados no
+              caderno manual acima, independentemente do diagnóstico D.5.
+            </p>
+            <AudiobookManualBindWizard
+              targets={targets}
+              bindingEnabled={audiobookBindEnabled(process.env)}
+            />
+          </div>
+        </details>
         {updateCandidates.length ? (
           <section className="mt-10 space-y-5">
             <div>
