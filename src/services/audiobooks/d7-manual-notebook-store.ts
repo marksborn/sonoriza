@@ -79,6 +79,19 @@ export async function saveUserDeclaredAudiobookNotebook(
 ): Promise<ManualNotebookView> {
   if (!ownerId) fail("OWNER_REQUIRED");
   return prisma.$transaction(async tx => {
+    // Owners with an existing D.7 notebook may still update/complete it;
+    // D.12 forbids creating ANOTHER legacy notebook after activation.
+    if (process.env.AUDIOBOOK02_MULTI_TARGET_MODE === "ACTIVE") {
+      const legacy = await tx.targetAudiobookManualNotebook.findFirst({
+        where: { userId: ownerId, targetPlaylistId: input.targetPlaylistId },
+        select: { id: true },
+      });
+      if (!legacy) fail("USE_GLOBAL_LIBRARY_FLOW");
+    }
+    const library = await tx.userAudiobookLibraryReading.findFirst({
+      where: { userId: ownerId, completedAt: null }, select: { id: true },
+    });
+    if (library) fail("GLOBAL_LIBRARY_BOOK_ACTIVE");
     if (singleReadingEnabled(process.env)) {
       // Serialize all new/updated readings for this owner, independent of
       // destination. The finish operation takes this same row lock first.
