@@ -476,6 +476,30 @@ export async function generatePlaylists(
         evidenceSource: true,
       },
     });
+    // D.12: ANY current or archived library association is a durable
+    // marker of potentially opaque remote book content. Block the entire
+    // batch BEFORE collecting sources, independently of the D.12 UI flag.
+    const libraryProtectedTargets = await prisma.userAudiobookLibraryTarget.findMany({
+      where: { userId,
+        spotifyPlaylistId: { in: targets.map(t => t.spotifyPlaylistId).filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        ) },
+      },
+      select: { targetPlaylistId: true, spotifyPlaylistId: true },
+    });
+    if (!simulate && libraryProtectedTargets.length > 0) {
+      const error = "Geração real bloqueada: audiolivro da biblioteca associado " +
+        "a playlist Spotify com conteúdo opaco (nenhuma escrita autorizada).";
+      summary.audiobookLibraryMultiTargetGate = {
+        mode: "REAL_WRITE_BLOCKED",
+        targetIds: libraryProtectedTargets.map(row => row.targetPlaylistId),
+        approvalEligible: false, spotifyWrites: false, plannerInfluence: false,
+      };
+      summary.qualityPassed = false;
+      log({ level: "ERROR", message: error });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
+    }
     // D.7: the notebook is a conservative indication of possible opaque
     // content. Preserve the original overlay guard below unchanged.
     if (!simulate && manualNotebookTargets.length > 0) {

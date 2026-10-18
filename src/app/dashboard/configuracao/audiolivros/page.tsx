@@ -13,6 +13,8 @@ import { manualNotebookEnabled } from "@/services/audiobooks/d7-manual-notebook-
 import { projectSingleReadingPreview } from "@/services/audiobooks/d9-single-reading-preview";
 import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading-contract";
 import { AudiobookReadingManager } from "@/components/AudiobookReadingManager";
+import { audiobookMultiTargetEnabled } from "@/services/audiobooks/d12-library-contract";
+import { AudiobookMultiPlaylistLibrary } from "@/components/AudiobookMultiPlaylistLibrary";
 import { canonicalManualShowHandoff } from "@/services/audiobooks/d11-manual-ux";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +29,44 @@ export default async function AudiobookConfigurationPage({
 
   const session = await auth();
   if (!session?.user?.id) redirect("/");
+
+  // D.12 is an opt-in alternative to the target-scoped D.7 UI. Do not
+  // silently migrate legacy notebooks; owners with legacy active notes keep
+  // the old completion screen until those notes are archived explicitly.
+  if (audiobookMultiTargetEnabled(process.env)) {
+    const legacyNotes = await prisma.targetAudiobookManualNotebook.count({
+      where: { userId: session.user.id },
+    });
+    if (legacyNotes === 0) {
+      const libraryTargets = await prisma.targetPlaylist.findMany({
+        where: { userId: session.user.id, spotifyPlaylistId: { not: null } },
+        select: { id: true, name: true, spotifyPlaylistId: true,
+          durationMode: true, fixedDurationSeconds: true, updatePolicy: true },
+        orderBy: [{ priority: "asc" }, { name: "asc" }],
+      });
+      const usableTargets = libraryTargets.filter(t => t.spotifyPlaylistId &&
+        /^[A-Za-z0-9]{22}$/.test(t.spotifyPlaylistId)).map(t => ({
+          id: t.id, name: t.name, spotifyPlaylistId: t.spotifyPlaylistId!,
+          durationMode: t.durationMode, fixedDurationSeconds: t.fixedDurationSeconds,
+          updatePolicy: t.updatePolicy,
+        }));
+      return (
+        <main className="product-shell px-5 py-8 pb-36 sm:px-8 lg:px-10">
+          <div className="product-ambient" />
+          <div className="relative mx-auto max-w-4xl">
+            <Link href="/dashboard/configuracao"
+              className="inline-flex items-center gap-2 text-sm font-bold text-muted-inverse">
+              <UiIcon name="arrow-left" size={18}/> Voltar à configuração
+            </Link>
+            <div className="mt-8">
+              <AudiobookMultiPlaylistLibrary targets={usableTargets} />
+            </div>
+          </div>
+        </main>
+      );
+    }
+  }
+
 
   const rows = await prisma.targetPlaylist.findMany({
     where: {

@@ -37,6 +37,7 @@ model User {
   audiobookManualNotebooks          TargetAudiobookManualNotebook[]
   audiobookManualEntries            TargetAudiobookManualEntry[]
   audiobookCompletedReadings        UserAudiobookCompletedReading[]
+  audiobookLibraryReadings           UserAudiobookLibraryReading[]
   podcastDurationBandSettings      PodcastDurationBandSettings?
   generationRuns                   GenerationRun[]
   musicPlaybackPolicy              MusicPlaybackPolicy?
@@ -945,6 +946,71 @@ model UserAudiobookCompletedChapter {
   reading UserAudiobookCompletedReading @relation(fields: [readingId], references: [id], onDelete: Cascade)
 
   @@unique([readingId, revision])
+}
+
+
+// AUDIOBOOK-02 D.12 — ONE active reading per user, many protected playlists.
+// This is separate from the legacy D.7 target-scoped notebook: do not
+// backfill or delete legacy records implicitly. Completed readings remain.
+model UserAudiobookLibraryReading {
+  id                String    @id @default(cuid())
+  userId            String
+  bookTitle         String    @db.VarChar(120)
+  spotifyShowId     String    @db.VarChar(22)
+  chapterLabel      String    @db.VarChar(120)
+  chapterDurationMs Int
+  consumedMs        Int       @default(0)
+  revision          Int       @default(1)
+  evidenceSource    String    @default("USER_DECLARED_UNVERIFIED") @db.VarChar(40)
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user              User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entries           UserAudiobookLibraryEntry[]
+  targets           UserAudiobookLibraryTarget[]
+
+  @@unique([userId, id])
+  // Partial unique active-row index is created directly by D.12 SQL migration.
+  @@index([userId, completedAt])
+}
+
+model UserAudiobookLibraryEntry {
+  id                String   @id @default(cuid())
+  userId            String
+  readingId         String
+  revision          Int
+  bookTitle         String   @db.VarChar(120)
+  spotifyShowId     String   @db.VarChar(22)
+  chapterLabel      String   @db.VarChar(120)
+  chapterDurationMs Int
+  consumedMs        Int
+  evidenceSource    String   @default("USER_DECLARED_UNVERIFIED") @db.VarChar(40)
+  createdAt         DateTime @default(now())
+
+  reading UserAudiobookLibraryReading @relation(fields: [userId, readingId], references: [userId, id], onDelete: Cascade)
+
+  @@unique([readingId, revision])
+  @@index([userId, createdAt])
+}
+
+// The snapshot remote ID must survive target renaming/deletion and completion.
+// No FK to TargetPlaylist: removing the destination configuration must never
+// release an unverified opaque Spotify book's durable write protection.
+model UserAudiobookLibraryTarget {
+  id                String   @id @default(cuid())
+  userId            String
+  readingId         String
+  targetPlaylistId  String
+  targetName        String   @db.VarChar(120)
+  spotifyPlaylistId String
+  createdAt         DateTime @default(now())
+
+  reading UserAudiobookLibraryReading @relation(fields: [userId, readingId], references: [userId, id], onDelete: Cascade)
+
+  @@unique([readingId, spotifyPlaylistId])
+  @@index([userId, spotifyPlaylistId])
+  @@index([userId, targetPlaylistId])
 }
 
 // AUDIOBOOK-02 Gate B.2: durable write admission/ambiguity fence.

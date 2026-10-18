@@ -53,6 +53,10 @@ export const prismaAudiobookWriteFenceStore: AudiobookWriteFenceStore = {
       if (archived) {
         throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_ARCHIVED_BOOK");
       }
+      const linked = await tx.userAudiobookLibraryTarget.findFirst({
+        where: { userId, spotifyPlaylistId }, select: { id: true },
+      });
+      if (linked) throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_LIBRARY_TARGET");
     });
   },
 
@@ -123,6 +127,10 @@ export async function withAudiobookOverlayBindAdmission<T>(
     if (archived) {
       throw new Error("AUDIOBOOK_BIND_BLOCKED_ARCHIVED_BOOK_PROTECTED");
     }
+    const linked = await tx.userAudiobookLibraryTarget.findFirst({
+      where: { userId, spotifyPlaylistId }, select: { id: true },
+    });
+    if (linked) throw new Error("AUDIOBOOK_BIND_BLOCKED_LIBRARY_TARGET");
     return commit(tx);
   });
 }
@@ -202,6 +210,11 @@ export async function withAudiobookTargetSettingsAdmission<T>(
       if (archived) {
         throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_ARCHIVED_BOOK");
       }
+      const linked = await tx.userAudiobookLibraryTarget.findFirst({
+        where: { userId, spotifyPlaylistId: expectedSpotifyPlaylistId },
+        select: { id: true },
+      });
+      if (linked) throw new Error("AUDIOBOOK_TARGET_CONFIG_BLOCKED_LIBRARY_TARGET");
     }
     return commit(tx);
   });
