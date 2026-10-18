@@ -210,7 +210,7 @@ export function AudiobookManualBindWizard({
           <span className="product-badge">2 · Livro e capítulo</span>
           <h2 className="mt-3 text-lg font-black text-ink-inverse">Identifique o audiolivro no Spotify</h2>
           <p className="mt-1 text-sm text-muted-inverse">
-            Cole o link do audiolivro ou informe o ID. Consultaremos os capítulos sem modificar a playlist.
+            Esta consulta avançada aceita /audiobook/ ou ID de catálogo. Para /show/, use o caderno manual.
           </p>
         </div>
         <div>
@@ -221,17 +221,22 @@ export function AudiobookManualBindWizard({
           {declaredShowReference ? (
             <div role="status" className="mt-3 space-y-2 rounded-xl border border-line-dark p-3 text-sm text-ink-inverse">
               <p className="font-bold">
-                Este link é um show Spotify. Se ele contém um livro narrado,
-                registre como audiolivro pela alternativa manual, sem exigir
-                catálogo de /audiobook/ nem inventar capítulos.
+                Link /show/ reconhecido como referência manual de livro narrado.
+                Não é necessário diagnosticar o país da conta ou consultar a
+                API de catálogo /audiobook/ para registrar este livro.
               </p>
-              <a className="underline" href="#audiobook-manual">
-                Ir para o livro e capítulos manuais ↑
+              <a className="underline"
+                href={"?showReference=" +
+                  encodeURIComponent(declaredShowReference.canonicalUrl) +
+                  "#audiobook-manual"}>
+                Usar este link no caderno manual ↑
               </a>
             </div>
           ) : null}
         </div>
-        <AudiobookCapabilityInspector key={parsedBookId ?? "no-book"} audiobookId={parsedBookId} />
+        {!declaredShowReference && (
+          <AudiobookCapabilityInspector key={parsedBookId ?? "no-book"} audiobookId={parsedBookId} />
+        )}
         <button type="button" className="secondary-button" onClick={loadChapters}
           disabled={!selected || !parsedBookId || pending}>
           {pending ? "Consultando..." : "Buscar capítulos no Spotify"}
