@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { AudiobookManualAdvisory } from "@/components/AudiobookManualAdvisory";
 import { parseManualSpotifyShowReference } from "@/services/audiobooks/d10-manual-show-reference";
+import { AUDIOBOOK_1984_MANUAL_EXAMPLE } from "@/services/audiobooks/d11-manual-ux";
 import {
   formatManualDuration,
   formatUserDeclaredChapterNotes,
@@ -52,15 +53,17 @@ type NotebookHistory = Readonly<{
 export function AudiobookSelfReportedPreview({
   targets, notebookEnabled = false, advisoryEnabled = false,
   singleReadingEnabled = false,
+  initialSpotifyShowUrl = "",
 }: Readonly<{
   targets: readonly ManualTarget[];
   notebookEnabled?: boolean;
   advisoryEnabled?: boolean;
   singleReadingEnabled?: boolean;
+  initialSpotifyShowUrl?: string;
 }>) {
   const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
   const [bookTitle, setBookTitle] = useState("");
-  const [spotifyShowUrl, setSpotifyShowUrl] = useState("");
+  const [spotifyShowUrl, setSpotifyShowUrl] = useState(initialSpotifyShowUrl);
   const [chapterLabel, setChapterLabel] = useState("");
   const [chapterSeconds, setChapterSeconds] = useState("");
   const [mode, setMode] = useState<"FULL_CHAPTER" | "MANUAL_REMAINDER">("FULL_CHAPTER");
@@ -230,9 +233,9 @@ export function AudiobookSelfReportedPreview({
   return (
     <section className="product-panel space-y-5 p-5 sm:p-7">
       <div>
-        <span className="product-badge">Gate D.6 · Alternativa manual</span>
+        <span className="product-badge">Audiolivro · Registro manual</span>
         <h2 className="mt-3 text-xl font-black text-ink-inverse">
-          Planejar um capítulo sem a API de audiolivros
+          Livro e capítulos manuais
         </h2>
         <p className="mt-2 text-sm leading-6 text-muted-inverse">
           Para quando o Spotify não disponibiliza o catálogo ou os capítulos
@@ -263,6 +266,26 @@ export function AudiobookSelfReportedPreview({
         ) : (
           <p className="text-sm text-muted-inverse">Nenhum destino elegível. Configure primeiro uma playlist FIXED sem vínculo de audiolivro.</p>
         )}
+      </div>
+      <div className="rounded-xl border border-line-dark p-4 text-sm text-ink-inverse">
+        <p className="mb-2 font-semibold">Exemplo já registrado para homologação: 1984</p>
+        <p className="mb-3 text-muted-inverse">
+          Apresentação · 20,039 segundos · referência /show/.
+          Use apenas se for este o livro e confirme os dados antes de salvar.
+          Não representa uma nova consulta ao Spotify.
+        </p>
+        <button type="button" className="secondary-button"
+          disabled={Boolean(notebook)}
+          onClick={() => change(() => {
+            setBookTitle(AUDIOBOOK_1984_MANUAL_EXAMPLE.bookTitle);
+            setSpotifyShowUrl(AUDIOBOOK_1984_MANUAL_EXAMPLE.spotifyShowUrl);
+            setChapterLabel(AUDIOBOOK_1984_MANUAL_EXAMPLE.chapterLabel);
+            setChapterSeconds(AUDIOBOOK_1984_MANUAL_EXAMPLE.chapterSeconds);
+            setMode("FULL_CHAPTER");
+            setConsumedSeconds("0");
+          })}>
+          Preencher exemplo 1984 (sem salvar)
+        </button>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="text-sm font-bold text-ink-inverse">
@@ -369,8 +392,9 @@ export function AudiobookSelfReportedPreview({
           <h3 className="font-bold text-ink-inverse">Gate D.7 · Caderno manual e histórico</h3>
           <p className="text-sm leading-6 text-muted-inverse">
             O histórico fica armazenado somente no Sonoriza, identificado como
-            USER_DECLARED_UNVERIFIED. Ele NÃO comprova a presença do livro no Spotify,
-            NÃO alimenta o planejador SHADOW e NÃO autoriza a geração ou a escrita de playlists.
+            USER_DECLARED_UNVERIFIED. Ele NÃO comprova a presença do livro no Spotify.
+            A simulação SHADOW é opcional; salvar o caderno NÃO autoriza geração real
+            nem qualquer escrita na playlist Spotify.
           </p>
           {notebook ? (
             <p className="text-sm text-ink-inverse">
