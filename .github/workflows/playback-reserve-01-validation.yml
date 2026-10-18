@@ -34,6 +34,9 @@ on:
       - "scripts/check-playback-reserve-operational-readiness.mjs"
       - "scripts/check-playback-reserve-operational-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
+      - "src/jobs/source-failure-policy.ts"
+      - "src/jobs/source-failure-policy.test.ts"
+      - "src/jobs/incremental-planning.test.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/components/PlaybackReserveTargetConsentForm.tsx"
       - "src/components/PlaybackReserveTargetConsentForm.test.tsx"
@@ -97,6 +100,9 @@ on:
       - "scripts/check-playback-reserve-operational-readiness.mjs"
       - "scripts/check-playback-reserve-operational-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
+      - "src/jobs/source-failure-policy.ts"
+      - "src/jobs/source-failure-policy.test.ts"
+      - "src/jobs/incremental-planning.test.ts"
       - "src/app/dashboard/configuracao/reserva/page.tsx"
       - "src/components/PlaybackReserveTargetConsentForm.tsx"
       - "src/components/PlaybackReserveTargetConsentForm.test.tsx"
@@ -196,6 +202,8 @@ jobs:
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts
           src/jobs/sequence-prewrite-guard.test.ts
+          src/jobs/source-failure-policy.test.ts
+          src/jobs/incremental-planning.test.ts
       - name: B1.7 isolated server-rendered Reserve consent UI contract
         run: npx tsx --test src/components/PlaybackReserveTargetConsentForm.test.tsx
       - name: B1.7 build OFFLINE styled QA preview (8 fictional states)
