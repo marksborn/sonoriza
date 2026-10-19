@@ -37,6 +37,29 @@ export function isProviderReadTimeout(error: unknown): boolean {
 }
 
 /**
+ * A scheduled preflight only reads provider state and must finish BEFORE
+ * GenerationRun / Spotify writes. A transient failure during this phase can
+ * safely retry the same slot, re-reading a fresh playlist snapshot. Keep
+ * permanent errors (including 404), auth failures and 429/quota terminal.
+ *
+ * This policy must never be used after provider write has started.
+ */
+export function isRetryableScheduledPreflightReadFailure(error: unknown): boolean {
+  if (isProviderReadTimeout(error)) return true;
+  if (!(error instanceof SpotifyApiError)) return false;
+  if (error.kind !== "HTTP_ERROR" || error.method.toUpperCase() !== "GET") {
+    return false;
+  }
+  return (
+    error.status >= 500 &&
+    error.status < 600 &&
+    (error.operation === "episode-state" ||
+      error.operation === "playlist-items" ||
+      error.operation === "playlist-metadata")
+  );
+}
+
+/**
  * Maps a finished GenerationRun to the TargetScheduleRun status.
  *
  * A FAILED generation is normally BLOCKED (terminal for the slot): retrying a
