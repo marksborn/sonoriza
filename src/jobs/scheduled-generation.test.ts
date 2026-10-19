@@ -55,6 +55,18 @@ test("#226 terminal writes are fenced to the exact claimed attempt", () => {
   assert.match(source, /Missing TargetScheduleAttempt .* while finishing/);
 });
 
+test("preflight GET 5xx becomes retryable FAILED before GenerationRun is created", () => {
+  const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+  assert.match(source, /await prepareKeepFilledTarget\(user\.id, entry\.target, now\)/);
+  assert.match(
+    source,
+    /catch \(error\) \{\s*const reason = errorMessage\(error\);\s*\/\/ KEEP_FILLED preparation[\s\S]*?isRetryableScheduledPreflightReadFailure\(error\)[\s\S]*?\? "FAILED"\s*:\s*"BLOCKED"/,
+  );
+  assert.match(source, /finishOne\(entry\.audit, status, reason, new Date\(\)\)/);
+  assert.match(source, /const MAX_SCHEDULE_ATTEMPTS = 3/);
+  assert.match(source, /return status === "FAILED" \? failedRetryAfterMs\(\) : RETRY_AFTER_MS/);
+});
+
 test("#324 BLOCKED is terminal for the same scheduled slot", () => {
   const source = readFileSync(
     "src/jobs/scheduled-generation.ts",
