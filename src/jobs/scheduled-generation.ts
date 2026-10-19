@@ -46,6 +46,7 @@ import { runIsolated } from "./isolated-execution";
 import {
   calendarSkippedTargetReason,
   failedRetryAfterMs,
+  isRetryableScheduledPreflightReadFailure,
   providerWriteNeverStarted,
   scheduleStatus,
 } from "./schedule-retry-policy";
@@ -211,8 +212,11 @@ export async function runScheduledGeneration(
             executable.push(entry);
           } catch (error) {
             const reason = errorMessage(error);
-            await finishOne(entry.audit, "BLOCKED", reason, now);
-            results.push(result(entry, "", `blocked: ${reason}`));
+            const status = isRetryableScheduledPreflightReadFailure(error)
+              ? "FAILED"
+              : "BLOCKED";
+            await finishOne(entry.audit, status, reason, new Date());
+            results.push(result(entry, "", `${status === "FAILED" ? "error" : "blocked"}: ${reason}`));
           }
           continue;
         }
@@ -232,8 +236,14 @@ export async function runScheduledGeneration(
           executable.push(entry);
         } catch (error) {
           const reason = errorMessage(error);
-          await finishOne(entry.audit, "BLOCKED", reason, now);
-          results.push(result(entry, "", `blocked: ${reason}`));
+          // KEEP_FILLED preparation reads authoritative episode playback state.
+          // A Spotify GET 5xx before any Spotify write is retryable; preserve
+          // the existing fail-closed behavior for permanent/ambiguous errors.
+          const status = isRetryableScheduledPreflightReadFailure(error)
+            ? "FAILED"
+            : "BLOCKED";
+          await finishOne(entry.audit, status, reason, new Date());
+          results.push(result(entry, "", `${status === "FAILED" ? "error" : "blocked"}: ${reason}`));
         }
       }
 
