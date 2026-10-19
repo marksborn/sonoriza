@@ -34,6 +34,10 @@ on:
       - "scripts/check-playback-reserve-operational-readiness.mjs"
       - "scripts/check-playback-reserve-operational-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
+      - "src/jobs/scheduled-generation.ts"
+      - "src/jobs/scheduled-generation.test.ts"
+      - "src/jobs/schedule-retry-policy.ts"
+      - "src/jobs/schedule-retry-policy.test.ts"
       - "src/jobs/source-failure-policy.ts"
       - "src/jobs/source-failure-policy.test.ts"
       - "src/jobs/incremental-planning.test.ts"
@@ -100,6 +104,10 @@ on:
       - "scripts/check-playback-reserve-operational-readiness.mjs"
       - "scripts/check-playback-reserve-operational-readiness.test.mjs"
       - "src/jobs/generate-playlists-incremental.ts"
+      - "src/jobs/scheduled-generation.ts"
+      - "src/jobs/scheduled-generation.test.ts"
+      - "src/jobs/schedule-retry-policy.ts"
+      - "src/jobs/schedule-retry-policy.test.ts"
       - "src/jobs/source-failure-policy.ts"
       - "src/jobs/source-failure-policy.test.ts"
       - "src/jobs/incremental-planning.test.ts"
@@ -202,6 +210,8 @@ jobs:
           src/services/playlist-planner/plan-run-playback-reserve-gate4.test.ts
           src/services/playlist-planner/plan-run-playback-reserve-gate7.test.ts
           src/jobs/sequence-prewrite-guard.test.ts
+          src/jobs/schedule-retry-policy.test.ts
+          src/jobs/scheduled-generation.test.ts
           src/jobs/source-failure-policy.test.ts
           src/jobs/incremental-planning.test.ts
       - name: B1.7 isolated server-rendered Reserve consent UI contract

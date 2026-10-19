@@ -14,6 +14,7 @@ import {
   calendarSkippedTargetReason,
   failedRetryAfterMs,
   isProviderReadTimeout,
+  isRetryableScheduledPreflightReadFailure,
   isSpotifyWriteTimeout,
   scheduleStatus,
 } from "./schedule-retry-policy";
@@ -161,6 +162,37 @@ test("#435 Gate 3F recognizes only provider read timeouts", () => {
   );
   assert.equal(isProviderReadTimeout(new Error("timed out after 10000ms")), false);
   assert.equal(isProviderReadTimeout(null), false);
+});
+
+test("KEEP_FILLED/REBUILD preflight retries isolated Spotify GET 502 without loosening safety", () => {
+  const spotifyError = (
+    status: number,
+    operation: "episode-state" | "playlist-items" | "playlist-metadata" | "saved-episodes",
+    method = "GET",
+    kind: "HTTP_ERROR" | "RATE_LIMITED" | "QUOTA_EXCEEDED" = "HTTP_ERROR",
+  ) =>
+    new SpotifyApiError({
+      kind,
+      status,
+      method,
+      operation,
+      retryable: status >= 500,
+      message: `Spotify API ${method} ${operation} failed (${status})`,
+    });
+
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(502, "episode-state")), true);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(503, "playlist-items")), true);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(500, "playlist-metadata")), true);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(504, "episode-state")), true);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(404, "episode-state")), false);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(401, "episode-state")), false);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(403, "episode-state")), false);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(429, "episode-state", "GET", "RATE_LIMITED")), false);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(429, "episode-state", "GET", "QUOTA_EXCEEDED")), false);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(502, "episode-state", "POST")), false);
+  assert.equal(isRetryableScheduledPreflightReadFailure(spotifyError(502, "saved-episodes")), false);
+  assert.equal(isRetryableScheduledPreflightReadFailure(new Error("unknown")), false);
+  assert.equal(isRetryableScheduledPreflightReadFailure(new ProviderReadTimeoutError("spotify", "episode-state", 5_000)), true);
 });
 
 test("#435 Gate 3F generation flags retryability only before the first provider write", () => {
