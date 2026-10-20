@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deliverOperationalNotification, retryDuePushDeliveries } from "./dispatch";
+import { deliverOperationalNotification, retryDuePushDeliveries, scheduleRunPayload } from "./dispatch";
 import { DEFAULT_NOTIFICATION_PREFERENCES } from "./core";
 import type {
   DeliveryAttempt,
@@ -118,6 +118,58 @@ function event(category: OperationalNotificationEvent["category"] = "GENERATION"
     },
   } satisfies OperationalNotificationEvent;
 }
+
+test("scheduled success shows effective playlist duration, not a much larger target", () => {
+  const payload = scheduleRunPayload({
+    name: "Carro",
+    targetPlaylistId: "carro",
+    status: "SUCCESS",
+    // Actual incident: calendar/fixed goal = 16h40, generated playlist = 2h24.
+    targetDurationMs: 1_000 * 60_000,
+    actualDurationMs: 144 * 60_000,
+    attempt: 2,
+    preservedCount: 5,
+    removedCount: 9,
+    addedCount: 23,
+    addedMusicCount: 21,
+    addedPodcastCount: 2,
+    addedMusicDurationMs: 83 * 60_000,
+    addedPodcastDurationMs: 21 * 60_000,
+    reason: null,
+    startedAt: new Date("2026-10-20T09:10:02Z"),
+    finishedAt: new Date("2026-10-20T09:11:28Z"),
+  });
+  assert.equal(payload.title, "Carro atualizada");
+  assert.match(payload.body, /^2h 24min planejados/);
+  assert.doesNotMatch(payload.body, /16h 40min/);
+  assert.match(payload.body, /5 mantidas/);
+  assert.match(payload.body, /23 adicionadas/);
+});
+
+test("transient retry notifications do not claim definitive failure", () => {
+  const base = {
+    name: "Carro",
+    targetPlaylistId: "carro",
+    targetDurationMs: null,
+    actualDurationMs: null,
+    preservedCount: 0,
+    removedCount: 0,
+    addedCount: 0,
+    addedMusicCount: null,
+    addedPodcastCount: null,
+    addedMusicDurationMs: null,
+    addedPodcastDurationMs: null,
+    reason: "Spotify API GET playlist-items failed (502)",
+    startedAt: new Date("2026-10-20T09:00:01Z"),
+    finishedAt: new Date("2026-10-20T09:00:03Z"),
+  };
+  const early = scheduleRunPayload({ ...base, status: "FAILED", attempt: 1 });
+  assert.match(early.title, /falha temporária/);
+  assert.match(early.body, /Nova tentativa automática prevista/);
+  const final = scheduleRunPayload({ ...base, status: "FAILED", attempt: 3 });
+  assert.match(final.title, /execução falhou/);
+  assert.doesNotMatch(final.body, /Nova tentativa automática prevista/);
+});
 
 test("same event is sent once per subscription", async () => {
   const store = new MemoryStore();

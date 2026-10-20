@@ -176,6 +176,25 @@ export async function dispatchTargetScheduleRunNotificationSafely(
     if (!run || run.status === "RUNNING" || !run.finishedAt) return;
 
     const details = objectRecord(run.details);
+    // Match the playlist detail page exactly: sum persisted GenerationItem
+    // durations for this target and this generation, not the calendar goal
+    // nor planner stats that can exclude preserved KEEP_FILLED content.
+    const persistedDuration = run.generationRunId && (
+      run.status === "SUCCESS" || run.status === "PARTIAL"
+    )
+      ? await prisma.generationItem.aggregate({
+          where: {
+            runId: run.generationRunId,
+            targetPlaylistId: run.target.id,
+          },
+          _sum: { durationMs: true },
+          _count: { _all: true },
+        })
+      : null;
+    const actualDurationMs =
+      persistedDuration && persistedDuration._count._all > 0
+        ? persistedDuration._sum.durationMs ?? 0
+        : null;
     const category =
       run.status === "BLOCKED" || run.status === "FAILED"
         ? "ERROR"
@@ -187,6 +206,8 @@ export async function dispatchTargetScheduleRunNotificationSafely(
       targetPlaylistId: run.target.id,
       status: run.status,
       targetDurationMs: run.targetDurationMs,
+      actualDurationMs,
+      attempt: run.attempt,
       preservedCount: run.preservedCount,
       removedCount: run.removedCount,
       addedCount: run.addedCount,
@@ -315,11 +336,13 @@ export async function dispatchMusicCleanupRunNotificationSafely(
   }
 }
 
-function scheduleRunPayload(input: {
+export function scheduleRunPayload(input: {
   name: string;
   targetPlaylistId: string;
   status: string;
   targetDurationMs: number | null;
+  actualDurationMs: number | null;
+  attempt: number;
   preservedCount: number;
   removedCount: number;
   addedCount: number;
@@ -335,9 +358,14 @@ function scheduleRunPayload(input: {
   const reason = sanitizeNotificationReason(input.reason);
 
   if (input.status === "BLOCKED" || input.status === "FAILED") {
+    const retrying = input.status === "FAILED" && input.attempt < 3;
     return {
-      title: `${input.name} — execução ${input.status === "BLOCKED" ? "bloqueada" : "falhou"}`,
-      body: reason ?? "A manutenção não pôde ser concluída. Abra o destino para revisar.",
+      title: retrying
+        ? `${input.name} — falha temporária (tentativa ${input.attempt}/3)`
+        : `${input.name} — execução ${input.status === "BLOCKED" ? "bloqueada" : "falhou"}`,
+      body: retrying
+        ? compactJoin([reason, "Nova tentativa automática prevista"])
+        : reason ?? "A manutenção não pôde ser concluída. Abra o destino para revisar.",
       url: `/dashboard/playlists/${input.targetPlaylistId}`,
       tag: `schedule-${input.targetPlaylistId}`,
     };
@@ -347,7 +375,7 @@ function scheduleRunPayload(input: {
     return {
       title: `${input.name} já estava completa`,
       body: compactJoin([
-        input.targetDurationMs ? formatDurationCompact(input.targetDurationMs) : null,
+        input.actualDurationMs !== null ? `${formatDurationCompact(input.actualDurationMs)} planejados` : null,
         `${input.preservedCount} mantidas`,
         reason,
         elapsed ? `verificado em ${elapsed}` : null,
@@ -379,7 +407,9 @@ function scheduleRunPayload(input: {
   return {
     title: `${input.name} ${input.status === "PARTIAL" ? "atualizada com alertas" : "atualizada"}`,
     body: compactJoin([
-      input.targetDurationMs ? formatDurationCompact(input.targetDurationMs) : null,
+      input.actualDurationMs !== null
+        ? `${formatDurationCompact(input.actualDurationMs)} planejados`
+        : null,
       `${input.preservedCount} mantidas`,
       `${input.addedCount} adicionadas`,
       `${input.removedCount} removidas`,

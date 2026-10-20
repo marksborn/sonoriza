@@ -9,6 +9,7 @@ import {
 } from "@/services/keep-filled-core";
 import type { Candidate } from "@/services/playlist-planner";
 import { parseSequencePattern } from "@/services/playlist-planner";
+import { resolveTargetCalendarScope } from "@/services/target-calendar-selection";
 import { SpotifyClient } from "@/services/spotify";
 import { refreshAuthoritativePodcastListeningStates } from "@/services/spotify/podcast-authoritative-state";
 import { prismaPodcastListeningStateStore } from "@/services/spotify/podcast-listening-state";
@@ -36,13 +37,88 @@ export type PreparedKeepFilledTarget = {
   skipReason: "EMPTY_CALENDAR_KEEP" | "EMPTY_CALENDAR_SKIP" | null;
 };
 
+/**
+ * CALENDAR-127 scope parity: KEEP_FILLED preflight must resolve the same
+ * destination-specific calendars as the generator. Otherwise it can preserve
+ * against the legacy global sum (e.g. 16h40) while the actual plan only
+ * targets the destination's selected events (e.g. 130 min).
+ * Fail closed on an invalid SELECTED scope; never silently fall back.
+ */
+async function resolveKeepFilledTargetCalendarIds(
+  userId: string,
+  target: TargetPlaylist,
+): Promise<string[]> {
+  const selectedCalendars = await prisma.calendarSelection.findMany({
+    where: { userId, selected: true },
+    select: { id: true, googleCalendarId: true, usedForDuration: true },
+  });
+  const queryableCalendarIds = selectedCalendars.map(
+    (calendar) => calendar.googleCalendarId,
+  );
+  const legacyDurationCalendarIds = selectedCalendars
+    .filter((calendar) => calendar.usedForDuration)
+    .map((calendar) => calendar.googleCalendarId);
+
+  if (target.durationMode !== "CALENDAR" ||
+      target.calendarMode === "LEGACY_GLOBAL") {
+    return resolveTargetCalendarScope({
+      mode: "LEGACY_GLOBAL",
+      selectedGoogleCalendarIds: [],
+      queryableCalendarIds,
+      legacyDurationCalendarIds,
+    }).calendarIds;
+  }
+
+  let selectedGoogleCalendarIds: string[] = [];
+  if (target.calendarMode === "SELECTED") {
+    const links = await prisma.targetPlaylistCalendar.findMany({
+      where: { targetPlaylistId: target.id },
+      select: {
+        calendarSelection: {
+          select: {
+            userId: true,
+            selected: true,
+            googleCalendarId: true,
+          },
+        },
+      },
+    });
+    if (
+      links.length === 0 ||
+      links.some((link) =>
+        link.calendarSelection.userId !== userId ||
+        !link.calendarSelection.selected
+      )
+    ) {
+      throw new Error(
+        `Target "${target.name}" has an unavailable selected calendar`,
+      );
+    }
+    selectedGoogleCalendarIds = links.map(
+      (link) => link.calendarSelection.googleCalendarId,
+    );
+  }
+
+  const scope = resolveTargetCalendarScope({
+    mode: target.calendarMode,
+    selectedGoogleCalendarIds,
+    queryableCalendarIds,
+    legacyDurationCalendarIds,
+  });
+  if (scope.calendarIds.length === 0) {
+    throw new Error(
+      `Target "${target.name}" resolved an empty ${scope.mode} calendar scope`,
+    );
+  }
+  return scope.calendarIds;
+}
+
 export async function prepareKeepFilledTarget(
   userId: string,
   target: TargetPlaylist,
   date = new Date(),
-  // Manual KEEP_FILLED callers must use the same destination-specific
-  // CALENDAR-127 scope as the final generator. Scheduler callers can retain
-  // the existing default until their scope resolution is migrated.
+  // Callers may supply the already-validated target-specific scope.
+  // Without an override, resolve the same CALENDAR-127 scope as generation.
   durationCalendarIdsOverride?: readonly string[],
 ): Promise<PreparedKeepFilledTarget> {
   if (!target.spotifyPlaylistId) {
@@ -51,12 +127,7 @@ export async function prepareKeepFilledTarget(
 
   const durationCalendarIds = durationCalendarIdsOverride
     ? [...durationCalendarIdsOverride]
-    : (
-        await prisma.calendarSelection.findMany({
-          where: { userId, selected: true, usedForDuration: true },
-          select: { googleCalendarId: true },
-        })
-      ).map((entry) => entry.googleCalendarId);
+    : await resolveKeepFilledTargetCalendarIds(userId, target);
   const resolved = await resolveTargetDuration(
     userId,
     target,
