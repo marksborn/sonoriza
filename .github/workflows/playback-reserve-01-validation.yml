@@ -36,6 +36,8 @@ on:
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/jobs/scheduled-generation.ts"
       - "src/services/spotify/client.ts"
+      - "src/services/keep-filled-maintenance.ts"
+      - "src/services/keep-filled-calendar-scope.test.ts"
       - "src/services/spotify/client-transient-read-retry.test.ts"
       - "src/services/notifications/dispatch.ts"
       - "src/services/notifications/dispatch.test.ts"
@@ -110,6 +112,8 @@ on:
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/jobs/scheduled-generation.ts"
       - "src/services/spotify/client.ts"
+      - "src/services/keep-filled-maintenance.ts"
+      - "src/services/keep-filled-calendar-scope.test.ts"
       - "src/services/spotify/client-transient-read-retry.test.ts"
       - "src/services/notifications/dispatch.ts"
       - "src/services/notifications/dispatch.test.ts"
@@ -222,6 +226,7 @@ jobs:
           src/jobs/scheduled-generation.test.ts
           src/services/spotify/client-transient-read-retry.test.ts
           src/services/notifications/dispatch.test.ts
+          src/services/keep-filled-calendar-scope.test.ts
           src/jobs/source-failure-policy.test.ts
           src/jobs/incremental-planning.test.ts
       - name: B1.7 isolated server-rendered Reserve consent UI contract
