@@ -176,6 +176,25 @@ export async function dispatchTargetScheduleRunNotificationSafely(
     if (!run || run.status === "RUNNING" || !run.finishedAt) return;
 
     const details = objectRecord(run.details);
+    // Match the playlist detail page exactly: sum persisted GenerationItem
+    // durations for this target and this generation, not the calendar goal
+    // nor planner stats that can exclude preserved KEEP_FILLED content.
+    const persistedDuration = run.generationRunId && (
+      run.status === "SUCCESS" || run.status === "PARTIAL"
+    )
+      ? await prisma.generationItem.aggregate({
+          where: {
+            runId: run.generationRunId,
+            targetPlaylistId: run.target.id,
+          },
+          _sum: { durationMs: true },
+          _count: { _all: true },
+        })
+      : null;
+    const actualDurationMs =
+      persistedDuration && persistedDuration._count._all > 0
+        ? persistedDuration._sum.durationMs ?? 0
+        : null;
     const category =
       run.status === "BLOCKED" || run.status === "FAILED"
         ? "ERROR"
@@ -187,9 +206,7 @@ export async function dispatchTargetScheduleRunNotificationSafely(
       targetPlaylistId: run.target.id,
       status: run.status,
       targetDurationMs: run.targetDurationMs,
-      // The persisted summary describes the effective generated contents,
-      // unlike targetDurationMs (the requested calendar/fixed duration).
-      actualDurationMs: numberFromRecord(details, "totalDurationMs"),
+      actualDurationMs,
       attempt: run.attempt,
       preservedCount: run.preservedCount,
       removedCount: run.removedCount,
