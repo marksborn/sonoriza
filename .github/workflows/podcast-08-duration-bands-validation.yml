@@ -11,6 +11,7 @@ on:
       - "scripts/report-podcast08-work-preview.ts"
       - "src/components/TargetPlaylistForm.tsx"
       - "src/components/TargetPlaylistForm.mobile.test.tsx"
+      - "tsconfig.ui-test.json"
       - "src/app/dashboard/configuracao/destinos/page.tsx"
       - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
       - "src/services/configuration-readiness.ts"
@@ -30,6 +31,7 @@ on:
       - "scripts/report-podcast08-work-preview.ts"
       - "src/components/TargetPlaylistForm.tsx"
       - "src/components/TargetPlaylistForm.mobile.test.tsx"
+      - "tsconfig.ui-test.json"
       - "src/app/dashboard/configuracao/destinos/page.tsx"
       - "src/app/dashboard/configuracao/fontes/podcasts/page.tsx"
       - "src/services/configuration-readiness.ts"
@@ -93,7 +95,7 @@ jobs:
           src/services/playlist-planner/podcast-duration-pilot-prewrite.test.ts
           src/services/playlist-planner/podcast-duration-ephemeral-preview.test.ts
       - name: PODCAST-08 mobile sequence render contract (#448)
-        run: npx tsx --test src/components/TargetPlaylistForm.mobile.test.tsx
+        run: npx tsx --tsconfig tsconfig.ui-test.json --test src/components/TargetPlaylistForm.mobile.test.tsx
       - run: npx tsx --test src/services/configuration-readiness.test.ts
       - run: npm run test:planner
       - run: npm run typecheck
