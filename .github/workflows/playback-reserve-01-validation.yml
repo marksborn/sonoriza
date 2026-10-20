@@ -36,7 +36,7 @@ on:
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/jobs/scheduled-generation.ts"
       - "src/services/spotify/client.ts"
-      - "src/services/spotify/client.test.ts"
+      - "src/services/spotify/client-transient-read-retry.test.ts"
       - "src/services/notifications/dispatch.ts"
       - "src/services/notifications/dispatch.test.ts"
       - "src/jobs/scheduled-generation.test.ts"
@@ -110,7 +110,7 @@ on:
       - "src/jobs/generate-playlists-incremental.ts"
       - "src/jobs/scheduled-generation.ts"
       - "src/services/spotify/client.ts"
-      - "src/services/spotify/client.test.ts"
+      - "src/services/spotify/client-transient-read-retry.test.ts"
       - "src/services/notifications/dispatch.ts"
       - "src/services/notifications/dispatch.test.ts"
       - "src/jobs/scheduled-generation.test.ts"
@@ -220,7 +220,7 @@ jobs:
           src/jobs/sequence-prewrite-guard.test.ts
           src/jobs/schedule-retry-policy.test.ts
           src/jobs/scheduled-generation.test.ts
-          src/services/spotify/client.test.ts
+          src/services/spotify/client-transient-read-retry.test.ts
           src/services/notifications/dispatch.test.ts
           src/jobs/source-failure-policy.test.ts
           src/jobs/incremental-planning.test.ts
