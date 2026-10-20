@@ -1144,26 +1144,27 @@ export function TargetPlaylistForm({
               por enquanto, novos podcasts usam Qualquer duração.
             </p>
           )}
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-4 flex min-w-0 flex-wrap gap-2">
             {sequenceSlots.map(({ type, band }, index) => (
               <div
                 key={`${type}-${index}`}
-                className={`flex items-center gap-1 rounded-xl border px-2 py-1.5 ${
+                className={`flex w-full min-w-0 flex-col gap-2 rounded-xl border px-2 py-2 sm:w-auto sm:flex-row sm:items-center sm:gap-1 sm:py-1.5 ${
                   type === "MUSIC"
                     ? "border-brand-400/35 bg-brand/15 text-ink-inverse"
                     : "border-accent/35 bg-accent/10 text-accent-400"
                 }`}
               >
-                <span className="px-1 text-xs font-black">{contentLabel(type)}</span>
+                <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-1">
+                  <span className="shrink-0 px-1 text-xs font-black">{contentLabel(type)}</span>
                 {type === "PODCAST" && (
-                  <label className="flex items-center gap-1 text-xs font-bold">
+                  <label className="flex min-w-0 flex-1 items-center gap-1 text-xs font-bold sm:flex-initial">
                     <span className="sr-only">Duração do podcast no passo {index + 1}</span>
                     <select
                       value={band}
                       disabled={!durationBandEditingEnabled}
                       onChange={(event) => changeDurationBand(index, event.target.value as PodcastDurationBand)}
                       aria-label={`Duração do podcast no passo ${index + 1}`}
-                      className="rounded-lg border border-line-dark/70 bg-surface-dark px-2 py-1.5 text-xs text-ink-inverse"
+                      className="w-full min-w-0 max-w-full rounded-lg border border-line-dark/70 bg-surface-dark px-2 py-2 text-xs text-ink-inverse disabled:cursor-not-allowed disabled:opacity-65 sm:w-auto sm:py-1.5"
                     >
                       <option value="ANY">Qualquer duração</option>
                       <option value="SHORT">Curto</option>
@@ -1172,33 +1173,36 @@ export function TargetPlaylistForm({
                     </select>
                   </label>
                 )}
-                <button
+                </div>
+                <div className="flex shrink-0 items-center justify-end gap-1 self-end sm:self-auto">
+                  <button
                   type="button"
-                  aria-label={`Mover ${contentLabel(type)} para a esquerda`}
+                  aria-label={`Mover ${contentLabel(type)} do passo ${index + 1} para a esquerda`}
                   disabled={index === 0}
                   onClick={() => moveSequence(index, -1)}
-                  className="rounded p-1.5 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-25"
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400 disabled:cursor-not-allowed disabled:opacity-25 sm:size-8"
                 >
                   <UiIcon name="arrow-left" size={14} />
                 </button>
                 <button
                   type="button"
-                  aria-label={`Mover ${contentLabel(type)} para a direita`}
+                  aria-label={`Mover ${contentLabel(type)} do passo ${index + 1} para a direita`}
                   disabled={index === sequence.length - 1}
                   onClick={() => moveSequence(index, 1)}
-                  className="rounded p-1.5 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-25"
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400 disabled:cursor-not-allowed disabled:opacity-25 sm:size-8"
                 >
                   <UiIcon name="arrow-right" size={14} />
                 </button>
                 <button
                   type="button"
-                  aria-label={`Remover ${contentLabel(type)}`}
+                  aria-label={`Remover ${contentLabel(type)} do passo ${index + 1}`}
                   disabled={sequence.length === 1}
                   onClick={() => removeSequence(index)}
-                  className="rounded p-1.5 transition hover:bg-danger/15 hover:text-danger disabled:cursor-not-allowed disabled:opacity-25"
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded transition hover:bg-danger/15 hover:text-danger focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400 disabled:cursor-not-allowed disabled:opacity-25 sm:size-8"
                 >
                   <UiIcon name="trash" size={14} />
                 </button>
+                </div>
               </div>
             ))}
           </div>
