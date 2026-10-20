@@ -319,7 +319,7 @@ export async function dispatchMusicCleanupRunNotificationSafely(
   }
 }
 
-function scheduleRunPayload(input: {
+export function scheduleRunPayload(input: {
   name: string;
   targetPlaylistId: string;
   status: string;
