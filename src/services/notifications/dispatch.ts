@@ -187,6 +187,10 @@ export async function dispatchTargetScheduleRunNotificationSafely(
       targetPlaylistId: run.target.id,
       status: run.status,
       targetDurationMs: run.targetDurationMs,
+      // The persisted summary describes the effective generated contents,
+      // unlike targetDurationMs (the requested calendar/fixed duration).
+      actualDurationMs: numberFromRecord(details, "totalDurationMs"),
+      attempt: run.attempt,
       preservedCount: run.preservedCount,
       removedCount: run.removedCount,
       addedCount: run.addedCount,
@@ -320,6 +324,8 @@ function scheduleRunPayload(input: {
   targetPlaylistId: string;
   status: string;
   targetDurationMs: number | null;
+  actualDurationMs: number | null;
+  attempt: number;
   preservedCount: number;
   removedCount: number;
   addedCount: number;
@@ -335,9 +341,14 @@ function scheduleRunPayload(input: {
   const reason = sanitizeNotificationReason(input.reason);
 
   if (input.status === "BLOCKED" || input.status === "FAILED") {
+    const retrying = input.status === "FAILED" && input.attempt < 3;
     return {
-      title: `${input.name} — execução ${input.status === "BLOCKED" ? "bloqueada" : "falhou"}`,
-      body: reason ?? "A manutenção não pôde ser concluída. Abra o destino para revisar.",
+      title: retrying
+        ? `${input.name} — falha temporária (tentativa ${input.attempt}/3)`
+        : `${input.name} — execução ${input.status === "BLOCKED" ? "bloqueada" : "falhou"}`,
+      body: retrying
+        ? compactJoin([reason, "Nova tentativa automática prevista"])
+        : reason ?? "A manutenção não pôde ser concluída. Abra o destino para revisar.",
       url: `/dashboard/playlists/${input.targetPlaylistId}`,
       tag: `schedule-${input.targetPlaylistId}`,
     };
@@ -347,7 +358,7 @@ function scheduleRunPayload(input: {
     return {
       title: `${input.name} já estava completa`,
       body: compactJoin([
-        input.targetDurationMs ? formatDurationCompact(input.targetDurationMs) : null,
+        input.actualDurationMs !== null ? `${formatDurationCompact(input.actualDurationMs)} planejados` : null,
         `${input.preservedCount} mantidas`,
         reason,
         elapsed ? `verificado em ${elapsed}` : null,
@@ -379,7 +390,9 @@ function scheduleRunPayload(input: {
   return {
     title: `${input.name} ${input.status === "PARTIAL" ? "atualizada com alertas" : "atualizada"}`,
     body: compactJoin([
-      input.targetDurationMs ? formatDurationCompact(input.targetDurationMs) : null,
+      input.actualDurationMs !== null
+        ? `${formatDurationCompact(input.actualDurationMs)} planejados`
+        : null,
       `${input.preservedCount} mantidas`,
       `${input.addedCount} adicionadas`,
       `${input.removedCount} removidas`,
