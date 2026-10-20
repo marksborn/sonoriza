@@ -24,6 +24,10 @@ const API = "https://api.spotify.com/v1";
 const MAX_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
 const RETRY_JITTER_MAX_MS = 250;
+// A transient server error on a critical pre-write GET may clear quickly.
+// Keep this independent of 429 retry and never retry Spotify writes.
+const MAX_CRITICAL_GET_5XX_RETRIES = 1;
+const CRITICAL_GET_5XX_WAIT_MS = 300;
 
 export interface SpotifyPlaylistSummary {
   id: string;
@@ -166,7 +170,8 @@ export class SpotifyClient {
       });
     }
 
-    let retries = 0;
+    let rateLimitRetries = 0;
+    let transientReadRetries = 0;
 
     while (true) {
       this.requestMetrics.totalCalls += 1;
@@ -249,8 +254,8 @@ export class SpotifyClient {
 
       if (error.kind === "RATE_LIMITED") {
         this.requestMetrics.rateLimitedCount += 1;
-        if (retries < MAX_RATE_LIMIT_RETRIES) {
-          retries += 1;
+        if (rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
+          rateLimitRetries += 1;
           const waitMs =
             Math.max(
               0,
@@ -261,6 +266,25 @@ export class SpotifyClient {
           await sleep(waitMs);
           continue;
         }
+      }
+
+      if (
+        method === "GET" &&
+        error.kind === "HTTP_ERROR" &&
+        [502, 503, 504].includes(error.status) &&
+        (operation === "playlist-items" ||
+          operation === "playlist-metadata" ||
+          operation === "episode-state") &&
+        transientReadRetries < MAX_CRITICAL_GET_5XX_RETRIES
+      ) {
+        transientReadRetries += 1;
+        const waitMs =
+          CRITICAL_GET_5XX_WAIT_MS +
+          Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
+        this.requestMetrics.retries += 1;
+        this.requestMetrics.retryWaitMs += waitMs;
+        await sleep(waitMs);
+        continue;
       }
 
       throw error;
