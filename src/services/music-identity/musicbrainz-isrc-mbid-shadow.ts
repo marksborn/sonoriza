@@ -102,6 +102,7 @@ export function evaluateGate5CIsrcMbid(input: {
   }
 
   const recording = recordings[0];
+  if (!recording) return result("ABSTAIN_ZERO_RECORDINGS", [], 0);
   const providerTitle = deriveBaseTitleSignal(input.spotify.title);
   const recordingTitle = deriveBaseTitleSignal(recording.title);
   if (!providerTitle || !recordingTitle || providerTitle !== recordingTitle) {
