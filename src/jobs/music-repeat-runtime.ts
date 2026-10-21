@@ -317,6 +317,7 @@ export async function revalidateMusicRepeatBeforeRealWrite(
     // A bounded replan revalidates again; keep the earlier vetoes as evidence.
     refreshed.preWriteRevalidationCount = previous.preWriteRevalidationCount + 1;
     refreshed.preWriteBlockedTotalCount = previous.preWriteBlockedTotalCount;
+    carryForwardLastFmFactualPlanningCounters(previous, refreshed);
     state.lastFmFactualCooldown = refreshed;
 
     if (refreshed.effectiveMode !== "ACTIVE") {
@@ -342,6 +343,19 @@ export async function revalidateMusicRepeatBeforeRealWrite(
   }
 
   await revalidateTargetDiscoveryPoliciesBeforeRealWrite();
+}
+
+/**
+ * #512: pre-write Last.fm refresh replaces the provider snapshot, not the
+ * planner's already-recorded factual eligibility evidence. Keep cumulative
+ * candidate counters across every bounded revalidation/replan.
+ */
+export function carryForwardLastFmFactualPlanningCounters(
+  previous: LastFmFactualCooldownRuntimeState,
+  refreshed: LastFmFactualCooldownRuntimeState,
+): void {
+  refreshed.matchedCandidateCount = previous.matchedCandidateCount;
+  refreshed.skippedCandidateCount = previous.skippedCandidateCount;
 }
 
 export function filterMusicCandidatesForLastFmFactualCooldown(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  carryForwardLastFmFactualPlanningCounters,
   filterMusicCandidatesForLastFmFactualCooldown,
   lastFmMusicIdentityKey,
   mustBlockRealWriteForLastFmFactualCooldown,
@@ -174,4 +175,36 @@ test("Gate #512 permite somente regra ACTIVE com cobertura completa ou sem opt-i
   const shadow = state("SHADOW", []);
   assert.equal(mustBlockRealWriteForLastFmFactualCooldown(shadow, false), false);
   assert.equal(mustBlockRealWriteForLastFmFactualCooldown(undefined, false), false);
+});
+
+test("#512 preserva contagem de candidatas filtradas após revalidação factual", () => {
+  const key = lastFmMusicIdentityKey(listened.title, listened.subtitle)!;
+  const before = state("ACTIVE", [key]);
+  const filtered = filterMusicCandidatesForLastFmFactualCooldown(
+    [listened, fresh],
+    before,
+  );
+  before.matchedCandidateCount += filtered.matchedCandidateCount;
+  before.skippedCandidateCount += filtered.skippedCandidateCount;
+
+  const revalidated = state("ACTIVE", [key]);
+  revalidated.asOf = new Date(before.asOf.getTime() + 1_000);
+  revalidated.preWriteRevalidated = true;
+  revalidated.preWriteRevalidationCount = 1;
+
+  carryForwardLastFmFactualPlanningCounters(before, revalidated);
+  assert.equal(revalidated.matchedCandidateCount, 1);
+  assert.equal(revalidated.skippedCandidateCount, 1);
+  assert.equal(revalidated.preWriteRevalidationCount, 1);
+  assert.equal(revalidated.preWriteRevalidated, true);
+  assert.notEqual(revalidated, before);
+  assert.deepEqual(filtered.candidates.map((candidate) => candidate.uri), [fresh.uri]);
+
+  const next = state("ACTIVE", [key]);
+  next.preWriteRevalidated = true;
+  next.preWriteRevalidationCount = 2;
+  carryForwardLastFmFactualPlanningCounters(revalidated, next);
+  assert.equal(next.matchedCandidateCount, 1);
+  assert.equal(next.skippedCandidateCount, 1);
+  assert.equal(next.preWriteRevalidationCount, 2);
 });
