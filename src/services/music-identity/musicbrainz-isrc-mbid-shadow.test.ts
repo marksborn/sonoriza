@@ -142,8 +142,8 @@ test("Gate 5C: 404 and 200 map to distinct client outcomes", async () => {
   const result = await client.lookup("USHR10723245");
   assert.equal(result.kind, "FOUND");
   if (result.kind === "FOUND") {
-    assert.deepEqual(result.recordings[0].artistNames, ["Atreyu"]);
-    assert.equal(result.recordings[0].id, MBID1);
+    assert.deepEqual(result.recordings.at(0)?.artistNames, ["Atreyu"]);
+    assert.equal(result.recordings.at(0)?.id, MBID1);
   }
   assert.deepEqual(delays, [1500]);
   assert.equal(client.getMetrics().requests, 2);
