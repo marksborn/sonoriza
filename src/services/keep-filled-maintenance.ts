@@ -16,6 +16,11 @@ import { prismaPodcastListeningStateStore } from "@/services/spotify/podcast-lis
 import { evaluatePodcastShowCandidateEligibility } from "@/services/spotify/podcast-show-policy";
 import { loadPodcastShowPolicies } from "@/services/spotify/podcast-show-policy-store";
 import { loadMusicRepeatContext } from "@/services/spotify/recently-played";
+import {
+  lastFmMusicIdentityKey,
+  mustBlockRealWriteForLastFmFactualCooldown,
+  prepareLastFmFactualCooldown,
+} from "@/jobs/music-repeat-runtime";
 
 export type KeepFilledTargetPatch = {
   snapshotBefore: string;
@@ -120,6 +125,7 @@ export async function prepareKeepFilledTarget(
   // Callers may supply the already-validated target-specific scope.
   // Without an override, resolve the same CALENDAR-127 scope as generation.
   durationCalendarIdsOverride?: readonly string[],
+  simulate = false,
 ): Promise<PreparedKeepFilledTarget> {
   if (!target.spotifyPlaylistId) {
     throw new Error(`Target "${target.name}" has no Spotify playlist`);
@@ -256,14 +262,62 @@ export async function prepareKeepFilledTarget(
         spotify,
       });
 
+  // #512: KEEP_FILLED preflight runs before the planner's Last.fm runtime.
+  // Preserved tracks must use the same factual eligibility, otherwise they
+  // bypass the six-month rule despite new candidates being excluded.
+  // Empty-calendar CLEAR and podcast-only playlists have no music to vet.
+  const hasReadableMusic = remote.items.some(
+    (item) => item.type === "MUSIC" && item.musicCandidate && item.uri,
+  );
+  const factual = !willClearEmptyCalendar && hasReadableMusic
+    ? await prepareLastFmFactualCooldown(userId, new Date())
+    : null;
+
+  if (factual && mustBlockRealWriteForLastFmFactualCooldown(factual, simulate)) {
+    throw new Error(
+      "KEEP_FILLED: cooldown factual Last.fm indisponível ou incompleto; " +
+        "nenhuma alteração foi realizada no Spotify.",
+    );
+  }
+
+  const factualBlockedUris = new Set<string>();
+  if (
+    factual?.effectiveMode === "ACTIVE" &&
+    factual.status === "READY_ACTIVE" &&
+    factual.providerComplete === true
+  ) {
+    for (const item of remote.items) {
+      if (item.type !== "MUSIC" || !item.musicCandidate || !item.uri) continue;
+      const candidate = item.musicCandidate;
+      const key = lastFmMusicIdentityKey(
+        candidate.title,
+        candidate.primaryArtistName ?? candidate.subtitle ?? item.subtitle,
+      );
+      // Never publish a preserved track with unknown factual identity while
+      // the explicit cooldown rule is ACTIVE. Ambiguity is not an opt-out.
+      if (!key) {
+        throw new Error(
+          "KEEP_FILLED: identidade musical insuficiente para validar " +
+            "a preservação sob a regra Last.fm ACTIVE.",
+        );
+      }
+      if (factual.blockedIdentityKeys.has(key)) factualBlockedUris.add(item.uri);
+    }
+  }
+
   const musicRepeat = await loadMusicRepeatContext(userId, date);
   const preservation = buildKeepFilledPreservation({
     items: remote.items,
     podcastStates,
     provenanceByUri,
     podcastShowPolicyByUri,
-    musicRepeatEnabled: musicRepeat.enabled,
+    // Spotify Recently Played is not allowed to override the factual
+    // Last.fm source when ACTIVE; its separate quarantine remains intact.
+    musicRepeatEnabled: factual?.configuredMode === "ACTIVE"
+      ? false
+      : musicRepeat.enabled,
     blockedTrackIds: musicRepeat.blockedTrackIds,
+    lastFmFactualBlockedUris: factualBlockedUris,
     rules: {
       compositionMode: target.compositionMode,
       sequencePattern: parseSequencePattern(target.sequencePattern),
