@@ -287,6 +287,43 @@ test("recently played music is removed when MUSIC-01 is active", () => {
   assert.equal(result.removals[0]?.reason, "MUSIC_RECENTLY_PLAYED");
 });
 
+test("#512 KEEP_FILLED removes Last.fm factual match while preserving unaffected podcast", () => {
+  const result = build({
+    lastFmFactualBlockedUris: new Set(["spotify:track:m1"]),
+  });
+
+  assert.deepEqual(result.preserved.map((item) => item.uri), ["spotify:episode:p1"]);
+  assert.deepEqual(result.removeUris, ["spotify:track:m1"]);
+  assert.equal(result.removals[0]?.reason, "MUSIC_LASTFM_FACTUAL_COOLDOWN");
+  assert.equal(result.removedDurationMs, 180_000);
+  assert.equal(result.validDurationBeforeMs, 3_600_000);
+  assert.equal(result.removedCount, 1);
+  assert.equal(result.forceReplace, false);
+});
+
+test("#512 factual set does not change KEEP_FILLED when no scrobbles match", () => {
+  const result = build({
+    lastFmFactualBlockedUris: new Set(["spotify:track:another-recording"]),
+  });
+  assert.deepEqual(result.preserved.map((item) => item.uri),
+    ["spotify:track:m1", "spotify:episode:p1"]);
+  assert.equal(result.removedCount, 0);
+});
+
+test("#512 factual removal participates in SEQUENCE preservation ordering", () => {
+  const result = build({
+    items: [music(0, "heard"), music(1, "fresh"), podcast(2, "p1")],
+    lastFmFactualBlockedUris: new Set(["spotify:track:heard"]),
+    rules: { ...baseRules, compositionMode: "SEQUENCE", sequencePattern: ["MUSIC", "PODCAST"] },
+  });
+
+  assert.deepEqual(result.preserved.map((item) => item.uri),
+    ["spotify:track:fresh", "spotify:episode:p1"]);
+  assert.deepEqual(result.removeUris, ["spotify:track:heard"]);
+  assert.equal(result.removals[0]?.reason, "MUSIC_LASTFM_FACTUAL_COOLDOWN");
+  assert.equal(result.preservedCount, 2);
+});
+
 test("hard podcast duration and program caps are applied to preserved items", () => {
   const result = build({
     items: [podcast(0, "p1"), podcast(1, "p2")],
