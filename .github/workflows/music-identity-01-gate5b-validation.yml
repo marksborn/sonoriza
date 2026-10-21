@@ -1,0 +1,33 @@
+name: MUSIC-IDENTITY-01 Gate 5B MBID audit
+
+on:
+  pull_request:
+    paths:
+      - "src/services/music-identity/canonical-factual-mbid-linkage-shadow.ts"
+      - "src/services/music-identity/canonical-factual-mbid-linkage-shadow.test.ts"
+      - "src/services/music-identity/canonical-factual-mbid-linkage-shadow-report.ts"
+      - "scripts/report-music-identity-gate5b-mbid-shadow.ts"
+      - ".github/workflows/music-identity-01-gate5b-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Gate 5B MBID pure review-only contracts
+        run: npx tsx --test src/services/music-identity/canonical-factual-mbid-linkage-shadow.test.ts
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
