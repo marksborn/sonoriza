@@ -313,7 +313,7 @@ export async function prepareKeepFilledTarget(
     podcastShowPolicyByUri,
     // Spotify Recently Played is not allowed to override the factual
     // Last.fm source when ACTIVE; its separate quarantine remains intact.
-    musicRepeatEnabled: factual?.configuredMode === "ACTIVE"
+    musicRepeatEnabled: factual?.effectiveMode === "ACTIVE"
       ? false
       : musicRepeat.enabled,
     blockedTrackIds: musicRepeat.blockedTrackIds,
