@@ -398,6 +398,7 @@ export async function generatePlaylists(
         "Geração bloqueada antes de alterar o Spotify: a regra de não repetição " +
         `do Last.fm está indisponível ou incompleta (${status}).`;
       summary.inconclusive = true;
+      summary.qualityPassed = false;
       summary.inconclusiveReason = "LASTFM_FACTUAL_COOLDOWN_NOT_READY";
       summary.musicRepeatFactualCooldownGate = {
         status: "BLOCKED",
