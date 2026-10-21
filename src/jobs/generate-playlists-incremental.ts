@@ -5,7 +5,7 @@ import {
   isProviderReadTimeout,
   isSpotifyWriteTimeout,
 } from "@/jobs/schedule-retry-policy";
-import { processMemorySnapshot } from "@/services/process-memory";
+import { processMemorySnapshot, type ProcessMemoryCheckpoint } from "@/services/process-memory";
 import { projectAudiobookVirtualChapterPlan } from "@/services/audiobooks/gate-d-shadow-planner";
 import { projectManualShowChapterPlan } from "@/services/audiobooks/d10-manual-shadow-plan";
 import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading-contract";
@@ -140,6 +140,11 @@ export interface GeneratePlaylistsOptions {
   keepFilledByTargetId?: Record<string, KeepFilledTargetPatch>;
   /** SCHEDULE-01 audit label per scoped target. */
   scheduledPolicyByTargetId?: Record<string, "KEEP_FILLED" | "REBUILD_DAILY">;
+  /** #442 Gate 2: two bounded scheduler memory readings for an isolated KEEP_FILLED target. */
+  gate8PreparationMemoryCheckpoints?: readonly [
+    ProcessMemoryCheckpoint,
+    ProcessMemoryCheckpoint,
+  ];
   /**
    * Legacy fail-closed reservation input. Unknown owners are treated as
    * exclusive and remain blocked for backward compatibility.
