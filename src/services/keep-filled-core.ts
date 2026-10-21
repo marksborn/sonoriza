@@ -42,6 +42,7 @@ export type KeepFilledRemovalReason =
   | "UNREADABLE_ITEM"
   | "DUPLICATE_URI"
   | "MUSIC_RECENTLY_PLAYED"
+  | "MUSIC_LASTFM_FACTUAL_COOLDOWN"
   | "MUSIC_IDENTITY_MISSING"
   | "PODCAST_IDENTITY_MISSING"
   | "PODCAST_COMPLETED_NO_REPLAY"
@@ -81,6 +82,8 @@ export function buildKeepFilledPreservation(input: {
   podcastShowPolicyByUri?: ReadonlyMap<string, PodcastShowMaintenancePolicy>;
   musicRepeatEnabled: boolean;
   blockedTrackIds: ReadonlySet<string>;
+  /** #512: exact factual Last.fm aliases of remote music approved for removal. */
+  lastFmFactualBlockedUris?: ReadonlySet<string>;
   rules: Pick<
     PlaylistRules,
     | "compositionMode"
@@ -153,6 +156,12 @@ export function buildKeepFilledPreservation(input: {
       candidate = item.musicCandidate ?? null;
       if (!candidate) {
         remove(item, "UNREADABLE_ITEM", item.originalDurationMs ?? 0);
+        continue;
+      }
+      // #512: preserved music has the same factual eligibility as new sources.
+      // Preflight computes these URIs from READY_ACTIVE Last.fm scrobbles.
+      if (input.lastFmFactualBlockedUris?.has(item.uri)) {
+        remove(item, "MUSIC_LASTFM_FACTUAL_COOLDOWN", candidate.durationMs);
         continue;
       }
       if (input.musicRepeatEnabled) {
