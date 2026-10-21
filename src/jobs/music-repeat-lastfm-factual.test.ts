@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   filterMusicCandidatesForLastFmFactualCooldown,
   lastFmMusicIdentityKey,
+  mustBlockRealWriteForLastFmFactualCooldown,
   type LastFmFactualCooldownRuntimeState,
 } from "./music-repeat-runtime";
 
@@ -131,4 +132,46 @@ test("podcast nunca é afetado pelo cooldown factual de música", () => {
   assert.equal(result.candidates.length, 1);
   assert.equal(result.matchedCandidateCount, 0);
   assert.equal(result.skippedCandidateCount, 0);
+});
+
+
+test("Gate #512 bloqueia geração real quando ACTIVE degrada para SHADOW", () => {
+  const unavailable = state("ACTIVE", []);
+  unavailable.effectiveMode = "SHADOW";
+  unavailable.status = "PROVIDER_UNAVAILABLE";
+  unavailable.providerComplete = false;
+  unavailable.failure = "Last.fm returned invalid JSON (503)";
+
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(unavailable, false), true);
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(unavailable, true), false);
+
+  unavailable.status = "PROVIDER_INCOMPLETE";
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(unavailable, false), true);
+
+  unavailable.status = "NOT_CONFIGURED";
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(unavailable, false), true);
+
+  unavailable.status = "POLICY_INCOMPLETE";
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(unavailable, false), true);
+});
+
+test("Gate #512 permite somente regra ACTIVE com cobertura completa ou sem opt-in", () => {
+  const active = state("ACTIVE", []);
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(active, false), false);
+  active.providerComplete = false;
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(active, false), true);
+  active.providerComplete = true;
+  active.effectiveMode = "SHADOW";
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(active, false), true);
+
+  const disabled = state("ACTIVE", []);
+  disabled.effectiveMode = "OFF";
+  disabled.status = "POLICY_DISABLED";
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(disabled, false), false);
+  disabled.status = "USER_NOT_ALLOWLISTED";
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(disabled, false), false);
+
+  const shadow = state("SHADOW", []);
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(shadow, false), false);
+  assert.equal(mustBlockRealWriteForLastFmFactualCooldown(undefined, false), false);
 });
