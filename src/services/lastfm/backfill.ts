@@ -201,7 +201,10 @@ export function isTransientLastFmFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return (
     /^Last\.fm API error (8|11|16):/.test(error.message) ||
-    /^Last\.fm request failed with HTTP 5\d\d$/.test(error.message)
+    /^Last\.fm request failed with HTTP 5\d\d$/.test(error.message) ||
+    // #512: an HTML/empty body from a 5xx endpoint surfaces as invalid JSON.
+    // Retry transient server responses, never malformed 2xx or rate limits.
+    /^Last\.fm returned invalid JSON \(5\d\d\)$/.test(error.message)
   );
 }
 

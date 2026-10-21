@@ -46,7 +46,7 @@ jobs:
         run: npx prisma generate
 
       - name: Factual Last.fm cooldown tests
-        run: npx tsx --test src/jobs/music-repeat-lastfm-factual.test.ts
+        run: npx tsx --test src/jobs/music-repeat-lastfm-factual.test.ts src/services/lastfm/retry.test.ts
 
       - name: Typecheck
         run: npm run typecheck

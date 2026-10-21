@@ -75,3 +75,30 @@ test("persistent transient failure stops after the configured attempt budget", a
 
   assert.equal(attempts, 3);
 });
+
+test("Gate #512 retries invalid-JSON 5xx but not malformed 2xx", async () => {
+  assert.equal(
+    isTransientLastFmFailure(new Error("Last.fm returned invalid JSON (503)")),
+    true,
+  );
+  assert.equal(
+    isTransientLastFmFailure(new Error("Last.fm returned invalid JSON (200)")),
+    false,
+  );
+  assert.equal(
+    isTransientLastFmFailure(new Error("Last.fm returned invalid JSON (429)")),
+    false,
+  );
+
+  let attempts = 0;
+  const result = await withLastFmTransientRetry(
+    async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("Last.fm returned invalid JSON (502)");
+      return "recovered";
+    },
+    { maxAttempts: 3, baseDelayMs: 0 },
+  );
+  assert.equal(result, "recovered");
+  assert.equal(attempts, 2);
+});

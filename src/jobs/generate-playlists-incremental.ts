@@ -101,7 +101,11 @@ import {
   type IncrementalSourceBatch,
   type IncrementalPlanningRound,
 } from "./incremental-planning";
-import { revalidateMusicRepeatBeforeRealWrite } from "./music-repeat-runtime";
+import {
+  currentMusicRepeatState,
+  mustBlockRealWriteForLastFmFactualCooldown,
+  revalidateMusicRepeatBeforeRealWrite,
+} from "./music-repeat-runtime";
 import { missingKeepFilledPreparation } from "./keep-filled-context-guard";
 import { isScheduledCalendarNoop } from "./scheduled-calendar-noop";
 import { sequencePrewriteViolations } from "./sequence-prewrite-guard";
@@ -381,6 +385,32 @@ export async function generatePlaylists(
     // GenerationRun. Internal simulations must never claim a scheduled attempt.
     if (!simulate) {
       await opts.onGenerationRunCreated?.(run.id);
+    }
+
+    // #512: Last.fm factual cooldown is an explicit user eligibility rule.
+    // Do not silently downgrade an ACTIVE rule to SHADOW in a productive run.
+    // A simulation remains diagnostic; the real run fails before any Spotify
+    // read/write and retains a GenerationRun for scheduler and UI evidence.
+    const factualCooldown = currentMusicRepeatState()?.lastFmFactualCooldown;
+    if (mustBlockRealWriteForLastFmFactualCooldown(factualCooldown, simulate)) {
+      const status = factualCooldown?.status ?? "UNKNOWN";
+      const error =
+        "Geração bloqueada antes de alterar o Spotify: a regra de não repetição " +
+        `do Last.fm está indisponível ou incompleta (${status}).`;
+      summary.inconclusive = true;
+      summary.qualityPassed = false;
+      summary.inconclusiveReason = "LASTFM_FACTUAL_COOLDOWN_NOT_READY";
+      summary.musicRepeatFactualCooldownGate = {
+        status: "BLOCKED",
+        configuredMode: factualCooldown?.configuredMode ?? null,
+        effectiveMode: factualCooldown?.effectiveMode ?? null,
+        factualStatus: status,
+        providerComplete: factualCooldown?.providerComplete ?? null,
+        spotifyWrites: false,
+      };
+      log({ level: "WARN", message: error });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
     }
 
     const sharingPreferenceUser = await prisma.user.findUnique({
