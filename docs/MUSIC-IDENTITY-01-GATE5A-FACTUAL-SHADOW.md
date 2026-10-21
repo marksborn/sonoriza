@@ -35,6 +35,16 @@ It is **not** wired into the normal generation pipeline.
 - Legacy side: compact-whitespace title and normalized artist, as in the current
   operational Last.fm matcher. Artist names in older GenerationItems may reflect
   display subtitles with multiple credits.
+- **Current importer limitation (verified in code)**: `toEventRow` in
+  `src/services/lastfm/import-history.ts` deliberately persists
+  `spotifyTrackId: null` and `isrc: null` for imported Last.fm events.
+  `trackMbid` may be stored. Consequently normal imported events will
+  **not** produce `EXACT_PROVIDER_REF` or `STRONG_SAME_RECORDING` evidence;
+  these categories are future-proof contracts for independently enriched,
+  explicitly provider-linked factual events, **not an expectation for current data**.
+  The expected present-day outcome is many canonical abstentions and, when
+  compatible MBIDs exist, review-only hints. No automated Last.fm-to-Spotify
+  association is being introduced here.
 - Provider evidence: only literal `spotifyTrackId` recorded in a factual
   scrobble can serve as its provider reference. A text match, ISRC alone,
   MBID alone, or the same title can **never** manufacture such a link.
