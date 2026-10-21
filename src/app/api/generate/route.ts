@@ -215,6 +215,7 @@ export async function POST(request: Request) {
         session.user.id,
         soleKeepFilledTargetId,
         preparationDate,
+        simulate,
       );
     } catch (error) {
       console.error("#460 KEEP_FILLED manual preflight failed", error);
