@@ -19,6 +19,8 @@ on:
       - "src/services/playback-reserve-gate7-persistence.test.ts"
       - "src/services/playback-reserve-gate8.ts"
       - "src/services/playback-reserve-gate8.test.ts"
+      - "src/services/process-memory.ts"
+      - "src/services/process-memory.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/playback-reserve-availability.ts"
       - "src/services/playback-reserve-availability.test.ts"
@@ -95,6 +97,8 @@ on:
       - "src/services/playback-reserve-gate7-persistence.test.ts"
       - "src/services/playback-reserve-gate8.ts"
       - "src/services/playback-reserve-gate8.test.ts"
+      - "src/services/process-memory.ts"
+      - "src/services/process-memory.test.ts"
       - "src/services/playback-reserve-shadow-runtime.ts"
       - "src/services/playback-reserve-availability.ts"
       - "src/services/playback-reserve-availability.test.ts"
@@ -207,6 +211,7 @@ jobs:
           src/services/playback-reserve-gate7.test.ts
           src/services/playback-reserve-gate7-persistence.test.ts
           src/services/playback-reserve-gate8.test.ts
+          src/services/process-memory.test.ts
           src/services/playback-reserve-availability.test.ts
           src/services/playback-reserve-capability-simulation.test.ts
           src/services/playback-reserve-capability-simulation.integration.test.ts

@@ -20,3 +20,25 @@ export function processMemorySnapshot(
     externalMb: Math.round(usage.external / MB),
   };
 }
+
+/**
+ * #442 Gate 2: a small, privacy-safe memory sample for preflight phases.
+ * It contains no playlist data, provider URLs, user IDs or runtime secrets.
+ */
+export type ProcessMemoryCheckpoint = {
+  checkpoint: string;
+  observedAt: string;
+  memory: ProcessMemorySnapshot;
+};
+
+export function processMemoryCheckpoint(
+  checkpoint: string,
+  usage: NodeJS.MemoryUsage = process.memoryUsage(),
+  observedAt: Date = new Date(),
+): ProcessMemoryCheckpoint {
+  return {
+    checkpoint,
+    observedAt: observedAt.toISOString(),
+    memory: processMemorySnapshot(usage),
+  };
+}

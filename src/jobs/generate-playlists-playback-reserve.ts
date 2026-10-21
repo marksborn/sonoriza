@@ -1,6 +1,10 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import {
+  processMemoryCheckpoint,
+  type ProcessMemoryCheckpoint,
+} from "@/services/process-memory";
 import { persistPlaybackReserveRolesAfterGeneration } from "@/services/playback-reserve-gate7";
 import { preparePlaybackReserveGate8KeepFilledInput } from "@/services/playback-reserve-gate8";
 import {
@@ -81,6 +85,10 @@ export async function generatePlaylists(
       );
     }
 
+    const memoryCheckpoints: ProcessMemoryCheckpoint[] = [
+      ...(effectiveOpts.gate8PreparationMemoryCheckpoints ?? []),
+      processMemoryCheckpoint("RESERVE_GATE8_BEFORE_SIMULATION"),
+    ];
     const simulationResult = await runWithPlaybackReserveShadowRuntimeState(
       simulationState,
       () =>
@@ -90,7 +98,11 @@ export async function generatePlaylists(
           simulate: true,
         }),
     );
-    await finalizePlaybackReserveRuntime(simulationResult, simulationState);
+    memoryCheckpoints.push(processMemoryCheckpoint("RESERVE_GATE8_AFTER_SIMULATION_RUN"));
+    await finalizePlaybackReserveRuntime(simulationResult, simulationState, () => {
+      memoryCheckpoints.push(processMemoryCheckpoint("RESERVE_GATE8_AFTER_ROLE_PERSISTENCE"));
+    });
+    memoryCheckpoints.push(processMemoryCheckpoint("RESERVE_GATE8_AFTER_SUMMARY_PERSISTENCE"));
 
     state.inlineSimulationRunId = simulationResult.runId;
     state.inlineSimulationStatus = simulationResult.status;
@@ -115,6 +127,7 @@ export async function generatePlaylists(
       !simulationEligible ||
       simulationState.rolePersistenceStatus !== "PERSISTED"
     ) {
+      await persistGate8MemoryCheckpoints(simulationResult.runId, memoryCheckpoints);
       return createBlockedRealRun(
         effectiveOpts,
         state,
@@ -125,11 +138,13 @@ export async function generatePlaylists(
     }
 
     const approvedState = await prepareState(false);
+    memoryCheckpoints.push(processMemoryCheckpoint("RESERVE_GATE8_AFTER_REAL_STATE_PREP"));
     approvedState.inlineSimulationRunId = simulationResult.runId;
     approvedState.inlineSimulationStatus = simulationResult.status;
     approvedState.additionalProviderReads = true;
 
     if (approvedState.effectiveMode !== "ACTIVE") {
+      await persistGate8MemoryCheckpoints(simulationResult.runId, memoryCheckpoints);
       return createBlockedRealRun(
         effectiveOpts,
         approvedState,
@@ -139,6 +154,8 @@ export async function generatePlaylists(
       );
     }
     state = approvedState;
+    memoryCheckpoints.push(processMemoryCheckpoint("RESERVE_GATE8_BEFORE_REAL_RUN"));
+    await persistGate8MemoryCheckpoints(simulationResult.runId, memoryCheckpoints);
   }
 
   const result = await runWithPlaybackReserveShadowRuntimeState(
@@ -152,6 +169,7 @@ export async function generatePlaylists(
 async function finalizePlaybackReserveRuntime(
   result: GeneratePlaylistsResult,
   state: PlaybackReserveShadowRuntimeState,
+  onAfterRolePersistence?: () => void,
 ): Promise<void> {
   if (state.effectiveMode === "ACTIVE" && result.status !== "FAILED") {
     try {
@@ -180,6 +198,7 @@ async function finalizePlaybackReserveRuntime(
     state.rolePersistenceStatus = "FAILED";
   }
 
+  onAfterRolePersistence?.();
   try {
     await appendPlaybackReserveRuntimeSummary(result.runId, state);
   } catch (error) {
@@ -196,6 +215,33 @@ async function finalizePlaybackReserveRuntime(
     } catch {
       // Best-effort observability only.
     }
+  }
+}
+
+/**
+ * #442 Gate 2: append only bounded, memory-only checkpoint data to the
+ * internal simulation run. Never change Gate 8 authorization if telemetry fails.
+ * No Spotify reads/writes, playlist metadata, source IDs or URL payloads.
+ */
+async function persistGate8MemoryCheckpoints(
+  simulationRunId: string,
+  checkpoints: readonly ProcessMemoryCheckpoint[],
+): Promise<void> {
+  try {
+    await prisma.generationLog.createMany({
+      data: checkpoints.map(({ checkpoint, observedAt, memory }) => ({
+        runId: simulationRunId,
+        level: "INFO" as const,
+        message: `Checkpoint ${checkpoint}`,
+        data: {
+          checkpoint,
+          observedAt,
+          memory,
+        } as Prisma.InputJsonValue,
+      })),
+    });
+  } catch {
+    // Best-effort instrumentation must never fail an otherwise safe generation.
   }
 }
 

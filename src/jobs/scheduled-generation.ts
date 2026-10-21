@@ -20,7 +20,11 @@ import {
   type KeepFilledTargetPatch,
 } from "@/services/keep-filled-maintenance";
 import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
-import { processMemorySnapshot } from "@/services/process-memory";
+import {
+  processMemoryCheckpoint,
+  processMemorySnapshot,
+  type ProcessMemoryCheckpoint,
+} from "@/services/process-memory";
 import type { Candidate } from "@/services/playlist-planner";
 import {
   LEGACY_GLOBAL_SHARING_POLICY,
@@ -182,6 +186,10 @@ export async function runScheduledGeneration(
         { snapshotBefore: string; currentCount: number; currentDurationMs: number }
       > = {};
       const currentDestinationEpisodeIdsByTargetId: Record<string, string[]> = {};
+      const keepFilledMemoryCheckpointsByTargetId = new Map<
+        string,
+        readonly [ProcessMemoryCheckpoint, ProcessMemoryCheckpoint]
+      >();
       let maintenanceSpotify: SpotifyClient | null = null;
 
       for (const entry of claimed) {
@@ -221,8 +229,10 @@ export async function runScheduledGeneration(
           continue;
         }
         try {
+          const prepStart = processMemoryCheckpoint("SCHEDULE_KEEP_FILLED_PREP_BEFORE_READ");
           await recordAttemptCheckpoint(entry.audit, "KEEP_FILLED_PREP_START");
           const prepared = await prepareKeepFilledTarget(user.id, entry.target, now);
+          const prepDone = processMemoryCheckpoint("SCHEDULE_KEEP_FILLED_PREP_AFTER_READ");
           await recordAttemptCheckpoint(entry.audit, "KEEP_FILLED_PREP_DONE");
           if (prepared.skipReason) {
             await finishOne(entry.audit, "NOOP", prepared.skipReason, now, {
@@ -233,6 +243,7 @@ export async function runScheduledGeneration(
           }
           preservedByTargetId[entry.target.id] = prepared.preserved;
           keepFilledByTargetId[entry.target.id] = prepared.patch;
+          keepFilledMemoryCheckpointsByTargetId.set(entry.target.id, [prepStart, prepDone]);
           executable.push(entry);
         } catch (error) {
           const reason = errorMessage(error);
@@ -370,6 +381,12 @@ export async function runScheduledGeneration(
                 scheduledPolicyByTargetId: {
                   [targetId]: scheduledPolicyByTargetId[targetId]!,
                 },
+                ...(keepFilledMemoryCheckpointsByTargetId.has(targetId)
+                  ? {
+                      gate8PreparationMemoryCheckpoints:
+                        keepFilledMemoryCheckpointsByTargetId.get(targetId)!,
+                    }
+                  : {}),
                 musicOrderSimulationEvidence,
                 externalReservationsByUri,
                 reservedTargetSnapshots,
