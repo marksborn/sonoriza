@@ -38,6 +38,7 @@ export async function prepareManualKeepFilledTarget(
   userId: string,
   targetId: string,
   date: Date,
+  simulate = false,
 ): Promise<ManualKeepFilledPreflight> {
   const target = await prisma.targetPlaylist.findFirst({
     where: { id: targetId, userId, enabled: true, updatePolicy: "KEEP_FILLED" },
@@ -80,6 +81,7 @@ export async function prepareManualKeepFilledTarget(
     target,
     date,
     durationCalendarIds,
+    simulate,
   );
   if (prepared.skipReason) {
     // KEEP / SKIP with an empty calendar must not even read the destination.
