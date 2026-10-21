@@ -108,6 +108,34 @@ export type LastFmFactualCooldownRuntimeState = {
   failure: string | null;
 };
 
+/**
+ * #512: a configured ACTIVE factual rule may be non-authoritative when the
+ * Last.fm observation fails or is incomplete. Simulations can still measure
+ * SHADOW, but productive runs must not publish without factual coverage.
+ *
+ * OFF, non-allowlisted and explicitly disabled policies are not requested
+ * productive cooldowns. In every other ACTIVE-configured state, only a fully
+ * covered READY_ACTIVE snapshot can authorize a real run.
+ */
+export function mustBlockRealWriteForLastFmFactualCooldown(
+  state: LastFmFactualCooldownRuntimeState | undefined,
+  simulate: boolean,
+): boolean {
+  if (simulate || !state || state.configuredMode !== "ACTIVE") return false;
+  if (
+    state.status === "OFF" ||
+    state.status === "USER_NOT_ALLOWLISTED" ||
+    state.status === "POLICY_DISABLED"
+  ) {
+    return false;
+  }
+  return (
+    state.status !== "READY_ACTIVE" ||
+    state.effectiveMode !== "ACTIVE" ||
+    state.providerComplete !== true
+  );
+}
+
 export type MusicRepeatRunState = {
   userId: string;
   simulate: boolean;
