@@ -281,6 +281,7 @@ export async function prepareKeepFilledTarget(
   }
 
   const factualBlockedUris = new Set<string>();
+  const factualUnmatchableUris = new Set<string>();
   if (
     factual?.effectiveMode === "ACTIVE" &&
     factual.status === "READY_ACTIVE" &&
@@ -293,13 +294,12 @@ export async function prepareKeepFilledTarget(
         candidate.title,
         candidate.primaryArtistName ?? candidate.subtitle ?? item.subtitle,
       );
-      // Never publish a preserved track with unknown factual identity while
-      // the explicit cooldown rule is ACTIVE. Ambiguity is not an opt-out.
+      // Do not preserve an unmatchable identity, but do not block all other
+      // valid tracks in this KEEP_FILLED target. The core removes this URI
+      // before the write and the planner also excludes unmatchable candidates.
       if (!key) {
-        throw new Error(
-          "KEEP_FILLED: identidade musical insuficiente para validar " +
-            "a preservação sob a regra Last.fm ACTIVE.",
-        );
+        factualUnmatchableUris.add(item.uri);
+        continue;
       }
       if (factual.blockedIdentityKeys.has(key)) factualBlockedUris.add(item.uri);
     }
@@ -318,6 +318,7 @@ export async function prepareKeepFilledTarget(
       : musicRepeat.enabled,
     blockedTrackIds: musicRepeat.blockedTrackIds,
     lastFmFactualBlockedUris: factualBlockedUris,
+    lastFmUnmatchableUris: factualUnmatchableUris,
     rules: {
       compositionMode: target.compositionMode,
       sequencePattern: parseSequencePattern(target.sequencePattern),
