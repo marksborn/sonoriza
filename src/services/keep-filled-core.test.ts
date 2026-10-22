@@ -287,6 +287,30 @@ test("recently played music is removed when MUSIC-01 is active", () => {
   assert.equal(result.removals[0]?.reason, "MUSIC_RECENTLY_PLAYED");
 });
 
+test("#512 KEEP_FILLED removes unmatchable music before preservation, without mislabeling it as a scrobble match", () => {
+  const result = build({
+    items: [music(0, "symbol-only"), music(1, "normal"), podcast(2, "p1")],
+    lastFmUnmatchableUris: new Set(["spotify:track:symbol-only"]),
+  });
+
+  assert.deepEqual(result.preserved.map((item) => item.uri), [
+    "spotify:track:normal", "spotify:episode:p1",
+  ]);
+  assert.deepEqual(result.removeUris, ["spotify:track:symbol-only"]);
+  assert.equal(result.removals[0]?.reason, "MUSIC_LASTFM_IDENTITY_UNMATCHABLE");
+  assert.equal(result.removedDurationMs, 180_000);
+  assert.equal(result.forceReplace, false);
+});
+
+test("#512 KEEP_FILLED preserves unrelated music if no unmatchable URI was detected", () => {
+  const result = build({
+    lastFmUnmatchableUris: new Set(["spotify:track:another"]),
+  });
+  assert.deepEqual(result.preserved.map((item) => item.uri), [
+    "spotify:track:m1", "spotify:episode:p1",
+  ]);
+});
+
 test("#512 KEEP_FILLED removes Last.fm factual match while preserving unaffected podcast", () => {
   const result = build({
     lastFmFactualBlockedUris: new Set(["spotify:track:m1"]),
