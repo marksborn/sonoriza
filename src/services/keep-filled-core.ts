@@ -43,6 +43,7 @@ export type KeepFilledRemovalReason =
   | "DUPLICATE_URI"
   | "MUSIC_RECENTLY_PLAYED"
   | "MUSIC_LASTFM_FACTUAL_COOLDOWN"
+  | "MUSIC_LASTFM_IDENTITY_UNMATCHABLE"
   | "MUSIC_IDENTITY_MISSING"
   | "PODCAST_IDENTITY_MISSING"
   | "PODCAST_COMPLETED_NO_REPLAY"
@@ -84,6 +85,8 @@ export function buildKeepFilledPreservation(input: {
   blockedTrackIds: ReadonlySet<string>;
   /** #512: exact factual Last.fm aliases of remote music approved for removal. */
   lastFmFactualBlockedUris?: ReadonlySet<string>;
+  /** #512: an unknown factual Last.fm identity cannot be preserved under ACTIVE. */
+  lastFmUnmatchableUris?: ReadonlySet<string>;
   rules: Pick<
     PlaylistRules,
     | "compositionMode"
@@ -156,6 +159,12 @@ export function buildKeepFilledPreservation(input: {
       candidate = item.musicCandidate ?? null;
       if (!candidate) {
         remove(item, "UNREADABLE_ITEM", item.originalDurationMs ?? 0);
+        continue;
+      }
+      // #512: a track with no exact factual identity must not bypass ACTIVE
+      // simply because it cannot be matched to a Last.fm scrobble.
+      if (input.lastFmUnmatchableUris?.has(item.uri)) {
+        remove(item, "MUSIC_LASTFM_IDENTITY_UNMATCHABLE", candidate.durationMs);
         continue;
       }
       // #512: preserved music has the same factual eligibility as new sources.

@@ -325,6 +325,7 @@ export async function revalidateMusicRepeatBeforeRealWrite(
     }
 
     let blockedCount = 0;
+    let unmatchableCount = 0;
     for (const target of plan.targets) {
       for (const item of target.result.items) {
         if (item.type !== "MUSIC") continue;
@@ -332,8 +333,15 @@ export async function revalidateMusicRepeatBeforeRealWrite(
           item.title,
           item.primaryArtistName ?? item.subtitle,
         );
-        if (key && refreshed.blockedIdentityKeys.has(key)) blockedCount += 1;
+        if (!key) unmatchableCount += 1;
+        else if (refreshed.blockedIdentityKeys.has(key)) blockedCount += 1;
       }
+    }
+    // Fail closed even when an upstream candidate source skipped its filter.
+    if (unmatchableCount > 0) {
+      throw new Error(
+        `Last.fm ACTIVE: ${unmatchableCount} música(s) sem identidade textual factual; escrita bloqueada.`,
+      );
     }
     refreshed.preWriteBlockedCount = blockedCount;
     refreshed.preWriteBlockedTotalCount += blockedCount;
@@ -366,7 +374,7 @@ export function filterMusicCandidatesForLastFmFactualCooldown(
   matchedCandidateCount: number;
   skippedCandidateCount: number;
 } {
-  if (!state || state.blockedIdentityKeys.size === 0) {
+  if (!state) {
     return {
       candidates,
       matchedCandidateCount: 0,
@@ -387,7 +395,15 @@ export function filterMusicCandidatesForLastFmFactualCooldown(
 
     const artistName = candidate.primaryArtistName ?? candidate.subtitle ?? null;
     const key = lastFmMusicIdentityKey(candidate.title, artistName);
-    const matched = Boolean(key && state.blockedIdentityKeys.has(key));
+    // A symbol-only or missing track/artist name has no provable textual
+    // identity. ACTIVE must exclude it even if there are zero known scrobbles;
+    // SHADOW remains observational and does not change eligibility.
+    if (!key) {
+      if (active) skippedCandidateCount += 1;
+      else eligible.push(candidate);
+      continue;
+    }
+    const matched = state.blockedIdentityKeys.has(key);
     if (!matched) {
       eligible.push(candidate);
       continue;

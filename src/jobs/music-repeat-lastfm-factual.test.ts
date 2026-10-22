@@ -86,6 +86,37 @@ test("aceita diferença apenas de espaço no título com artista exato", () => {
   );
 });
 
+test("#512 ACTIVE cannot admit symbol-only or missing-artist music even with no scrobbles", () => {
+  const symbolOnly = { ...fresh, uri: "spotify:track:symbol-only", title: "∞" };
+  const missingArtist = {
+    ...fresh, uri: "spotify:track:no-artist",
+    primaryArtistName: "", subtitle: "",
+  };
+  assert.equal(lastFmMusicIdentityKey("∞", "Unknown Artist"), null);
+  assert.equal(lastFmMusicIdentityKey("Valid Title", ""), null);
+
+  const result = filterMusicCandidatesForLastFmFactualCooldown(
+    [symbolOnly, missingArtist, fresh],
+    state("ACTIVE", []),
+  );
+  assert.deepEqual(result.candidates.map((candidate) => candidate.uri), [fresh.uri]);
+  assert.equal(result.matchedCandidateCount, 0);
+  assert.equal(result.skippedCandidateCount, 2);
+});
+
+test("#512 SHADOW does not exclude symbol-only music", () => {
+  const symbolOnly = { ...fresh, uri: "spotify:track:symbol-only", title: "∞" };
+  const result = filterMusicCandidatesForLastFmFactualCooldown(
+    [symbolOnly, fresh],
+    state("SHADOW", []),
+  );
+  assert.deepEqual(result.candidates.map((candidate) => candidate.uri), [
+    symbolOnly.uri, fresh.uri,
+  ]);
+  assert.equal(result.matchedCandidateCount, 0);
+  assert.equal(result.skippedCandidateCount, 0);
+});
+
 test("ACTIVE remove candidata com scrobble factual dentro da janela", () => {
   const key = lastFmMusicIdentityKey(listened.title, listened.subtitle)!;
   const result = filterMusicCandidatesForLastFmFactualCooldown(
