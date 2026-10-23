@@ -47,9 +47,9 @@ npx tsx scripts/report-music-identity-gate5c-musicbrainz-shadow.ts \
 
 CLI rejects unknown flags, `--write` and `--apply`; `--ack-provider-reads`
 is mandatory. `--limit` is max 5 (default 3); offset 0–500. No
-automation, cron, or background task is added. Each report is a historical
+automation, cron, or background task is added. By default, each report is a historical
 sample of the latest successful real GenerationRun for the target, not a
-live Spotify playlist. The cutoff is computed using the persisted user's
+live Spotify playlist. Gate 5D.3 adds explicitly selected older real runs (see below). The cutoff is computed using the persisted user's
 repeat window as of this report; historical policy changes are not
 reconstructed. Scrobbles are `LASTFM_SCROBBLE` only, read with a hard
 20,000-row cap. Excessive data makes the report abort.
@@ -113,3 +113,76 @@ MusicBrainz ingestion is authorized by Gate 5C.
    overlaps. No production cooldown activation permitted by these results.
 
 Refs: #374, #512, #278, #200; predecessor gates #516 and #517.
+
+## Gate 5D.3 — controlled historical GenerationRun and exact positions
+
+An operator-requested diagnostic can now specify a **previous** successful
+real GenerationRun and up to five exact MUSIC positions. The normal Gate 5C
+behavior (latest real successful run, offset/limit) remains unchanged.
+
+Purpose: inspect the original Carro 21/10/2026 incident — positions
+`5,9,10` (Dragon Fly, I'm So Sick, Ride The Lightning - Remastered).
+Those items were not in the 23/10 generation, so sampling the latest run
+would not reproduce the investigated source.
+
+**Safety contract:**
+- `--run-id=<id>` is optional and must reference a `SUCCESS`, non-simulated
+  GenerationRun **belonging to the specified user and target**; otherwise abort
+  before any provider lookup. No fallback to latest run if the explicit ID is
+  invalid or does not belong to the user/target.
+- `--positions=5,9,10` requires `--run-id`. Positions are unique integers
+  1–500, with at most five. The report must find **all** requested MUSIC
+  positions for the selected target, otherwise abort before provider reads.
+  Explicit positions cannot be combined with `--offset` or `--limit`.
+- The database uses a read-only REPEATABLE READ snapshot. This command still
+  uses **Spotify catalog and MusicBrainz remote requests** and may refresh
+  Spotify OAuth credentials. Never claim global zero writes. The operator
+  must explicitly acknowledge `--ack-provider-reads`, and MusicBrainz
+  licensing/rate limits remain as described above.
+- The report includes the selected generation ID, actual item position,
+  Spotify ISRC and candidate MusicBrainz recording MBIDs, with
+  `REVIEW`/`ABSTAIN` outcomes only. It does **not** confirm original/master
+  equivalence, backfill Last.fm, or update canonical identities or cooldown.
+- `localLastFmScrobblesWithCandidateMbid` reads only persisted history.
+  The Last.fm handoff for this account is 14/08/2026; scrobbles observed
+  remotely in September are absent locally by design. A zero count for
+  September does not prove absence of a factual listen.
+
+### Identify the historical run first (read-only)
+
+```sql
+BEGIN TRANSACTION READ ONLY;
+SELECT g."id" AS historical_run_id,
+       p."id" AS target_id,
+       r."scheduledLocalDate" AS scheduled_date,
+       g."startedAt" AS started_at
+FROM "TargetScheduleRun" r
+JOIN "TargetPlaylist" p ON p."id" = r."targetPlaylistId"
+JOIN "TargetScheduleAttempt" a ON a."targetScheduleRunId" = r."id"
+JOIN "GenerationRun" g ON g."id" = a."generationRunId"
+WHERE p."name" = 'Carro'
+  AND r."scheduledLocalDate" = '2026-10-21'
+  AND g."status"::text = 'SUCCESS'
+  AND g."simulation" = false
+ORDER BY g."startedAt" DESC
+LIMIT 1;
+ROLLBACK;
+```
+
+After **separate PR review, merge and deployment** and only after explicit
+authorization to contact Spotify/MusicBrainz, run a controlled report:
+
+```bash
+npx tsx scripts/report-music-identity-gate5c-musicbrainz-shadow.ts \
+  --user=<SonorizaUserId> --target=<CarroTargetId> \
+  --run-id=<HistoricalGenerationRunId> --positions=5,9,10 \
+  --ack-provider-reads --json
+```
+
+Do not put credentials or personal IDs in an issue comment. No automated
+provider calls, playlist mutation, model migration, scheduler change, or
+productive identity/cooldown activation is part of Gate 5D.3.
+
+Refs: #374, #512; predecessor 5D.1 confirmed Last.fm historical handoff;
+5D.2 observed three recent scrobbles for each of the disputed tracks
+within the active six-month window.

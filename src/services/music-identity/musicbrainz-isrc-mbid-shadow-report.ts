@@ -10,6 +10,7 @@ import {
   type Gate5CDecisionResult,
 } from "./musicbrainz-isrc-mbid-shadow";
 import { Gate5CMusicBrainzClient } from "./musicbrainz-isrc-mbid-shadow-client";
+import { validateGate5CHistoricalSelection } from "./musicbrainz-isrc-mbid-shadow-selection";
 
 const MAX_BATCH = 5;
 const MAX_HISTORY_EVENTS = 20_000;
@@ -26,6 +27,7 @@ export type Gate5CIsrcReport = Readonly<{
   cutoff: string;
   offset: number;
   requestedLimit: number;
+  selectedPositions: readonly number[] | null;
   authority: {
     spotifyCatalogCalls: true;
     musicBrainzCalls: true;
@@ -41,6 +43,7 @@ export type Gate5CIsrcReport = Readonly<{
     musicBrainz: ReturnType<Gate5CMusicBrainzClient["getMetrics"]>;
   };
   rows: Array<{
+    position: number;
     spotifyTrackId: string;
     publishedTitle: string | null;
     catalogTitle: string | null;
@@ -66,12 +69,21 @@ export async function reportGate5CIsrcMbidShadow(input: {
   targetPlaylistId: string;
   offset: number;
   limit: number;
+  /** Optional exact historical SUCCESS real run, owned by the same user and target. */
+  runId?: string | null;
+  /** Optional exact 1–5 item positions; only allowed with runId. */
+  positions?: readonly number[] | null;
   spotify?: Pick<SpotifyCatalogSearchClient, "lookupTracksByIds" | "getMetrics">;
   musicBrainz?: Pick<Gate5CMusicBrainzClient, "lookup" | "getMetrics">;
 }): Promise<Gate5CIsrcReport> {
   const userId = input.userId.trim();
   const targetPlaylistId = input.targetPlaylistId.trim();
   const { offset, limit } = input;
+  const selection = validateGate5CHistoricalSelection({
+    runId: input.runId,
+    positions: input.positions,
+    paginationRequested: input.positions != null && (offset !== 0 || limit !== 3),
+  });
   if (!userId || !targetPlaylistId) throw new Error("Gate 5C: user and target required");
   if (!Number.isInteger(offset) || offset < 0 || offset > 500) {
     throw new Error("Gate 5C: offset must be an integer from 0 to 500");
@@ -99,20 +111,36 @@ export async function reportGate5CIsrcMbidShadow(input: {
     const run = await tx.generationRun.findFirst({
       where: {
         userId, simulation: false, status: "SUCCESS",
+        ...(selection.runId ? { id: selection.runId } : {}),
         items: { some: { targetPlaylistId } },
       },
       orderBy: { startedAt: "desc" },
       select: {
         id: true, startedAt: true,
         items: {
-          where: { targetPlaylistId, contentType: "MUSIC" },
+          where: {
+            targetPlaylistId, contentType: "MUSIC",
+            ...(selection.positions ? { position: { in: [...selection.positions] } } : {}),
+          },
           orderBy: [{ position: "asc" }, { id: "asc" }],
-          skip: offset, take: limit,
-          select: { spotifyTrackId: true, title: true },
+          ...(selection.positions
+            ? { take: selection.positions.length }
+            : { skip: offset, take: limit }),
+          select: { position: true, spotifyTrackId: true, title: true },
         },
       },
     });
-    if (!run) throw new Error("Gate 5C: no successful real generation");
+    if (!run) {
+      throw new Error("Gate 5D.3: selected run must be a successful real generation owned by this user and target");
+    }
+    if (selection.positions && (
+      run.items.length !== selection.positions.length
+      || selection.positions.some((position) =>
+        run.items.filter((item) => item.position === position).length !== 1
+      )
+    )) {
+      throw new Error("Gate 5D.3: requested positions do not each resolve to one MUSIC item on selected target");
+    }
     const cutoff = computeMusicRepeatCutoff(
       run.startedAt, policy.windowValue, policy.windowUnit,
     );
@@ -155,6 +183,7 @@ export async function reportGate5CIsrcMbidShadow(input: {
     const track = lookup?.track;
     if (!track) {
       rows.push({
+        position: item.position,
         spotifyTrackId: item.spotifyTrackId,
         publishedTitle: item.title,
         catalogTitle: null, catalogIsrc: null,
@@ -186,6 +215,7 @@ export async function reportGate5CIsrcMbidShadow(input: {
     );
 
     rows.push({
+      position: item.position,
       spotifyTrackId: item.spotifyTrackId,
       publishedTitle: item.title,
       catalogTitle: track.name,
@@ -208,7 +238,8 @@ export async function reportGate5CIsrcMbidShadow(input: {
     sourceRunId: baseline.runId,
     sourceRunStartedAt: baseline.runStartedAt,
     cutoff: baseline.cutoff,
-    offset, requestedLimit: limit,
+    offset, requestedLimit: selection.positions?.length ?? limit,
+    selectedPositions: selection.positions,
     authority: {
       spotifyCatalogCalls: true, musicBrainzCalls: true,
       operationalSpotifyTokenRefreshMayWrite: true,

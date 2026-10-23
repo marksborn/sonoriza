@@ -6,6 +6,8 @@ on:
       - "src/services/music-identity/musicbrainz-isrc-mbid-shadow.ts"
       - "src/services/music-identity/musicbrainz-isrc-mbid-shadow-client.ts"
       - "src/services/music-identity/musicbrainz-isrc-mbid-shadow-report.ts"
+      - "src/services/music-identity/musicbrainz-isrc-mbid-shadow-selection.ts"
+      - "src/services/music-identity/musicbrainz-isrc-mbid-shadow-selection.test.ts"
       - "src/services/music-identity/musicbrainz-isrc-mbid-shadow.test.ts"
       - "scripts/report-music-identity-gate5c-musicbrainz-shadow.ts"
       - "docs/MUSIC-IDENTITY-01-GATE5C-MUSICBRAINZ-ISRC-SHADOW.md"
@@ -29,6 +31,8 @@ jobs:
       - run: npx prisma generate
       - name: Gate 5C conservative decision and provider failure contracts
         run: npx tsx --test src/services/music-identity/musicbrainz-isrc-mbid-shadow.test.ts
+      - name: Gate 5D.3 historical run selection guardrails
+        run: npx tsx --test src/services/music-identity/musicbrainz-isrc-mbid-shadow-selection.test.ts
       - name: Typecheck
         run: npm run typecheck
       - name: Build
