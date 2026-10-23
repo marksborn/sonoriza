@@ -137,7 +137,8 @@ test("#489 Gate B: shared client request checks before each provider attempt", (
   const client = readFileSync("src/services/spotify/client.ts", "utf8");
   const request = client.indexOf("private async request<T>(");
   const guard = client.indexOf("await assertAudiobookPlaylistMutationAllowed(", request);
-  const provider = client.indexOf("return await spotifyRequestAttempt<T>(", request);
+  // The request may inspect a successful response before returning it (e.g. retry telemetry).
+  const provider = client.indexOf("await spotifyRequestAttempt<T>(", request);
   assert.ok(request >= 0 && guard > request && provider > guard);
   const loop = client.indexOf("while (true)", request);
   assert.ok(loop >= 0 && loop < guard, "Guard must be inside the retry loop");

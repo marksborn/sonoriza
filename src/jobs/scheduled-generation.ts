@@ -39,6 +39,13 @@ import {
   runWithCalendar03PlannerRuntimeState,
 } from "@/services/playlist-planner/calendar-event-composition-runtime";
 import { SpotifyClient } from "@/services/spotify";
+import type { SpotifyRequestMetrics } from "@/services/spotify/errors";
+import {
+  addScheduledSpotifyPreflight,
+  preserveScheduledSpotifyPreflight,
+  summarizeScheduledSpotifyPreflight,
+  type ScheduledSpotifyPreflightTelemetry,
+} from "./spotify-preflight-telemetry";
 import { getActiveSpotifyBackoff } from "@/services/spotify/backoff";
 import {
   dailyScheduleSlot,
@@ -197,12 +204,15 @@ export async function runScheduledGeneration(
           | "KEEP_FILLED"
           | "REBUILD_DAILY";
         if (entry.target.updatePolicy !== "KEEP_FILLED") {
+          const preflightStartedAtMs = Date.now();
+          let metricsBefore: SpotifyRequestMetrics | null = null;
           try {
             await recordAttemptCheckpoint(entry.audit, "REBUILD_PREP_START");
             if (!entry.target.spotifyPlaylistId) {
               throw new Error(`Target "${entry.target.name}" has no Spotify playlist`);
             }
             maintenanceSpotify ??= await SpotifyClient.forUser(user.id);
+            metricsBefore = maintenanceSpotify.getRequestMetrics();
             const before = await maintenanceSpotify.getTargetPlaylistState(
               entry.target.spotifyPlaylistId,
             );
@@ -217,8 +227,28 @@ export async function runScheduledGeneration(
             currentDestinationEpisodeIdsByTargetId[entry.target.id] =
               podcast09DestinationEpisodeIds(before.items);
             await recordAttemptCheckpoint(entry.audit, "REBUILD_PREP_DONE");
+            await recordAttemptSpotifyPreflightSafely(
+              entry.audit,
+              summarizeScheduledSpotifyPreflight({
+                phase: "REBUILD",
+                startedAtMs: preflightStartedAtMs,
+                endedAtMs: Date.now(),
+                before: metricsBefore,
+                after: maintenanceSpotify?.getRequestMetrics() ?? null,
+              }),
+            );
             executable.push(entry);
           } catch (error) {
+            await recordAttemptSpotifyPreflightSafely(
+              entry.audit,
+              summarizeScheduledSpotifyPreflight({
+                phase: "REBUILD",
+                startedAtMs: preflightStartedAtMs,
+                endedAtMs: Date.now(),
+                before: metricsBefore,
+                after: maintenanceSpotify?.getRequestMetrics() ?? null,
+              }),
+            );
             const reason = errorMessage(error);
             const status = isRetryableScheduledPreflightReadFailure(error)
               ? "FAILED"
@@ -228,12 +258,26 @@ export async function runScheduledGeneration(
           }
           continue;
         }
+        const preflightStartedAtMs = Date.now();
+        const scopedSpotify: { client: SpotifyClient | null } = { client: null };
         try {
           const prepStart = processMemoryCheckpoint("SCHEDULE_KEEP_FILLED_PREP_BEFORE_READ");
           await recordAttemptCheckpoint(entry.audit, "KEEP_FILLED_PREP_START");
-          const prepared = await prepareKeepFilledTarget(user.id, entry.target, now);
+          const prepared = await prepareKeepFilledTarget(
+            user.id, entry.target, now, undefined, false,
+            (client) => { scopedSpotify.client = client; },
+          );
           const prepDone = processMemoryCheckpoint("SCHEDULE_KEEP_FILLED_PREP_AFTER_READ");
           await recordAttemptCheckpoint(entry.audit, "KEEP_FILLED_PREP_DONE");
+          await recordAttemptSpotifyPreflightSafely(
+            entry.audit,
+            summarizeScheduledSpotifyPreflight({
+              phase: "KEEP_FILLED",
+              startedAtMs: preflightStartedAtMs,
+              endedAtMs: Date.now(),
+              after: scopedSpotify.client?.getRequestMetrics() ?? null,
+            }),
+          );
           if (prepared.skipReason) {
             await finishOne(entry.audit, "NOOP", prepared.skipReason, now, {
               targetDurationMs: 0,
@@ -246,6 +290,15 @@ export async function runScheduledGeneration(
           keepFilledMemoryCheckpointsByTargetId.set(entry.target.id, [prepStart, prepDone]);
           executable.push(entry);
         } catch (error) {
+          await recordAttemptSpotifyPreflightSafely(
+            entry.audit,
+            summarizeScheduledSpotifyPreflight({
+              phase: "KEEP_FILLED",
+              startedAtMs: preflightStartedAtMs,
+              endedAtMs: Date.now(),
+              after: scopedSpotify.client?.getRequestMetrics() ?? null,
+            }),
+          );
           const reason = errorMessage(error);
           // KEEP_FILLED preparation reads authoritative episode playback state.
           // A Spotify GET 5xx before any Spotify write is retryable; preserve
@@ -875,6 +928,46 @@ async function finishMany(
   );
 }
 
+/**
+ * Persist metrics before a GenerationRun exists. Audit failure is observable
+ * but must not turn a completed Spotify GET into a repeated provider write.
+ */
+async function recordAttemptSpotifyPreflightSafely(
+  audit: ScheduleAttemptRef,
+  summary: ScheduledSpotifyPreflightTelemetry,
+): Promise<void> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.targetScheduleAttempt.findUnique({
+        where: {
+          targetScheduleRunId_attempt: {
+            targetScheduleRunId: audit.id,
+            attempt: audit.attempt,
+          },
+        },
+        select: { details: true, status: true },
+      });
+      if (current?.status !== "RUNNING") return;
+      await tx.targetScheduleAttempt.updateMany({
+        where: {
+          targetScheduleRunId: audit.id,
+          attempt: audit.attempt,
+          status: "RUNNING",
+        },
+        data: {
+          details: addScheduledSpotifyPreflight(
+            current.details,
+            summary,
+          ) as Prisma.InputJsonValue,
+        },
+      });
+    });
+  } catch {
+    // Do not log personal playlist/episode identifiers or change the slot outcome.
+    console.warn("Scheduled Spotify preflight telemetry persistence failed");
+  }
+}
+
 async function recordAttemptCheckpoint(
   audit: ScheduleAttemptRef,
   checkpoint:
@@ -919,6 +1012,15 @@ async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: str
       );
     }
 
+    const currentAttempt = await tx.targetScheduleAttempt.findUnique({
+      where: {
+        targetScheduleRunId_attempt: {
+          targetScheduleRunId: audit.id,
+          attempt: audit.attempt,
+        },
+      },
+      select: { details: true },
+    });
     const attempt = await tx.targetScheduleAttempt.updateMany({
       where: {
         targetScheduleRunId: audit.id,
@@ -927,9 +1029,12 @@ async function linkGenerationRun(audit: ScheduleAttemptRef, generationRunId: str
       },
       data: {
         generationRunId,
-        details: runningAttemptDetails("GENERATION_LINKED", {
-          generationRunId,
-        }),
+        details: preserveScheduledSpotifyPreflight(
+          currentAttempt?.details,
+          runningAttemptDetails("GENERATION_LINKED", {
+            generationRunId,
+          }) as Record<string, unknown>,
+        ) as Prisma.InputJsonValue,
       },
     });
     if (attempt.count !== 1) {
@@ -1015,6 +1120,15 @@ async function finishOne(
     });
     if (aggregate.count !== 1) return false;
 
+    const currentAttempt = await tx.targetScheduleAttempt.findUnique({
+      where: {
+        targetScheduleRunId_attempt: {
+          targetScheduleRunId: audit.id,
+          attempt: audit.attempt,
+        },
+      },
+      select: { details: true },
+    });
     const attemptData: Prisma.TargetScheduleAttemptUncheckedUpdateManyInput = {
       status,
       reason,
@@ -1022,7 +1136,12 @@ async function finishOne(
       ...(data.generationRunId === undefined
         ? {}
         : { generationRunId: data.generationRunId }),
-      ...(data.details === undefined ? {} : { details: data.details }),
+      ...(data.details === undefined ? {} : {
+        details: preserveScheduledSpotifyPreflight(
+          currentAttempt?.details,
+          data.details as Record<string, unknown>,
+        ) as Prisma.InputJsonValue,
+      }),
     };
     const attempt = await tx.targetScheduleAttempt.updateMany({
       where: {

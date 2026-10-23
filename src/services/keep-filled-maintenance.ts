@@ -126,6 +126,7 @@ export async function prepareKeepFilledTarget(
   // Without an override, resolve the same CALENDAR-127 scope as generation.
   durationCalendarIdsOverride?: readonly string[],
   simulate = false,
+  onSpotifyClient?: (client: SpotifyClient) => void,
 ): Promise<PreparedKeepFilledTarget> {
   if (!target.spotifyPlaylistId) {
     throw new Error(`Target "${target.name}" has no Spotify playlist`);
@@ -152,6 +153,8 @@ export async function prepareKeepFilledTarget(
   }
 
   const spotify = await SpotifyClient.forUser(userId);
+  // #521: the scheduled preflight can collect safe counters even when a read fails.
+  onSpotifyClient?.(spotify);
   const remote = await spotify.getTargetPlaylistState(target.spotifyPlaylistId);
   const observations = remote.items.flatMap((item) => {
     if (item.type !== "PODCAST" || !item.uri || !item.spotifyEpisodeId) {

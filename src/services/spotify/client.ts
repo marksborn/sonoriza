@@ -24,10 +24,12 @@ const API = "https://api.spotify.com/v1";
 const MAX_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_RATE_LIMIT_WAIT_SECONDS = 1;
 const RETRY_JITTER_MAX_MS = 250;
-// A transient server error on a critical pre-write GET may clear quickly.
-// Keep this independent of 429 retry and never retry Spotify writes.
-const MAX_CRITICAL_GET_5XX_RETRIES = 1;
-const CRITICAL_GET_5XX_WAIT_MS = 300;
+// A transient upstream failure on a critical GET should recover within the
+// same scheduled attempt when possible. Cap retries and total backoff per
+// request; never automatically retry Spotify mutations.
+const MAX_CRITICAL_GET_5XX_RETRIES = 3;
+const CRITICAL_GET_5XX_BASE_WAIT_MS = 1_000;
+const CRITICAL_GET_5XX_MAX_WAIT_MS = 4_000;
 
 export interface SpotifyPlaylistSummary {
   id: string;
@@ -94,6 +96,8 @@ export class SpotifyClient {
     quotaExceededCount: 0,
     retries: 0,
     retryWaitMs: 0,
+    criticalGet5xxRetries: 0,
+    criticalGet5xxRecoveries: 0,
     circuitOpenSkips: 0,
     cacheHits: 0,
     cacheMisses: 0,
@@ -234,13 +238,23 @@ export class SpotifyClient {
             }),
           );
         }
-        return await spotifyRequestAttempt<T>({
+        const response = await spotifyRequestAttempt<T>({
           accessToken: this.accessToken,
           path,
           method,
           operation,
           init,
         });
+        if (transientReadRetries > 0) {
+          this.requestMetrics.criticalGet5xxRecoveries =
+            (this.requestMetrics.criticalGet5xxRecoveries ?? 0) + 1;
+          // Deliberately omit path/URI and tokens from operational logs.
+          console.info("Spotify critical GET recovered from 5xx", {
+            operation,
+            requestAttempts: transientReadRetries + 1,
+          });
+        }
+        return response;
       } catch (requestError) {
         if (!(requestError instanceof SpotifyApiError)) throw requestError;
         error = requestError;
@@ -279,10 +293,21 @@ export class SpotifyClient {
       ) {
         transientReadRetries += 1;
         const waitMs =
-          CRITICAL_GET_5XX_WAIT_MS +
-          Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
+          Math.min(
+            CRITICAL_GET_5XX_MAX_WAIT_MS,
+            CRITICAL_GET_5XX_BASE_WAIT_MS * 2 ** (transientReadRetries - 1),
+          ) + Math.floor(Math.random() * (RETRY_JITTER_MAX_MS + 1));
         this.requestMetrics.retries += 1;
+        this.requestMetrics.criticalGet5xxRetries =
+          (this.requestMetrics.criticalGet5xxRetries ?? 0) + 1;
         this.requestMetrics.retryWaitMs += waitMs;
+        // Does not expose episode IDs, playlist IDs, access tokens, or URLs.
+        console.warn("Spotify critical GET transient 5xx; retrying", {
+          operation,
+          status: error.status,
+          retry: transientReadRetries,
+          waitMs,
+        });
         await sleep(waitMs);
         continue;
       }

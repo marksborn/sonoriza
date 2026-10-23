@@ -57,10 +57,10 @@ test("#226 terminal writes are fenced to the exact claimed attempt", () => {
 
 test("preflight GET 5xx becomes retryable FAILED before GenerationRun is created", () => {
   const source = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
-  assert.match(source, /await prepareKeepFilledTarget\(user\.id, entry\.target, now\)/);
+  assert.match(source, /await prepareKeepFilledTarget\(\s*user\.id, entry\.target, now,/);
   assert.match(
     source,
-    /catch \(error\) \{\s*const reason = errorMessage\(error\);\s*\/\/ KEEP_FILLED preparation[\s\S]*?isRetryableScheduledPreflightReadFailure\(error\)[\s\S]*?\? "FAILED"\s*:\s*"BLOCKED"/,
+    /catch \(error\) \{\s*await recordAttemptSpotifyPreflightSafely\([\s\S]*?\);\s*const reason = errorMessage\(error\);\s*\/\/ KEEP_FILLED preparation[\s\S]*?isRetryableScheduledPreflightReadFailure\(error\)[\s\S]*?\? "FAILED"\s*:\s*"BLOCKED"/,
   );
   assert.match(source, /finishOne\(entry\.audit, status, reason, new Date\(\)\)/);
   assert.match(source, /const MAX_SCHEDULE_ATTEMPTS = 3/);
@@ -143,4 +143,17 @@ test("PODCAST-09 Gate 3.2 reuses the existing REBUILD_DAILY target-state read", 
     source,
     /PODCAST_09[\s\S]*?getTargetPlaylistState/,
   );
+});
+
+test("#521 scheduled Spotify preflight metrics survive before and after GenerationRun", () => {
+  const scheduler = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
+  const keepFilled = readFileSync("src/services/keep-filled-maintenance.ts", "utf8");
+
+  assert.match(keepFilled, /onSpotifyClient\?\.\(spotify\)/);
+  assert.match(scheduler, /recordAttemptSpotifyPreflightSafely\(/);
+  assert.match(scheduler, /summarizeScheduledSpotifyPreflight\(/);
+  assert.match(scheduler, /phase: "KEEP_FILLED"/);
+  assert.match(scheduler, /phase: "REBUILD"/);
+  assert.match(scheduler, /preserveScheduledSpotifyPreflight\(/);
+  assert.match(scheduler, /targetScheduleAttempt\.updateMany\(/);
 });
