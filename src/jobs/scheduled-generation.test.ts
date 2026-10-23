@@ -60,7 +60,7 @@ test("preflight GET 5xx becomes retryable FAILED before GenerationRun is created
   assert.match(source, /await prepareKeepFilledTarget\(\s*user\.id, entry\.target, now,/);
   assert.match(
     source,
-    /catch \(error\) \{\s*const reason = errorMessage\(error\);\s*\/\/ KEEP_FILLED preparation[\s\S]*?isRetryableScheduledPreflightReadFailure\(error\)[\s\S]*?\? "FAILED"\s*:\s*"BLOCKED"/,
+    /catch \(error\) \{\s*await recordAttemptSpotifyPreflightSafely\([\s\S]*?\);\s*const reason = errorMessage\(error\);\s*\/\/ KEEP_FILLED preparation[\s\S]*?isRetryableScheduledPreflightReadFailure\(error\)[\s\S]*?\? "FAILED"\s*:\s*"BLOCKED"/,
   );
   assert.match(source, /finishOne\(entry\.audit, status, reason, new Date\(\)\)/);
   assert.match(source, /const MAX_SCHEDULE_ATTEMPTS = 3/);
