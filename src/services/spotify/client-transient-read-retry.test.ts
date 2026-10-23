@@ -186,3 +186,83 @@ test("critical GET 429 follows rate-limit retry without entering 5xx backoff", a
     Math.random = originalRandom;
   }
 });
+
+test("persistent critical 502 fails closed before any playlist mutation", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRandom = Math.random;
+  const methods: string[] = [];
+  globalThis.fetch = (async (_input, init) => {
+    methods.push((init?.method ?? "GET").toUpperCase());
+    return jsonResponse(
+      { error: { status: 502, message: "Temporary upstream failure" } },
+      { status: 502 },
+    );
+  }) as typeof fetch;
+  Math.random = () => 0;
+  try {
+    const client = createClient();
+    await assert.rejects(
+      async () => {
+        // Same safety order as the scheduled preflight: a conclusive snapshot
+        // is required before invoking any Spotify mutation.
+        await client.getTargetPlaylistState("playlist-a");
+        await client.appendPlaylistItems("playlist-a", ["spotify:track:must-not-append"]);
+      },
+      (error: unknown) => {
+        assert.ok(error instanceof SpotifyApiError);
+        assert.equal(error.operation, "playlist-metadata");
+        assert.equal(error.status, 502);
+        return true;
+      },
+    );
+    assert.deepEqual(methods, ["GET", "GET", "GET", "GET"]);
+    assert.equal(client.getRequestMetrics().callsByOperation["playlist-write"] ?? 0, 0);
+    assert.equal(client.getRequestMetrics().criticalGet5xxRecoveries, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Math.random = originalRandom;
+  }
+});
+
+test("critical preflight GET timeout fails closed without local retry or playlist write", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = process.env.SPOTIFY_READ_TIMEOUT_MS;
+  process.env.SPOTIFY_READ_TIMEOUT_MS = "20";
+  const keepAlive = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(keepAlive));
+  const methods: string[] = [];
+  globalThis.fetch = (async (_input, init) => {
+    methods.push((init?.method ?? "GET").toUpperCase());
+    const signal = init?.signal;
+    assert.ok(signal, "Spotify GET must carry its timeout abort signal");
+    return await new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener(
+        "abort",
+        () => reject(signal.reason ?? new Error("aborted")),
+        { once: true },
+      );
+    });
+  }) as typeof fetch;
+  try {
+    const client = createClient();
+    await assert.rejects(
+      async () => {
+        await client.getTargetPlaylistState("playlist-a");
+        await client.replacePlaylistItems("playlist-a", ["spotify:track:must-not-replace"]);
+      },
+      (error: unknown) => {
+        assert.ok(error instanceof SpotifyApiError);
+        assert.equal(error.kind, "READ_TIMEOUT");
+        assert.equal(error.operation, "playlist-metadata");
+        return true;
+      },
+    );
+    assert.deepEqual(methods, ["GET"]);
+    assert.equal(client.getRequestMetrics().retries, 0);
+    assert.equal(client.getRequestMetrics().callsByOperation["playlist-write"] ?? 0, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTimeout === undefined) delete process.env.SPOTIFY_READ_TIMEOUT_MS;
+    else process.env.SPOTIFY_READ_TIMEOUT_MS = originalTimeout;
+  }
+});
