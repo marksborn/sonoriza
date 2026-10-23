@@ -43,6 +43,9 @@ export interface SpotifyRequestMetrics {
   quotaExceededCount: number;
   retries: number;
   retryWaitMs: number;
+  /** Optional for compatibility with existing historical/fixture metrics. */
+  criticalGet5xxRetries?: number;
+  criticalGet5xxRecoveries?: number;
   circuitOpenSkips: number;
   cacheHits: number;
   cacheMisses: number;
