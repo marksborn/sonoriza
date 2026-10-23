@@ -82,6 +82,7 @@ export async function reportGate5CIsrcMbidShadow(input: {
   const selection = validateGate5CHistoricalSelection({
     runId: input.runId,
     positions: input.positions,
+    paginationRequested: input.positions != null && (offset !== 0 || limit !== 3),
   });
   if (!userId || !targetPlaylistId) throw new Error("Gate 5C: user and target required");
   if (!Number.isInteger(offset) || offset < 0 || offset > 500) {
@@ -132,8 +133,13 @@ export async function reportGate5CIsrcMbidShadow(input: {
     if (!run) {
       throw new Error("Gate 5D.3: selected run must be a successful real generation owned by this user and target");
     }
-    if (selection.positions && run.items.length !== selection.positions.length) {
-      throw new Error("Gate 5D.3: requested positions do not all belong to MUSIC items on selected target");
+    if (selection.positions && (
+      run.items.length !== selection.positions.length
+      || selection.positions.some((position) =>
+        run.items.filter((item) => item.position === position).length !== 1
+      )
+    )) {
+      throw new Error("Gate 5D.3: requested positions do not each resolve to one MUSIC item on selected target");
     }
     const cutoff = computeMusicRepeatCutoff(
       run.startedAt, policy.windowValue, policy.windowUnit,
@@ -232,7 +238,7 @@ export async function reportGate5CIsrcMbidShadow(input: {
     sourceRunId: baseline.runId,
     sourceRunStartedAt: baseline.runStartedAt,
     cutoff: baseline.cutoff,
-    offset, requestedLimit: limit,
+    offset, requestedLimit: selection.positions?.length ?? limit,
     selectedPositions: selection.positions,
     authority: {
       spotifyCatalogCalls: true, musicBrainzCalls: true,
