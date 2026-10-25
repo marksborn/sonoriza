@@ -8,6 +8,8 @@ import {
   type Gate5CProviderTrack,
 } from "./musicbrainz-isrc-mbid-shadow";
 import { Gate5CMusicBrainzClient } from "./musicbrainz-isrc-mbid-shadow-client";
+import { compareGate5BMbidEvidence } from "./canonical-factual-mbid-linkage-shadow";
+import { deriveBaseTitleSignal } from "./shadow-resolver-report";
 
 const MBID1 = "13319e84-d6d6-4a15-ad68-94c1b674f97e";
 const MBID2 = "47afceb7-47fb-4987-b738-8a8c7e275957";
@@ -179,4 +181,143 @@ test("Gate 5C: invalid payload fails closed", async () => {
   ) as typeof fetch;
   const client = new Gate5CMusicBrainzClient(fake);
   await assert.rejects(() => client.lookup("USHR10723245"), /invalid MusicBrainz payload/);
+});
+
+// Recorded operator evidence from #374 Gates 5D.4/5D.6. No live provider
+// requests: the historical Flyleaf MBID lookup returned 404, NOT the ISRC
+// lookup used by Gate 5C. Neither result establishes recording equivalence.
+const ATOMSHIP: Gate5CProviderTrack = {
+  title: "Dragon Fly", artistName: "Atomship", durationMs: 261920,
+  isrc: "USWU30300079", linkedFromTrackId: null,
+};
+const ATOMSHIP_RECORDING: Gate5CMusicBrainzRecording = {
+  id: "80b3b39e-9ab0-402a-8541-2f3eab6174c3",
+  title: "Dragonfly", artistNames: ["Atomship"], durationMs: 261920,
+};
+
+function compareAtomship(
+  spotify: Partial<Gate5CProviderTrack> = {},
+  recording: Partial<Gate5CMusicBrainzRecording> = {},
+) {
+  return evaluateGate5CIsrcMbid({
+    spotify: { ...ATOMSHIP, ...spotify },
+    lookup: { kind: "FOUND", recordings: [{ ...ATOMSHIP_RECORDING, ...recording }] },
+  });
+}
+
+function assertReviewOnly(row: ReturnType<typeof evaluateGate5CIsrcMbid>) {
+  assert.equal(row.reviewOnly, true);
+  assert.equal(row.recordingIdentityWrites, false);
+  assert.equal(row.productiveCooldownEligible, false);
+}
+
+test("Gate 5D.7: Atomship spacing alias is symmetric and only REVIEW", () => {
+  for (const [providerTitle, recordingTitle] of [
+    ["Dragon Fly", "Dragonfly"],
+    ["Dragonfly", "Dragon Fly"],
+  ]) {
+    const row = compareAtomship({ title: providerTitle }, { title: recordingTitle });
+    assert.equal(row.decision, "REVIEW_TEXTUAL_ALIAS");
+    assert.equal(row.durationDeltaMs, 0);
+    assert.deepEqual(row.mbids, [ATOMSHIP_RECORDING.id]);
+    assertReviewOnly(row);
+  }
+  // Other canonical consumers must still see two different title signals.
+  assert.notEqual(deriveBaseTitleSignal("Dragon Fly"), deriveBaseTitleSignal("Dragonfly"));
+  assert.equal(compareAtomship({ title: "Dragonfly" }).decision, "REVIEW_SINGLE_MBID");
+  const remasterAlias = compareAtomship({ title: "Dragon Fly - Remastered" });
+  assert.equal(remasterAlias.decision, "REVIEW_TEXTUAL_ALIAS");
+  assertReviewOnly(remasterAlias);
+});
+
+test("Gate 5D.7: spacing alias cannot bypass artist, title or version conflicts", () => {
+  const cases: Array<[Partial<Gate5CProviderTrack>, Partial<Gate5CMusicBrainzRecording>, string]> = [
+    [{ artistName: "Cover Artist" }, {}, "ABSTAIN_ARTIST_MISMATCH"],
+    [{ artistName: "Atom ship" }, {}, "ABSTAIN_ARTIST_MISMATCH"],
+    [{ artistName: "" }, {}, "ABSTAIN_ARTIST_MISMATCH"],
+    [{}, { artistNames: [] }, "ABSTAIN_ARTIST_MISMATCH"],
+    [{ title: "Dragon Flight" }, {}, "ABSTAIN_TITLE_MISMATCH"],
+    [{ title: "Dragon-Fly" }, {}, "ABSTAIN_TITLE_MISMATCH"],
+    [{ title: "" }, {}, "ABSTAIN_TITLE_MISMATCH"],
+    [{}, { title: "" }, "ABSTAIN_TITLE_MISMATCH"],
+    ...["Live", "Acoustic", "Remix", "Demo"].map((version): typeof cases[number] => [
+      { title: `Dragon Fly - ${version}` }, {}, "ABSTAIN_VERSION_CONFLICT",
+    ]),
+  ];
+  for (const [spotify, recording, decision] of cases) {
+    const row = compareAtomship(spotify, recording);
+    assert.equal(row.decision, decision);
+    assertReviewOnly(row);
+  }
+});
+
+test("Gate 5D.7: spacing alias still requires duration, valid IDs and no relinking", () => {
+  for (const durationMs of [null, 0, NaN, Infinity]) {
+    const row = compareAtomship({}, { durationMs });
+    assert.equal(row.decision, "ABSTAIN_DURATION_MISSING");
+    assertReviewOnly(row);
+  }
+  for (const durationMs of [0, NaN, Infinity]) {
+    assert.equal(compareAtomship({ durationMs }).decision, "ABSTAIN_DURATION_MISSING");
+  }
+  assert.equal(compareAtomship({}, { durationMs: 266920 }).decision, "REVIEW_TEXTUAL_ALIAS");
+  const durationMismatch = compareAtomship({}, { durationMs: 266921 });
+  assert.equal(durationMismatch.decision, "ABSTAIN_DURATION_MISMATCH");
+  assert.equal(durationMismatch.durationDeltaMs, 5001);
+  assertReviewOnly(durationMismatch);
+  assert.equal(compareAtomship({ isrc: null }).decision, "ABSTAIN_INVALID_ISRC");
+  assert.equal(compareAtomship({ linkedFromTrackId: "original" }).decision, "ABSTAIN_RELINKED_TRACK");
+  assert.equal(compareAtomship({}, { id: "invalid" }).decision, "ABSTAIN_INVALID_MUSICBRAINZ_MBID");
+  const multiple = evaluateGate5CIsrcMbid({
+    spotify: ATOMSHIP,
+    lookup: { kind: "FOUND", recordings: [ATOMSHIP_RECORDING, { ...ATOMSHIP_RECORDING, id: MBID2 }] },
+  });
+  assert.equal(multiple.decision, "ABSTAIN_MULTIPLE_MBIDS");
+  assertReviewOnly(multiple);
+});
+
+test("Gate 5D.7: Flyleaf curly apostrophe remains REVIEW; historical Last.fm MBID is not linked", () => {
+  const candidateMbid = "93c8180f-f4f4-4a73-b73c-5d028ed9b80b";
+  const historicalMbid = "06ead44b-a0d6-4db0-8fc5-54ffa31f45c2";
+  const row = evaluateGate5CIsrcMbid({
+    spotify: {
+      title: "I'm So Sick", artistName: "Flyleaf", durationMs: 176160,
+      isrc: "USOCT0500070", linkedFromTrackId: null,
+    },
+    lookup: { kind: "FOUND", recordings: [{
+      id: candidateMbid, title: "I’m So Sick", artistNames: ["Flyleaf"], durationMs: 176160,
+    }] },
+  });
+  assert.equal(row.decision, "REVIEW_SINGLE_MBID");
+  assertReviewOnly(row);
+  const linkage = compareGate5BMbidEvidence({
+    candidate: {
+      providerTrackId: "flyleaf-fixture", recordingIdentityId: "flyleaf-recording",
+      title: "I'm So Sick", artistName: "Flyleaf", providerTrackMbid: candidateMbid,
+    },
+    scrobbles: [{ trackName: "I'm So Sick", artistName: "Flyleaf", trackMbid: historicalMbid }],
+    mbidOwners: [{ recordingIdentityId: "flyleaf-recording", trackMbid: candidateMbid }],
+  });
+  assert.equal(linkage.decision, "ABSTAIN_NO_SCROBBLE_MBID_MATCH");
+  assert.equal(linkage.matchedScrobbleCount, 0);
+  assert.equal(linkage.inferredRecordingEquivalence, false);
+  assert.equal(linkage.eligibleForProductiveCooldown, false);
+});
+
+test("Gate 5D.7: Metallica original/remaster retains its separate REVIEW category", () => {
+  // Gate 5D.4 recorded the 774 ms delta, not the absolute durations.
+  // Absolute durations below are synthetic; do not present them as provider evidence.
+  const row = evaluateGate5CIsrcMbid({
+    spotify: {
+      title: "Ride The Lightning - Remastered", artistName: "Metallica", durationMs: 400000,
+      isrc: "QMKHM1600095", linkedFromTrackId: null,
+    },
+    lookup: { kind: "FOUND", recordings: [{
+      id: "19bc7363-eb0a-450d-ab1d-1f3082072e0a",
+      title: "Ride the Lightning", artistNames: ["Metallica"], durationMs: 400774,
+    }] },
+  });
+  assert.equal(row.decision, "REVIEW_STANDARD_REMASTER");
+  assert.equal(row.durationDeltaMs, 774);
+  assertReviewOnly(row);
 });

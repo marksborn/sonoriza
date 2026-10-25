@@ -67,6 +67,12 @@ failures.
 
 ## Classification: no automatic identity or cooldown decisions
 
+- `REVIEW_TEXTUAL_ALIAS` (Gate 5D.7): different nonempty derived base
+  titles become equal **only by removing whitespace**, with all existing
+  unique-MBID, ISRC, relinking, artist, version and duration guards passing.
+  This category takes precedence over the other REVIEW labels when both
+  a spacing alias and a compatible standard/remaster transition occur.
+  It does not establish either an alias association or master equivalence.
 - `REVIEW_SINGLE_MBID`: exactly one valid recording MBID and compatible
   primary artist, derived base title, version, and duration <=5 s apart.
   **Still review-only.**
@@ -186,3 +192,59 @@ productive identity/cooldown activation is part of Gate 5D.3.
 Refs: #374, #512; predecessor 5D.1 confirmed Last.fm historical handoff;
 5D.2 observed three recent scrobbles for each of the disputed tracks
 within the active six-month window.
+
+## Gate 5D.7 — conservative textual alias review (25 October 2026)
+
+The strict shared comparator `deriveBaseTitleSignal` preserves internal
+spaces, normalizes curly apostrophes and case, and derives a base title
+using the existing version qualifiers. Its behavior is unchanged for
+canonical grouping, strong-ID comparisons and the Gate 5B MBID linkage.
+The productive `lastFmMusicIdentityKey` separately removes spaces from
+titles; that factual key is not proof of canonical recording equivalence.
+
+Only `evaluateGate5CIsrcMbid`, used by the manually invoked shadow report,
+now recognizes a difference in base-title spacing as `REVIEW_TEXTUAL_ALIAS`.
+It compares the two nonempty base titles after removing whitespace, without
+edit distance, punctuation stripping, word reordering or artist compaction.
+It still requires exactly one valid candidate MBID, a valid input ISRC,
+no relinking, matching normalized artist, compatible versions and positive
+finite durations within 5,000 ms. All guards run before returning REVIEW.
+Different artists, live/studio conflicts, remix/acoustic/demo conflicts,
+missing metadata, multiple MBIDs and duration conflicts keep their
+respective ABSTAIN outcomes. The shared comparator is not loosened.
+
+Every outcome still has `reviewOnly=true`, `recordingIdentityWrites=false`
+and `productiveCooldownEligible=false`. The report carries the decision
+through its existing row field; no new provider request or persistence path
+is introduced. This change does not persist an alias or reconcile MBIDs.
+
+### Offline regression evidence and limits
+
+Fixtures use the operator observations recorded in #374:
+
+| Case | Recorded evidence | Expected classification |
+|---|---|---|
+| Atomship | `Dragon Fly` / `Dragonfly`, MBID `80b3b39e-9ab0-402a-8541-2f3eab6174c3`, ISRC `USWU30300079`, 261920 ms | `REVIEW_TEXTUAL_ALIAS` in both directions, only after all guards pass |
+| Flyleaf | `I'm So Sick` / `I’m So Sick`, candidate MBID `93c8180f-f4f4-4a73-b73c-5d028ed9b80b`, ISRC `USOCT0500070`, 176160 ms | `REVIEW_SINGLE_MBID`; Gate 5B still abstains against the different historical Last.fm MBID |
+| Metallica | `Ride The Lightning - Remastered` / base title, MBID `19bc7363-eb0a-450d-ab1d-1f3082072e0a`, ISRC `QMKHM1600095`, recorded delta 774 ms | `REVIEW_STANDARD_REMASTER`; no claim of same master |
+
+Flyleaf's historical Last.fm MBID
+`06ead44b-a0d6-4db0-8fc5-54ffa31f45c2` returned HTTP 404 in the prior
+operator lookup **by recording MBID**. Gate 5C looks up **ISRCs**, so the
+tests do not misrepresent that observation as an ISRC 404. The regression
+passes the two distinct MBIDs through the existing Gate 5B comparator and
+asserts no match, inferred equivalence or productive eligibility. The
+historical HTTP observation is fixture context, not a new HTTP validation;
+404 proves neither distinct recordings nor absence of listening.
+Metallica absolute test durations are synthetic, preserving the observed
+774 ms delta; the prior evidence supplied no absolute durations.
+
+The Gate 5C CI workflow also runs the unchanged strict resolver, Gate 5B,
+factual Last.fm cooldown, calendar cutoff, bounded retry and KEEP_FILLED
+tests. #512, ACTIVE fail-closed behavior, prewrite guards and the factual
+six-calendar-month policy remain unchanged. Passing offline fixtures does
+not certify current provider data, live coverage or recording equivalence.
+
+This gate authorizes isolated code/tests/PR and evidence documentation only:
+no merge, deployment, provider probe, database migration, identity mutation,
+playlist write or productive rollout. Issues #374 and #512 remain open.

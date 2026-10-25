@@ -31,6 +31,7 @@ export type Gate5CDecision =
   | "ABSTAIN_VERSION_CONFLICT"
   | "ABSTAIN_DURATION_MISSING"
   | "ABSTAIN_DURATION_MISMATCH"
+  | "REVIEW_TEXTUAL_ALIAS"
   | "REVIEW_SINGLE_MBID"
   | "REVIEW_STANDARD_REMASTER";
 
@@ -105,7 +106,14 @@ export function evaluateGate5CIsrcMbid(input: {
   if (!recording) return result("ABSTAIN_ZERO_RECORDINGS", [], 0);
   const providerTitle = deriveBaseTitleSignal(input.spotify.title);
   const recordingTitle = deriveBaseTitleSignal(recording.title);
-  if (!providerTitle || !recordingTitle || providerTitle !== recordingTitle) {
+  // Gate 5D.7: spacing is only a review hint in this manual shadow probe.
+  // Keep the shared canonical title signal strict; never reuse the factual
+  // cooldown key as evidence of recording equivalence.
+  const textualAlias = Boolean(
+    providerTitle && recordingTitle && providerTitle !== recordingTitle &&
+    providerTitle.replace(/\s/g, "") === recordingTitle.replace(/\s/g, ""),
+  );
+  if (!providerTitle || !recordingTitle || (providerTitle !== recordingTitle && !textualAlias)) {
     return result("ABSTAIN_TITLE_MISMATCH", validMbids, recordings.length);
   }
   const artist = normalizeMusicIdentityText(input.spotify.artistName);
@@ -138,7 +146,8 @@ export function evaluateGate5CIsrcMbid(input: {
   }
 
   return result(
-    compatibleRemaster ? "REVIEW_STANDARD_REMASTER" : "REVIEW_SINGLE_MBID",
+    textualAlias ? "REVIEW_TEXTUAL_ALIAS" :
+      compatibleRemaster ? "REVIEW_STANDARD_REMASTER" : "REVIEW_SINGLE_MBID",
     validMbids,
     recordings.length,
     deltaMs,
