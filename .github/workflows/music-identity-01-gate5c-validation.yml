@@ -31,6 +31,15 @@ jobs:
       - run: npx prisma generate
       - name: Gate 5C conservative decision and provider failure contracts
         run: npx tsx --test src/services/music-identity/musicbrainz-isrc-mbid-shadow.test.ts
+      - name: Gate 5D.7 strict canonical comparator and factual cooldown regressions
+        run: >-
+          npx tsx --test
+          src/services/music-identity/shadow-resolver-report.test.ts
+          src/services/music-identity/canonical-factual-mbid-linkage-shadow.test.ts
+          src/jobs/music-repeat-lastfm-factual.test.ts
+          src/services/spotify/recently-played.test.ts
+          src/services/lastfm/retry.test.ts
+          src/services/keep-filled-core.test.ts
       - name: Gate 5D.3 historical run selection guardrails
         run: npx tsx --test src/services/music-identity/musicbrainz-isrc-mbid-shadow-selection.test.ts
       - name: Typecheck
