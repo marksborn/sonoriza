@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -623,16 +624,7 @@ async function findApprovedGate8Simulation(input: {
   targetPlaylistId: string;
   approvalKey: string;
 }): Promise<string | null> {
-  const runs = await prisma.generationRun.findMany({
-    where: {
-      userId: input.userId,
-      simulation: true,
-      status: { in: ["SUCCESS", "PARTIAL"] },
-    },
-    orderBy: { startedAt: "desc" },
-    take: 30,
-    select: { id: true, status: true, summary: true },
-  });
+  const runs = await loadGate8SimulationApprovalCandidates(input.userId);
 
   for (const run of runs) {
     if (!playbackReserveGate8SimulationEligible(run.status, run.summary)) continue;
@@ -655,6 +647,38 @@ async function findApprovedGate8Simulation(input: {
   }
 
   return null;
+}
+
+/**
+ * #442: project approval evidence in PostgreSQL, before JSON reaches Node.
+ * Keep the same user, statuses, ordering and 30-run horizon. Do not filter
+ * by approval key/target before LIMIT: that could admit an older simulation.
+ * No planning payload, source catalog or candidate pool is needed here.
+ */
+export async function loadGate8SimulationApprovalCandidates(userId: string) {
+  return prisma.$queryRaw<Array<{ id: string; status: string; summary: Prisma.JsonValue }>>`
+    SELECT id, status::text AS status,
+      jsonb_build_object(
+        'simulate', summary->'simulate',
+        'inconclusive', summary->'inconclusive',
+        'qualityPassed', summary->'qualityPassed',
+        'collectionComplete', summary->'collectionComplete',
+        'podcast08SimulationOnly', summary->'podcast08SimulationOnly',
+        'podcast08PreviewNotForApproval', summary->'podcast08PreviewNotForApproval',
+        'audiobookGateDSimulationOnly', summary->'audiobookGateDSimulationOnly',
+        'qualityFailures', summary->'qualityFailures',
+        'sourceCollection', jsonb_build_object(
+          'degradedSourceCount', summary->'sourceCollection'->'degradedSourceCount',
+          'failures', summary->'sourceCollection'->'failures'
+        ),
+        'playbackReserveRuntime', summary->'playbackReserveRuntime'
+      ) AS summary
+    FROM "GenerationRun"
+    WHERE "userId" = ${userId} AND simulation = true
+      AND status IN ('SUCCESS', 'PARTIAL')
+    ORDER BY "startedAt" DESC
+    LIMIT 30
+  `;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

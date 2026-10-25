@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import test from "node:test";
 
 import { prisma } from "@/lib/prisma";
@@ -15,6 +16,7 @@ import {
 import { savePlaybackReservePolicy } from "./playback-reserve-policy";
 import {
   playbackReserveKeepFilledNeedsInlineSimulation,
+  loadGate8SimulationApprovalCandidates,
   playbackReserveGate8SimulationEligible,
   playbackReserveShadowRuntimeSummary,
   preparePlaybackReserveShadowRuntime,
@@ -22,6 +24,81 @@ import {
 
 const databaseTest = process.env.PLAYBACK_RESERVE_DB_TEST === "1" ? test : test.skip;
 const MINUTE = 60_000;
+
+databaseTest("#442 approval projection preserves eligibility and omits unrelated large payloads", async t => {
+  const user = await prisma.user.create({ data: {} });
+  t.after(() => prisma.user.delete({ where: { id: user.id } }).then(() => undefined));
+  const valid = {
+    simulate: true, inconclusive: false, qualityPassed: true, collectionComplete: false,
+    qualityFailures: [], sourceCollection: { degradedSourceCount: 1,
+      failures: [{ errorKind: "HTTP_ERROR", status: 502 }] },
+    playbackReserveRuntime: { gate: 8, effectiveMode: "ACTIVE", simulate: true,
+      status: "READY_ACTIVE_SIMULATION", rolePersistenceStatus: "PERSISTED",
+      simulationApprovalKey: "synthetic-key", targetPlaylistIds: ["synthetic-target"] },
+  };
+  const cases: Prisma.InputJsonValue[] = [
+    valid,
+    ...["simulate", "qualityPassed"].map(key => ({ ...valid, [key]: false })),
+    ...["inconclusive", "collectionComplete", "podcast08SimulationOnly",
+      "podcast08PreviewNotForApproval", "audiobookGateDSimulationOnly"].map(key => ({ ...valid, [key]: true })),
+    { ...valid, qualityFailures: ["unsafe"] },
+    { ...valid, sourceCollection: { degradedSourceCount: 2, failures: valid.sourceCollection.failures } },
+    { ...valid, sourceCollection: { degradedSourceCount: 1, failures: [{ errorKind: "RATE_LIMITED", status: 429 }] } },
+    { ...valid, sourceCollection: { degradedSourceCount: 1, failures: [{ errorKind: "HTTP_ERROR", status: 404, operation: "show-episodes" }] } },
+    { ...valid, sourceCollection: { degradedSourceCount: 1, failures: [{ errorKind: "HTTP_ERROR", status: 404, operation: "episode-state" }] } },
+    { ...valid, sourceCollection: [] }, {}, "malformed-summary", [],
+  ];
+  for (let i = 0; i < cases.length; i++) {
+    const summary = cases[i]!;
+    await prisma.generationRun.create({ data: { userId: user.id, trigger: "SIMULATION",
+      simulation: true, status: "PARTIAL", startedAt: new Date(1_700_000_000_000 + i * 1000),
+      summary: typeof summary === "object" && !Array.isArray(summary)
+        ? { ...summary, unrelatedCatalog: "x".repeat(300_000) } : summary } });
+  }
+  await prisma.generationRun.create({ data: { userId: user.id, trigger: "SIMULATION",
+    simulation: true, status: "SUCCESS", summary: Prisma.JsonNull } });
+  const full = await prisma.generationRun.findMany({ where: { userId: user.id, simulation: true,
+    status: { in: ["SUCCESS", "PARTIAL"] } }, orderBy: { startedAt: "desc" }, take: 30,
+    select: { id: true, status: true, summary: true } });
+  const projected = await loadGate8SimulationApprovalCandidates(user.id);
+  assert.deepEqual(projected.map(r => r.id), full.map(r => r.id));
+  for (let i = 0; i < full.length; i++) {
+    const a = full[i]!;
+    const b = projected[i]!;
+    assert.equal(playbackReserveGate8SimulationEligible(b.status, b.summary),
+      playbackReserveGate8SimulationEligible(a.status, a.summary), `eligibility ${i}`);
+    const runtime = (value: unknown) => (value as { playbackReserveRuntime?: unknown } | null)?.playbackReserveRuntime ?? null;
+    assert.deepEqual(runtime(b.summary), runtime(a.summary));
+    assert.equal(JSON.stringify(b.summary).includes("unrelatedCatalog"), false);
+  }
+  const fullBytes = Buffer.byteLength(JSON.stringify(full));
+  const projectedBytes = Buffer.byteLength(JSON.stringify(projected));
+  assert.ok(projectedBytes < fullBytes / 20);
+  t.diagnostic(`Synthetic approval JSON: ${fullBytes} -> ${projectedBytes} bytes; eligibility unchanged`);
+});
+
+databaseTest("#442 approval projection keeps user isolation, statuses and the latest-30 horizon", async t => {
+  const user = await prisma.user.create({ data: {} });
+  const other = await prisma.user.create({ data: {} });
+  t.after(async () => { await prisma.user.delete({ where: { id: user.id } }); await prisma.user.delete({ where: { id: other.id } }); });
+  const rows = Array.from({ length: 31 }, (_, i) => ({ userId: user.id, trigger: "SIMULATION" as const,
+    simulation: true, status: "SUCCESS" as const, startedAt: new Date(1_700_000_000_000 + i * 1000),
+    summary: { playbackReserveRuntime: { simulationApprovalKey: i === 0 ? "older-match" : "different-key" } } }));
+  await prisma.generationRun.createMany({ data: rows });
+  await prisma.generationRun.createMany({ data: [
+    { userId: other.id, trigger: "SIMULATION", simulation: true, status: "SUCCESS" },
+    { userId: user.id, trigger: "MANUAL", simulation: false, status: "SUCCESS" },
+    { userId: user.id, trigger: "SIMULATION", simulation: true, status: "FAILED" },
+    { userId: user.id, trigger: "SIMULATION", simulation: true, status: "RUNNING" },
+  ] });
+  const expected = await prisma.generationRun.findMany({ where: { userId: user.id, simulation: true,
+    status: { in: ["SUCCESS", "PARTIAL"] } }, orderBy: { startedAt: "desc" }, take: 30, select: { id: true } });
+  const actual = await loadGate8SimulationApprovalCandidates(user.id);
+  assert.equal(actual.length, 30);
+  assert.deepEqual(actual.map(r => r.id), expected.map(r => r.id));
+  assert.equal(JSON.stringify(actual).includes("older-match"), false);
+  assert.deepEqual(await loadGate8SimulationApprovalCandidates("' OR true --"), []);
+});
 
 function music(id: string): Candidate {
   return {
