@@ -21,6 +21,9 @@ import {
   patchMusicSourceCacheAfterRemove,
 } from "./source-cache";
 import { getSpotifyAccessToken } from "./token";
+import { resolvePersistedCleanupRecordingEvidence } from "./source-cleanup-recording-runtime";
+import type { CleanupRecordingMetadata } from "./source-cleanup-recording";
+import { assertSpotifyBackoffInactive } from "./backoff";
 
 const API = "https://api.spotify.com/v1";
 const MAX_RATE_LIMIT_RETRIES = 1;
@@ -38,6 +41,7 @@ export type PlaylistCleanupOccurrence = {
   aliases: string[];
   isTrack: boolean;
   isLocal: boolean;
+  recording?: CleanupRecordingMetadata;
 };
 
 export type MusicSourceCleanupPlan = {
@@ -57,6 +61,7 @@ export type MusicSourceCleanupPreviewResult = MusicSourceCleanupPlan & {
   snapshotId: string;
   historyKnownSince: Date | null;
   historyLastSyncAt: Date | null;
+  recordingAssessments: Awaited<ReturnType<typeof resolvePersistedCleanupRecordingEvidence>>["assessments"];
 };
 
 export type MusicSourceCleanupExecutionResult = {
@@ -85,6 +90,10 @@ type PlaylistItemsPage = {
       uri?: string | null;
       type?: string | null;
       linked_from?: { id?: string | null } | null;
+      name?: string | null;
+      duration_ms?: number | null;
+      artists?: Array<{ id?: string | null; name?: string | null }>;
+      external_ids?: { isrc?: string | null } | null;
     } | null;
   }>;
   next?: string | null;
@@ -216,17 +225,12 @@ export async function createMusicSourceCleanupPreview(
     );
   }
 
-  const [playlist, playedStates] = await Promise.all([
-    readStablePlaylist(userId, source.spotifyId),
-    prisma.trackListeningState.findMany({
-      where: { userId },
-      select: { spotifyTrackId: true },
-    }),
-  ]);
+  const playlist = await readStablePlaylist(userId, source.spotifyId);
+  const evidence = await resolvePersistedCleanupRecordingEvidence(userId, playlist.occurrences, now);
 
   const plan = buildMusicSourceCleanupPlan(
     playlist.occurrences,
-    new Set(playedStates.map((state) => state.spotifyTrackId)),
+    evidence.playedTrackIds,
   );
 
   const run = await prisma.musicSourceCleanupRun.create({
@@ -254,6 +258,7 @@ export async function createMusicSourceCleanupPreview(
     snapshotId: playlist.snapshotId,
     historyKnownSince: history.historyKnownSince,
     historyLastSyncAt: history.lastSyncAt,
+    recordingAssessments: evidence.assessments,
   };
 }
 
@@ -313,13 +318,10 @@ export async function executeMusicSourceCleanupPreview(
   }
 
   const current = await readStablePlaylist(userId, preview.source.spotifyId);
-  const playedStates = await prisma.trackListeningState.findMany({
-    where: { userId },
-    select: { spotifyTrackId: true },
-  });
+  const evidence = await resolvePersistedCleanupRecordingEvidence(userId, current.occurrences, now);
   const currentPlan = buildMusicSourceCleanupPlan(
     current.occurrences,
-    new Set(playedStates.map((state) => state.spotifyTrackId)),
+    evidence.playedTrackIds,
   );
 
   if (
@@ -342,6 +344,18 @@ export async function executeMusicSourceCleanupPreview(
 
   let snapshotAfter: string | null = current.snapshotId;
   const acceptedDeleteUris: string[] = [];
+
+  if (plannedUris.length > 0) {
+    try {
+      await assertCleanupWriteStillAuthorized(userId, preview.source.id, preview.source.spotifyId, current.snapshotId, false);
+    } catch (error) {
+      await prisma.musicSourceCleanupRun.update({ where: { id: preview.id }, data: {
+        status: MusicSourceCleanupStatus.STALE, finishedAt: now,
+        error: "A autorização, permissão ou snapshot mudou durante a conferência; nenhuma remoção foi executada.",
+      } });
+      throw error;
+    }
+  }
 
   try {
     if (plannedUris.length > 0) {
@@ -502,6 +516,7 @@ export async function executeAutomaticMusicSourceCleanup(
 ): Promise<MusicSourceCleanupExecutionResult> {
   const source = await loadManagedMusicSource(userId, sourcePlaylistId);
   if (
+    !source.enabled ||
     source.musicRetentionMode !== MusicSourceRetentionMode.REMOVE_AFTER_PLAYED ||
     !source.musicCleanupAutomationEnabled ||
     !source.musicCleanupFirstCompletedAt
@@ -535,21 +550,28 @@ export async function executeAutomaticMusicSourceCleanup(
 
   const me = await spotifyRequest<{ id?: string | null }>(accessToken, "/me");
   const ownerId = metadata.owner?.id ?? null;
-  if (ownerId !== me.id && metadata.collaborative !== true) {
+  if (!me.id || (ownerId !== me.id && metadata.collaborative !== true)) {
     throw new MusicSourceCleanupPermissionError(
       "A conta conectada não é proprietária nem colaboradora desta playlist.",
     );
   }
 
-  const playedStates = await prisma.trackListeningState.findMany({
-    where: { userId },
-    select: { spotifyTrackId: true },
-  });
+  const evidence = await resolvePersistedCleanupRecordingEvidence(userId,
+    cachedCandidates.map(candidate => ({
+      uri: candidate.uri, aliases: candidate.spotifyTrackId ? [candidate.spotifyTrackId] : [],
+      isTrack: true, isLocal: false,
+      recording: { title: candidate.title, artistId: candidate.primaryArtistId ?? null,
+        artistName: candidate.primaryArtistName ?? candidate.subtitle ?? null,
+        durationMs: candidate.durationMs, isrc: null },
+    })), now);
 
   const plan = buildCachedMusicSourceCleanupPlan(
     cachedCandidates,
-    new Set(playedStates.map((state) => state.spotifyTrackId)),
+    evidence.playedTrackIds,
   );
+  if (plan.removableUris.length > 0) {
+    await assertCleanupWriteStillAuthorized(userId, source.id, source.spotifyId, source.spotifySnapshotId, true);
+  }
   const startedAt = new Date();
   let snapshotAfter = source.spotifySnapshotId;
   const acceptedDeleteUris: string[] = [];
@@ -679,6 +701,32 @@ async function loadManagedMusicSource(userId: string, sourcePlaylistId: string) 
   return source;
 }
 
+/** Source opt-in and snapshot are checked again AFTER metadata enrichment. */
+async function assertCleanupWriteStillAuthorized(
+  userId: string, sourceId: string, spotifyId: string, snapshotId: string, automatic: boolean,
+) {
+  const source = await loadManagedMusicSource(userId, sourceId);
+  const policy = await prisma.musicPlaybackPolicy.findUnique({ where: { userId }, select: { enabled: true } });
+  if (!policy?.enabled) {
+    throw new MusicSourceCleanupHistoryRequiredError("O histórico foi desativado; a limpeza foi interrompida.");
+  }
+  if (source.spotifyId !== spotifyId || source.musicRetentionMode !== MusicSourceRetentionMode.REMOVE_AFTER_PLAYED ||
+      (automatic && (!source.enabled || !source.musicCleanupAutomationEnabled || !source.musicCleanupFirstCompletedAt))) {
+    throw new MusicSourceCleanupStaleError("A autorização da fonte mudou; nenhuma remoção foi executada.");
+  }
+  await assertSpotifyBackoffInactive();
+  const token = await getSpotifyAccessToken(userId);
+  const [metadata, me] = await Promise.all([
+    readPlaylistMetadata(token, spotifyId), spotifyRequest<{ id?: string }>(token, "/me"),
+  ]);
+  if (metadata.snapshot_id !== snapshotId) {
+    throw new MusicSourceCleanupStaleError("A playlist mudou durante a conferência de identidade; nenhuma remoção foi executada.");
+  }
+  if (!me.id || (metadata.owner?.id !== me.id && metadata.collaborative !== true)) {
+    throw new MusicSourceCleanupPermissionError("A permissão da playlist mudou; nenhuma remoção foi executada.");
+  }
+}
+
 async function readStablePlaylist(
   userId: string,
   playlistId: string,
@@ -693,7 +741,7 @@ async function readStablePlaylist(
     throw new MusicSourceCleanupError("O Spotify não retornou snapshot da playlist.");
   }
   const ownerId = before.owner?.id ?? null;
-  if (ownerId !== me.id && before.collaborative !== true) {
+  if (!me.id || (ownerId !== me.id && before.collaborative !== true)) {
     throw new MusicSourceCleanupPermissionError(
       "A conta conectada não é proprietária nem colaboradora desta playlist.",
     );
@@ -701,7 +749,7 @@ async function readStablePlaylist(
 
   const occurrences: PlaylistCleanupOccurrence[] = [];
   let path: string | null =
-    `/playlists/${playlistId}/items?market=from_token&limit=50&fields=next,total,items(is_local,item(id,uri,type,linked_from(id)))`;
+    `/playlists/${playlistId}/items?market=from_token&limit=50&fields=next,total,items(is_local,item(id,uri,type,linked_from(id),name,duration_ms,artists(id,name),external_ids(isrc)))`;
 
   while (path) {
     const page: PlaylistItemsPage = await spotifyRequest(accessToken, path);
@@ -719,6 +767,9 @@ async function readStablePlaylist(
           : [],
         isTrack,
         isLocal: entry.is_local === true,
+        recording: { title: item?.name ?? "", artistId: item?.artists?.[0]?.id ?? null,
+          artistName: item?.artists?.[0]?.name ?? null, durationMs: item?.duration_ms ?? null,
+          isrc: item?.external_ids?.isrc ?? null },
       });
     }
     path = page.next ? stripSpotifyBase(page.next) : null;
@@ -787,6 +838,7 @@ async function spotifyRequest<T>(
   let retries = 0;
 
   while (true) {
+    await assertSpotifyBackoffInactive();
     const response = await fetch(`${API}${path}`, {
       ...init,
       headers: {

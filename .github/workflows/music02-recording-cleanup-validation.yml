@@ -1,0 +1,62 @@
+name: MUSIC-02 recording cleanup validation
+
+on:
+  pull_request:
+    paths:
+      - "src/services/spotify/source-cleanup*.ts"
+      - "scripts/report-music-source-cleanup-recordings.ts"
+      - "docs/MUSIC02-RECORDING-CLEANUP.md"
+      - ".github/workflows/music02-recording-cleanup-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_music02_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_music02_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_music02_ci
+      MUSIC02_RECORDING_DB_TEST: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx prisma validate
+      - run: npx prisma generate
+      - name: Existing schema in disposable PostgreSQL only
+        run: npx prisma migrate deploy
+      - name: Recording evidence, preview, confirmation, automation and legacy guards
+        run: >-
+          npx tsx --test
+          src/services/spotify/source-cleanup*.test.ts
+          src/jobs/music-repeat-lastfm-factual.test.ts
+          src/services/music-identity/musicbrainz-isrc-mbid-shadow.test.ts
+          src/services/music-identity/shadow-resolver-report.test.ts
+          src/services/keep-filled-core.test.ts
+      - run: npm run typecheck
+      - name: Lint changed services and diagnostic
+        run: >-
+          npx eslint src/services/spotify/source-cleanup.ts
+          src/services/spotify/source-cleanup-recording*.ts
+          scripts/report-music-source-cleanup-recordings.ts
+      - run: npm run build
