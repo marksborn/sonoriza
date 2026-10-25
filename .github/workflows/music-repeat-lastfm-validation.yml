@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "src/jobs/music-repeat-runtime.ts"
+      - "src/services/factual-cooldown-status.ts"
+      - "src/components/FactualCooldownStatus*.tsx"
+      - "src/app/dashboard/playlists/**"
       - "src/jobs/music-repeat-lastfm-factual.test.ts"
       - "src/services/music-preference/lastfm-coverage.ts"
       - "src/services/music-preference/lastfm-coverage-reader.ts"
@@ -56,7 +59,10 @@ jobs:
         run: npx prisma generate
 
       - name: Factual Last.fm cooldown tests
-        run: npx tsx --test src/jobs/music-repeat-lastfm-factual.test.ts src/services/lastfm/retry.test.ts src/services/keep-filled-core.test.ts
+        run: npx tsx --test src/jobs/music-repeat-lastfm-factual.test.ts src/services/lastfm/retry.test.ts src/services/keep-filled-core.test.ts src/components/FactualCooldownStatus.test.tsx src/services/music-identity/canonical-factual-cooldown-shadow.test.ts
+
+      - name: Lint factual status display
+        run: npx eslint src/services/factual-cooldown-status.ts src/components/FactualCooldownStatus*.tsx 'src/app/dashboard/playlists/[targetId]/page.tsx'
 
       - name: Typecheck
         run: npm run typecheck
