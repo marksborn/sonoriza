@@ -3,6 +3,8 @@ name: MUSIC-02 recording cleanup validation
 on:
   pull_request:
     paths:
+      - "package.json"
+      - "package-lock.json"
       - "src/services/spotify/source-cleanup*.ts"
       - "scripts/report-music-source-cleanup-recordings.ts"
       - "docs/MUSIC02-RECORDING-CLEANUP.md"

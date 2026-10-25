@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { SpotifyClient } from "./client";
 import { SpotifyApiError } from "./errors";
+import { spotifyRequestAttempt } from "./request";
+import { audiobookGuardedWriteToken } from "../audiobooks/write-admission";
 
 function createClient(): SpotifyClient {
   const Constructor = SpotifyClient as unknown as new (
@@ -49,6 +51,8 @@ test("429 normal respects Retry-After and retries once", async () => {
       quotaExceededCount: 0,
       retries: 1,
       retryWaitMs: 0,
+      criticalGet5xxRetries: 0,
+      criticalGet5xxRecoveries: 0,
       circuitOpenSkips: 0,
       cacheHits: 0,
       cacheMisses: 0,
@@ -235,7 +239,25 @@ test("#435 Gate 3D Spotify GET timeout is classified and audit-friendly", async 
   }
 });
 
-test("#435 Gate 3H Spotify write timeout is classified as ambiguous and never retried", async (t) => {
+test("playlist client without a user is blocked before reaching mocked transport", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    throw new Error("must not reach provider");
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      createClient().appendPlaylistItems("playlist-a", ["spotify:track:a"]),
+      /AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_UNKNOWN_USER/,
+    );
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("#435 Gate 3H admitted transport write timeout is ambiguous and not retried", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalTimeout = process.env.SPOTIFY_WRITE_TIMEOUT_MS;
   process.env.SPOTIFY_WRITE_TIMEOUT_MS = "20";
@@ -260,9 +282,18 @@ test("#435 Gate 3H Spotify write timeout is classified as ambiguous and never re
   }) as typeof fetch;
 
   try {
-    const client = createClient();
+    // The client fixture has no user and must fail its audiobook guard.
+    // Exercise the transport deadline separately with fake admission proof;
+    // global fetch below is mocked, so this can never write a real playlist.
     await assert.rejects(
-      client.appendPlaylistItems("playlist-a", ["spotify:track:a"]),
+      spotifyRequestAttempt({
+        accessToken: "test-token",
+        path: "/playlists/playlist-a/items",
+        method: "POST",
+        operation: "playlist-write",
+        init: { method: "POST", body: JSON.stringify({ uris: ["spotify:track:a"] }) },
+        writeAdmissionToken: audiobookGuardedWriteToken,
+      }),
       (error: unknown) => {
         assert.ok(error instanceof SpotifyApiError);
         assert.equal(error.kind, "WRITE_TIMEOUT");

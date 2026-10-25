@@ -1,0 +1,72 @@
+name: DEPENDENCIES-02 security and compatibility
+
+on:
+  pull_request:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/dependencies-security.test.ts"
+      - "docs/DEPENDENCIES-02.md"
+      - ".github/workflows/dependencies-02-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_dependencies_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_dependencies_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_dependencies_ci
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Audit full dependency tree
+        run: npm audit --json > audit-full.json
+      - name: Audit production dependency tree
+        run: npm audit --omit=dev --json > audit-production.json
+      - run: npx prisma validate
+      - run: npx prisma generate
+      - name: Prepare disposable CI database
+        run: npx prisma migrate deploy
+      - name: Security fixes and transitive-major compatibility
+        run: npx tsx --test scripts/dependencies-security.test.ts
+      - name: Scheduler, cooldown, cleanup, Spotify, podcast, audiobook, notification and PWA regressions
+        run: >-
+          npx tsx --test
+          src/jobs/*.test.ts
+          src/services/spotify/*.test.ts
+          src/services/audiobooks/*.test.ts
+          src/services/playlist-planner/*.test.ts
+          src/services/prelaunch-signup.test.ts
+          src/services/notifications/*.test.ts
+          src/services/pwa-contract.test.ts
+          src/lib/prelaunch-admin.test.ts
+      - run: npm run typecheck
+      - run: npx eslint scripts/dependencies-security.test.ts
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependencies-02-audit
+          path: audit-*.json
