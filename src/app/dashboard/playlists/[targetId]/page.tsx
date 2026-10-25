@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { BrandLogo } from "@/components/BrandLogo";
+import { FactualCooldownStatus } from "@/components/FactualCooldownStatus";
 import { ReviewSimulationButton } from "@/components/ReviewSimulationButton";
 import { TargetRunButton } from "@/components/TargetRunButton";
 import { UiIcon } from "@/components/UiIcon";
@@ -303,6 +304,8 @@ export default async function GeneratedPlaylistPage({
                         </span>
                       ) : null}
                     </div>
+
+                    <FactualCooldownStatus summary={recentRun.summary} runStatus={recentRun.status} />
 
                     {diagnostic ? (
                       <details
