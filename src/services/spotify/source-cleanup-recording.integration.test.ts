@@ -47,7 +47,7 @@ async function fixture(t: TestContext) {
   let present = true;
   let afterCatalog: () => Promise<void> = async () => {};
   const track = { id: "source-a", uri: "spotify:track:source-a", type: "track", name: "Example Song",
-    duration_ms: 180000, artists: [{ id: "artist-a", name: "Example Artist" }], external_ids: { isrc } };
+    duration_ms: 180000, artists: [{ id: "artist-a", uri: "spotify:artist:artist-a", name: "Example Artist" }], external_ids: { isrc } };
   globalThis.fetch = (async (input, init) => {
     const url = new URL(String(input));
     const method = init?.method ?? "GET";
