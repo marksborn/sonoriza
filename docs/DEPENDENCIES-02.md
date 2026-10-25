@@ -106,6 +106,15 @@ and the PR. This change contains dependency resolutions, compatibility
 tests, CI and evidence only; application source, Prisma models/migrations,
 flags, schedules, Spotify provider logic and playlists are unchanged.
 
+The broad regression run exposed two stale assertions in `client.test.ts`;
+both were reproduced unchanged on the base checkout. The metrics fixture
+omitted the two zero-valued critical-GET counters introduced previously.
+The timeout test constructed a client without a user, which now correctly
+fails the existing audiobook guard before any transport timeout. The test
+now checks that guard explicitly with zero fetch calls and exercises the
+admitted transport deadline separately against mocked fetch. No runtime
+guard is bypassed or weakened in application code.
+
 Merge, production deployment, flags and any real provider/playlist actions
 are separate release decisions. #523 remains open until its release and
 health criteria have been met; a zero local audit alone does not close it.
