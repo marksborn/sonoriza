@@ -1,5 +1,5 @@
 import { normalizeIsrcEvidence } from "./contracts";
-import { lastFmMusicIdentityKey } from "@/jobs/music-repeat-runtime";
+import { lastFmMusicIdentityKey } from "./factual-text-key";
 
 /**
  * #374 Gate 5A: a read-only comparison, NOT an eligibility decision.

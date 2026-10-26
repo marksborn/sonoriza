@@ -16,6 +16,7 @@ import { prismaPodcastListeningStateStore } from "@/services/spotify/podcast-lis
 import { evaluatePodcastShowCandidateEligibility } from "@/services/spotify/podcast-show-policy";
 import { loadPodcastShowPolicies } from "@/services/spotify/podcast-show-policy-store";
 import { loadMusicRepeatContext } from "@/services/spotify/recently-played";
+import { matchesCanonicalCooldown, type CanonicalPreservationEvidence } from "@/services/music-identity/canonical-factual-cooldown";
 import {
   lastFmMusicIdentityKey,
   mustBlockRealWriteForLastFmFactualCooldown,
@@ -23,6 +24,7 @@ import {
 } from "@/jobs/music-repeat-runtime";
 
 export type KeepFilledTargetPatch = {
+  canonicalCooldownEvidence?: CanonicalPreservationEvidence;
   snapshotBefore: string;
   preservedUris: string[];
   removeUris: string[];
@@ -273,7 +275,7 @@ export async function prepareKeepFilledTarget(
     (item) => item.type === "MUSIC" && item.musicCandidate && item.uri,
   );
   const factual = !willClearEmptyCalendar && hasReadableMusic
-    ? await prepareLastFmFactualCooldown(userId, new Date())
+    ? await prepareLastFmFactualCooldown(userId, new Date(), [target.id])
     : null;
 
   if (factual && mustBlockRealWriteForLastFmFactualCooldown(factual, simulate)) {
@@ -304,7 +306,8 @@ export async function prepareKeepFilledTarget(
         factualUnmatchableUris.add(item.uri);
         continue;
       }
-      if (factual.blockedIdentityKeys.has(key)) factualBlockedUris.add(item.uri);
+      if (factual.blockedIdentityKeys.has(key) ||
+          (factual.canonical?.scope.mode === "ACTIVE" && matchesCanonicalCooldown(candidate, factual.canonical))) factualBlockedUris.add(item.uri);
     }
   }
 
@@ -371,6 +374,8 @@ export async function prepareKeepFilledTarget(
     patch: {
       snapshotBefore: remote.snapshotId,
       preservedUris: preservation.preserved.map((item) => item.uri),
+      ...(factual?.canonical?.scope.mode === "ACTIVE" && factual.canonical.status === "READY" && factual.canonical.graphFingerprint
+        ? { canonicalCooldownEvidence: { targetId: target.id, fingerprint: factual.canonical.graphFingerprint } } : {}),
       removeUris: preservation.removeUris,
       forceReplace: preservation.forceReplace,
       targetDurationMs: resolved.durationMs,

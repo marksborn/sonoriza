@@ -107,6 +107,7 @@ import {
   revalidateMusicRepeatBeforeRealWrite,
 } from "./music-repeat-runtime";
 import { missingKeepFilledPreparation } from "./keep-filled-context-guard";
+import { canonicalPreservationMismatch } from "@/services/music-identity/canonical-factual-cooldown";
 import { isScheduledCalendarNoop } from "./scheduled-calendar-noop";
 import { sequencePrewriteViolations } from "./sequence-prewrite-guard";
 import { isDegradableSpotifySourceFailure } from "./source-failure-policy";
@@ -392,7 +393,8 @@ export async function generatePlaylists(
     // A simulation remains diagnostic; the real run fails before any Spotify
     // read/write and retains a GenerationRun for scheduler and UI evidence.
     const factualCooldown = currentMusicRepeatState()?.lastFmFactualCooldown;
-    if (mustBlockRealWriteForLastFmFactualCooldown(factualCooldown, simulate)) {
+    const canonicalPreservationStale = canonicalPreservationMismatch(currentMusicRepeatState()?.canonicalPreservationEvidence, factualCooldown?.canonical);
+    if (mustBlockRealWriteForLastFmFactualCooldown(factualCooldown, simulate) || (!simulate && canonicalPreservationStale)) {
       const status = factualCooldown?.status ?? "UNKNOWN";
       const error =
         "Geração bloqueada antes de alterar o Spotify: a regra de não repetição " +
@@ -407,6 +409,8 @@ export async function generatePlaylists(
         factualStatus: status,
         providerComplete: factualCooldown?.providerComplete ?? null,
         spotifyWrites: false,
+        canonicalStatus: factualCooldown?.canonical?.status ?? "OFF",
+        canonicalPreservationStale,
       };
       log({ level: "WARN", message: error });
       await finalizeRun(run.id, "FAILED", logs, summary, error);
