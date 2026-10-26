@@ -225,6 +225,9 @@ export async function generatePlaylists(
 
   const state: MusicRepeatRunState = {
     userId: opts.userId,
+    targetPlaylistIds: targetScope ?? undefined,
+    canonicalPreservationEvidence: Object.values(opts.keepFilledByTargetId ?? {}).flatMap(patch =>
+      patch.canonicalCooldownEvidence ? [patch.canonicalCooldownEvidence] : []),
     simulate,
     context: prepared.context,
     initialSync: prepared.sync,

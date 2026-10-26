@@ -13,7 +13,10 @@ import {
   type FirstPartyPlaybackPreference,
   type FirstPartyPlannerPreferenceEvidence,
 } from "@/services/music-preference";
-import { normalizeMusicIdentityText } from "@/services/music-preference/lastfm-coverage";
+import { lastFmMusicIdentityKey } from "@/services/music-identity/factual-text-key";
+export { lastFmMusicIdentityKey } from "@/services/music-identity/factual-text-key";
+import { prepareCanonicalFactualCooldown } from "@/services/music-identity/canonical-factual-cooldown-preparation";
+import { matchesCanonicalCooldown, canonicalSnapshotChanged, type CanonicalCooldownState, type CanonicalPreservationEvidence } from "@/services/music-identity/canonical-factual-cooldown";
 import { readLastFmRecentObservation } from "@/services/music-preference/lastfm-coverage-reader";
 import type { Candidate, PlanRunResult } from "@/services/playlist-planner";
 import {
@@ -58,7 +61,7 @@ export class LastFmFactualCooldownPreWriteBlockedError extends Error {
 }
 
 export class LastFmFactualCooldownPreWriteUnavailableError extends Error {
-  constructor(status: LastFmFactualCooldownStatus) {
+  constructor(status: string) {
     super(
       `A geração foi bloqueada antes de alterar o Spotify porque o cooldown factual do Last.fm não pôde ser revalidado (${status}).`,
     );
@@ -106,6 +109,7 @@ export type LastFmFactualCooldownRuntimeState = {
   /** Blocked tracks summed across every pre-write revalidation in this run. */
   preWriteBlockedTotalCount: number;
   failure: string | null;
+  canonical?: CanonicalCooldownState;
 };
 
 /**
@@ -121,6 +125,7 @@ export function mustBlockRealWriteForLastFmFactualCooldown(
   state: LastFmFactualCooldownRuntimeState | undefined,
   simulate: boolean,
 ): boolean {
+  if (!simulate && state?.canonical?.scope.mode === "ACTIVE" && state.canonical.status !== "READY") return true;
   if (simulate || !state || state.configuredMode !== "ACTIVE") return false;
   if (
     state.status === "OFF" ||
@@ -138,6 +143,8 @@ export function mustBlockRealWriteForLastFmFactualCooldown(
 
 export type MusicRepeatRunState = {
   userId: string;
+  targetPlaylistIds?: readonly string[];
+  canonicalPreservationEvidence?: readonly CanonicalPreservationEvidence[];
   simulate: boolean;
   context: MusicRepeatContext;
   initialSync: RecentlyPlayedSyncResult;
@@ -174,7 +181,7 @@ export async function runWithMusicRepeatState<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   state.lastFmFactualCooldown ??=
-    await prepareLastFmFactualCooldown(state.userId, new Date());
+    await prepareLastFmFactualCooldown(state.userId, new Date(), state.targetPlaylistIds);
 
   const result = await storage.run(state, run);
 
@@ -274,6 +281,10 @@ export async function revalidateMusicRepeatBeforeRealWrite(
 ): Promise<void> {
   const state = currentMusicRepeatState();
 
+  if (state && !state.simulate && mustBlockRealWriteForLastFmFactualCooldown(state.lastFmFactualCooldown, false)) {
+    throw new LastFmFactualCooldownPreWriteUnavailableError("FACTUAL_EVIDENCE_UNAVAILABLE");
+  }
+
   if (
     state &&
     state.repeatCompliance.allowed &&
@@ -312,7 +323,7 @@ export async function revalidateMusicRepeatBeforeRealWrite(
     !state.simulate
   ) {
     const previous = state.lastFmFactualCooldown;
-    const refreshed = await prepareLastFmFactualCooldown(state.userId, new Date());
+    const refreshed = await prepareLastFmFactualCooldown(state.userId, new Date(), state.targetPlaylistIds);
     refreshed.preWriteRevalidated = true;
     // A bounded replan revalidates again; keep the earlier vetoes as evidence.
     refreshed.preWriteRevalidationCount = previous.preWriteRevalidationCount + 1;
@@ -320,7 +331,10 @@ export async function revalidateMusicRepeatBeforeRealWrite(
     carryForwardLastFmFactualPlanningCounters(previous, refreshed);
     state.lastFmFactualCooldown = refreshed;
 
-    if (refreshed.effectiveMode !== "ACTIVE") {
+    if (canonicalSnapshotChanged(previous.canonical, refreshed.canonical)) {
+      throw new LastFmFactualCooldownPreWriteUnavailableError("CANONICAL_EVIDENCE_CHANGED");
+    }
+    if (refreshed.effectiveMode !== "ACTIVE" || mustBlockRealWriteForLastFmFactualCooldown(refreshed, false)) {
       throw new LastFmFactualCooldownPreWriteUnavailableError(refreshed.status);
     }
 
@@ -334,7 +348,8 @@ export async function revalidateMusicRepeatBeforeRealWrite(
           item.primaryArtistName ?? item.subtitle,
         );
         if (!key) unmatchableCount += 1;
-        else if (refreshed.blockedIdentityKeys.has(key)) blockedCount += 1;
+        else if (refreshed.blockedIdentityKeys.has(key) ||
+          (refreshed.canonical?.scope.mode === "ACTIVE" && matchesCanonicalCooldown(item, refreshed.canonical))) blockedCount += 1;
       }
     }
     // Fail closed even when an upstream candidate source skipped its filter.
@@ -364,6 +379,7 @@ export function carryForwardLastFmFactualPlanningCounters(
 ): void {
   refreshed.matchedCandidateCount = previous.matchedCandidateCount;
   refreshed.skippedCandidateCount = previous.skippedCandidateCount;
+  if (refreshed.canonical && previous.canonical) refreshed.canonical.matchedCandidateCount = previous.canonical.matchedCandidateCount;
 }
 
 export function filterMusicCandidatesForLastFmFactualCooldown(
@@ -403,7 +419,9 @@ export function filterMusicCandidatesForLastFmFactualCooldown(
       else eligible.push(candidate);
       continue;
     }
-    const matched = state.blockedIdentityKeys.has(key);
+    const canonicalMatch = matchesCanonicalCooldown(candidate, state.canonical);
+    if (canonicalMatch && state.canonical) state.canonical.matchedCandidateCount++;
+    const matched = state.blockedIdentityKeys.has(key) || (state.canonical?.scope.mode === "ACTIVE" && canonicalMatch);
     if (!matched) {
       eligible.push(candidate);
       continue;
@@ -424,25 +442,21 @@ export function filterMusicCandidatesForLastFmFactualCooldown(
   };
 }
 
-export function lastFmMusicIdentityKey(
-  trackName: string | null | undefined,
-  artistName: string | null | undefined,
-): string | null {
-  const track = normalizeMusicIdentityText(trackName);
-  const artist = normalizeMusicIdentityText(artistName);
-  if (!track || !artist) return null;
-
-  // Last.fm and Spotify occasionally differ only in whether a compound title
-  // is written with a space (e.g. "Dragon Fly" vs "Dragonfly"). Keep artist
-  // matching exact after normalization and compact only the track title. This
-  // deliberately does not strip words, suffixes, versions or other metadata.
-  const compactTrack = track.replace(/\s+/g, "");
-  return `${artist}\u0000${compactTrack}`;
-}
-
 export async function prepareLastFmFactualCooldown(
   userId: string,
   asOf = new Date(),
+  targetPlaylistIds?: readonly string[],
+): Promise<LastFmFactualCooldownRuntimeState> {
+  const factual = await prepareTextLastFmFactualCooldown(userId, asOf);
+  const canonical = await prepareCanonicalFactualCooldown({ userId, targetIds: targetPlaylistIds, asOf,
+    cutoff: factual.cutoff, factualReady: factual.providerComplete === true && ["READY_ACTIVE", "READY_SHADOW"].includes(factual.status),
+    legacyActive: factual.configuredMode === "ACTIVE" && factual.effectiveMode === "ACTIVE" });
+  return { ...factual, canonical };
+}
+
+async function prepareTextLastFmFactualCooldown(
+  userId: string,
+  asOf: Date,
 ): Promise<LastFmFactualCooldownRuntimeState> {
   const configuredMode = lastFmFactualModeFromEnv();
   if (configuredMode === "OFF") return offLastFmFactualCooldown(asOf);
@@ -727,6 +741,11 @@ function lastFmFactualCooldownSummary(
     preWriteRevalidationCount: state.preWriteRevalidationCount,
     preWriteBlockedTotalCount: state.preWriteBlockedTotalCount,
     identityMethod: "TRACK_COMPACT_WHITESPACE_ARTIST_NORMALIZED_EXACT",
+    canonical: state.canonical ? {
+      mode: state.canonical.scope.mode, status: state.canonical.status,
+      linkedFactCount: state.canonical.linkedFactCount, blockedProviderRefCount: state.canonical.blockedRefs.size,
+      matchedCandidateCount: state.canonical.matchedCandidateCount,
+    } : { mode: "OFF", status: "OFF" },
     failure: state.failure,
   };
 }

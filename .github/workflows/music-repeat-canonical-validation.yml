@@ -1,0 +1,62 @@
+name: MUSIC-REPEAT Canonical Factual Validation
+
+on:
+  pull_request:
+    paths:
+      - "src/services/music-identity/**"
+      - "src/services/keep-filled-*.ts"
+      - "src/jobs/music-repeat*.ts"
+      - "src/jobs/generate-playlists*.ts"
+      - "src/services/playback-reserve*.ts"
+      - ".env.example"
+      - ".github/workflows/music-repeat-canonical-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: canonical_cooldown_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/canonical_cooldown_test?schema=public
+      CANONICAL_COOLDOWN_DB_TEST: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Prepare disposable test database with existing schema
+        run: npx prisma migrate deploy
+      - name: Canonical integration and factual regressions (mocked providers)
+        run: >-
+          npx tsx --test
+          src/services/music-identity/canonical-factual-cooldown.test.ts
+          src/services/music-identity/canonical-factual-cooldown.integration.test.ts
+          src/services/music-identity/canonical-factual-cooldown-shadow.test.ts
+          src/services/music-identity/strong-identifier-enrichment-shadow.test.ts
+          src/services/music-identity/musicbrainz-isrc-mbid-shadow.test.ts
+          src/services/music-identity/canonical-factual-mbid-linkage-shadow.test.ts
+          src/jobs/music-repeat-lastfm-factual.test.ts
+          src/jobs/music-repeat-runtime.test.ts
+          src/services/keep-filled-core.test.ts
+          src/services/lastfm/retry.test.ts
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
