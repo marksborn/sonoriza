@@ -12,6 +12,7 @@ import {
 import { readPlaybackReserveSimulationView } from "@/services/playback-reserve-ui";
 import { readManualKeepFilledNoop } from "@/services/manual-keep-filled-calendar-scope";
 import { readInconclusiveSimulation } from "@/services/simulation-presentation";
+import { destinationEditHref } from "@/lib/destination-edit-link";
 
 type PageProps = {
   searchParams: Promise<{ run?: string }>;
@@ -741,10 +742,16 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                       </p>
                       <h3 className="mt-1 text-lg font-black text-ink-inverse">{target.name}</h3>
                     </div>
-                    <span className="status-success inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-black">
-                      <UiIcon name="check" size={13} />
-                      Ativa
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="status-success inline-flex w-fit items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-black">
+                        <UiIcon name="check" size={13} />
+                        Ativa
+                      </span>
+                      <Link href={destinationEditHref(target.id)} className="product-link text-xs">
+                        Editar
+                        <UiIcon name="arrow-right" size={14} />
+                      </Link>
+                    </div>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-muted-inverse">
                     {target.durationMode === "CALENDAR"
