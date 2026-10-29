@@ -1,9 +1,26 @@
+export type Calendar04BlockPreview = Readonly<{
+  filledDurationMs: number;
+  deficitMs: number;
+  musicDurationMs: number;
+  podcastDurationMs: number;
+  initialSequenceSlots: number;
+  initialSequenceFilledSlots: number;
+  remainderAfterSequenceMs: number;
+  remainderFillStrategy: string;
+  requestedRemainderPodcastPercent: number | null;
+  remainderMusicDurationMs: number;
+  remainderPodcastDurationMs: number;
+  fallbackMusicDurationMs: number;
+}>;
+
 export type Calendar03BlockPreview = Readonly<{
   index: number;
   key: string;
   targetDurationMs: number;
   podcastUsableDurationMs: number;
   diagnosticCodes: string[];
+  /** CALENDAR-04 only. */
+  calendar04?: Calendar04BlockPreview;
 }>;
 
 export type Calendar03TargetPreview = Readonly<{
@@ -56,6 +73,7 @@ export function calendar03TargetPreviewFromSummary(
       ) {
         return [];
       }
+      const calendar04 = calendar04BlockPreview(block);
       return [
         {
           index,
@@ -63,6 +81,7 @@ export function calendar03TargetPreviewFromSummary(
           targetDurationMs,
           podcastUsableDurationMs,
           diagnosticCodes: stringArray(block.diagnosticCodes),
+          ...(calendar04 ? { calendar04 } : {}),
         },
       ];
     })
@@ -78,6 +97,34 @@ export function calendar03TargetPreviewFromSummary(
     status: text(target.status) ?? "UNKNOWN",
     selectedPodcastUris: stringArray(target.selectedPodcastUris),
     blocks,
+  };
+}
+
+function calendar04BlockPreview(
+  block: Record<string, unknown>,
+): Calendar04BlockPreview | null {
+  const evidence = asRecord(block.calendar04);
+  if (!evidence) return null;
+  const numbers = {
+    filledDurationMs: nonNegativeNumber(block.filledDurationMs),
+    deficitMs: nonNegativeNumber(block.deficitMs),
+    musicDurationMs: nonNegativeNumber(block.musicDurationMs),
+    podcastDurationMs: nonNegativeNumber(block.podcastDurationMs),
+    initialSequenceSlots: nonNegativeNumber(evidence.initialSequenceSlots),
+    initialSequenceFilledSlots: nonNegativeNumber(evidence.initialSequenceFilledSlots),
+    remainderAfterSequenceMs: nonNegativeNumber(evidence.remainderAfterSequenceMs),
+    remainderMusicDurationMs: nonNegativeNumber(evidence.remainderMusicDurationMs),
+    remainderPodcastDurationMs: nonNegativeNumber(evidence.remainderPodcastDurationMs),
+    fallbackMusicDurationMs: nonNegativeNumber(evidence.fallbackMusicDurationMs),
+  };
+  const strategy = text(evidence.remainderFillStrategy);
+  if (!strategy || Object.values(numbers).some((value) => value === null)) return null;
+  return {
+    ...(numbers as { [K in keyof typeof numbers]: number }),
+    remainderFillStrategy: strategy,
+    requestedRemainderPodcastPercent: nonNegativeNumber(
+      evidence.requestedRemainderPodcastPercent,
+    ),
   };
 }
 

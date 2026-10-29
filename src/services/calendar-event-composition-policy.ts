@@ -2,7 +2,28 @@ import { prisma } from "@/lib/prisma";
 
 export type EventCompositionPolicyValue =
   | "INHERIT_DESTINATION"
-  | "PODCAST_THEN_MUSIC";
+  | "PODCAST_THEN_MUSIC"
+  | "SEQUENCE_PER_EVENT";
+
+export type CalendarRemainderFillStrategyValue =
+  | "MUSIC_ONLY"
+  | "PODCAST_ONLY"
+  | "MIX_RATIO"
+  | "REPEAT_SEQUENCE";
+
+export type CalendarRemainderFallbackValue = "FILL_WITH_MUSIC" | "LEAVE_GAP";
+
+/**
+ * CALENDAR-04 (#532). Present on the snapshot only for SEQUENCE_PER_EVENT so
+ * legacy snapshots, and therefore existing CONFIG-04 fingerprints, keep their
+ * exact serialized shape.
+ */
+export type CalendarSequencePerEventSettings = Readonly<{
+  remainderFillStrategy: CalendarRemainderFillStrategyValue;
+  /** Duration share of the remainder for podcasts; null unless MIX_RATIO. */
+  remainderPodcastPercent: number | null;
+  remainderFallback: CalendarRemainderFallbackValue;
+}>;
 
 export type PodcastEventDistributionValue =
   | "EVERY_EVENT"
@@ -16,6 +37,7 @@ export type CalendarEventCompositionPolicySnapshot = Readonly<{
   podcastEventDistribution: PodcastEventDistributionValue;
   podcastEveryNEvents: number;
   podcastEventOffset: number;
+  sequencePerEvent?: CalendarSequencePerEventSettings;
 }>;
 
 export type CalendarEventCompositionPolicyInput = Readonly<{
@@ -25,7 +47,16 @@ export type CalendarEventCompositionPolicyInput = Readonly<{
   podcastEventDistribution: PodcastEventDistributionValue;
   podcastEveryNEvents?: number | null;
   podcastEventOffset?: number | null;
+  remainderFillStrategy?: CalendarRemainderFillStrategyValue | null;
+  remainderPodcastPercent?: number | null;
+  remainderFallback?: CalendarRemainderFallbackValue | null;
 }>;
+
+export const DEFAULT_CALENDAR_SEQUENCE_PER_EVENT_STORAGE = Object.freeze({
+  remainderFillStrategy: "MUSIC_ONLY" as const,
+  remainderPodcastPercent: 30,
+  remainderFallback: "FILL_WITH_MUSIC" as const,
+});
 
 export const DEFAULT_CALENDAR_EVENT_COMPOSITION_POLICY = Object.freeze({
   eventCompositionPolicy: "INHERIT_DESTINATION" as const,
@@ -55,11 +86,23 @@ export function normalizeCalendarEventCompositionPolicy(
 
   if (
     input.eventCompositionPolicy !== "INHERIT_DESTINATION" &&
-    input.eventCompositionPolicy !== "PODCAST_THEN_MUSIC"
+    input.eventCompositionPolicy !== "PODCAST_THEN_MUSIC" &&
+    input.eventCompositionPolicy !== "SEQUENCE_PER_EVENT"
   ) {
     throw new Error(
-      "Event composition policy must be INHERIT_DESTINATION or PODCAST_THEN_MUSIC.",
+      "Event composition policy must be INHERIT_DESTINATION, PODCAST_THEN_MUSIC or SEQUENCE_PER_EVENT.",
     );
+  }
+
+  if (input.eventCompositionPolicy === "SEQUENCE_PER_EVENT") {
+    // CALENDAR-04 restarts the sequence at every event. It deliberately has no
+    // event cadence (N/offset), podcast cap or margin: one canonical shape.
+    return Object.freeze({
+      targetPlaylistId: normalizedTargetId,
+      ...DEFAULT_CALENDAR_EVENT_COMPOSITION_POLICY,
+      eventCompositionPolicy: "SEQUENCE_PER_EVENT",
+      sequencePerEvent: normalizeSequencePerEventSettings(input),
+    });
   }
 
   assertPositiveInteger(input.maxPodcastsPerEvent, "maxPodcastsPerEvent");
@@ -156,6 +199,9 @@ export async function loadCalendarEventCompositionPolicy(
     podcastEventDistribution: row.podcastEventDistribution,
     podcastEveryNEvents: row.podcastEveryNEvents,
     podcastEventOffset: row.podcastEventOffset,
+    remainderFillStrategy: row.remainderFillStrategy,
+    remainderPodcastPercent: row.remainderPodcastPercent,
+    remainderFallback: row.remainderFallback,
   });
 }
 
@@ -171,6 +217,21 @@ export async function saveCalendarEventCompositionPolicy(
   );
 
   await assertOwnedTarget(normalizedUserId, resolved.targetPlaylistId);
+
+  // Saving a legacy policy leaves the CALENDAR-04 columns untouched (database
+  // defaults on create), so switching back keeps the last remainder choice.
+  const sequenceStorage = resolved.sequencePerEvent
+    ? {
+        remainderFillStrategy: resolved.sequencePerEvent.remainderFillStrategy,
+        ...(resolved.sequencePerEvent.remainderPodcastPercent === null
+          ? {}
+          : {
+              remainderPodcastPercent:
+                resolved.sequencePerEvent.remainderPodcastPercent,
+            }),
+        remainderFallback: resolved.sequencePerEvent.remainderFallback,
+      }
+    : {};
 
   await prisma.calendarEventCompositionPolicy.upsert({
     where: {
@@ -189,6 +250,7 @@ export async function saveCalendarEventCompositionPolicy(
       podcastEventDistribution: resolved.podcastEventDistribution,
       podcastEveryNEvents: resolved.podcastEveryNEvents,
       podcastEventOffset: resolved.podcastEventOffset,
+      ...sequenceStorage,
     },
     update: {
       eventCompositionPolicy: resolved.eventCompositionPolicy,
@@ -198,10 +260,52 @@ export async function saveCalendarEventCompositionPolicy(
       podcastEventDistribution: resolved.podcastEventDistribution,
       podcastEveryNEvents: resolved.podcastEveryNEvents,
       podcastEventOffset: resolved.podcastEventOffset,
+      ...sequenceStorage,
     },
   });
 
   return resolved;
+}
+
+function normalizeSequencePerEventSettings(
+  input: CalendarEventCompositionPolicyInput,
+): CalendarSequencePerEventSettings {
+  const strategy =
+    input.remainderFillStrategy ??
+    DEFAULT_CALENDAR_SEQUENCE_PER_EVENT_STORAGE.remainderFillStrategy;
+  if (
+    strategy !== "MUSIC_ONLY" &&
+    strategy !== "PODCAST_ONLY" &&
+    strategy !== "MIX_RATIO" &&
+    strategy !== "REPEAT_SEQUENCE"
+  ) {
+    throw new Error(
+      "remainderFillStrategy must be MUSIC_ONLY, PODCAST_ONLY, MIX_RATIO or REPEAT_SEQUENCE.",
+    );
+  }
+
+  const fallback =
+    input.remainderFallback ??
+    DEFAULT_CALENDAR_SEQUENCE_PER_EVENT_STORAGE.remainderFallback;
+  if (fallback !== "FILL_WITH_MUSIC" && fallback !== "LEAVE_GAP") {
+    throw new Error("remainderFallback must be FILL_WITH_MUSIC or LEAVE_GAP.");
+  }
+
+  let remainderPodcastPercent: number | null = null;
+  if (strategy === "MIX_RATIO") {
+    const percent = input.remainderPodcastPercent;
+    if (!Number.isInteger(percent) || Number(percent) < 0 || Number(percent) > 100) {
+      throw new Error("remainderPodcastPercent must be an integer from 0 to 100.");
+    }
+    remainderPodcastPercent = Number(percent);
+  }
+
+  return Object.freeze({
+    remainderFillStrategy: strategy,
+    remainderPodcastPercent,
+    // Music-only remainder never needs a music fallback; keep one canonical value.
+    remainderFallback: strategy === "MUSIC_ONLY" ? "FILL_WITH_MUSIC" : fallback,
+  });
 }
 
 async function assertOwnedTarget(userId: string, targetPlaylistId: string) {

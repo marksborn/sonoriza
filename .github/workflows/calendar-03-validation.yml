@@ -30,6 +30,10 @@ on:
       - "src/services/playlist-planner/calendar-event-composition-runtime.ts"
       - "src/services/playlist-planner/calendar-event-composition-runtime.test.ts"
       - "src/services/playlist-planner/plan-run-calendar03.ts"
+      - "src/services/playlist-planner/calendar-sequence-per-event.ts"
+      - "src/services/playlist-planner/calendar-sequence-per-event.test.ts"
+      - "src/services/playlist-planner/calendar-sequence-per-event-runtime.test.ts"
+      - "src/services/playlist-planner/planner.ts"
       - "src/services/playlist-planner/index.ts"
       - ".github/workflows/calendar-03-validation.yml"
   push:
@@ -63,6 +67,10 @@ on:
       - "src/services/playlist-planner/calendar-event-composition-runtime.ts"
       - "src/services/playlist-planner/calendar-event-composition-runtime.test.ts"
       - "src/services/playlist-planner/plan-run-calendar03.ts"
+      - "src/services/playlist-planner/calendar-sequence-per-event.ts"
+      - "src/services/playlist-planner/calendar-sequence-per-event.test.ts"
+      - "src/services/playlist-planner/calendar-sequence-per-event-runtime.test.ts"
+      - "src/services/playlist-planner/planner.ts"
       - "src/services/playlist-planner/index.ts"
       - ".github/workflows/calendar-03-validation.yml"
   workflow_dispatch:
@@ -108,7 +116,7 @@ jobs:
       - run: npx prisma validate
       - run: npx prisma migrate deploy
       - run: npx prisma generate
-      - name: CALENDAR-03 Gates 1-3 + Gate 6B scheduler + Gate 7 UX + shared podcast fit
+      - name: CALENDAR-03 Gates 1-3 + Gate 6B scheduler + Gate 7 UX + shared podcast fit + CALENDAR-04
         run: >-
           npx tsx --test
           src/jobs/calendar03-scheduled-generation.test.ts
@@ -120,6 +128,9 @@ jobs:
           src/services/playlist-planner/podcast-fit.test.ts
           src/services/playlist-planner/calendar-event-composition-shadow.test.ts
           src/services/playlist-planner/calendar-event-composition-runtime.test.ts
+          src/services/playlist-planner/calendar-sequence-per-event.test.ts
+          src/services/playlist-planner/calendar-sequence-per-event-runtime.test.ts
+          src/services/playlist-planner/planner.test.ts
       - run: npm run test:incremental
       - name: "Manual KEEP_FILLED calendar and no-op contracts (#460)"
         run: npx tsx --test src/services/manual-keep-filled-calendar-scope.test.ts

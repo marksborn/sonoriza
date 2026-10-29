@@ -111,3 +111,80 @@ test("target id is required", () => {
     /targetPlaylistId is required/,
   );
 });
+
+test("CALENDAR-04 SEQUENCE_PER_EVENT has one canonical shape without cadence", () => {
+  const resolved = normalizeCalendarEventCompositionPolicy("carro", {
+    eventCompositionPolicy: "SEQUENCE_PER_EVENT",
+    maxPodcastsPerEvent: 3,
+    podcastEventSafetyMarginSeconds: 120,
+    podcastEventDistribution: "EVERY_N_EVENTS",
+    podcastEveryNEvents: 2,
+    podcastEventOffset: 1,
+    remainderFillStrategy: "MIX_RATIO",
+    remainderPodcastPercent: 30,
+    remainderFallback: "LEAVE_GAP",
+  });
+
+  assert.deepEqual(resolved, {
+    targetPlaylistId: "carro",
+    eventCompositionPolicy: "SEQUENCE_PER_EVENT",
+    maxPodcastsPerEvent: 1,
+    podcastEventSafetyMarginSeconds: 0,
+    podcastEventDistribution: "EVERY_EVENT",
+    podcastEveryNEvents: 1,
+    podcastEventOffset: 0,
+    sequencePerEvent: {
+      remainderFillStrategy: "MIX_RATIO",
+      remainderPodcastPercent: 30,
+      remainderFallback: "LEAVE_GAP",
+    },
+  });
+});
+
+test("CALENDAR-04 percent only applies to MIX_RATIO and must be 0..100", () => {
+  const base = {
+    eventCompositionPolicy: "SEQUENCE_PER_EVENT" as const,
+    maxPodcastsPerEvent: 1,
+    podcastEventSafetyMarginSeconds: 0,
+    podcastEventDistribution: "EVERY_EVENT" as const,
+  };
+
+  const musicOnly = normalizeCalendarEventCompositionPolicy("carro", {
+    ...base,
+    remainderFillStrategy: "MUSIC_ONLY",
+    remainderPodcastPercent: 80,
+    remainderFallback: "LEAVE_GAP",
+  });
+  assert.deepEqual(musicOnly.sequencePerEvent, {
+    remainderFillStrategy: "MUSIC_ONLY",
+    remainderPodcastPercent: null,
+    remainderFallback: "FILL_WITH_MUSIC",
+  });
+
+  for (const remainderPodcastPercent of [-1, 101, 12.5, null]) {
+    assert.throws(() =>
+      normalizeCalendarEventCompositionPolicy("carro", {
+        ...base,
+        remainderFillStrategy: "MIX_RATIO",
+        remainderPodcastPercent,
+      }),
+    );
+  }
+  assert.throws(() =>
+    normalizeCalendarEventCompositionPolicy("carro", {
+      ...base,
+      remainderFillStrategy: "BOGUS" as never,
+    }),
+  );
+});
+
+test("legacy policies never carry CALENDAR-04 settings (fingerprint stability)", () => {
+  const legacy = normalizeCalendarEventCompositionPolicy("carro", {
+    eventCompositionPolicy: "PODCAST_THEN_MUSIC",
+    maxPodcastsPerEvent: 1,
+    podcastEventSafetyMarginSeconds: 0,
+    podcastEventDistribution: "EVERY_EVENT",
+    remainderFillStrategy: "REPEAT_SEQUENCE",
+  });
+  assert.equal("sequencePerEvent" in legacy, false);
+});

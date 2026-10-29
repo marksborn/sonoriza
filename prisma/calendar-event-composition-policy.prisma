@@ -10,6 +10,21 @@
 enum EventCompositionPolicy {
   INHERIT_DESTINATION
   PODCAST_THEN_MUSIC
+  // CALENDAR-04 (#532): restart the target sequence at every event, then fill
+  // the remaining event time with remainderFillStrategy.
+  SEQUENCE_PER_EVENT
+}
+
+enum CalendarRemainderFillStrategy {
+  MUSIC_ONLY
+  PODCAST_ONLY
+  MIX_RATIO
+  REPEAT_SEQUENCE
+}
+
+enum CalendarRemainderFallback {
+  FILL_WITH_MUSIC
+  LEAVE_GAP
 }
 
 enum PodcastEventDistribution {
@@ -26,6 +41,9 @@ model CalendarEventCompositionPolicy {
   podcastEventDistribution        PodcastEventDistribution @default(EVERY_EVENT)
   podcastEveryNEvents             Int                     @default(1)
   podcastEventOffset              Int                     @default(0)
+  remainderFillStrategy           CalendarRemainderFillStrategy @default(MUSIC_ONLY)
+  remainderPodcastPercent         Int                     @default(30)
+  remainderFallback               CalendarRemainderFallback @default(FILL_WITH_MUSIC)
   createdAt                       DateTime                @default(now())
   updatedAt                       DateTime                @updatedAt
 

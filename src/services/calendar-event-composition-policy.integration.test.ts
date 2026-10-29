@@ -213,3 +213,86 @@ databaseTest(
     }
   },
 );
+
+databaseTest(
+  "CALENDAR-04 persists SEQUENCE_PER_EVENT and switching back keeps the remainder choice",
+  async () => {
+    const suffix = randomUUID();
+    const userId = `calendar04-user-${suffix}`;
+    const targetPlaylistId = `calendar04-target-${suffix}`;
+
+    await prisma.user.create({ data: { id: userId } });
+    await prisma.targetPlaylist.create({
+      data: {
+        id: targetPlaylistId,
+        userId,
+        name: "CALENDAR-04 integration fixture",
+        durationMode: "CALENDAR",
+        fixedDurationSeconds: null,
+        calendarDurationStrategy: "PER_EVENT",
+        sequencePattern: ["PODCAST", "MUSIC"],
+      },
+    });
+
+    const legacyInput = {
+      eventCompositionPolicy: "PODCAST_THEN_MUSIC" as const,
+      maxPodcastsPerEvent: 1,
+      podcastEventSafetyMarginSeconds: 0,
+      podcastEventDistribution: "EVERY_N_EVENTS" as const,
+      podcastEveryNEvents: 2,
+      podcastEventOffset: 0,
+    };
+
+    try {
+      await saveCalendarEventCompositionPolicy(userId, targetPlaylistId, legacyInput);
+      const saved = await saveCalendarEventCompositionPolicy(userId, targetPlaylistId, {
+        ...legacyInput,
+        eventCompositionPolicy: "SEQUENCE_PER_EVENT",
+        remainderFillStrategy: "MIX_RATIO",
+        remainderPodcastPercent: 25,
+        remainderFallback: "LEAVE_GAP",
+      });
+      assert.deepEqual(saved.sequencePerEvent, {
+        remainderFillStrategy: "MIX_RATIO",
+        remainderPodcastPercent: 25,
+        remainderFallback: "LEAVE_GAP",
+      });
+      assert.deepEqual(
+        await loadCalendarEventCompositionPolicy(userId, targetPlaylistId),
+        saved,
+      );
+
+      const legacyAgain = await saveCalendarEventCompositionPolicy(
+        userId,
+        targetPlaylistId,
+        legacyInput,
+      );
+      assert.equal("sequencePerEvent" in legacyAgain, false);
+      const row = await prisma.calendarEventCompositionPolicy.findUniqueOrThrow({
+        where: { userId_targetPlaylistId: { userId, targetPlaylistId } },
+        select: {
+          remainderFillStrategy: true,
+          remainderPodcastPercent: true,
+          remainderFallback: true,
+        },
+      });
+      assert.deepEqual(row, {
+        remainderFillStrategy: "MIX_RATIO",
+        remainderPodcastPercent: 25,
+        remainderFallback: "LEAVE_GAP",
+      });
+
+      await assert.rejects(
+        prisma.$executeRaw`UPDATE "CalendarEventCompositionPolicy" SET "remainderPodcastPercent" = 101 WHERE "userId" = ${userId}`,
+      );
+    } finally {
+      await prisma.calendarEventCompositionPolicy
+        .deleteMany({ where: { userId, targetPlaylistId } })
+        .catch(() => undefined);
+      await prisma.targetPlaylist
+        .delete({ where: { id: targetPlaylistId } })
+        .catch(() => undefined);
+      await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
+    }
+  },
+);
