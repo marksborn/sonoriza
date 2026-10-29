@@ -112,12 +112,13 @@ test("#365 Gate 5: stateful episode ordering also abstains", () => {
   assert.deepEqual(decisions,["ABSTAIN_UNSAFE_CONTEXT"]);
 });
 
-test("#365 Gate 5: segmented targets abstain to unchanged canonical multi-event logic", () => {
+test("#365: strict/stateful shows still abstain on segmented targets", () => {
   const input=buildInput(true);
   input.targets[0]!.durationBlocks=[
     {key:"event-one",targetDurationMs:20*min},
     {key:"event-two",targetDurationMs:20*min},
   ];
+  input.pools.podcasts[0]={...input.pools.podcasts[0]!,podcastStrictSequence:true};
   const decisions:string[]=[];
   planRun({...input,onPodcast08ActiveDecision:e=>decisions.push(e.status)});
   assert.deepEqual(decisions,["ABSTAIN_UNSAFE_CONTEXT"]);
@@ -138,4 +139,70 @@ test("#365 Gate 5: ONLY allowlisted simulation can pass the active policy", () =
     limits:policy.limits,hasDurationBlocks:false,
   });
   assert.equal(refused.status,"ABSTAIN_REAL_WRITE_NOT_APPROVED");
+});
+
+test("#365 PER_EVENT: bands apply per slot inside each event, never across", () => {
+  const decisions: Array<{ status: string; fallbackCount: number }> = [];
+  const input: PlanRunInput = {
+    pools: {
+      music: [],
+      podcasts: [
+        episode("long-a", 70, "show-long-a"),
+        episode("long-b", 75, "show-long-b"),
+        episode("short-a", 20, "show-short-a"),
+        episode("short-b", 25, "show-short-b"),
+      ],
+    },
+    targets: [{
+      targetPlaylistId: "work",
+      name: "Trabalho",
+      priority: 0,
+      rules: { ...rules, targetDurationMs: 200 * min },
+      durationBlocks: [
+        { key: "E1", targetDurationMs: 100 * min },
+        { key: "E2", targetDurationMs: 100 * min },
+      ],
+      podcast08ActivePolicy: policy,
+    }],
+    onPodcast08ActiveDecision: ({ status, fallbackCount }) =>
+      decisions.push({ status, fallbackCount }),
+  };
+
+  const out = planRun(input);
+  const items = out.targets[0]!.result.items;
+  assert.deepEqual(
+    items.map((item) => [item.planningBlockIndex, item.uri]),
+    [[0, "short-a"], [0, "long-a"], [1, "short-b"], [1, "long-b"]],
+  );
+  assert.deepEqual(decisions, [{ status: "ACTIVE", fallbackCount: 0 }]);
+  for (const block of out.targets[0]!.result.stats.segmentation?.blocks ?? []) {
+    assert.ok(block.filledDurationMs <= block.targetDurationMs);
+  }
+
+  const legacy = planRun({ ...input, targets: [{ ...input.targets[0]!, podcast08ActivePolicy: undefined }] });
+  assert.equal(legacy.targets[0]!.result.items[0]!.uri, "long-a");
+});
+
+test("#365 PER_EVENT: fallback counts are summed across events", () => {
+  const decisions: Array<{ status: string; fallbackCount: number }> = [];
+  planRun({
+    pools: {
+      music: [],
+      podcasts: [episode("medium-a", 45, "a"), episode("medium-b", 45, "b")],
+    },
+    targets: [{
+      targetPlaylistId: "work",
+      name: "Trabalho",
+      priority: 0,
+      rules: { ...rules, targetDurationMs: 100 * min, sequencePattern: ["PODCAST"] },
+      durationBlocks: [
+        { key: "E1", targetDurationMs: 50 * min },
+        { key: "E2", targetDurationMs: 50 * min },
+      ],
+      podcast08ActivePolicy: { ...policy, bands: ["SHORT"] },
+    }],
+    onPodcast08ActiveDecision: ({ status, fallbackCount }) =>
+      decisions.push({ status, fallbackCount }),
+  });
+  assert.deepEqual(decisions, [{ status: "ACTIVE", fallbackCount: 2 }]);
 });
