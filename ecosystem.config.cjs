@@ -13,12 +13,16 @@ module.exports = {
       exec_mode: "fork",
       autorestart: true,
       // #435 Gate 3E: observed scheduled generation peaks ~541 MiB RSS.
-      // Keep enough headroom to avoid killing the process between inline preflight
-      // and the authoritative scheduled run.
-      max_memory_restart: "768M",
+      // #442: 768M was exceeded on 2026-10-29 (837 MiB); production was raised
+      // to 1G by the operator. Keep the repository aligned with that value.
+      max_memory_restart: "1G",
       env: {
         NODE_ENV: "production",
         PORT: process.env.PORT || "3005",
+        // #442: ~180 MiB of idle RSS sat in glibc per-thread malloc arenas
+        // (native threads: Prisma engine, libuv). Cap the arena count so freed
+        // native memory is reused instead of fragmenting across ~20 arenas.
+        MALLOC_ARENA_MAX: process.env.MALLOC_ARENA_MAX || "2",
       },
     },
   ],

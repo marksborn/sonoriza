@@ -198,6 +198,11 @@ pm2 save
 
 On this production server, CloudPanel proxies to **`http://127.0.0.1:3005`**. Other installations may use a different port.
 
+The routine deploy restarts through `pm2 resurrect` (`dump.pm2`), so edits to
+`ecosystem.config.cjs` (env, `max_memory_restart`) need a one-time
+`pm2 restart ecosystem.config.cjs --update-env && pm2 save` as the site user.
+See [MEMORY-442-MALLOC-ARENAS.md](MEMORY-442-MALLOC-ARENAS.md) before doing it.
+
 ## 4. Scheduled generation (server cron)
 
 SCHEDULE-01 turns the server cron into a **dispatcher**, not the authority for a

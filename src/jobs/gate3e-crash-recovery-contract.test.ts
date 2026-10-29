@@ -103,6 +103,12 @@ test("#435 Gate 3E PM2 memory guard keeps headroom above the observed generation
   const ecosystem = readFileSync("ecosystem.config.cjs", "utf8");
 
   assert.match(ecosystem, /instances: 1/);
-  assert.match(ecosystem, /max_memory_restart: "768M"/);
-  assert.doesNotMatch(ecosystem, /max_memory_restart: "512M"/);
+  assert.match(ecosystem, /max_memory_restart: "1G"/);
+  assert.doesNotMatch(ecosystem, /max_memory_restart: "(512|768)M"/);
+});
+
+test("#442 PM2 env caps glibc malloc arenas for native-thread fragmentation", () => {
+  const ecosystem = readFileSync("ecosystem.config.cjs", "utf8");
+
+  assert.match(ecosystem, /MALLOC_ARENA_MAX: process\.env\.MALLOC_ARENA_MAX \|\| "2"/);
 });
