@@ -246,27 +246,32 @@ export function planRun({
     // Gate 5: the canonical selector can opt in to the existing duration-band
     // core only when the caller passed an explicitly approved target policy.
     // Per-event and stateful/strict shows abstain rather than skip episodes.
+    // #365: PER_EVENT blocks apply the same band per sequence slot inside
+    // each event (the slot index continues across events like SEQUENCE does).
     const podcast08Policy = target.podcast08ActivePolicy;
     const podcast08Veto = podcast08Policy
-      ? target.durationBlocks
+      ? podcast08ActiveCandidateVeto(targetPools.podcasts, preserved)
         ? "ABSTAIN_UNSAFE_CONTEXT"
-        : podcast08ActiveCandidateVeto(targetPools.podcasts, preserved)
-          ? "ABSTAIN_UNSAFE_CONTEXT"
-          : null
+        : null
       : null;
-    const podcast08Projection = podcast08Policy && !podcast08Veto
+    const podcast08ActivePolicy = podcast08Policy && !podcast08Veto ? podcast08Policy : null;
+    const podcast08Projection = podcast08ActivePolicy && !target.durationBlocks
       ? projectPodcastDurationPlan(
           singleBlockInput,
-          podcast08Policy.bands,
-          podcast08Policy.limits,
+          podcast08ActivePolicy.bands,
+          podcast08ActivePolicy.limits,
         )
       : null;
+    const podcast08SegmentedFallbacks = { count: 0 };
     const result = target.durationBlocks
       ? planSegmentedTarget({
           target,
           pools: targetPools,
           reserved,
           preserved,
+          podcast08: podcast08ActivePolicy
+            ? { policy: podcast08ActivePolicy, fallbacks: podcast08SegmentedFallbacks }
+            : undefined,
         })
       : podcast08Projection
         ? podcast08Projection.result
@@ -274,10 +279,10 @@ export function planRun({
     if (podcast08Policy) {
       onPodcast08ActiveDecision?.({
         targetPlaylistId: target.targetPlaylistId,
-        status: podcast08Projection ? "ACTIVE" : "ABSTAIN_UNSAFE_CONTEXT",
-        fallbackCount: podcast08Projection?.slots.filter(
-          (slot) => slot.fallbackApplied,
-        ).length ?? 0,
+        status: podcast08ActivePolicy ? "ACTIVE" : "ABSTAIN_UNSAFE_CONTEXT",
+        fallbackCount: podcast08Projection
+          ? podcast08Projection.slots.filter((slot) => slot.fallbackApplied).length
+          : podcast08SegmentedFallbacks.count,
       });
     }
     if (!target.durationBlocks) {
@@ -450,6 +455,11 @@ function planSegmentedTarget(input: {
   pools: PlannerPools;
   reserved: ReadonlySet<string>;
   preserved?: Candidate[];
+  /** #365: approved duration-band policy applied inside every block. */
+  podcast08?: {
+    policy: Podcast08ActiveTargetPolicy;
+    fallbacks: { count: number };
+  };
 }): PlanResult {
   const blocks = input.target.durationBlocks ?? [];
   const localReserved = new Set(input.reserved);
@@ -501,7 +511,7 @@ function planSegmentedTarget(input: {
       ? { music: [], podcasts: [] }
       : input.pools;
     const startPosition = selected.length;
-    const result = planPlaylist({
+    const blockInput: PlanPlaylistInput = {
       rules: {
         ...input.target.rules,
         targetDurationMs,
@@ -512,7 +522,21 @@ function planSegmentedTarget(input: {
       constraintSeed: selected,
       strictDurationBoundary: true,
       sequenceStartIndex: selected.length,
-    });
+    };
+    let result: PlanResult;
+    if (input.podcast08) {
+      const projection = projectPodcastDurationPlan(
+        blockInput,
+        input.podcast08.policy.bands,
+        input.podcast08.policy.limits,
+      );
+      input.podcast08.fallbacks.count += projection.slots.filter(
+        (slot) => slot.fallbackApplied,
+      ).length;
+      result = projection.result;
+    } else {
+      result = planPlaylist(blockInput);
+    }
 
     for (const item of result.items) {
       const planned: PlannedItem = {

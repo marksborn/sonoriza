@@ -89,7 +89,8 @@ export function resolvePodcast08ActiveTargetPolicy(input: {
     return inactive("ABSTAIN_REAL_WRITE_NOT_APPROVED");
   }
   if (input.compositionMode !== "SEQUENCE") return inactive("ABSTAIN_NOT_SEQUENCE");
-  if (input.hasDurationBlocks) return inactive("ABSTAIN_NOT_SINGLE_BLOCK");
+  // #365: PER_EVENT targets are supported; the band of each sequence slot is
+  // applied inside every event block. hasDurationBlocks stays for evidence.
 
   const bands = parsePersistedPodcastDurationSlots(
     input.sequencePattern, input.rawBands,

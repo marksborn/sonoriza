@@ -1447,7 +1447,7 @@ export async function generatePlaylists(
     }
     if (podcast08UnhonoredBandTargetIds.length > 0) {
       const error =
-        "PODCAST-08: geração real bloqueada. O destino tem faixas de duração, mas o planner não pôde aplicá-las (calendário por evento, programa com ordem estrita ou limites inválidos); a playlist não foi alterada.";
+        "PODCAST-08: geração real bloqueada. O destino tem faixas de duração, mas o planner não pôde aplicá-las (programa com ordem estrita/sequencial, composição por evento CALENDAR-03/04 ou limites inválidos); a playlist não foi alterada.";
       summary.podcast08PilotPrewriteGuard = {
         gate: "7B",
         status: "BLOCKED_BANDS_NOT_HONORED",

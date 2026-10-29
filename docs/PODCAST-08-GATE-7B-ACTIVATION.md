@@ -9,7 +9,7 @@
 - Com aprovação, uma simulação com faixas vira evidência válida para o CONFIG-04,
   porque o run real usa o mesmo seletor.
 - Fail-closed novo (`BLOCKED_BANDS_NOT_HONORED`): se um destino aprovado tem
-  faixas mas o planner não as aplicou (calendário por evento, programa com ordem
+  faixas mas o planner não as aplicou (composição por evento CALENDAR-03/04 ativa, programa com ordem
   estrita/sequencial, limites inválidos), o run real falha antes da primeira
   escrita e a playlist fica como estava.
 - O editor de faixas abre **somente** nos destinos que cumprem as três chaves e
@@ -17,8 +17,11 @@
   faixa (servidor e UI), para não travar o Carro, a Academia etc.
 
 ## Limites
-- Funciona só em destinos de bloco único (duração fixa ou calendário somado).
-  Destinos por evento do calendário (CALENDAR-03/04) ficam fora.
+- Funciona em bloco único e em calendário `PER_EVENT`: dentro de cada evento, cada
+  slot de podcast respeita a sua faixa, e o índice do slot continua de um evento
+  para o outro, como na sequência normal. Nada atravessa o limite do evento.
+- Não se combina com a composição por evento CALENDAR-03/04 ativa (podcast primeiro /
+  sequência por evento): nesse caso o run real falha com `BLOCKED_BANDS_NOT_HONORED`.
 - Fallback por slot: `SHORT → MEDIUM → ANY`, `MEDIUM → SHORT → LONG → ANY`,
   `LONG → MEDIUM → ANY`. Sem candidato, a sequência termina naquele slot.
 - A divergência 11 → 25 itens vista no SHADOW de 20/10 não foi investigada item

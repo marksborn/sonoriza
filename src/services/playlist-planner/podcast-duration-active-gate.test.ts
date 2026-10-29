@@ -54,11 +54,11 @@ test("#365 Gate 5: invalid slots, legacy ANY and invalid limits abstain", () => 
   }).status,"ABSTAIN_INVALID_LIMITS");
 });
 
-test("#365 Gate 5: only single-block SEQUENCE is eligible for v1", () => {
+test("#365: SEQUENCE is required; PER_EVENT blocks are now eligible", () => {
   assert.equal(resolvePodcast08ActiveTargetPolicy({...base,
     compositionMode:"PROPORTION"}).status,"ABSTAIN_NOT_SEQUENCE");
   assert.equal(resolvePodcast08ActiveTargetPolicy({...base,
-    hasDurationBlocks:true}).status,"ABSTAIN_NOT_SINGLE_BLOCK");
+    hasDurationBlocks:true}).status,"ACTIVE_ALLOWED");
 });
 
 test("#365 Gate 5: eligible allowlisted target retains specific band and limits", () => {
