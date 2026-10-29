@@ -157,3 +157,26 @@ test("#365 Gate 7: saved specific bands block legacy real writes even with ACTIV
     ...params, configuredSpecificBandTargetIds: ["another"],
   }), []);
 });
+
+test("#365 Gate 7B: approval unblocks only allowlisted targets", () => {
+  const params = {
+    simulate: false,
+    activeMode: "ACTIVE",
+    allowlistCsv: "work",
+    runTargetIds: ["work", "car"],
+    configuredSpecificBandTargetIds: ["work", "car"],
+  };
+  assert.deepEqual(podcast08UnapprovedRealPilotTargetIds(params), ["work", "car"]);
+  assert.deepEqual(
+    podcast08UnapprovedRealPilotTargetIds({ ...params, productiveWritesApproved: true }),
+    ["car"],
+  );
+  assert.deepEqual(
+    podcast08UnapprovedRealPilotTargetIds({
+      ...params,
+      activeMode: "SHADOW",
+      productiveWritesApproved: true,
+    }),
+    ["work", "car"],
+  );
+});

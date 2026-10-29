@@ -1131,8 +1131,10 @@ export function TargetPlaylistForm({
               <p className="text-sm font-black text-ink-inverse">Ordem Música / Podcast</p>
               <p className="mt-1 text-xs leading-5 text-muted-inverse/65">
                 O padrão abaixo se repete até atingir a duração desejada. Use os controles para reorganizar.
-                A faixa de cada podcast viaja com ele ao mover ou remover um passo. A seleção por faixa
-                ainda não altera a geração real. O piloto só será ativado depois de validarmos o planner.
+                A faixa de cada podcast viaja com ele ao mover ou remover um passo.
+                {durationBandEditingEnabled
+                  ? " As faixas valem nas gerações reais deste destino. Se faltar episódio na faixa, o Sonoriza tenta a faixa vizinha e depois qualquer duração."
+                  : " A seleção por faixa só vale nos destinos liberados para o piloto."}
               </p>
             </div>
             <span className="text-xs font-bold text-muted-inverse/60">{sequence.length}/20 passos</span>
@@ -1140,8 +1142,8 @@ export function TargetPlaylistForm({
 
           {!durationBandEditingEnabled && (
             <p className="mt-3 rounded-xl border border-line-dark/55 bg-surface-dark px-3 py-2 text-xs leading-5 text-muted-inverse">
-              Faixas específicas em preparação. A edição permanece bloqueada até a ativação controlada;
-              por enquanto, novos podcasts usam Qualquer duração.
+              Faixas específicas ainda não liberadas para este destino. Por enquanto, os podcasts usam
+              Qualquer duração.
             </p>
           )}
           <div className="mt-4 flex min-w-0 flex-wrap gap-2">

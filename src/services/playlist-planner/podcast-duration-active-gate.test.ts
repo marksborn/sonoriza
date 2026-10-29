@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   podcast08ActiveCandidateVeto,
+  podcast08BandEditingAllowedForTarget,
+  podcast08ProductiveWritesApproved,
   resolvePodcast08ActiveTargetPolicy,
 } from "./podcast-duration-active-gate";
 
@@ -77,4 +79,52 @@ test("#365 Gate 5: strict/stateful show ordering always vetoes", () => {
     {...episode,podcastSequenceStateful:true},
   ]),"ABSTAIN_STATEFUL_ORDER");
   assert.equal(podcast08ActiveCandidateVeto([episode],[]),null);
+});
+
+test("Gate 7B: productive approval is a literal third switch", () => {
+  assert.equal(podcast08ProductiveWritesApproved("APPROVED"), true);
+  assert.equal(podcast08ProductiveWritesApproved(" APPROVED "), true);
+  for (const value of [undefined, null, "", "1", "true", "approved", "ACTIVE"]) {
+    assert.equal(podcast08ProductiveWritesApproved(value), false);
+  }
+});
+
+test("Gate 7B: band editor opens only for an approved, allowlisted ACTIVE target", () => {
+  const env = {
+    PODCAST08_DURATION_EDITOR_ENABLED: "1",
+    PODCAST08_ACTIVE_MODE: "ACTIVE",
+    PODCAST08_ACTIVE_TARGET_IDS: "trabalho",
+    PODCAST08_PRODUCTIVE_WRITES: "APPROVED",
+  };
+  assert.equal(podcast08BandEditingAllowedForTarget(env, "trabalho"), true);
+  assert.equal(podcast08BandEditingAllowedForTarget(env, "carro"), false);
+  assert.equal(podcast08BandEditingAllowedForTarget(env, undefined), false);
+  assert.equal(
+    podcast08BandEditingAllowedForTarget({ ...env, PODCAST08_PRODUCTIVE_WRITES: undefined }, "trabalho"),
+    false,
+  );
+  assert.equal(
+    podcast08BandEditingAllowedForTarget({ ...env, PODCAST08_ACTIVE_MODE: "SHADOW" }, "trabalho"),
+    false,
+  );
+  assert.equal(
+    podcast08BandEditingAllowedForTarget({ ...env, PODCAST08_DURATION_EDITOR_ENABLED: "0" }, "trabalho"),
+    false,
+  );
+});
+
+test("Gate 7B: real-run approval reaches the target policy", () => {
+  const decision = resolvePodcast08ActiveTargetPolicy({
+    mode: "ACTIVE",
+    targetAllowlist: "trabalho",
+    productiveWritesApproved: true,
+    simulate: false,
+    targetId: "trabalho",
+    compositionMode: "SEQUENCE",
+    sequencePattern: ["MUSIC", "PODCAST"],
+    rawBands: ["ANY", "SHORT"],
+    limits: { shortMaxMinutes: 30, mediumMaxMinutes: 60 },
+    hasDurationBlocks: false,
+  });
+  assert.equal(decision.status, "ACTIVE_ALLOWED");
 });

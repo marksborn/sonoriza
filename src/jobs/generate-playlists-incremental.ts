@@ -15,7 +15,10 @@ import {
   type PodcastDurationBand,
 } from "@/services/playlist-planner/podcast-duration-bands";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
-import { resolvePodcast08ActiveTargetPolicy } from "@/services/playlist-planner/podcast-duration-active-gate";
+import {
+  podcast08ProductiveWritesApproved,
+  resolvePodcast08ActiveTargetPolicy,
+} from "@/services/playlist-planner/podcast-duration-active-gate";
 import {
   validatePodcast08EphemeralPreviewRequest,
   validatePodcast08EphemeralPreviewTarget,
@@ -607,21 +610,28 @@ export async function generatePlaylists(
     // generation requests ACTIVE or contains any configured non-ANY bands. Gate 5A does not yet
     // have productive approval. Silently falling back to legacy would publish
     // a playlist that contradicts the user's chosen podcast bands.
+    // Gate 7B (#365): PODCAST08_PRODUCTIVE_WRITES=APPROVED lets allowlisted
+    // ACTIVE targets publish band-aware plans. Everything else stays fail-closed.
+    const podcast08WritesApproved = podcast08ProductiveWritesApproved(
+      process.env.PODCAST08_PRODUCTIVE_WRITES,
+    );
+    const podcast08ConfiguredBandTargetIds = targets
+      .filter((target) => target.compositionMode === "SEQUENCE")
+      .filter((target) => {
+        const bands = parsePersistedPodcastDurationSlots(
+          target.sequencePattern,
+          target.podcastDurationSlotBands,
+        );
+        return bands?.some((band) => band !== "ANY") === true;
+      })
+      .map((target) => target.id);
     const unauthorizedPilotTargetIds = podcast08UnapprovedRealPilotTargetIds({
       simulate,
       activeMode: process.env.PODCAST08_ACTIVE_MODE,
       allowlistCsv: process.env.PODCAST08_ACTIVE_TARGET_IDS,
       runTargetIds: targets.map((target) => target.id),
-      configuredSpecificBandTargetIds: targets
-        .filter((target) => target.compositionMode === "SEQUENCE")
-        .filter((target) => {
-          const bands = parsePersistedPodcastDurationSlots(
-            target.sequencePattern,
-            target.podcastDurationSlotBands,
-          );
-          return bands?.some((band) => band !== "ANY") === true;
-        })
-        .map((target) => target.id),
+      configuredSpecificBandTargetIds: podcast08ConfiguredBandTargetIds,
+      productiveWritesApproved: podcast08WritesApproved,
     });
     if (unauthorizedPilotTargetIds.length > 0) {
       const error =
@@ -646,6 +656,7 @@ export async function generatePlaylists(
       mode: process.env.PODCAST08_ACTIVE_MODE,
       targetAllowlist: process.env.PODCAST08_ACTIVE_TARGET_IDS,
       runTargetIds: targets.map((target) => target.id),
+      productiveWritesApproved: podcast08WritesApproved,
     })) {
       const error =
         "PODCAST-08: execução real bloqueada. O piloto por faixas ainda não foi autorizado para gravação no Spotify.";
@@ -1101,9 +1112,7 @@ export async function generatePlaylists(
         const decision = resolvePodcast08ActiveTargetPolicy({
           mode: process.env.PODCAST08_ACTIVE_MODE,
           targetAllowlist: process.env.PODCAST08_ACTIVE_TARGET_IDS,
-          // Gate 5 cannot approve productive Spotify writes. Gate 7 must
-          // explicitly rework this flag with prewrite simulation proof.
-          productiveWritesApproved: false,
+          productiveWritesApproved: podcast08WritesApproved,
           simulate,
           targetId: runTarget.targetPlaylistId,
           compositionMode: runTarget.rules.compositionMode,
@@ -1122,7 +1131,7 @@ export async function generatePlaylists(
         gate: 5,
         mode: "ACTIVE_REQUESTED",
         simulate,
-        spotifyWritesEnabled: false,
+        spotifyWritesEnabled: !simulate && podcast08WritesApproved,
         targets: podcast08ActiveConfig,
       };
     }
@@ -1404,19 +1413,30 @@ export async function generatePlaylists(
     }
 
     let plan = incremental.plan;
-    // A simulation with an active PODCAST-08 selection is an experimental
-    // counterfactual. It MUST NOT grant CONFIG-04 approval for a productive
-    // run that still uses the legacy selector.
+    // Without Gate 7B approval a band-aware simulation is an experimental
+    // counterfactual and MUST NOT grant CONFIG-04 approval. With approval the
+    // real run uses the same selector, so the simulation is valid evidence.
     const podcast08ExperimentalSelectionApplied = simulate &&
+      !podcast08WritesApproved &&
       [...podcast08ActiveDecisions.values()].some(
         (decision) => decision.status === "ACTIVE",
       );
+    // Gate 7B: a real run must never publish a legacy order for a target whose
+    // saved bands were approved but could not be honored (per-event calendar,
+    // strict/stateful show order, invalid limits...).
+    const podcast08UnhonoredBandTargetIds = !simulate && podcast08WritesApproved
+      ? podcast08ConfiguredBandTargetIds.filter(
+          (targetId) =>
+            podcast08ActiveDecisions.get(targetId)?.status !== "ACTIVE" &&
+            runTargets.some((target) => target.targetPlaylistId === targetId),
+        )
+      : [];
     if (podcast08ActiveConfig.length > 0) {
       summary.podcast08ActiveGate = {
         gate: 5,
         mode: "ACTIVE_REQUESTED",
         simulate,
-        spotifyWritesEnabled: false,
+        spotifyWritesEnabled: !simulate && podcast08WritesApproved,
         realRunApprovalEligible: !podcast08ExperimentalSelectionApplied,
         targets: podcast08ActiveConfig.map((entry) => ({
           ...entry,
@@ -1424,6 +1444,19 @@ export async function generatePlaylists(
         })),
       };
       podcast08ActiveDecisions.clear();
+    }
+    if (podcast08UnhonoredBandTargetIds.length > 0) {
+      const error =
+        "PODCAST-08: geração real bloqueada. O destino tem faixas de duração, mas o planner não pôde aplicá-las (calendário por evento, programa com ordem estrita ou limites inválidos); a playlist não foi alterada.";
+      summary.podcast08PilotPrewriteGuard = {
+        gate: "7B",
+        status: "BLOCKED_BANDS_NOT_HONORED",
+        targetIds: podcast08UnhonoredBandTargetIds,
+        spotifyWrites: false,
+      };
+      log({ level: "ERROR", message: error, data: summary.podcast08PilotPrewriteGuard });
+      await finalizeRun(run.id, "FAILED", logs, summary, error);
+      return { runId: run.id, status: "FAILED" };
     }
     // Observe only the final, fully collected canonical planner contexts.
     // This is never invoked for real updates; no extra Spotify calls or writes.

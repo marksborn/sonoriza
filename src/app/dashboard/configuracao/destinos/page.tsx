@@ -42,6 +42,7 @@ import { saveTargetDiscoveryPolicy } from "./discovery-actions";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
 import type { PodcastDurationBand } from "@/services/playlist-planner/podcast-duration-bands";
 import { maySavePodcastDurationBandsWhenEditorDisabled } from "@/services/playlist-planner/podcast-duration-sequence-editor";
+import { podcast08BandEditingAllowedForTarget } from "@/services/playlist-planner/podcast-duration-active-gate";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
 const CREATE_NEW = "__NEW__";
@@ -410,8 +411,9 @@ async function saveTarget(formData: FormData) {
   // Gate 6 preparatory UI remains read-only for specific bands until the
   // product owner explicitly permits a pilot. Do not allow a stale/malicious
   // client to opt in while productive selection still uses the legacy planner.
+  // Gate 7B: bands may change only on a target whose real runs honor them.
   if (
-    process.env.PODCAST08_DURATION_EDITOR_ENABLED !== "1" &&
+    !podcast08BandEditingAllowedForTarget(process.env, existingTarget?.id) &&
     !maySavePodcastDurationBandsWhenEditorDisabled({
       existingSequence: existingTarget?.sequencePattern ?? null,
       existingBands: existingTarget?.podcastDurationSlotBands ?? null,
@@ -1270,7 +1272,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 calendarOptions={calendarOptions}
                 sourceOptions={sourceOptions}
                 globalSharingPolicy={globalSharingPolicy}
-                durationBandEditingEnabled={process.env.PODCAST08_DURATION_EDITOR_ENABLED === "1"}
+                durationBandEditingEnabled={false}
                 initial={{
                   name: "",
                   enabled: true,
@@ -1511,7 +1513,10 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                           calendarOptions={calendarOptions}
                           sourceOptions={sourceOptions}
                           globalSharingPolicy={globalSharingPolicy}
-                          durationBandEditingEnabled={process.env.PODCAST08_DURATION_EDITOR_ENABLED === "1"}
+                          durationBandEditingEnabled={podcast08BandEditingAllowedForTarget(
+                            process.env,
+                            target.id,
+                          )}
                           initial={{
                             id: target.id,
                             name: target.name,

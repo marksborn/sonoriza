@@ -82,7 +82,7 @@ test("#448: band selector stays disabled when the pilot flag is OFF", () => {
   const select = html.match(/<select\b[^>]*aria-label="Duração do podcast no passo 2"[^>]*>/)?.[0];
   assert.ok(select, "expected a labeled podcast band selector");
   assert.match(select, /\sdisabled(?:="")?(?=\s|>)/);
-  assert.match(html, /Faixas específicas em preparação/);
+  assert.match(html, /Faixas específicas ainda não liberadas/);
   assert.match(html, /name="sequencePattern"[^>]*value="\[&quot;MUSIC&quot;/);
   assert.match(html, /name="podcastDurationSlotBands"[^>]*value="\[&quot;ANY&quot;/);
 });
