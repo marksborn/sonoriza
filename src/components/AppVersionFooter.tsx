@@ -8,7 +8,7 @@ export function AppVersionFooter() {
   const commitDate = version.commitDate ? formatDate(version.commitDate) : null;
 
   return (
-    <footer className="px-5 pb-6 pt-2 text-center text-[11px] leading-5 text-muted-inverse/55 sm:px-8">
+    <footer className="bg-canvas-dark px-5 pb-6 pt-2 text-center text-[11px] leading-5 text-muted-inverse/70 sm:px-8">
       <span>Sonoriza {version.version}</span>
       {version.sha && version.shortSha ? (
         <>
