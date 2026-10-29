@@ -42,6 +42,7 @@ import { saveTargetDiscoveryPolicy } from "./discovery-actions";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
 import type { PodcastDurationBand } from "@/services/playlist-planner/podcast-duration-bands";
 import { maySavePodcastDurationBandsWhenEditorDisabled } from "@/services/playlist-planner/podcast-duration-sequence-editor";
+import { destinationCardId } from "@/lib/destination-edit-link";
 import { podcast08BandEditingAllowedForTarget } from "@/services/playlist-planner/podcast-duration-active-gate";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
@@ -763,6 +764,8 @@ type DestinationsPageProps = {
   searchParams: Promise<{
     saved?: string;
     error?: string;
+    /** Target id whose editor opens expanded (shortcut from other screens). */
+    editar?: string;
   }>;
 };
 
@@ -1352,7 +1355,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 return (
                   <article
                     key={target.id}
-                    className={`product-card p-4 sm:p-5 ${
+                    id={destinationCardId(target.id)}
+                    className={`product-card scroll-mt-6 p-4 sm:p-5 ${
                       target.enabled ? "" : "opacity-65"
                     }`}
                   >
@@ -1500,7 +1504,10 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                         ) : null}
                       </div>
                     ) : (
-                    <details className="mt-4 rounded-2xl border border-line-dark/55 bg-surface-dark/60 p-4">
+                    <details
+                      className="mt-4 rounded-2xl border border-line-dark/55 bg-surface-dark/60 p-4"
+                      open={params.editar === target.id}
+                    >
                       <summary className="cursor-pointer text-sm font-black text-ink-inverse">
                         Editar regras e destino
                       </summary>

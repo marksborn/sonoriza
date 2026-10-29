@@ -12,6 +12,7 @@ import {
   runSummaryMentionsTarget,
   summarizeGenerationRunDiagnostic,
 } from "@/services/generation-run-diagnostics";
+import { destinationEditHref } from "@/lib/destination-edit-link";
 
 export default async function GeneratedPlaylistPage({
   params,
@@ -106,6 +107,13 @@ export default async function GeneratedPlaylistPage({
                   variant="secondary"
                 />
                 <TargetRunButton targetId={target.id} targetName={target.name} />
+                <Link
+                  href={destinationEditHref(target.id)}
+                  className="inline-flex w-fit items-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-bold text-ink-inverse backdrop-blur-sm transition hover:bg-white/15"
+                >
+                  <UiIcon name="settings" size={18} />
+                  Editar destino
+                </Link>
               </div>
               {spotifyUrl ? (
                 <a
