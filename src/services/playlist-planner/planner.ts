@@ -35,6 +35,11 @@ export interface PlanPlaylistInput {
   strictDurationBoundary?: boolean;
   /** CALENDAR-02: keep SEQUENCE continuous across concatenated blocks. */
   sequenceStartIndex?: number;
+  /**
+   * CALENDAR-04: stop SEQUENCE after this many fresh slots were filled.
+   * Undefined keeps the canonical "fill until the target" behavior.
+   */
+  maxSequenceSlots?: number;
 }
 
 const MIX_QUALITY_TOLERANCE_POINTS = 10;
@@ -110,6 +115,7 @@ function planPlaylistCore({
   constraintSeed,
   strictDurationBoundary = false,
   sequenceStartIndex = 0,
+  maxSequenceSlots,
 }: PlanPlaylistInput, projection?: PodcastDurationProjection): PlanResult {
   const target = Math.max(0, rules.targetDurationMs);
   const podcastPercent = clamp(rules.podcastPercent, 0, 100);
@@ -243,7 +249,12 @@ function planPlaylistCore({
       completedCycles = Math.floor((sequenceStartIndex + items.length) / pattern.length) -
         Math.floor(sequenceStartIndex / pattern.length);
 
+      let freshSlotsFilled = 0;
       while (totalDuration() < target) {
+        if (maxSequenceSlots !== undefined && freshSlotsFilled >= maxSequenceSlots) {
+          sequenceStopReason = "SLOT_LIMIT_REACHED";
+          break;
+        }
         const remainingMs = target - totalDuration();
         const slotType = pattern[patternIndex]!;
         sequenceSlotsRequested += 1;
@@ -322,6 +333,7 @@ function planPlaylistCore({
 
         place(candidate);
         sequenceSlotsFilled += 1;
+        freshSlotsFilled += 1;
         patternIndex = (patternIndex + 1) % pattern.length;
         if (patternIndex === 0) completedCycles += 1;
       }

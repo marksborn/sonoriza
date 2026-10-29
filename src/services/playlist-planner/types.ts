@@ -12,7 +12,9 @@ export type SequenceStopReason =
   | "TARGET_REACHED"
   | "NO_CANDIDATE_FOR_SLOT"
   | "NO_FITTING_CANDIDATE"
-  | "INVALID_PATTERN";
+  | "INVALID_PATTERN"
+  /** CALENDAR-04: the caller's maxSequenceSlots was reached. */
+  | "SLOT_LIMIT_REACHED";
 
 export interface Candidate {
   uri: string;

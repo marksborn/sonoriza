@@ -3,7 +3,7 @@ import {
   applyPodcast06PlannerRuntimeToCandidates,
 } from "./podcast-cadence-shadow-runtime";
 import {
-  calendar03TargetIsActive,
+  calendarCompositionTargetIsActive,
   currentCalendar03PlannerRuntimeState,
   recordCalendar03RuntimeTargets,
   type Calendar03RuntimeTargetEvidence,
@@ -12,6 +12,10 @@ import {
   projectCalendar03EventComposition,
   type Calendar03EventCompositionShadow,
 } from "./calendar-event-composition-shadow";
+import {
+  projectCalendar04SequencePerEvent,
+  type Calendar04ProjectedBlock,
+} from "./calendar-sequence-per-event";
 import {
   planRun as basePlanRun,
   type PlanRunInput,
@@ -68,13 +72,12 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     input.pools.podcasts,
   );
 
-  const activeCandidates = orderedTargets.filter((target) => {
-    const policy = state.policies.get(target.targetPlaylistId);
-    return Boolean(
-      policy?.eventCompositionPolicy === "PODCAST_THEN_MUSIC" &&
-      calendar03TargetIsActive(state, target.targetPlaylistId),
-    );
-  });
+  const activeCandidates = orderedTargets.filter((target) =>
+    calendarCompositionTargetIsActive(
+      state,
+      state.policies.get(target.targetPlaylistId),
+    ),
+  );
 
   const activeSingleTarget =
     state.effectiveMode === "ACTIVE" &&
@@ -85,6 +88,16 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     const target = orderedTargets[0]!;
     const policy = state.policies.get(target.targetPlaylistId)!;
     const preserved = input.preservedByTargetId?.get(target.targetPlaylistId) ?? [];
+
+    // CALENDAR-04 does not yet reconcile a KEEP_FILLED preserved prefix against
+    // per-event sequence restarts; it abstains to the legacy plan instead.
+    if (policy.eventCompositionPolicy === "SEQUENCE_PER_EVENT" && preserved.length > 0) {
+      const fallback = basePlanRun(input);
+      recordCalendar03RuntimeTargets(state, [
+        abstention(target, policy, "ABSTAIN_PRESERVED_ITEMS"),
+      ]);
+      return fallback;
+    }
 
     if (target.durationBlocks?.length) {
       const targetPools = poolsForTarget(input, target, podcastRuntimePool);
@@ -100,7 +113,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
             reservationsByUri: reservationOwners,
           })
         : null;
-      const projection = projectCalendar03EventComposition({
+      const projection = projectEventComposition({
         policy,
         blocks: target.durationBlocks,
         rules: target.rules,
@@ -205,7 +218,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     } else if (
       state.effectiveMode === "ACTIVE" &&
       allowlisted &&
-      policy.eventCompositionPolicy === "PODCAST_THEN_MUSIC" &&
+      calendarCompositionTargetIsActive(state, policy) &&
       orderedTargets.length !== 1
     ) {
       evidence.push({
@@ -217,7 +230,10 @@ export function planRun(input: PlanRunInput): PlanRunResult {
         selectedPodcastUris: [],
         blockDiagnostics: [],
       });
-    } else if (policy.eventCompositionPolicy === "PODCAST_THEN_MUSIC") {
+    } else if (
+      policy.eventCompositionPolicy === "PODCAST_THEN_MUSIC" ||
+      policy.eventCompositionPolicy === "SEQUENCE_PER_EVENT"
+    ) {
       const preserved = input.preservedByTargetId?.get(target.targetPlaylistId) ?? [];
       const filteredPodcasts = filterPodcastPoolForGlobalCounts({
         candidates: podcastRuntimePool,
@@ -226,7 +242,7 @@ export function planRun(input: PlanRunInput): PlanRunResult {
         target,
       });
       const targetPools = poolsForTarget(input, target, filteredPodcasts);
-      const projection = projectCalendar03EventComposition({
+      const projection = projectEventComposition({
         policy,
         blocks: target.durationBlocks ?? [],
         rules: target.rules,
@@ -253,6 +269,48 @@ export function planRun(input: PlanRunInput): PlanRunResult {
 
   recordCalendar03RuntimeTargets(state, evidence);
   return legacy;
+}
+
+type EventCompositionProjection = Omit<Calendar03EventCompositionShadow, "blocks"> & {
+  blocks: ReadonlyArray<
+    Calendar03EventCompositionShadow["blocks"][number] | Calendar04ProjectedBlock
+  >;
+};
+
+/**
+ * Dispatches the persisted policy to its pure projection. SHADOW evidence for
+ * a SEQUENCE_PER_EVENT target with a preserved prefix still projects from an
+ * empty playlist: it is diagnostic only and never influences the plan.
+ */
+function projectEventComposition(
+  input: Parameters<typeof projectCalendar03EventComposition>[0],
+): EventCompositionProjection {
+  if (input.policy.eventCompositionPolicy === "SEQUENCE_PER_EVENT") {
+    return projectCalendar04SequencePerEvent({
+      policy: input.policy,
+      blocks: input.blocks,
+      rules: input.rules,
+      pools: input.pools,
+      reserved: input.reserved,
+    });
+  }
+  return projectCalendar03EventComposition(input);
+}
+
+function abstention(
+  target: RunTarget,
+  policy: Calendar03RuntimeTargetEvidence["policy"],
+  status: Calendar03RuntimeTargetEvidence["status"],
+): Calendar03RuntimeTargetEvidence {
+  return {
+    targetPlaylistId: target.targetPlaylistId,
+    targetName: target.name,
+    policy,
+    status,
+    plannerInfluence: false,
+    selectedPodcastUris: [],
+    blockDiagnostics: [],
+  };
 }
 
 function poolsForTarget(
@@ -325,7 +383,7 @@ function countPodcasts(items: Candidate[], counts: Map<string, number>) {
 function evidenceFromProjection(
   target: RunTarget,
   policy: Calendar03RuntimeTargetEvidence["policy"],
-  projection: Calendar03EventCompositionShadow,
+  projection: EventCompositionProjection,
   plannerInfluence: boolean,
 ): Calendar03RuntimeTargetEvidence {
   return {
@@ -343,13 +401,22 @@ function evidenceFromProjection(
       targetDurationMs: block.targetDurationMs,
       podcastUsableDurationMs: block.podcastUsableDurationMs,
       diagnosticCodes: [...block.diagnosticCodes],
+      ...("calendar04" in block
+        ? {
+            filledDurationMs: block.filledDurationMs,
+            deficitMs: block.deficitMs,
+            musicDurationMs: block.musicDurationMs,
+            podcastDurationMs: block.podcastDurationMs,
+            calendar04: block.calendar04,
+          }
+        : {}),
     })),
   };
 }
 
 function projectionToPlanResult(
   target: RunTarget,
-  projection: Calendar03EventCompositionShadow,
+  projection: EventCompositionProjection,
 ): PlanResult {
   const items = projection.items.map((item, position) => ({
     ...item,

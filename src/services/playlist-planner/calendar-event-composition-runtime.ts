@@ -5,6 +5,7 @@ import type {
 } from "@/services/calendar-event-composition-policy";
 
 import type { Calendar03EventCompositionShadow } from "./calendar-event-composition-shadow";
+import type { Calendar04BlockEvidence } from "./calendar-sequence-per-event";
 
 export type Calendar03PlannerMode = "OFF" | "SHADOW" | "ACTIVE";
 
@@ -33,6 +34,12 @@ export type Calendar03RuntimeTargetEvidence = Readonly<{
     targetDurationMs: number;
     podcastUsableDurationMs: number;
     diagnosticCodes: string[];
+    /** CALENDAR-04 only: per-event fill evidence for the preview. */
+    filledDurationMs?: number;
+    deficitMs?: number;
+    musicDurationMs?: number;
+    podcastDurationMs?: number;
+    calendar04?: Calendar04BlockEvidence;
   }>;
 }>;
 
@@ -47,6 +54,9 @@ export type Calendar03PlannerRuntimeSummary = Readonly<{
   spotifyWrites: false;
   configuredPolicyCount: number;
   activeTargetAllowlist: string[];
+  /** CALENDAR-04 (#532): own kill switch on top of the CALENDAR-03 gate. */
+  calendar04RequestedMode?: Calendar03PlannerMode;
+  calendar04EffectiveMode?: Calendar03PlannerMode;
   targets: Calendar03RuntimeTargetEvidence[];
 }>;
 
@@ -56,6 +66,11 @@ export type Calendar03PlannerRuntimeState = {
   effectiveMode: Calendar03PlannerMode;
   activationReason: Calendar03PlannerActivationReason;
   activeTargetAllowlist: ReadonlySet<string>;
+  /**
+   * CALENDAR-04 can only be ACTIVE when CALENDAR-03 is ACTIVE for the target
+   * (same email/target allowlists) and CALENDAR_04_PLANNER_MODE=ACTIVE.
+   */
+  calendar04Mode: Calendar03PlannerMode;
   evidence: Calendar03PlannerRuntimeSummary;
 };
 
@@ -134,11 +149,23 @@ export function createCalendar03PlannerRuntimeState(input: {
   userEmail?: string | null;
   activeEmailAllowlist?: string | null;
   activeTargetIds?: string | null;
+  /** Defaults to CALENDAR_04_PLANNER_MODE so every trigger shares one switch. */
+  calendar04RequestedMode?: string | null;
 }): Calendar03PlannerRuntimeState {
   const mode = resolveCalendar03PlannerMode(input);
+  const calendar04 = resolveCalendar04PlannerMode(
+    input.calendar04RequestedMode === undefined
+      ? process.env.CALENDAR_04_PLANNER_MODE
+      : input.calendar04RequestedMode,
+    mode.effectiveMode,
+  );
+  const hasCalendar04Policy = [...input.policies.values()].some(
+    (policy) => policy.eventCompositionPolicy === "SEQUENCE_PER_EVENT",
+  );
   return {
     policies: input.policies,
     ...mode,
+    calendar04Mode: calendar04.effectiveMode,
     evidence: {
       runtimeVersion: "calendar03-gate3-runtime-v1",
       policyVersion: "calendar03-gate2-shadow-v1",
@@ -149,12 +176,55 @@ export function createCalendar03PlannerRuntimeState(input: {
       databaseWrites: false,
       spotifyWrites: false,
       configuredPolicyCount: [...input.policies.values()].filter(
-        (policy) => policy.eventCompositionPolicy === "PODCAST_THEN_MUSIC",
+        (policy) =>
+          policy.eventCompositionPolicy === "PODCAST_THEN_MUSIC" ||
+          policy.eventCompositionPolicy === "SEQUENCE_PER_EVENT",
       ).length,
       activeTargetAllowlist: [...mode.activeTargetAllowlist].sort(),
+      // Only surfaced when a target uses CALENDAR-04, so legacy evidence keeps
+      // its exact shape.
+      ...(hasCalendar04Policy
+        ? {
+            calendar04RequestedMode: calendar04.requestedMode,
+            calendar04EffectiveMode: calendar04.effectiveMode,
+          }
+        : {}),
       targets: [],
     },
   };
+}
+
+export function resolveCalendar04PlannerMode(
+  rawRequestedMode: string | null | undefined,
+  calendar03EffectiveMode: Calendar03PlannerMode,
+): { requestedMode: Calendar03PlannerMode; effectiveMode: Calendar03PlannerMode } {
+  const raw = normalizedOptionalText(rawRequestedMode)?.toUpperCase() ?? "SHADOW";
+  const requestedMode: Calendar03PlannerMode =
+    raw === "OFF" || raw === "ACTIVE" ? raw : "SHADOW";
+  if (requestedMode === "OFF" || calendar03EffectiveMode === "OFF") {
+    return { requestedMode, effectiveMode: "OFF" };
+  }
+  return {
+    requestedMode,
+    effectiveMode:
+      requestedMode === "ACTIVE" && calendar03EffectiveMode === "ACTIVE"
+        ? "ACTIVE"
+        : "SHADOW",
+  };
+}
+
+/** True when this target's persisted policy may replace the legacy plan. */
+export function calendarCompositionTargetIsActive(
+  state: Calendar03PlannerRuntimeState,
+  policy: CalendarEventCompositionPolicySnapshot | undefined,
+): boolean {
+  if (!policy) return false;
+  if (!calendar03TargetIsActive(state, policy.targetPlaylistId)) return false;
+  if (policy.eventCompositionPolicy === "PODCAST_THEN_MUSIC") return true;
+  return (
+    policy.eventCompositionPolicy === "SEQUENCE_PER_EVENT" &&
+    state.calendar04Mode === "ACTIVE"
+  );
 }
 
 export function runWithCalendar03PlannerRuntimeState<T>(

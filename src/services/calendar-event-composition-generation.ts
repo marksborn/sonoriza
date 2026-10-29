@@ -73,9 +73,33 @@ export async function assessCalendar03GenerationConfiguration(
           podcastEventDistribution: row.podcastEventDistribution,
           podcastEveryNEvents: row.podcastEveryNEvents,
           podcastEventOffset: row.podcastEventOffset,
+          remainderFillStrategy: row.remainderFillStrategy,
+          remainderPodcastPercent: row.remainderPodcastPercent,
+          remainderFallback: row.remainderFallback,
         })
       : defaultCalendarEventCompositionPolicy(target.id);
     policies.set(target.id, policy);
+
+    if (policy.eventCompositionPolicy === "SEQUENCE_PER_EVENT") {
+      if (
+        target.durationMode !== "CALENDAR" ||
+        target.calendarDurationStrategy !== "PER_EVENT"
+      ) {
+        pushUniqueIssue(issues, {
+          code: `CALENDAR04_PER_EVENT_REQUIRED:${target.id}`,
+          message: `Destino "${target.name}": a sequência por evento exige duração por calendário com estratégia Por evento.`,
+          href: "/dashboard/configuracao/destinos",
+        });
+      }
+      if (target.compositionMode !== "SEQUENCE" || target.sequence.length === 0) {
+        pushUniqueIssue(issues, {
+          code: `CALENDAR04_SEQUENCE_REQUIRED:${target.id}`,
+          message: `Destino "${target.name}": defina uma sequência de Música/Podcast no destino para usar a sequência por evento.`,
+          href: "/dashboard/configuracao/destinos",
+        });
+      }
+      continue;
+    }
 
     if (policy.eventCompositionPolicy !== "PODCAST_THEN_MUSIC") continue;
 

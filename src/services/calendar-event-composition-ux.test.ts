@@ -114,3 +114,62 @@ test("does not reuse evidence from another target", () => {
     null,
   );
 });
+
+test("CALENDAR-04 block evidence is parsed only when complete", () => {
+  const summary = {
+    calendar03PlannerRuntime: {
+      runtimeVersion: "calendar03-gate3-runtime-v1",
+      requestedMode: "ACTIVE",
+      effectiveMode: "ACTIVE",
+      activationReason: "ACTIVE_ALLOWED",
+      targets: [
+        {
+          targetPlaylistId: "carro",
+          targetName: "Carro",
+          status: "READY_SHADOW",
+          plannerInfluence: false,
+          selectedPodcastUris: [],
+          blockDiagnostics: [
+            {
+              index: 0,
+              key: "E1",
+              targetDurationMs: 4_800_000,
+              podcastUsableDurationMs: 4_800_000,
+              diagnosticCodes: ["EVENT_SEQUENCE_COMPLETED"],
+              filledDurationMs: 4_680_000,
+              deficitMs: 120_000,
+              musicDurationMs: 3_360_000,
+              podcastDurationMs: 1_320_000,
+              calendar04: {
+                initialSequenceSlots: 2,
+                initialSequenceFilledSlots: 2,
+                initialMusicDurationMs: 240_000,
+                initialPodcastDurationMs: 1_320_000,
+                remainderAfterSequenceMs: 3_240_000,
+                remainderFillStrategy: "MIX_RATIO",
+                requestedRemainderPodcastPercent: 30,
+                remainderMusicDurationMs: 3_120_000,
+                remainderPodcastDurationMs: 0,
+                fallbackMusicDurationMs: 0,
+              },
+            },
+            {
+              index: 1,
+              key: "E2",
+              targetDurationMs: 1_500_000,
+              podcastUsableDurationMs: 1_500_000,
+              diagnosticCodes: [],
+              calendar04: { remainderFillStrategy: "MUSIC_ONLY" },
+            },
+          ],
+        },
+      ],
+    },
+  };
+
+  const preview = calendar03TargetPreviewFromSummary(summary, "carro");
+  assert.equal(preview?.blocks[0]?.calendar04?.remainderFillStrategy, "MIX_RATIO");
+  assert.equal(preview?.blocks[0]?.calendar04?.requestedRemainderPodcastPercent, 30);
+  assert.equal(preview?.blocks[0]?.calendar04?.deficitMs, 120_000);
+  assert.equal(preview?.blocks[1]?.calendar04, undefined);
+});
