@@ -27,6 +27,40 @@ export type Podcast08GateResolution = Readonly<{
 }>;
 
 /**
+ * Gate 7B (#365): third, independent switch for productive Spotify writes.
+ * Only the literal value APPROVED counts; anything else keeps real runs on
+ * the fail-closed Gate 7 path.
+ */
+export function podcast08ProductiveWritesApproved(value: string | null | undefined): boolean {
+  return value?.trim() === "APPROVED";
+}
+
+export function podcast08AllowlistedTargetIds(
+  mode: string | null | undefined,
+  allowlistCsv: string | null | undefined,
+): ReadonlySet<string> {
+  if (mode !== "ACTIVE") return new Set();
+  return new Set((allowlistCsv ?? "").split(",").map((id) => id.trim()).filter(Boolean));
+}
+
+/**
+ * Gate 7B: the band editor opens only for a target whose bands would actually
+ * be honored by real runs. Saving non-ANY bands anywhere else would make
+ * Gate 7 fail that target's real generation.
+ */
+export function podcast08BandEditingAllowedForTarget(
+  env: Readonly<Record<string, string | undefined>>,
+  targetId: string | null | undefined,
+): boolean {
+  if (!targetId || env.PODCAST08_DURATION_EDITOR_ENABLED !== "1") return false;
+  if (!podcast08ProductiveWritesApproved(env.PODCAST08_PRODUCTIVE_WRITES)) return false;
+  return podcast08AllowlistedTargetIds(
+    env.PODCAST08_ACTIVE_MODE,
+    env.PODCAST08_ACTIVE_TARGET_IDS,
+  ).has(targetId);
+}
+
+/**
  * Gate 5: no implicit activation. The feature cannot affect a run unless
  * BOTH a deliberate mode and a per-target allowlist were supplied.
  *
@@ -48,9 +82,7 @@ export function resolvePodcast08ActiveTargetPolicy(input: {
   const inactive = (status: Podcast08GateResolution["status"]): Podcast08GateResolution =>
     { return { status, policy: null }; };
   if (input.mode !== "ACTIVE") return inactive("OFF");
-  const allowlist = new Set(
-    (input.targetAllowlist ?? "").split(",").map((id) => id.trim()).filter(Boolean),
-  );
+  const allowlist = podcast08AllowlistedTargetIds(input.mode, input.targetAllowlist);
   if (allowlist.size === 0) return inactive("ABSTAIN_NO_EXPLICIT_ALLOWLIST");
   if (!allowlist.has(input.targetId)) return inactive("ABSTAIN_TARGET_NOT_ALLOWLISTED");
   if (!input.simulate && !input.productiveWritesApproved) {

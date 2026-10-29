@@ -172,6 +172,8 @@ export function podcast08UnapprovedRealPilotTargetIds(input: {
   runTargetIds: readonly string[];
   /** Any persisted non-ANY SEQUENCE destination may not silently use legacy writes. */
   configuredSpecificBandTargetIds?: readonly string[];
+  /** Gate 7B: PODCAST08_PRODUCTIVE_WRITES=APPROVED authorizes allowlisted targets. */
+  productiveWritesApproved?: boolean;
 }): string[] {
   if (input.simulate) return [];
   const allowlist = input.activeMode === "ACTIVE"
@@ -180,5 +182,8 @@ export function podcast08UnapprovedRealPilotTargetIds(input: {
       )
     : new Set<string>();
   const configuredBands = new Set(input.configuredSpecificBandTargetIds ?? []);
-  return input.runTargetIds.filter(id => allowlist.has(id) || configuredBands.has(id));
+  return input.runTargetIds.filter((id) => {
+    if (input.productiveWritesApproved && allowlist.has(id)) return false;
+    return allowlist.has(id) || configuredBands.has(id);
+  });
 }

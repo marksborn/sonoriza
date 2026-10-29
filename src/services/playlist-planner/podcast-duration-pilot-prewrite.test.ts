@@ -167,5 +167,30 @@ test("#365 Gate 7: a requested ACTIVE real run is rejected before any provider r
   assert.ok(guard >= 0, "must include server-side real-write veto");
   assert.ok(sourceRead > guard, "veto must be before Spotify source collection");
   assert.ok(writer > guard, "veto must be before obtaining Spotify writer");
-  assert.match(source, /productiveWritesApproved: false/);
+  // Gate 7B: approval only comes from the literal PODCAST08_PRODUCTIVE_WRITES switch.
+  assert.match(source, /podcast08ProductiveWritesApproved\(\s*process\.env\.PODCAST08_PRODUCTIVE_WRITES,?\s*\)/);
+  assert.match(source, /productiveWritesApproved: podcast08WritesApproved/);
+  assert.doesNotMatch(source, /productiveWritesApproved: true/);
+});
+
+test("#365 Gate 7B: unhonored approved bands fail the run before any Spotify write", () => {
+  const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const guard = source.indexOf('status: "BLOCKED_BANDS_NOT_HONORED"');
+  const firstWrite = source.search(/await writer!?\./);
+  assert.ok(guard >= 0, "must fail closed when approved bands cannot be applied");
+  assert.ok(firstWrite > guard, "guard must run before the first playlist write");
+});
+
+test("#365 Gate 7B: approved productive writes no longer block allowlisted runs", () => {
+  const guard = {
+    simulate: false,
+    mode: "ACTIVE",
+    targetAllowlist: "work",
+    runTargetIds: ["work"],
+  };
+  assert.equal(mustBlockPodcast08RequestedRealWrite(guard), true);
+  assert.equal(
+    mustBlockPodcast08RequestedRealWrite({ ...guard, productiveWritesApproved: true }),
+    false,
+  );
 });

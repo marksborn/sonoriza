@@ -172,8 +172,11 @@ export function mustBlockPodcast08RequestedRealWrite(input: {
   mode: string | null | undefined;
   targetAllowlist: string | null | undefined;
   runTargetIds: readonly string[];
+  /** Gate 7B: approved productive writes no longer block allowlisted targets. */
+  productiveWritesApproved?: boolean;
 }): boolean {
   if (input.simulate || input.mode !== "ACTIVE") return false;
+  if (input.productiveWritesApproved) return false;
   const requestedIds = new Set(
     (input.targetAllowlist ?? "")
       .split(",")
