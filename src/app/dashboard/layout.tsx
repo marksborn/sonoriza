@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { AppVersionFooter } from "@/components/AppVersionFooter";
 import { DashboardNav } from "@/components/DashboardNav";
 import { auth } from "@/lib/auth";
 import {
@@ -43,6 +44,7 @@ export default async function DashboardLayout({
           />
         ) : null}
         {children}
+        <AppVersionFooter />
       </div>
       <DashboardNav />
     </div>
