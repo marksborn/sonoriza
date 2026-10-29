@@ -223,6 +223,20 @@ test("CONFIG-04 green CTA is derived from the same realRunAllowed authority", ()
 });
 
 
+test("CONFIG-04 review gate uses the same decorated fingerprint as generation", () => {
+  for (const file of [
+    "src/app/dashboard/configuracao/revisao/page.tsx",
+    "src/app/api/generate/route.ts",
+    "src/jobs/scheduled-generation.ts",
+  ]) {
+    const source = readFileSync(file, "utf8");
+    const decorated = source.indexOf("assessCalendar03GenerationConfiguration(");
+    const gate = source.indexOf("getFirstRunGate(");
+    assert.ok(decorated >= 0, `${file} must decorate the assessment`);
+    assert.ok(gate > decorated, `${file} must evaluate the gate on the decorated assessment`);
+  }
+});
+
 test("ORDER-01 music ordering policy participates in configuration fingerprint", () => {
   const source = readFileSync("src/services/configuration-readiness.ts", "utf8");
   const fingerprintStart = source.indexOf("const fingerprintPayload");

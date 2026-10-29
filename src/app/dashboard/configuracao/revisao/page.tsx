@@ -13,6 +13,8 @@ import { readPlaybackReserveSimulationView } from "@/services/playback-reserve-u
 import { readManualKeepFilledNoop } from "@/services/manual-keep-filled-calendar-scope";
 import { readInconclusiveSimulation } from "@/services/simulation-presentation";
 import { destinationEditHref } from "@/lib/destination-edit-link";
+import { assessCalendar03GenerationConfiguration } from "@/services/calendar-event-composition-generation";
+import { readPodcast08TargetReviews } from "@/services/playlist-planner/podcast-duration-review";
 
 type PageProps = {
   searchParams: Promise<{ run?: string }>;
@@ -424,7 +426,13 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
   if (!session?.user?.id) redirect("/");
 
   const params = await searchParams;
-  const assessment = await assessConfiguration(session.user.id);
+  // Same decorated assessment as /api/generate and the scheduler, so the
+  // fingerprint matches the one persisted by simulations (CALENDAR-03 and
+  // PODCAST-07 policies included) and the gate shown here is the real one.
+  const { assessment } = await assessCalendar03GenerationConfiguration(
+    session.user.id,
+    await assessConfiguration(session.user.id),
+  );
   const gate = await getFirstRunGate(session.user.id, assessment);
 
   const simulation = params.run
@@ -459,6 +467,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
     : null;
 
   const simulatedTargets = readSimulationTargets(simulation?.summary);
+  const podcast08Reviews = readPodcast08TargetReviews(simulation?.summary);
   const simulatedOrderByTargetId = new Map<
     string,
     Array<{ position: number; type: "MUSIC" | "PODCAST"; title: string }>
@@ -1262,10 +1271,23 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                                   ? ` · ${target.sequenceUnfilledSlots} slot não preenchido`
                                   : ""}
                               </p>
+                              {target.targetPlaylistId &&
+                                podcast08Reviews.get(target.targetPlaylistId) && (
+                                  <p
+                                    className={`mt-1 text-xs font-semibold ${
+                                      podcast08Reviews.get(target.targetPlaylistId)!.applied
+                                        ? "text-success"
+                                        : "text-warning"
+                                    }`}
+                                  >
+                                    Faixas de duração:{" "}
+                                    {podcast08Reviews.get(target.targetPlaylistId)!.label}
+                                  </p>
+                                )}
                               {target.actualPodcastPercent !== null && (
                                 <p className="mt-1 text-xs opacity-70">
                                   Resultado por duração: {target.actualPodcastPercent}% podcast /{" "}
-                                  {100 - target.actualPodcastPercent}% música. Esse percentual é apenas informativo.
+                                  {Math.round((100 - target.actualPodcastPercent) * 10) / 10}% música. Esse percentual é apenas informativo.
                                 </p>
                               )}
                               {target.sequenceStopReason &&
