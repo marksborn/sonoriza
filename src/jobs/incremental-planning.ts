@@ -110,12 +110,21 @@ type CollectIncrementallyOptions<TSource extends IncrementalCandidateSource> = {
   onRound?: (round: IncrementalPlanningRound) => void;
   /** Test seam and bounded pre-write repair hook; production uses MUSIC-01 revalidation. */
   revalidateBeforeWrite?: (plan: PlanRunResult) => Promise<void>;
+  /**
+   * Re-reads the authoritative playback state of the planned podcasts and
+   * returns the URIs found COMPLETED (persisted as sticky canonical state by
+   * the callee). Those episodes are dropped from the pool and the plan is
+   * rebuilt, so a stale listing resume_point no longer fails the whole run.
+   */
+  findCompletedPlannedPodcasts?: (plan: PlanRunResult) => Promise<ReadonlySet<string>>;
   replanAfterEachSourceRead?: boolean;
   sequenceTerminalUnderfillToleranceMs?: number;
   recoverSourceFailure?: (source: TSource, error: unknown) => boolean;
 };
 
 const MAX_MUSIC_REPEAT_PREWRITE_REPLANS = 2;
+/** Each pass re-reads only the planned episodes, so the bound caps Spotify GETs. */
+const MAX_PODCAST_COMPLETION_REPLANS = 6;
 
 /**
  * Pre-write vetoes that the bounded repair can resolve locally: the refreshed
@@ -167,6 +176,7 @@ export async function collectIncrementally<
   onBatch,
   onRound,
   revalidateBeforeWrite = revalidateMusicRepeatBeforeRealWrite,
+  findCompletedPlannedPodcasts,
   replanAfterEachSourceRead = false,
   sequenceTerminalUnderfillToleranceMs = 0,
   recoverSourceFailure = () => false,
@@ -374,6 +384,8 @@ export async function collectIncrementally<
   let requestedKinds = new Set<IncrementalSourceKind>(relevantKinds);
   let rounds = 0;
   let preWriteReplans = 0;
+  let podcastCompletionReplans = 0;
+  const completedPlannedPodcastUris = new Set<string>();
   let plan = planRun({
     pools,
     targets,
@@ -455,7 +467,6 @@ export async function collectIncrementally<
   const revalidateOrRepair = async (): Promise<boolean> => {
     try {
       await revalidateBeforeWrite(plan);
-      return true;
     } catch (error) {
       if (
         !isRepairablePreWriteBlock(error) ||
@@ -467,6 +478,25 @@ export async function collectIncrementally<
       repairAgainstLatestHistory();
       return false;
     }
+
+    // Once the bound is reached the plan is returned as is; the caller's final
+    // podcast pre-write gate still blocks any remaining completed episode.
+    if (
+      findCompletedPlannedPodcasts &&
+      podcastCompletionReplans < MAX_PODCAST_COMPLETION_REPLANS
+    ) {
+      const completed = await findCompletedPlannedPodcasts(plan);
+      if (completed.size > 0) {
+        podcastCompletionReplans += 1;
+        for (const uri of completed) completedPlannedPodcastUris.add(uri);
+        pools.podcasts = pools.podcasts.filter(
+          (candidate) => !completedPlannedPodcastUris.has(candidate.uri),
+        );
+        rebuildPlan();
+        return false;
+      }
+    }
+    return true;
   };
 
   const settleReadyPlan = async (): Promise<boolean> => {
@@ -587,7 +617,11 @@ export async function collectIncrementally<
       if (source.kind === "MUSIC") {
         pools.music = dedupeByUri([...pools.music, ...batch.candidates]);
       } else {
-        pools.podcasts.push(...batch.candidates);
+        pools.podcasts.push(
+          ...batch.candidates.filter(
+            (candidate) => !completedPlannedPodcastUris.has(candidate.uri),
+          ),
+        );
       }
       onBatch?.(source, batch);
 
@@ -641,7 +675,8 @@ export async function collectIncrementally<
   }
 
   while (!(await revalidateOrRepair())) {
-    // Re-run only the local planner against the refreshed MUSIC-01 context.
+    // Re-run only the local planner against the refreshed MUSIC-01 context
+    // or without the podcasts just confirmed COMPLETED.
   }
 
   captureLikedTrackSourceShadow();

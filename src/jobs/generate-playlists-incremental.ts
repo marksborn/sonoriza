@@ -43,6 +43,7 @@ import {
   parseSequencePattern,
   type Candidate,
   type DurationPlanningBlock,
+  type PlanRunResult,
   type RunTarget,
 } from "@/services/playlist-planner";
 import type { KeepFilledTargetPatch } from "@/services/keep-filled-maintenance";
@@ -1163,7 +1164,55 @@ export async function generatePlaylists(
 
     let musicUnavailableSkippedCount = 0;
     let genericPodcastSuppressedCount = 0;
+    // #365/#530: listing resume_point is often missing, so a planned episode
+    // may already be COMPLETED. Re-read the planned episodes, persist the
+    // canonical state and replan without them. Runs in simulations too, so the
+    // approved simulation and the real run converge on the same plan.
+    const podcastCompletionReplan = {
+      checks: 0,
+      replans: 0,
+      completedEpisodeUris: [] as string[],
+      readFailures: 0,
+    };
+    // Instrumented client so these reads show up in their own run metrics.
+    let podcastStateClient: SpotifyClient | null = null;
+    const findCompletedPlannedPodcasts = async (
+      candidatePlan: PlanRunResult,
+    ): Promise<ReadonlySet<string>> => {
+      try {
+        podcastCompletionReplan.checks += 1;
+        podcastStateClient ??= await SpotifyClient.forUser(userId);
+        const client = podcastStateClient;
+        const check = await checkPodcastCompletionBeforeWrite(
+          userId,
+          candidatePlan.targets.map((planned) => ({
+            targetPlaylistId: planned.targetPlaylistId,
+            targetName: planned.name,
+            items: planned.result.items,
+          })),
+          new Date(),
+          { episodeReader: (episodeId) => client.getEpisodePlaybackState(episodeId) },
+        );
+        const completed = new Set(
+          check.violations
+            .filter((violation) => violation.reason === "COMPLETED_NO_REPLAY")
+            .map((violation) => violation.uri),
+        );
+        if (completed.size > 0) {
+          podcastCompletionReplan.replans += 1;
+          podcastCompletionReplan.completedEpisodeUris.push(...completed);
+        }
+        return completed;
+      } catch {
+        // Unavailable provider: keep the plan; the final pre-write gate of a
+        // real run still fails closed on any unverified episode.
+        podcastCompletionReplan.readFailures += 1;
+        return new Set();
+      }
+    };
+
     const incremental = await collectIncrementally({
+      findCompletedPlannedPodcasts,
       sources: sourceCursors,
       targets: runTargets,
       sourceIdsByTargetId,
@@ -1413,6 +1462,18 @@ export async function generatePlaylists(
     }
 
     let plan = incremental.plan;
+    if (podcastStateClient) {
+      summary.podcastCompletionReplan = {
+        ...podcastCompletionReplan,
+        spotifyApi: (podcastStateClient as SpotifyClient).getRequestMetrics(),
+      };
+    }
+    if (podcastCompletionReplan.replans > 0) {
+      log({
+        level: "INFO",
+        message: `Podcasts já concluídos removidos do plano antes da escrita: ${podcastCompletionReplan.completedEpisodeUris.length} (replanejamentos: ${podcastCompletionReplan.replans}).`,
+      });
+    }
     // Without Gate 7B approval a band-aware simulation is an experimental
     // counterfactual and MUST NOT grant CONFIG-04 approval. With approval the
     // real run uses the same selector, so the simulation is valid evidence.
