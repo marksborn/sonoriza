@@ -310,3 +310,11 @@ test("#435 Gate 3H admitted transport write timeout is ambiguous and not retried
     else process.env.SPOTIFY_WRITE_TIMEOUT_MS = originalTimeout;
   }
 });
+
+test("radar and audiobook reads have their own operation names", async () => {
+  const { inferSpotifyOperation } = await import("./errors");
+  assert.equal(inferSpotifyOperation("/artists/abc/albums?limit=10", "GET"), "artist-albums");
+  assert.equal(inferSpotifyOperation("/albums/abc/tracks?limit=50", "GET"), "album-tracks");
+  assert.equal(inferSpotifyOperation("/audiobooks/abc/chapters?limit=50", "GET"), "audiobook-chapters");
+  assert.equal(inferSpotifyOperation("/browse/categories", "GET"), "spotify-api");
+});

@@ -26,7 +26,12 @@ export const RELEASE_RADAR_DEFAULTS = Object.freeze({
   windowDays: 30,
   maxSeeds: 50,
   maxReleases: 40,
-  minRefreshIntervalMs: 10 * 60_000,
+  /** Quota budget (30/10/2026 block): artists checked per refresh, in rotation. */
+  artistsPerRefresh: 20,
+  /** Each artist is re-checked at most once in this period. */
+  artistRecheckMs: 7 * 86_400_000,
+  /** At most one refresh per day. */
+  minRefreshIntervalMs: 20 * 60 * 60_000,
 });
 
 export type ReleaseRadarSeed = Readonly<{
@@ -63,6 +68,8 @@ export type ReleaseRadarEvidence = Readonly<{
   firstFailure: string | null;
   /** Quota/rate limit/backoff hit: reading stopped at the first such error. */
   providerBlocked: boolean;
+  /** Seeds whose release list was read successfully in this refresh. */
+  checkedArtistIds?: string[];
 }>;
 
 /** Errors after which every further Spotify read would only fail too. */
@@ -159,6 +166,7 @@ export async function collectRecentReleases(input: {
     if (isSpotifyProviderBlock(error)) providerBlocked = true;
   };
 
+  const checkedArtistIds: string[] = [];
   for (const seed of input.seeds) {
     if (providerBlocked) break;
     try {
@@ -170,6 +178,7 @@ export async function collectRecentReleases(input: {
         }
         found.set(release.id, { release, seedArtistId: seed.spotifyArtistId });
       }
+      checkedArtistIds.push(seed.spotifyArtistId);
     } catch (error) {
       fail(error);
     }
@@ -223,6 +232,7 @@ export async function collectRecentReleases(input: {
       failures,
       firstFailure,
       providerBlocked,
+      checkedArtistIds,
     },
   };
 }
@@ -275,21 +285,30 @@ export async function refreshReleaseRadar(input: {
   now?: Date;
 }) {
   const now = input.now ?? new Date();
-  const seeds = await loadReleaseRadarSeeds(input.userId, now);
-  const heard = await prisma.trackListeningState.findMany({
-    where: { userId: input.userId },
-    select: { spotifyTrackId: true },
-  });
-  const { releases, evidence } = await collectRecentReleases({
+  const [seeds, previous, heard] = await Promise.all([
+    loadReleaseRadarSeeds(input.userId, now),
+    readReleaseRadar(input.userId),
+    prisma.trackListeningState.findMany({
+      where: { userId: input.userId },
+      select: { spotifyTrackId: true },
+    }),
+  ]);
+  const heardTrackIds = new Set(heard.map((row) => row.spotifyTrackId));
+  const lastCheckedAt = previous?.artistChecks ?? {};
+  const due = selectSeedsToCheck(seeds, lastCheckedAt, now);
+  const { releases: fresh, evidence } = await collectRecentReleases({
     reader: input.reader,
-    seeds,
-    heardTrackIds: new Set(heard.map((row) => row.spotifyTrackId)),
+    seeds: due,
+    heardTrackIds,
     now,
   });
   // An incomplete read must never replace a good radar with an empty one.
   if (!shouldPersistReleaseRadar(evidence)) {
-    return { releases, evidence, persisted: false as const };
+    return { releases: fresh, evidence, persisted: false as const };
   }
+  const releases = mergeRadarReleases(previous?.releases ?? [], fresh, heardTrackIds, now);
+  const artistChecks = { ...lastCheckedAt };
+  for (const id of evidence.checkedArtistIds ?? []) artistChecks[id] = now.toISOString();
   const data = {
     fetchedAt: now,
     windowDays: RELEASE_RADAR_DEFAULTS.windowDays,
@@ -298,6 +317,8 @@ export async function refreshReleaseRadar(input: {
     releases: releases as unknown as Prisma.InputJsonValue,
     evidence: {
       ...evidence,
+      checkedThisRefresh: due.length,
+      artistChecks,
       seeds: seeds.map((seed) => ({ id: seed.spotifyArtistId, reasons: seed.reasons })),
     } as unknown as Prisma.InputJsonValue,
   };
@@ -307,6 +328,64 @@ export async function refreshReleaseRadar(input: {
     update: data,
   });
   return { releases, evidence, persisted: true as const };
+}
+
+/**
+ * Rotation within the quota budget: never-checked artists first (in seed
+ * priority order), then the ones checked longest ago; artists checked within
+ * the recheck period are skipped.
+ */
+export function selectSeedsToCheck(
+  seeds: readonly ReleaseRadarSeed[],
+  lastCheckedAt: Readonly<Record<string, string>>,
+  now: Date,
+  limit: number = RELEASE_RADAR_DEFAULTS.artistsPerRefresh,
+  recheckMs: number = RELEASE_RADAR_DEFAULTS.artistRecheckMs,
+): ReleaseRadarSeed[] {
+  const checkedAt = (seed: ReleaseRadarSeed) => {
+    const value = Date.parse(lastCheckedAt[seed.spotifyArtistId] ?? "");
+    return Number.isFinite(value) ? value : null;
+  };
+  return seeds
+    .map((seed, rank) => ({ seed, rank, at: checkedAt(seed) }))
+    .filter((entry) => entry.at === null || now.getTime() - entry.at >= recheckMs)
+    .sort((a, b) =>
+      a.at === null && b.at === null
+        ? a.rank - b.rank
+        : a.at === null
+          ? -1
+          : b.at === null
+            ? 1
+            : a.at - b.at || a.rank - b.rank,
+    )
+    .slice(0, Math.max(0, limit))
+    .map((entry) => entry.seed);
+}
+
+/** Previous releases still inside the window + fresh ones (fresh wins); heard flags refreshed. */
+export function mergeRadarReleases(
+  previous: readonly ReleaseRadarRelease[],
+  fresh: readonly ReleaseRadarRelease[],
+  heardTrackIds: ReadonlySet<string>,
+  now: Date,
+  windowDays: number = RELEASE_RADAR_DEFAULTS.windowDays,
+  maxReleases: number = RELEASE_RADAR_DEFAULTS.maxReleases,
+): ReleaseRadarRelease[] {
+  const byId = new Map<string, ReleaseRadarRelease>();
+  for (const release of [...previous, ...fresh]) {
+    if (!isRecentRelease(release.releaseDate, undefined, now, windowDays)) continue;
+    byId.set(release.albumId, release);
+  }
+  return [...byId.values()]
+    .map((release) => ({
+      ...release,
+      tracks: release.tracks.map((track) => ({
+        ...track,
+        alreadyHeard: track.alreadyHeard || heardTrackIds.has(track.spotifyTrackId),
+      })),
+    }))
+    .sort((a, b) => b.releaseDate.localeCompare(a.releaseDate))
+    .slice(0, maxReleases);
 }
 
 /** Keep the previous radar when the provider blocked us or most reads failed. */
@@ -325,5 +404,19 @@ export async function readReleaseRadar(userId: string) {
     seedCount: row.seedCount,
     releases: Array.isArray(row.releases) ? (row.releases as unknown as ReleaseRadarRelease[]) : [],
     evidence: row.evidence as unknown as ReleaseRadarEvidence,
+    artistChecks: artistChecksFrom(row.evidence),
   };
+}
+
+function artistChecksFrom(evidence: unknown): Record<string, string> {
+  const checks =
+    evidence && typeof evidence === "object" && !Array.isArray(evidence)
+      ? (evidence as Record<string, unknown>).artistChecks
+      : null;
+  if (!checks || typeof checks !== "object" || Array.isArray(checks)) return {};
+  return Object.fromEntries(
+    Object.entries(checks as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
