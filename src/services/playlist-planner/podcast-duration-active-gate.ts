@@ -104,11 +104,9 @@ export function resolvePodcast08ActiveTargetPolicy(input: {
 }
 
 /**
- * Stateful / strict show order is an absolute veto in the v1 pilot.
- * The earlier canonical episode may not be skipped simply to fit a band.
- *
- * This is checked again at the last filtered candidate boundary, after all
- * Spotify sources and podcast cadence policies have been resolved.
+ * Stateful / strict show order veto. planRun applies it only to a preserved
+ * KEEP_FILLED prefix: fresh candidates are protected per show by the planner's
+ * head-of-line rule (an earlier pending episode is never skipped to fit a band).
  */
 export function podcast08ActiveCandidateVeto(
   candidates: readonly Candidate[],

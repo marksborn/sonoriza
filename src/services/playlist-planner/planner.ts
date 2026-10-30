@@ -534,15 +534,17 @@ function pickCandidate(
     if (candidate.durationMs <= 0 || candidate.durationMs > maxDurationMs) continue;
 
     if (candidate.type === "PODCAST") {
-      // #451: simulation-only strict head-of-line protection. A duration-band
-      // match must not leap past an earlier pending episode of the same show.
-      // The input pool is already scoped, ordered and policy-filtered by planRun.
-      // The earlier episode is released only after it was actually placed (used).
-      if (enforceStrictProgramHeadOfLine && candidate.podcastStrictSequence === true &&
+      // #451/#365: head-of-line protection for ordered shows (strict sequence
+      // or stateful traversal). A duration-band match must not leap past an
+      // earlier pending episode of the same show; that show simply waits for a
+      // slot whose band fits its next episode. The input pool is already
+      // scoped, ordered and policy-filtered by planRun. The earlier episode is
+      // released only after it was actually placed (used).
+      if (enforceStrictProgramHeadOfLine && isOrderedShowEpisode(candidate) &&
           candidate.programId && pool.slice(0, index).some((earlier) =>
             earlier.type === "PODCAST" &&
             earlier.programId === candidate.programId &&
-            earlier.podcastStrictSequence === true &&
+            isOrderedShowEpisode(earlier) &&
             !used.has(earlier.uri))) continue;
       if (!podcastDurationMatchesBand(candidate.durationMs, durationBand, bandLimits)) continue;
       if (!candidate.programId) continue;
@@ -555,6 +557,11 @@ function pickCandidate(
     return candidate;
   }
   return null;
+}
+
+function isOrderedShowEpisode(candidate: Candidate): boolean {
+  return candidate.podcastStrictSequence === true ||
+    candidate.podcastSequenceStateful === true;
 }
 
 function musicCandidatePassesDiversity(
