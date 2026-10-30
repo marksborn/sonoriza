@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { UiIcon } from "@/components/UiIcon";
+import { destinationCompositionCardId } from "@/lib/destination-edit-link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
@@ -294,7 +295,11 @@ export default async function CalendarEventCompositionPage({
               const evidence = eligible ? previewByTargetId.get(target.id) : null;
 
               return (
-                <article key={target.id} className="product-card overflow-hidden">
+                <article
+                  key={target.id}
+                  id={destinationCompositionCardId(target.id)}
+                  className="product-card scroll-mt-6 overflow-hidden"
+                >
                   <div className="border-b border-line-dark/55 p-5 sm:p-6">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>

@@ -11,3 +11,8 @@ export function destinationEditHref(targetId: string): string {
     destinationCardId(targetId),
   )}`;
 }
+
+/** Anchor id of a destination card on the Composição por evento page. */
+export function destinationCompositionCardId(targetId: string): string {
+  return `composicao-${targetId}`;
+}
