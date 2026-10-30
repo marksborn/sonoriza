@@ -10,6 +10,7 @@ import { projectAudiobookVirtualChapterPlan } from "@/services/audiobooks/gate-d
 import { projectManualShowChapterPlan } from "@/services/audiobooks/d10-manual-shadow-plan";
 import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading-contract";
 import {
+  audiobookSequenceStartOffset,
   planPreservingRewrite,
   reserveAudiobookChapterBudget,
   resolveAudiobookPreservingTarget,
@@ -841,9 +842,21 @@ export async function generatePlaylists(
 
     // D.13: the current chapter's remaining virtual duration is reserved
     // before planning, in simulations and real runs alike (same plan).
+    // The book plays first, so in a SEQUENCE with podcasts it occupies the
+    // first PODCAST slot and the plan continues from the next slot.
+    const audiobookSequenceOffsetByTargetId = new Map<string, number>();
     for (const runTarget of runTargets) {
       const decision = audiobookPreservingByTargetId.get(runTarget.targetPlaylistId);
-      if (decision?.eligible) reserveAudiobookChapterBudget(runTarget, decision.reservedMs);
+      if (!decision?.eligible) continue;
+      reserveAudiobookChapterBudget(runTarget, decision.reservedMs);
+      const offset = audiobookSequenceStartOffset(runTarget.rules);
+      if (offset > 0) {
+        runTarget.sequenceStartOffset = offset;
+        audiobookSequenceOffsetByTargetId.set(runTarget.targetPlaylistId, offset);
+      }
+    }
+    if (audiobookSequenceOffsetByTargetId.size > 0) {
+      summary.audiobookSequenceSlot = Object.fromEntries(audiobookSequenceOffsetByTargetId);
     }
 
     await persistGenerationCheckpoint(run.id, "CALENDAR_READ_DONE", {
@@ -1845,6 +1858,7 @@ export async function generatePlaylists(
     const sequenceViolations = sequencePrewriteViolations(
       plan.targets,
       targetByPlanId,
+      audiobookSequenceOffsetByTargetId,
     );
 
     if (!simulate && sequenceViolations.length > 0) {

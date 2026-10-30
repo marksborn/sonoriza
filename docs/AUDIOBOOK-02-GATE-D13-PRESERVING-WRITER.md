@@ -23,3 +23,7 @@ Fora disso, o comportamento anterior (bloqueio do lote real) não muda. O summar
 3. Ligue `AUDIOBOOK02_PRESERVING_WRITER_MODE=ACTIVE` com **só** o ID do destino de teste na allowlist e reinicie.
 4. Simule e gere o destino de teste. Confira no Spotify que o livro continua lá, no topo, e que o summary mostra `audiobookPreservingWrite.ok=true`.
 5. Só depois coloque destinos reais na allowlist.
+
+## Livro como slot de podcast (30/10/2026)
+Em destinos D.13 com composição **por sequência** que tenha Podcast, o livro, que toca primeiro por estar no topo, **ocupa o 1º slot de Podcast** da sequência. O plano continua no slot seguinte (`RunTarget.sequenceStartOffset`), e a duração restante do capítulo continua sendo descontada do 1º evento ou do orçamento. As faixas PODCAST-08 acompanham o índice deslocado, então cada slot de podcast restante mantém a sua faixa. O guard de sequência pré-escrita recebe o mesmo deslocamento. Exemplo, Trabalho `M → P → M → P → M → P → M`: **Livro (P1)** → M → P (faixa do slot 4) → M → P → M → M → P….
+Sequências só de música e composição por proporção não mudam (deslocamento 0).

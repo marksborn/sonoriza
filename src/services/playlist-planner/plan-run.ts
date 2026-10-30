@@ -39,6 +39,12 @@ export interface RunTarget {
   durationBlocks?: DurationPlanningBlock[];
   /** PODCAST-08: policy supplied only through explicit simulation/pilot gates. */
   podcast08ActivePolicy?: Podcast08ActiveTargetPolicy;
+  /**
+   * AUDIOBOOK-02 D.13: SEQUENCE slots already occupied before the plan (the
+   * book at the top of the playlist counts as the first PODCAST slot). The
+   * plan continues the pattern from this index; PODCAST-08 bands follow it.
+   */
+  sequenceStartOffset?: number;
 }
 
 export interface PlanRunInput {
@@ -242,6 +248,7 @@ export function planRun({
       pools: targetPools,
       reserved,
       preserved,
+      ...(target.sequenceStartOffset ? { sequenceStartIndex: target.sequenceStartOffset } : {}),
     };
     // Gate 5: the canonical selector can opt in to the existing duration-band
     // core only when the caller passed an explicitly approved target policy.
@@ -524,7 +531,7 @@ function planSegmentedTarget(input: {
       preserved: preservedForBlock,
       constraintSeed: selected,
       strictDurationBoundary: true,
-      sequenceStartIndex: selected.length,
+      sequenceStartIndex: (input.target.sequenceStartOffset ?? 0) + selected.length,
     };
     let result: PlanResult;
     if (input.podcast08) {

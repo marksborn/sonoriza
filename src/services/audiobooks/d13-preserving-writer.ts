@@ -152,6 +152,19 @@ export function reserveAudiobookChapterBudget(target: RunTarget, reservedMs: num
   });
 }
 
+/**
+ * The book sits at the top of the playlist and plays first. In a SEQUENCE that
+ * contains podcasts it takes the first PODCAST slot; the plan resumes at the
+ * slot after it. Returns 0 (no shift) for PROPORTION or music-only patterns.
+ */
+export function audiobookSequenceStartOffset(
+  rules: Pick<RunTarget["rules"], "compositionMode" | "sequencePattern">,
+): number {
+  if (rules.compositionMode !== "SEQUENCE") return 0;
+  const index = rules.sequencePattern.indexOf("PODCAST");
+  return index < 0 ? 0 : index + 1;
+}
+
 const REMOVABLE_URI = /^spotify:(track|episode):[A-Za-z0-9]+$/;
 
 export type PreservingRewritePlan = Readonly<{
