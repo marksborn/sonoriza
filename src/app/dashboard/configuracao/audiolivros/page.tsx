@@ -15,6 +15,7 @@ import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading
 import { AudiobookReadingManager } from "@/components/AudiobookReadingManager";
 import { audiobookMultiTargetEnabled } from "@/services/audiobooks/d12-library-contract";
 import { AudiobookMultiPlaylistLibrary } from "@/components/AudiobookMultiPlaylistLibrary";
+import { audiobookPreservingWriterConfigured } from "@/services/audiobooks/d13-preserving-writer";
 import { canonicalManualShowHandoff } from "@/services/audiobooks/d11-manual-ux";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,7 @@ export default async function AudiobookConfigurationPage({
           id: t.id, name: t.name, spotifyPlaylistId: t.spotifyPlaylistId!,
           durationMode: t.durationMode, fixedDurationSeconds: t.fixedDurationSeconds,
           updatePolicy: t.updatePolicy,
+          preservingWriter: audiobookPreservingWriterConfigured(process.env, t),
         }));
       return (
         <main className="product-shell px-5 py-8 pb-36 sm:px-8 lg:px-10">

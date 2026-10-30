@@ -8,6 +8,7 @@ import type { SpotifyTargetPlaylistContentItem } from "@/services/spotify/client
 import {
   audiobookPreservingPermitActive,
   audiobookPreservingPermitAllows,
+  audiobookPreservingWriterConfigured,
   planPreservingRewrite,
   reserveAudiobookChapterBudget,
   resolveAudiobookPreservingTarget,
@@ -182,4 +183,11 @@ test("guards: the permit only relaxes the D.12 library check, never older protec
   const generation = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
   const writer = generation.slice(generation.indexOf("async function writeAroundAudiobook("));
   assert.doesNotMatch(writer.slice(0, writer.indexOf("\nfunction ")), /replacePlaylistItems/);
+});
+
+test("UI hint mirrors the switch, allowlist and KEEP_FILLED exclusion", () => {
+  assert.equal(audiobookPreservingWriterConfigured(ENV, { id: "book-target", updatePolicy: "MANUAL" }), true);
+  assert.equal(audiobookPreservingWriterConfigured(ENV, { id: "book-target", updatePolicy: "KEEP_FILLED" }), false);
+  assert.equal(audiobookPreservingWriterConfigured(ENV, { id: "other", updatePolicy: "MANUAL" }), false);
+  assert.equal(audiobookPreservingWriterConfigured({}, { id: "book-target", updatePolicy: "MANUAL" }), false);
 });
