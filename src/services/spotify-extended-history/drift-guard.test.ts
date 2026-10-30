@@ -10,9 +10,14 @@ import { buildSpotifyExtendedPersistencePlan } from "./persistence-plan";
 import { applySpotifyExtendedHistory } from "./persistence-writer";
 import { reconcileSpotifyExtendedHistory } from "./reconcile";
 
+// HISTORY-02 integration tests need PostgreSQL. Outside CI they skip without
+// DATABASE_URL; in CI (CI=true) a missing database still fails loudly.
+const dbTest = process.env.DATABASE_URL || process.env.CI ? test : test.skip;
+
+
 const PACKAGE_SHA = "c".repeat(64);
 
-test("HISTORY-02 stale INSERT_NEW is guarded when Last.fm appears after manifest freeze", async () => {
+dbTest("HISTORY-02 stale INSERT_NEW is guarded when Last.fm appears after manifest freeze", async () => {
   const user = await prisma.user.create({
     data: { email: `history02-drift-${randomUUID()}@example.test` },
   });

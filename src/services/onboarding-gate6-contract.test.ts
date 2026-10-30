@@ -22,9 +22,11 @@ const readiness = () =>
     "utf8",
   );
 
+// generate-playlists.ts only re-exports the layered generator; the scoped
+// simulation guard lives in the base layer every layer delegates to.
 const wrapper = () =>
   readFileSync(
-    "src/jobs/generate-playlists.ts",
+    "src/jobs/generate-playlists-base.ts",
     "utf8",
   );
 
@@ -172,7 +174,22 @@ test("#205 Gate 6 disabled-target exception is fail-closed to scoped simulation"
 
   assert.match(
     generationWrapper,
-    /resolveSimulationDisabledTargetIds/,
+    /resolveSimulationDisabledTargetIds\(\{/,
+  );
+});
+
+test("#205 Gate 6 public generator still reaches the guarded base layer", () => {
+  const files = [
+    "src/jobs/generate-playlists.ts",
+    "src/jobs/generate-playlists-podcast09.ts",
+    "src/jobs/generate-playlists-podcast07.ts",
+    "src/jobs/generate-playlists-playback-reserve.ts",
+    "src/jobs/generate-playlists-music-identity.ts",
+  ].map((file) => readFileSync(file, "utf8"));
+  assert.match(files[0]!, /from "\.\/generate-playlists-podcast09"/);
+  assert.ok(
+    files.some((source) => /from "\.\/generate-playlists-base"/.test(source)),
+    "some layer must delegate to generate-playlists-base",
   );
 });
 

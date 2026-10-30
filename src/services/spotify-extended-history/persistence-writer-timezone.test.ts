@@ -13,6 +13,11 @@ import {
 } from "./persistence-writer";
 import { reconcileSpotifyExtendedHistory } from "./reconcile";
 
+// HISTORY-02 integration tests need PostgreSQL. Outside CI they skip without
+// DATABASE_URL; in CI (CI=true) a missing database still fails loudly.
+const dbTest = process.env.DATABASE_URL || process.env.CI ? test : test.skip;
+
+
 const PACKAGE_SHA = "c".repeat(64);
 
 function clientInSaoPaulo(): PrismaClient {
@@ -54,7 +59,7 @@ function event(id: string, estimatedStartedAt: string): SpotifyExtendedMusicEven
   };
 }
 
-test("HISTORY-02 writer stores UTC playedAt and snapshot bounds remain UTC-safe in America/Sao_Paulo", async () => {
+dbTest("HISTORY-02 writer stores UTC playedAt and snapshot bounds remain UTC-safe in America/Sao_Paulo", async () => {
   const client = clientInSaoPaulo();
   const user = await client.user.create({
     data: { email: `history02-timezone-${randomUUID()}@example.test` },
