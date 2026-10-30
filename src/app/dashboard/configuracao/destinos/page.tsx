@@ -42,7 +42,10 @@ import { saveTargetDiscoveryPolicy } from "./discovery-actions";
 import { parsePersistedPodcastDurationSlots } from "@/services/playlist-planner/podcast-duration-persistence";
 import type { PodcastDurationBand } from "@/services/playlist-planner/podcast-duration-bands";
 import { maySavePodcastDurationBandsWhenEditorDisabled } from "@/services/playlist-planner/podcast-duration-sequence-editor";
-import { destinationCardId } from "@/lib/destination-edit-link";
+import {
+  destinationCardId,
+  destinationCompositionCardId,
+} from "@/lib/destination-edit-link";
 import { podcast08BandEditingAllowedForTarget } from "@/services/playlist-planner/podcast-duration-active-gate";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
@@ -1492,6 +1495,22 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                         </form>
                       </div>
                     </div>
+
+                    {target.durationMode === "CALENDAR" &&
+                      target.calendarDurationStrategy === "PER_EVENT" && (
+                        <Link
+                          href={`/dashboard/configuracao/destinos/composicao-eventos#${destinationCompositionCardId(target.id)}`}
+                          className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-accent-400/30 bg-accent/10 px-4 py-3 text-sm font-black text-ink-inverse transition hover:bg-accent/15"
+                        >
+                          <span>
+                            Composição por evento
+                            <span className="mt-0.5 block text-xs font-normal text-muted-inverse">
+                              Sequência por evento, podcast no começo do evento e preenchimento do restante.
+                            </span>
+                          </span>
+                          <UiIcon name="arrow-right" size={17} />
+                        </Link>
+                      )}
 
                     {target.audiobookOverlay ? (
                       <div className="mt-4 space-y-2 rounded-2xl border border-accent/25 bg-accent/10 p-4 text-sm leading-6 text-ink-inverse">
