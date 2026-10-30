@@ -1169,14 +1169,20 @@ export async function generatePlaylists(
     // canonical state and replan without them. Runs in simulations too, so the
     // approved simulation and the real run converge on the same plan.
     const podcastCompletionReplan = {
+      checks: 0,
       replans: 0,
       completedEpisodeUris: [] as string[],
       readFailures: 0,
     };
+    // Instrumented client so these reads show up in their own run metrics.
+    let podcastStateClient: SpotifyClient | null = null;
     const findCompletedPlannedPodcasts = async (
       candidatePlan: PlanRunResult,
     ): Promise<ReadonlySet<string>> => {
       try {
+        podcastCompletionReplan.checks += 1;
+        podcastStateClient ??= await SpotifyClient.forUser(userId);
+        const client = podcastStateClient;
         const check = await checkPodcastCompletionBeforeWrite(
           userId,
           candidatePlan.targets.map((planned) => ({
@@ -1185,6 +1191,7 @@ export async function generatePlaylists(
             items: planned.result.items,
           })),
           new Date(),
+          { episodeReader: (episodeId) => client.getEpisodePlaybackState(episodeId) },
         );
         const completed = new Set(
           check.violations
@@ -1455,8 +1462,13 @@ export async function generatePlaylists(
     }
 
     let plan = incremental.plan;
-    if (podcastCompletionReplan.replans > 0 || podcastCompletionReplan.readFailures > 0) {
-      summary.podcastCompletionReplan = podcastCompletionReplan;
+    if (podcastStateClient) {
+      summary.podcastCompletionReplan = {
+        ...podcastCompletionReplan,
+        spotifyApi: (podcastStateClient as SpotifyClient).getRequestMetrics(),
+      };
+    }
+    if (podcastCompletionReplan.replans > 0) {
       log({
         level: "INFO",
         message: `Podcasts já concluídos removidos do plano antes da escrita: ${podcastCompletionReplan.completedEpisodeUris.length} (replanejamentos: ${podcastCompletionReplan.replans}).`,

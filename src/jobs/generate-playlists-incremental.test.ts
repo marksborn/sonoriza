@@ -412,7 +412,9 @@ integrationTest(
         simulate: true,
       });
       assert.equal(result.status, "SUCCESS");
-      assert.equal(calls, 1);
+      // 1 shared source page + 1 authoritative state read per planned episode
+      // (completion replan, metered separately from source collection).
+      assert.equal(calls, 3);
 
       const run = await readRun(result.runId);
       const summary = summaryObject(run.summary);
@@ -423,6 +425,14 @@ integrationTest(
       assert.equal(summary.sourceCollection.planningRounds, 1);
       assert.equal(summary.targets.length, 2);
       assert.equal(summary.spotifyApi.totalCalls, 1);
+      const completionReplan = (summary as unknown as Record<string, unknown>).podcastCompletionReplan as {
+        checks: number;
+        replans: number;
+        spotifyApi: { totalCalls: number };
+      };
+      assert.equal(completionReplan.checks, 1);
+      assert.equal(completionReplan.replans, 0);
+      assert.equal(completionReplan.spotifyApi.totalCalls, 2);
       const sourceMetrics = Object.values(summary.spotifyApi.sourceReads);
       assert.equal(sourceMetrics.length, 1);
       assert.equal(sourceMetrics[0]?.pagesRead, 1);
