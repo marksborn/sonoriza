@@ -35,6 +35,13 @@ import {
   revalidateMusicRepeatBeforeRealWrite,
 } from "./music-repeat-runtime";
 import { currentTargetDiscoveryRuntimeState } from "./target-discovery-runtime";
+import {
+  RELEASES_PLANNER_POLICY,
+  releaseCandidatesForPlanner,
+  resolveReleasesPlannerMode,
+  spreadReleasesIntoPool,
+} from "@/services/releases/release-planner";
+import { readReleaseRadar } from "@/services/releases/release-radar";
 
 export type IncrementalSourceKind = "MUSIC" | "PODCAST";
 
@@ -254,7 +261,10 @@ export async function collectIncrementally<
     targetScopedRuntime &&
     targets.some((target) => {
       const policy = targetDiscoveryState.policies.get(target.targetPlaylistId);
-      return Boolean(policy && targetUsesSourceDiscovery(policy));
+      return Boolean(
+        policy &&
+          (targetUsesSourceDiscovery(policy) || (policy.enabled && policy.releasesEnabled)),
+      );
     });
   const shouldPrepareDiscoverySources = Boolean(
     discoveryState?.enabled &&
@@ -288,6 +298,23 @@ export async function collectIncrementally<
   if (discovery && targetScopedRuntime && targetDiscoveryState) {
     musicPoolByTargetId = new Map<string, Candidate[]>();
     const sourceProjections: unknown[] = [];
+    // RELEASES-01 Gate 2: cached radar only, never a provider call here.
+    const releasesMode = resolveReleasesPlannerMode(process.env.RELEASES_PLANNER_MODE);
+    const wantsReleases =
+      releasesMode !== "OFF" &&
+      targets.some((target) => {
+        const policy = targetDiscoveryState.policies.get(target.targetPlaylistId);
+        return Boolean(policy?.enabled && policy.releasesEnabled);
+      });
+    const radar = wantsReleases ? await readReleaseRadar(targetDiscoveryState.userId) : null;
+    const radarFresh = Boolean(
+      radar && Date.now() - radar.fetchedAt.getTime() <= RELEASES_PLANNER_POLICY.maxRadarAgeMs,
+    );
+    const releaseSelection = radar && radarFresh ? releaseCandidatesForPlanner(radar.releases) : null;
+    const releaseCandidates = releaseSelection
+      ? filterMusicBatchForCurrentRun(releaseSelection.candidates).candidates
+      : [];
+    const releaseProjections: unknown[] = [];
 
     for (const target of targets) {
       const policy = targetDiscoveryState.policies.get(target.targetPlaylistId);
@@ -307,10 +334,30 @@ export async function collectIncrementally<
         sourceEntries: discovery.sourceEntries,
         rediscoveryCeiling: caps.rediscoveryCeiling,
       });
-      musicPoolByTargetId.set(
-        target.targetPlaylistId,
-        dedupeByUri(projection.sourceEntries.map((entry) => entry.candidate)),
-      );
+      let targetPool = dedupeByUri(projection.sourceEntries.map((entry) => entry.candidate));
+      if (wantsReleases && policy?.enabled && policy.releasesEnabled) {
+        const ceiling = RELEASES_PLANNER_POLICY.ceilingByIntensity[policy.intensity];
+        const spread = spreadReleasesIntoPool(targetPool, releaseCandidates, ceiling);
+        if (releasesMode === "ACTIVE") targetPool = spread.pool;
+        releaseProjections.push({
+          targetPlaylistId: target.targetPlaylistId,
+          targetName: target.name,
+          mode: releasesMode,
+          radarFetchedAt: radar?.fetchedAt.toISOString() ?? null,
+          radarFresh,
+          ceiling,
+          eligibleCount: releaseCandidates.length,
+          reissueExcluded: releaseSelection?.reissueExcluded ?? 0,
+          heardExcluded: releaseSelection?.heardExcluded ?? 0,
+          injected: spread.injected.map((candidate) => ({
+            uri: candidate.uri,
+            title: candidate.title,
+            artists: candidate.subtitle ?? null,
+          })),
+          plannerInfluence: releasesMode === "ACTIVE" && spread.injected.length > 0,
+        });
+      }
+      musicPoolByTargetId.set(target.targetPlaylistId, targetPool);
       sourceProjections.push({
         targetPlaylistId: target.targetPlaylistId,
         targetName: target.name,
@@ -333,6 +380,7 @@ export async function collectIncrementally<
     targetDiscoveryState.evidence = {
       ...(targetDiscoveryState.evidence ?? {}),
       sourceProjections,
+      ...(releaseProjections.length > 0 ? { releases: releaseProjections } : {}),
     };
   }
 
