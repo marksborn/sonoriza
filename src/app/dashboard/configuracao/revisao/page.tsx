@@ -15,6 +15,7 @@ import { readInconclusiveSimulation } from "@/services/simulation-presentation";
 import { destinationEditHref } from "@/lib/destination-edit-link";
 import { assessCalendar03GenerationConfiguration } from "@/services/calendar-event-composition-generation";
 import { readPodcast08TargetReviews } from "@/services/playlist-planner/podcast-duration-review";
+import { readReleasesTargetReviews } from "@/services/releases/release-planner";
 
 type PageProps = {
   searchParams: Promise<{ run?: string }>;
@@ -468,6 +469,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
 
   const simulatedTargets = readSimulationTargets(simulation?.summary);
   const podcast08Reviews = readPodcast08TargetReviews(simulation?.summary);
+  const releasesReviews = readReleasesTargetReviews(simulation?.summary);
   const simulatedOrderByTargetId = new Map<
     string,
     Array<{ position: number; type: "MUSIC" | "PODCAST"; title: string }>
@@ -1283,6 +1285,21 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                                     Faixas de duração:{" "}
                                     {podcast08Reviews.get(target.targetPlaylistId)!.label}
                                   </p>
+                                )}
+                              {target.targetPlaylistId &&
+                                releasesReviews.get(target.targetPlaylistId) && (
+                                  <div className="mt-1 text-xs">
+                                    <p className="font-semibold text-accent-400">
+                                      Novidades: {releasesReviews.get(target.targetPlaylistId)!.label}
+                                    </p>
+                                    {releasesReviews.get(target.targetPlaylistId)!.titles.length > 0 && (
+                                      <ul className="mt-1 list-disc pl-4 opacity-75">
+                                        {releasesReviews.get(target.targetPlaylistId)!.titles.map((title) => (
+                                          <li key={title}>{title}</li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
                                 )}
                               {target.actualPodcastPercent !== null && (
                                 <p className="mt-1 text-xs opacity-70">
