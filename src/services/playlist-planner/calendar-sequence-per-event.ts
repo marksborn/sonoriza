@@ -49,6 +49,11 @@ export type ProjectCalendar04SequencePerEventInput = Readonly<{
   rules: PlaylistRules;
   pools: PlannerPools;
   reserved?: Iterable<string>;
+  /**
+   * KEEP_FILLED: valid items already in the remote playlist, in order. They
+   * stay as a physical prefix of each event while they fit; see below.
+   */
+  preserved?: Candidate[];
 }>;
 
 /**
@@ -65,6 +70,15 @@ export type ProjectCalendar04SequencePerEventInput = Readonly<{
  *
  * MIX_RATIO percentages are duration shares of the remainder only, and are a
  * target: whole episodes, real durations and available candidates may deviate.
+ *
+ * KEEP_FILLED: preserved items are consumed in remote order as the start of
+ * each event while they fit (and, for podcasts, within the show cap). A
+ * preserved item may open the next event only when the current one is exactly
+ * full. At the first preserved item that cannot continue that prefix, it and
+ * the whole remaining preserved suffix are dropped for this run and reserved,
+ * so the writer removes them and they are never reselected as fresh content.
+ * Preserved items count as the first slots of the event's sequence when their
+ * types match the pattern in order; the first pass continues from there.
  */
 export function projectCalendar04SequencePerEvent(
   input: ProjectCalendar04SequencePerEventInput,
@@ -85,6 +99,11 @@ export function projectCalendar04SequencePerEvent(
   const usedUris = new Set<string>();
   const selected: PlannedItem[] = [];
   const projectedBlocks: Calendar04ProjectedBlock[] = [];
+  const preservedQueue = [...(input.preserved ?? [])];
+  const programCounts = new Map<string, number>();
+  const dropPreservedSuffix = () => {
+    for (const item of preservedQueue.splice(0)) reserved.add(item.uri);
+  };
 
   for (let blockIndex = 0; blockIndex < input.blocks.length; blockIndex += 1) {
     const block = input.blocks[blockIndex]!;
@@ -127,11 +146,43 @@ export function projectCalendar04SequencePerEvent(
       };
     };
 
-    // 1. First pass of the sequence, one attempt per slot.
+    // 0. KEEP_FILLED preserved prefix for this event.
     let initialFilledSlots = 0;
     let initialMusicMs = 0;
     let initialPodcastMs = 0;
-    for (const slotType of pattern) {
+    while (preservedQueue.length > 0) {
+      const candidate = preservedQueue[0]!;
+      const durationMs = Math.max(0, candidate.durationMs);
+      if (filledMs >= targetDurationMs && blockIndex < input.blocks.length - 1) {
+        break; // exact boundary: it may open the next event
+      }
+      const programId = candidate.type === "PODCAST" ? candidate.programId?.trim() : null;
+      const overCap = Boolean(
+        programId && (programCounts.get(programId) ?? 0) >= showCap(candidate, input.rules),
+      );
+      if (durationMs <= 0 || overCap || filledMs + durationMs > targetDurationMs) {
+        dropPreservedSuffix();
+        break;
+      }
+      preservedQueue.shift();
+      selected.push({ ...candidate, position: selected.length, planningBlockIndex: blockIndex });
+      reserved.add(candidate.uri);
+      usedUris.add(candidate.uri);
+      filledMs += durationMs;
+      if (programId) programCounts.set(programId, (programCounts.get(programId) ?? 0) + 1);
+      if (initialFilledSlots < pattern.length && candidate.type === pattern[initialFilledSlots]) {
+        initialFilledSlots += 1;
+        if (candidate.type === "MUSIC") initialMusicMs += durationMs;
+        else initialPodcastMs += durationMs;
+      }
+    }
+    if (blockIndex === input.blocks.length - 1) dropPreservedSuffix();
+    // When the next preserved item opens the following event, this event is
+    // exactly full and no fresh item may be inserted in front of it; every
+    // fresh fill below then sees a zero budget and adds nothing.
+
+    // 1. First pass of the sequence, one attempt per slot.
+    for (const slotType of pattern.slice(initialFilledSlots)) {
       if (filledMs >= targetDurationMs) break;
       const slot = fill(
         { compositionMode: "SEQUENCE", sequencePattern: [slotType] },
@@ -262,6 +313,12 @@ function remainderRequest(
       // first slot it cannot fill, so the loop always terminates.
       return [{ compositionMode: "SEQUENCE", sequencePattern: pattern }, pools];
   }
+}
+
+function showCap(candidate: Candidate, rules: PlaylistRules): number {
+  const targetCap = Math.max(1, Math.trunc(rules.maxEpisodesPerProgram || 1));
+  const cap = candidate.podcastMaxEpisodesPerCycle;
+  return Number.isInteger(cap) && Number(cap) >= 1 ? Math.min(targetCap, Number(cap)) : targetCap;
 }
 
 function poolsOfType(pools: PlannerPools, type: ContentType): PlannerPools {

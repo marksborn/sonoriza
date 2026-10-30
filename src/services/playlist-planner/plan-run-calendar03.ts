@@ -89,16 +89,6 @@ export function planRun(input: PlanRunInput): PlanRunResult {
     const policy = state.policies.get(target.targetPlaylistId)!;
     const preserved = input.preservedByTargetId?.get(target.targetPlaylistId) ?? [];
 
-    // CALENDAR-04 does not yet reconcile a KEEP_FILLED preserved prefix against
-    // per-event sequence restarts; it abstains to the legacy plan instead.
-    if (policy.eventCompositionPolicy === "SEQUENCE_PER_EVENT" && preserved.length > 0) {
-      const fallback = basePlanRun(input);
-      recordCalendar03RuntimeTargets(state, [
-        abstention(target, policy, "ABSTAIN_PRESERVED_ITEMS"),
-      ]);
-      return fallback;
-    }
-
     if (target.durationBlocks?.length) {
       const targetPools = poolsForTarget(input, target, podcastRuntimePool);
       const reservationOwners = cloneReservationMap(input.externalReservationsByUri);
@@ -277,11 +267,7 @@ type EventCompositionProjection = Omit<Calendar03EventCompositionShadow, "blocks
   >;
 };
 
-/**
- * Dispatches the persisted policy to its pure projection. SHADOW evidence for
- * a SEQUENCE_PER_EVENT target with a preserved prefix still projects from an
- * empty playlist: it is diagnostic only and never influences the plan.
- */
+/** Dispatches the persisted policy to its pure projection. */
 function projectEventComposition(
   input: Parameters<typeof projectCalendar03EventComposition>[0],
 ): EventCompositionProjection {
@@ -292,25 +278,10 @@ function projectEventComposition(
       rules: input.rules,
       pools: input.pools,
       reserved: input.reserved,
+      preserved: input.preserved,
     });
   }
   return projectCalendar03EventComposition(input);
-}
-
-function abstention(
-  target: RunTarget,
-  policy: Calendar03RuntimeTargetEvidence["policy"],
-  status: Calendar03RuntimeTargetEvidence["status"],
-): Calendar03RuntimeTargetEvidence {
-  return {
-    targetPlaylistId: target.targetPlaylistId,
-    targetName: target.name,
-    policy,
-    status,
-    plannerInfluence: false,
-    selectedPodcastUris: [],
-    blockDiagnostics: [],
-  };
 }
 
 function poolsForTarget(
