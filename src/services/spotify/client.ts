@@ -638,6 +638,25 @@ export class SpotifyClient {
    * (calls, retries, rate limits) instead of a private `fetch`.
    */
   /**
+   * RELEASES-01: an artist's most recent albums and singles (first page only;
+   * Spotify returns them newest first). Read-only.
+   */
+  async getArtistRecentReleases(artistId: string): Promise<ArtistReleaseResponse[]> {
+    const page: SpotifyPage<ArtistReleaseResponse> = await this.request(
+      `/artists/${encodeURIComponent(artistId)}/albums?include_groups=album,single&market=from_token&limit=10`,
+    );
+    return page.items;
+  }
+
+  /** RELEASES-01: tracks of one release (single-item endpoint since Feb 2026). */
+  async getReleaseTracks(albumId: string): Promise<ReleaseTrackResponse[]> {
+    const page: SpotifyPage<ReleaseTrackResponse> = await this.request(
+      `/albums/${encodeURIComponent(albumId)}/tracks?market=from_token&limit=50`,
+    );
+    return page.items;
+  }
+
+  /**
    * AUDIOBOOK-02 D.14: chapters of an audiobook with the user's per-chapter
    * resume_point (scope user-read-playback-position). Read-only, paginated.
    */
@@ -824,6 +843,26 @@ export class SpotifyClient {
 }
 
 // --- Spotify API response shapes (only the fields we use) --------------------
+
+export interface ArtistReleaseResponse {
+  id?: string;
+  name?: string;
+  album_type?: string;
+  release_date?: string;
+  release_date_precision?: "year" | "month" | "day";
+  total_tracks?: number;
+  images?: { url?: string; width?: number | null }[];
+  artists?: { id?: string; name?: string }[];
+}
+
+export interface ReleaseTrackResponse {
+  id?: string;
+  uri?: string;
+  name?: string;
+  duration_ms?: number;
+  is_playable?: boolean;
+  artists?: { id?: string; name?: string }[];
+}
 
 export interface AudiobookChapterResponse {
   id?: string;
