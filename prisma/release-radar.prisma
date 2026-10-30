@@ -1,0 +1,21 @@
+// ---------------------------------------------------------------------------
+// RELEASES-01 (#161) Gate 1 — per-user cache of recent releases from the
+// user's own artists (liked-track affinity + recent listening). Read-only
+// provider data: no planner influence and no Spotify writes in Gate 1.
+// ---------------------------------------------------------------------------
+
+model ReleaseRadarSnapshot {
+  userId      String   @id
+  fetchedAt   DateTime
+  windowDays  Int
+  seedCount   Int
+  releaseCount Int
+  /// Releases with their tracks (see src/services/releases/release-radar.ts).
+  releases    Json
+  /// Provider counters, failures and seed provenance.
+  evidence    Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
