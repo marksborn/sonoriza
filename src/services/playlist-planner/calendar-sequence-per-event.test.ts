@@ -306,3 +306,58 @@ test("abstains without SEQUENCE pattern, without blocks or with another policy",
     "ABSTAIN_INHERIT_DESTINATION",
   );
 });
+
+test("KEEP_FILLED: preserved prefix counts as the first sequence slots", () => {
+  const projection = projectCalendar04SequencePerEvent({
+    policy: policy(),
+    blocks: blocks(30, 30),
+    rules: rules(["PODCAST", "MUSIC"]),
+    pools: { podcasts: [podcast("fresh", 20)], music: musicPool(20, 5) },
+    preserved: [podcast("kept", 20), music("kept-m", 5)],
+  });
+
+  assert.deepEqual(
+    projection.items.filter((item) => item.planningBlockIndex === 0).slice(0, 2).map((i) => i.uri),
+    ["spotify:episode:kept", "spotify:track:kept-m"],
+  );
+  assert.equal(projection.blocks[0]!.calendar04.initialSequenceFilledSlots, 2);
+  // The second event restarts the sequence with fresh content.
+  assert.deepEqual(typesOfBlock(projection, 1).slice(0, 2), ["P20", "M5"]);
+});
+
+test("KEEP_FILLED: an item that no longer fits drops itself and the rest of the suffix", () => {
+  const projection = projectCalendar04SequencePerEvent({
+    policy: policy(),
+    blocks: blocks(25, 25),
+    rules: rules(["PODCAST", "MUSIC"]),
+    pools: { podcasts: [podcast("fresh", 20)], music: musicPool(20, 5) },
+    preserved: [podcast("kept", 20), podcast("too-long", 30), music("after", 5)],
+  });
+
+  const uris = projection.items.map((item) => item.uri);
+  assert.ok(uris.includes("spotify:episode:kept"));
+  assert.ok(!uris.includes("spotify:episode:too-long"));
+  assert.ok(!uris.includes("spotify:track:after"), "dropped suffix is never reselected");
+  for (const block of projection.blocks) {
+    assert.ok(block.filledDurationMs <= block.targetDurationMs);
+  }
+});
+
+test("KEEP_FILLED: preserved items may open the next event only at an exact boundary", () => {
+  const projection = projectCalendar04SequencePerEvent({
+    policy: policy(),
+    blocks: blocks(25, 25),
+    rules: rules(["PODCAST", "MUSIC"]),
+    pools: { podcasts: [], music: musicPool(20, 5) },
+    preserved: [podcast("a", 20), music("a-m", 5), podcast("b", 20, "show:b")],
+  });
+
+  assert.deepEqual(
+    projection.items.map((item) => [item.planningBlockIndex, item.uri]).slice(0, 3),
+    [
+      [0, "spotify:episode:a"],
+      [0, "spotify:track:a-m"],
+      [1, "spotify:episode:b"],
+    ],
+  );
+});

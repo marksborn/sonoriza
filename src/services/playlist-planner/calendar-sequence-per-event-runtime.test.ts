@@ -149,20 +149,21 @@ test("ACTIVE replaces the plan: both events start with the sequence", () => {
   for (const block of blocks) assert.ok(block.filledDurationMs <= block.targetDurationMs);
 });
 
-test("ACTIVE abstains to the legacy plan when KEEP_FILLED preserved items exist", () => {
+test("ACTIVE keeps a KEEP_FILLED preserved prefix and owns the composition", () => {
   const runtime = state("ACTIVE");
-  const preserved = [music("kept", 5)];
+  const preserved = [podcast("kept-podcast", 20), music("kept-music", 5)];
   const runInput = input({ preservedByTargetId: new Map([[TARGET, preserved]]) });
   const result = runWithCalendar03PlannerRuntimeState(runtime, () => planRun(runInput));
-  const legacy = basePlanRun(runInput);
+  const items = result.targets[0]!.result.items;
 
   assert.deepEqual(
-    result.targets[0]!.result.items.map((item) => item.uri),
-    legacy.targets[0]!.result.items.map((item) => item.uri),
+    items.slice(0, 2).map((item) => item.uri),
+    ["spotify:episode:kept-podcast", "spotify:track:kept-music"],
   );
+  assert.deepEqual(blockTypes(result, 1).slice(0, 2), ["PODCAST", "MUSIC"]);
   const evidence = calendar03PlannerRuntimeSummary(runtime).targets[0]!;
-  assert.equal(evidence.status, "ABSTAIN_PRESERVED_ITEMS");
-  assert.equal(calendar03TargetOwnsComposition(runtime, TARGET), false);
+  assert.equal(evidence.status, "READY_SHADOW");
+  assert.equal(calendar03TargetOwnsComposition(runtime, TARGET), true);
 });
 
 test("legacy PODCAST_THEN_MUSIC evidence keeps its shape without CALENDAR-04 keys", () => {

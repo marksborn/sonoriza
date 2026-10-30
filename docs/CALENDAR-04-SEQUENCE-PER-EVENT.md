@@ -48,8 +48,12 @@ configuration, until the user switches and saves.
 
 ## Known limits of this gate
 
-- With KEEP_FILLED preserved items, ACTIVE abstains (`ABSTAIN_PRESERVED_ITEMS`)
-  and the legacy plan is used. SHADOW evidence projects from an empty playlist.
+- KEEP_FILLED: preserved items stay, in remote order, as the start of each
+  event while they fit (and within the show cap). They count as the first
+  sequence slots when their types match the pattern in order. The first item
+  that no longer fits is dropped together with the rest of the preserved
+  suffix (reserved, so the writer removes it and it is never reselected). A
+  preserved item opens the next event only when the current one is exactly full.
 - Multi-target ACTIVE runs abstain like CALENDAR-03 does.
 - MIX_RATIO is an approximation and is not a quality gate; the preview shows the
   deviation.
