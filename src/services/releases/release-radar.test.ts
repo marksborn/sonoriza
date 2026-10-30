@@ -122,3 +122,40 @@ test("persist only when most reads succeeded and the provider did not block", as
   assert.equal(shouldPersistReleaseRadar({ ...base, artistReads: 10, releaseReads: 0, failures: 5 }), false);
   assert.equal(shouldPersistReleaseRadar({ ...base, artistReads: 0, releaseReads: 0, failures: 0 }), true);
 });
+
+test("rotation: never-checked first, then oldest; recent checks skipped; capped", async () => {
+  const { selectSeedsToCheck } = await import("./release-radar");
+  const seed = (id: string) => ({ spotifyArtistId: id, artistName: null, reasons: ["LIKED_TRACKS" as const], weight: 1 });
+  const seeds = [seed(ARTIST_A), seed(ARTIST_B), seed(ARTIST_C), seed("2CIMQHirSU0MQqyYHq0eOx")];
+  const checks = {
+    [ARTIST_A]: "2026-10-29T12:00:00Z", // 1 day ago: skipped
+    [ARTIST_B]: "2026-10-01T12:00:00Z", // 29 days ago: due
+    [ARTIST_C]: "2026-10-20T12:00:00Z", // 10 days ago: due, newer than B
+  };
+  assert.deepEqual(
+    selectSeedsToCheck(seeds, checks, NOW, 2).map((s) => s.spotifyArtistId),
+    ["2CIMQHirSU0MQqyYHq0eOx", ARTIST_B],
+  );
+  assert.deepEqual(
+    selectSeedsToCheck(seeds, checks, NOW, 10).map((s) => s.spotifyArtistId),
+    ["2CIMQHirSU0MQqyYHq0eOx", ARTIST_B, ARTIST_C],
+  );
+});
+
+test("merge keeps previous releases inside the window, fresh wins, heard refreshed", async () => {
+  const { mergeRadarReleases } = await import("./release-radar");
+  const rel = (albumId: string, releaseDate: string, name = albumId) => ({
+    albumId, name, albumType: "single", releaseDate, artists: [], imageUrl: null,
+    seedArtistId: ARTIST_A,
+    tracks: [{ spotifyTrackId: `${albumId}-t`, uri: `spotify:track:${albumId}t`, name: "t", durationMs: 1, alreadyHeard: false }],
+  });
+  const merged = mergeRadarReleases(
+    [rel("kept", "2026-10-20"), rel("expired", "2026-08-01"), rel("dup", "2026-10-22", "old name")],
+    [rel("dup", "2026-10-22", "new name"), rel("fresh", "2026-10-29")],
+    new Set(["kept-t"]),
+    NOW,
+  );
+  assert.deepEqual(merged.map((r) => r.albumId), ["fresh", "dup", "kept"]);
+  assert.equal(merged.find((r) => r.albumId === "dup")!.name, "new name");
+  assert.equal(merged.find((r) => r.albumId === "kept")!.tracks[0]!.alreadyHeard, true);
+});

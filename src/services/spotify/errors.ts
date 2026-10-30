@@ -19,6 +19,9 @@ export type SpotifyOperation =
   | "user-playlists"
   | "saved-shows"
   | "current-user"
+  | "artist-albums"
+  | "album-tracks"
+  | "audiobook-chapters"
   | "playlist-write"
   | "spotify-api"
   | "normalize-episodes"
@@ -169,6 +172,10 @@ export function inferSpotifyOperation(
     return normalizedMethod === "GET" ? "user-playlists" : "playlist-write";
   }
   if (path === "/me" || path.startsWith("/me?")) return "current-user";
+  // Classified so a quota block names the feature that caused it.
+  if (/^\/artists\/[^/]+\/albums(?:\?|$)/.test(path)) return "artist-albums";
+  if (/^\/albums\/[^/]+\/tracks(?:\?|$)/.test(path)) return "album-tracks";
+  if (/^\/audiobooks\/[^/]+\/chapters(?:\?|$)/.test(path)) return "audiobook-chapters";
   return "spotify-api";
 }
 
