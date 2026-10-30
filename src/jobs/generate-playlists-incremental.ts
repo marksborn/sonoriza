@@ -99,7 +99,10 @@ import {
   type IncrementalSpotifySourceConfig,
   type SpotifyIncrementalCandidateSource,
 } from "@/services/spotify/incremental-reader";
-import { checkPodcastCompletionBeforeWrite } from "@/services/spotify/podcast-authoritative-state";
+import {
+  checkPodcastCompletionBeforeWrite,
+  type EpisodePlaybackResponse,
+} from "@/services/spotify/podcast-authoritative-state";
 import {
   analyzeAndRecordInferredSkips,
   loadPendingInferredSkips,
@@ -1270,6 +1273,10 @@ export async function generatePlaylists(
     };
     // Instrumented client so these reads show up in their own run metrics.
     let podcastStateClient: SpotifyClient | null = null;
+    // Quota: each replan pass re-checks the whole plan, but an episode read
+    // earlier in this run is reused; only newly planned episodes cost a GET.
+    // The final pre-write gate below still re-reads everything authoritatively.
+    const podcastStateReadCache = new Map<string, Promise<EpisodePlaybackResponse>>();
     const findCompletedPlannedPodcasts = async (
       candidatePlan: PlanRunResult,
     ): Promise<ReadonlySet<string>> => {
@@ -1285,7 +1292,18 @@ export async function generatePlaylists(
             items: planned.result.items,
           })),
           new Date(),
-          { episodeReader: (episodeId) => client.getEpisodePlaybackState(episodeId) },
+          {
+            episodeReader: (episodeId) => {
+              let pending = podcastStateReadCache.get(episodeId);
+              if (!pending) {
+                pending = client.getEpisodePlaybackState(episodeId);
+                podcastStateReadCache.set(episodeId, pending);
+                // A failed read must be retried by the next pass, not cached.
+                pending.catch(() => podcastStateReadCache.delete(episodeId));
+              }
+              return pending;
+            },
+          },
         );
         const completed = new Set(
           check.violations

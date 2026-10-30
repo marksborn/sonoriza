@@ -1,6 +1,8 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { SpotifyBackoffActiveError } from "@/services/spotify/backoff";
+import { SpotifyApiError } from "@/services/spotify/errors";
 import type {
   ArtistReleaseResponse,
   ReleaseTrackResponse,
@@ -59,7 +61,18 @@ export type ReleaseRadarEvidence = Readonly<{
   releaseReads: number;
   failures: number;
   firstFailure: string | null;
+  /** Quota/rate limit/backoff hit: reading stopped at the first such error. */
+  providerBlocked: boolean;
 }>;
+
+/** Errors after which every further Spotify read would only fail too. */
+export function isSpotifyProviderBlock(error: unknown): boolean {
+  return (
+    error instanceof SpotifyBackoffActiveError ||
+    (error instanceof SpotifyApiError &&
+      (error.kind === "QUOTA_EXCEEDED" || error.kind === "RATE_LIMITED"))
+  );
+}
 
 export type ReleaseRadarReader = Readonly<{
   artistReleases: (artistId: string) => Promise<ArtistReleaseResponse[]>;
@@ -139,12 +152,15 @@ export async function collectRecentReleases(input: {
   let releaseReads = 0;
   let failures = 0;
   let firstFailure: string | null = null;
+  let providerBlocked = false;
   const fail = (error: unknown) => {
     failures += 1;
     firstFailure ??= error instanceof Error ? error.message.slice(0, 160) : "UNKNOWN";
+    if (isSpotifyProviderBlock(error)) providerBlocked = true;
   };
 
   for (const seed of input.seeds) {
+    if (providerBlocked) break;
     try {
       artistReads += 1;
       for (const release of await input.reader.artistReleases(seed.spotifyArtistId)) {
@@ -165,6 +181,7 @@ export async function collectRecentReleases(input: {
 
   const releases: ReleaseRadarRelease[] = [];
   for (const { release, seedArtistId } of newestFirst) {
+    if (providerBlocked) break;
     let tracks: ReleaseTrackResponse[] = [];
     try {
       releaseReads += 1;
@@ -199,7 +216,14 @@ export async function collectRecentReleases(input: {
 
   return {
     releases,
-    evidence: { seedCount: input.seeds.length, artistReads, releaseReads, failures, firstFailure },
+    evidence: {
+      seedCount: input.seeds.length,
+      artistReads,
+      releaseReads,
+      failures,
+      firstFailure,
+      providerBlocked,
+    },
   };
 }
 
@@ -262,6 +286,10 @@ export async function refreshReleaseRadar(input: {
     heardTrackIds: new Set(heard.map((row) => row.spotifyTrackId)),
     now,
   });
+  // An incomplete read must never replace a good radar with an empty one.
+  if (!shouldPersistReleaseRadar(evidence)) {
+    return { releases, evidence, persisted: false as const };
+  }
   const data = {
     fetchedAt: now,
     windowDays: RELEASE_RADAR_DEFAULTS.windowDays,
@@ -278,7 +306,14 @@ export async function refreshReleaseRadar(input: {
     create: { userId: input.userId, ...data },
     update: data,
   });
-  return { releases, evidence };
+  return { releases, evidence, persisted: true as const };
+}
+
+/** Keep the previous radar when the provider blocked us or most reads failed. */
+export function shouldPersistReleaseRadar(evidence: ReleaseRadarEvidence): boolean {
+  if (evidence.providerBlocked) return false;
+  const reads = evidence.artistReads + evidence.releaseReads;
+  return reads === 0 || evidence.failures * 2 < reads;
 }
 
 export async function readReleaseRadar(userId: string) {
