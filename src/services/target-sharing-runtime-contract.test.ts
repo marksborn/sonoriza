@@ -33,7 +33,8 @@ test("#204 Gate 5 retains snapshot guard before Spotify mutation", () => {
   );
 
   const guard = generator.indexOf("reservationSnapshotViolations");
-  const replace = generator.indexOf("replacePlaylistItems");
+  // The first real writer call, not a comment that mentions the method.
+  const replace = generator.search(/\.replacePlaylistItems\(/);
 
   assert.ok(guard >= 0);
   assert.ok(replace >= 0);

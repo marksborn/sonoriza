@@ -13,9 +13,14 @@ import {
   type ExistingListeningEvent,
 } from "./reconcile";
 
+// HISTORY-02 integration tests need PostgreSQL. Outside CI they skip without
+// DATABASE_URL; in CI (CI=true) a missing database still fails loudly.
+const dbTest = process.env.DATABASE_URL || process.env.CI ? test : test.skip;
+
+
 const PACKAGE_SHA = "c".repeat(64);
 
-test("HISTORY-02 writer persists URI-less music and remains idempotent", async () => {
+dbTest("HISTORY-02 writer persists URI-less music and remains idempotent", async () => {
   const user = await prisma.user.create({
     data: { email: `history02-no-uri-${randomUUID()}@example.test` },
   });
@@ -108,7 +113,7 @@ test("HISTORY-02 writer persists URI-less music and remains idempotent", async (
   }
 });
 
-test("HISTORY-02 stale URI-less insert is guarded by an exact Last.fm candidate", async () => {
+dbTest("HISTORY-02 stale URI-less insert is guarded by an exact Last.fm candidate", async () => {
   const user = await prisma.user.create({
     data: { email: `history02-no-uri-guard-${randomUUID()}@example.test` },
   });
