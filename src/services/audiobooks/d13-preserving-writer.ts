@@ -59,6 +59,22 @@ export function audiobookPreservingPermitAllows(
   );
 }
 
+/**
+ * UI hint: the target is configured for the preserving writer. The run still
+ * re-checks protection kind and the active reading before writing.
+ */
+export function audiobookPreservingWriterConfigured(
+  env: Readonly<Record<string, string | undefined>>,
+  target: Readonly<{ id: string; updatePolicy: string }>,
+): boolean {
+  if (env.AUDIOBOOK02_PRESERVING_WRITER_MODE?.trim() !== "ACTIVE") return false;
+  if (target.updatePolicy === "KEEP_FILLED") return false;
+  return (env.AUDIOBOOK02_PRESERVING_WRITER_TARGET_IDS ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .includes(target.id);
+}
+
 export type AudiobookPreservingTargetInput = Readonly<{
   targetPlaylistId: string;
   spotifyPlaylistId: string | null;

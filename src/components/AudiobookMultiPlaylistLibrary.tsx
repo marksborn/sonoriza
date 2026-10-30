@@ -16,6 +16,8 @@ type Target = Readonly<{
   id: string; name: string; spotifyPlaylistId: string;
   durationMode: "FIXED" | "CALENDAR";
   fixedDurationSeconds: number | null; updatePolicy: string;
+  /** D.13: real runs rewrite only tracks/episodes around the book. */
+  preservingWriter: boolean;
 }>;
 type Reading = Readonly<{
   id: string; bookTitle: string; spotifyShowUrl: string;
@@ -237,7 +239,9 @@ export function AudiobookMultiPlaylistLibrary({ targets }: { targets: readonly T
                 : "Orçamento indisponível ou requer revisão neste destino."}
           </p>
           <p className="text-xs text-muted-inverse">
-            Destino protegido: nenhuma alteração automática no Spotify.
+            {target?.preservingWriter
+              ? "Gerada ao redor do livro: o Sonoriza troca só músicas e episódios; o livro continua no topo."
+              : "Destino protegido: nenhuma alteração automática no Spotify."}
           </p>
         </div>;
       })}
