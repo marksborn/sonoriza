@@ -148,3 +148,14 @@ test("generation wires the completion replan for simulations and real runs", asy
   // The final fail-closed gate before writing stays in place.
   assert.ok(source.indexOf("checkPodcastCompletionBeforeWrite(", collector) > collector);
 });
+
+test("replan passes reuse episode-state reads within the run (quota)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
+  const hook = source.slice(
+    source.indexOf("const findCompletedPlannedPodcasts = async"),
+    source.indexOf("await collectIncrementally({"),
+  );
+  assert.match(hook, /podcastStateReadCache\.get\(episodeId\)/);
+  assert.match(hook, /pending\.catch\(\(\) => podcastStateReadCache\.delete\(episodeId\)\)/);
+});

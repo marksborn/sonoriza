@@ -87,3 +87,38 @@ test("collect: recent releases only, deduped across artists, newest first, heard
   assert.match(result.evidence.firstFailure ?? "", /502/);
   assert.equal(result.evidence.artistReads, 3);
 });
+
+test("quota block stops after the first failure and is never persisted", async () => {
+  const { SpotifyApiError } = await import("@/services/spotify/errors");
+  const { shouldPersistReleaseRadar } = await import("./release-radar");
+  let reads = 0;
+  const result = await collectRecentReleases({
+    seeds: [ARTIST_A, ARTIST_B, ARTIST_C].map((id) => ({
+      spotifyArtistId: id, artistName: null, reasons: ["LIKED_TRACKS" as const], weight: 1,
+    })),
+    heardTrackIds: new Set(),
+    now: NOW,
+    reader: {
+      artistReleases: async () => {
+        reads += 1;
+        throw new SpotifyApiError({
+          kind: "QUOTA_EXCEEDED", status: 429, method: "GET",
+          operation: "catalog-track", reason: "QUOTA_EXCEEDED", retryable: false, message: "quota",
+        });
+      },
+      releaseTracks: async () => [],
+    },
+  });
+  assert.equal(reads, 1, "no further calls after a quota block");
+  assert.equal(result.evidence.providerBlocked, true);
+  assert.equal(shouldPersistReleaseRadar(result.evidence), false);
+});
+
+test("persist only when most reads succeeded and the provider did not block", async () => {
+  const { shouldPersistReleaseRadar } = await import("./release-radar");
+  const base = { seedCount: 10, firstFailure: null, providerBlocked: false };
+  assert.equal(shouldPersistReleaseRadar({ ...base, artistReads: 10, releaseReads: 0, failures: 0 }), true);
+  assert.equal(shouldPersistReleaseRadar({ ...base, artistReads: 10, releaseReads: 2, failures: 5 }), true);
+  assert.equal(shouldPersistReleaseRadar({ ...base, artistReads: 10, releaseReads: 0, failures: 5 }), false);
+  assert.equal(shouldPersistReleaseRadar({ ...base, artistReads: 0, releaseReads: 0, failures: 0 }), true);
+});

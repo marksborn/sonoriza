@@ -8,6 +8,7 @@ import {
   readReleaseRadar,
   refreshReleaseRadar,
 } from "@/services/releases/release-radar";
+import { getActiveSpotifyBackoff } from "@/services/spotify/backoff";
 import { SpotifyClient } from "@/services/spotify/client";
 
 const PAGE_PATH = "/dashboard/descobrir/novidades";
@@ -28,21 +29,24 @@ async function refreshRadar() {
     redirect(`${PAGE_PATH}?status=recent`);
   }
 
+  if (await getActiveSpotifyBackoff()) redirect(`${PAGE_PATH}?status=blocked`);
+
+  let persisted = false;
   try {
     const client = await SpotifyClient.forUser(userId);
-    await refreshReleaseRadar({
+    ({ persisted } = await refreshReleaseRadar({
       userId,
       reader: {
         artistReleases: (artistId) => client.getArtistRecentReleases(artistId),
         releaseTracks: (albumId) => client.getReleaseTracks(albumId),
       },
-    });
+    }));
   } catch (error) {
     console.error("RELEASES-01 refresh failed", error);
     redirect(`${PAGE_PATH}?status=failed`);
   }
   revalidatePath(PAGE_PATH);
-  redirect(`${PAGE_PATH}?status=updated`);
+  redirect(`${PAGE_PATH}?status=${persisted ? "updated" : "failed"}`);
 }
 
 type PageProps = { searchParams: Promise<{ status?: string }> };
@@ -58,7 +62,9 @@ export default async function NewReleasesPage({ searchParams }: PageProps) {
       ? { tone: "status-success", text: "Radar atualizado. Nenhuma playlist foi alterada." }
       : params.status === "recent"
         ? { tone: "status-info", text: "O radar foi atualizado há poucos minutos. Tente de novo daqui a pouco." }
-        : params.status === "failed"
+        : params.status === "blocked"
+          ? { tone: "status-warning", text: "O Spotify está temporariamente bloqueado (cota). O último radar foi mantido; tente depois do horário indicado no aviso." }
+          : params.status === "failed"
           ? { tone: "status-danger", text: "Não foi possível consultar o Spotify agora. O último radar foi mantido." }
           : null;
 
