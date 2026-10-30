@@ -249,8 +249,11 @@ export function planRun({
     // #365: PER_EVENT blocks apply the same band per sequence slot inside
     // each event (the slot index continues across events like SEQUENCE does).
     const podcast08Policy = target.podcast08ActivePolicy;
+    // Ordered shows in the fresh pool are protected per show by the planner's
+    // head-of-line rule. Only a preserved KEEP_FILLED prefix with ordered shows
+    // still abstains, since it was not selected under that rule.
     const podcast08Veto = podcast08Policy
-      ? podcast08ActiveCandidateVeto(targetPools.podcasts, preserved)
+      ? podcast08ActiveCandidateVeto([], preserved)
         ? "ABSTAIN_UNSAFE_CONTEXT"
         : null
       : null;

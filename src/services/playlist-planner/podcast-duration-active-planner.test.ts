@@ -88,39 +88,66 @@ test("#365 Gate 5: global URI reservations remain authoritative across targets",
   for(const uri of first) assert.equal(second.has(uri),false);
 });
 
-test("#365 Gate 5: strict episodes abstain and never skip canonical show order", () => {
+test("#365: strict shows use bands per show without skipping canonical order", () => {
   const input=buildInput(true);
   input.pools.podcasts=[
     {...episode("episode-01",70,"show"),podcastStrictSequence:true},
     {...episode("episode-02",20,"show"),podcastStrictSequence:true},
   ];
-  const decisions:string[]=[];
+  const decisions:Array<{status:string;fallbackCount:number}>=[];
   const out=planRun({...input,
-    onPodcast08ActiveDecision: e=>decisions.push(e.status),
+    onPodcast08ActiveDecision: ({status,fallbackCount})=>decisions.push({status,fallbackCount}),
   });
+  // SHORT cannot take episode-02 ahead of pending episode-01; the fallback
+  // chain reaches ANY and places episode-01, never episode-02 first.
   assert.deepEqual(out.targets[0]?.result.items.map(x=>x.uri),["episode-01"]);
-  assert.deepEqual(decisions,["ABSTAIN_UNSAFE_CONTEXT"]);
+  assert.deepEqual(decisions,[{status:"ACTIVE",fallbackCount:1}]);
 });
 
-test("#365 Gate 5: stateful episode ordering also abstains", () => {
+test("#365: an ordered show waits while another show fills the band", () => {
   const input=buildInput(true);
   input.pools.podcasts=[
-    {...episode("p1",60,"show"),podcastSequenceStateful:true},
+    {...episode("serial-01",70,"serial"),podcastStrictSequence:true},
+    {...episode("serial-02",20,"serial"),podcastStrictSequence:true},
+    {...episode("traversal-01",65,"traversal"),podcastSequenceStateful:true},
+    {...episode("traversal-02",15,"traversal"),podcastSequenceStateful:true},
+    episode("free-short",25,"free"),
   ];
   const decisions:string[]=[];
-  planRun({...input,onPodcast08ActiveDecision:e=>decisions.push(e.status)});
-  assert.deepEqual(decisions,["ABSTAIN_UNSAFE_CONTEXT"]);
+  const out=planRun({...input,onPodcast08ActiveDecision:e=>decisions.push(e.status)});
+  const uris=out.targets[0]!.result.items.map(x=>x.uri);
+  assert.equal(uris[0],"free-short");
+  assert.equal(uris.includes("serial-02"),false);
+  assert.equal(uris.includes("traversal-02"),false);
+  assert.deepEqual(decisions,["ACTIVE"]);
 });
 
-test("#365: strict/stateful shows still abstain on segmented targets", () => {
+test("#365: ordered shows are protected the same way on segmented targets", () => {
   const input=buildInput(true);
   input.targets[0]!.durationBlocks=[
-    {key:"event-one",targetDurationMs:20*min},
-    {key:"event-two",targetDurationMs:20*min},
+    {key:"event-one",targetDurationMs:80*min},
+    {key:"event-two",targetDurationMs:80*min},
   ];
-  input.pools.podcasts[0]={...input.pools.podcasts[0]!,podcastStrictSequence:true};
+  input.pools.podcasts=[
+    {...episode("serial-01",70,"serial"),podcastStrictSequence:true},
+    {...episode("serial-02",20,"serial"),podcastStrictSequence:true},
+    episode("free-short",25,"free"),
+  ];
   const decisions:string[]=[];
-  planRun({...input,onPodcast08ActiveDecision:e=>decisions.push(e.status)});
+  const out=planRun({...input,onPodcast08ActiveDecision:e=>decisions.push(e.status)});
+  const uris=out.targets[0]!.result.items.map(x=>x.uri);
+  assert.equal(uris.includes("serial-02"),false);
+  assert.deepEqual(decisions,["ACTIVE"]);
+});
+
+test("#365: a preserved KEEP_FILLED prefix with ordered shows still abstains", () => {
+  const input=buildInput(true);
+  const kept={...episode("kept",20,"serial"),podcastStrictSequence:true};
+  const decisions:string[]=[];
+  planRun({...input,
+    preservedByTargetId:new Map([["work",[kept]]]),
+    onPodcast08ActiveDecision:e=>decisions.push(e.status),
+  });
   assert.deepEqual(decisions,["ABSTAIN_UNSAFE_CONTEXT"]);
 });
 
