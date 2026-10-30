@@ -9,6 +9,7 @@ import {
   audiobookPreservingPermitActive,
   audiobookPreservingPermitAllows,
   audiobookPreservingWriterConfigured,
+  audiobookSequenceStartOffset,
   planPreservingRewrite,
   reserveAudiobookChapterBudget,
   resolveAudiobookPreservingTarget,
@@ -190,4 +191,16 @@ test("UI hint mirrors the switch, allowlist and KEEP_FILLED exclusion", () => {
   assert.equal(audiobookPreservingWriterConfigured(ENV, { id: "book-target", updatePolicy: "KEEP_FILLED" }), false);
   assert.equal(audiobookPreservingWriterConfigured(ENV, { id: "other", updatePolicy: "MANUAL" }), false);
   assert.equal(audiobookPreservingWriterConfigured({}, { id: "book-target", updatePolicy: "MANUAL" }), false);
+});
+
+test("the book takes the first PODCAST slot of a SEQUENCE", () => {
+  const seq = (sequencePattern: Array<"MUSIC" | "PODCAST">) =>
+    audiobookSequenceStartOffset({ compositionMode: "SEQUENCE", sequencePattern });
+  assert.equal(seq(["MUSIC", "PODCAST", "MUSIC", "PODCAST"]), 2);
+  assert.equal(seq(["PODCAST", "MUSIC"]), 1);
+  assert.equal(seq(["MUSIC"]), 0);
+  assert.equal(
+    audiobookSequenceStartOffset({ compositionMode: "PROPORTION", sequencePattern: ["PODCAST"] }),
+    0,
+  );
 });

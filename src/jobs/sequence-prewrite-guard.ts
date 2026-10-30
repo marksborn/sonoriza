@@ -50,6 +50,8 @@ type SequencePlannedTarget = {
 export function sequencePrewriteViolations(
   plannedTargets: SequencePlannedTarget[],
   targetByPlanId: ReadonlyMap<string, SequenceTarget>,
+  /** AUDIOBOOK-02 D.13: pattern slots occupied before the first planned item. */
+  sequenceStartOffsetByTargetId: ReadonlyMap<string, number> = new Map(),
 ): SequencePrewriteViolation[] {
   const calendar03State = currentCalendar03PlannerRuntimeState();
   const violations: SequencePrewriteViolation[] = [];
@@ -76,8 +78,9 @@ export function sequencePrewriteViolations(
     }
 
     const sequenceOwnedItems = primaryItemsForLegacySequenceGuard(planned);
+    const offset = sequenceStartOffsetByTargetId.get(target.id) ?? 0;
     const mismatch = sequenceOwnedItems.find(
-      (item, index) => item.type !== pattern[index % pattern.length],
+      (item, index) => item.type !== pattern[(offset + index) % pattern.length],
     );
 
     if (mismatch) {
