@@ -10,6 +10,14 @@ import { projectAudiobookVirtualChapterPlan } from "@/services/audiobooks/gate-d
 import { projectManualShowChapterPlan } from "@/services/audiobooks/d10-manual-shadow-plan";
 import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading-contract";
 import {
+  planPreservingRewrite,
+  reserveAudiobookChapterBudget,
+  resolveAudiobookPreservingTarget,
+  runWithAudiobookPreservingPermit,
+  verifyPreservingRewrite,
+  type AudiobookPreservingDecision,
+} from "@/services/audiobooks/d13-preserving-writer";
+import {
   DEFAULT_PODCAST_DURATION_BAND_LIMITS,
   parsePodcastDurationBandLimits,
   type PodcastDurationBand,
@@ -522,14 +530,60 @@ export async function generatePlaylists(
     // D.12: ANY current or archived library association is a durable
     // marker of potentially opaque remote book content. Block the entire
     // batch BEFORE collecting sources, independently of the D.12 UI flag.
-    const libraryProtectedTargets = await prisma.userAudiobookLibraryTarget.findMany({
+    const libraryProtectedRows = await prisma.userAudiobookLibraryTarget.findMany({
       where: { userId,
         spotifyPlaylistId: { in: targets.map(t => t.spotifyPlaylistId).filter(
           (id): id is string => typeof id === "string" && id.length > 0,
         ) },
       },
-      select: { targetPlaylistId: true, spotifyPlaylistId: true },
+      select: {
+        targetPlaylistId: true,
+        spotifyPlaylistId: true,
+        reading: { select: { chapterDurationMs: true, consumedMs: true, completedAt: true } },
+      },
     });
+    // D.13: a library-protected target explicitly allowlisted for the
+    // preserving writer is planned around the book instead of blocking the run.
+    const archivedPlaylistIds = new Set(
+      (libraryProtectedRows.length === 0
+        ? []
+        : await prisma.userAudiobookCompletedReading.findMany({
+            where: {
+              userId,
+              spotifyPlaylistId: { in: libraryProtectedRows.map((row) => row.spotifyPlaylistId) },
+            },
+            select: { spotifyPlaylistId: true },
+          })
+      ).map((row) => row.spotifyPlaylistId),
+    );
+    const audiobookPreservingByTargetId = new Map<string, AudiobookPreservingDecision>();
+    for (const target of targets) {
+      const rows = libraryProtectedRows.filter(
+        (row) => row.spotifyPlaylistId === target.spotifyPlaylistId,
+      );
+      if (rows.length === 0) continue;
+      const active = rows.find((row) => row.reading.completedAt === null)?.reading ?? null;
+      const decision = resolveAudiobookPreservingTarget(process.env, {
+        targetPlaylistId: target.id,
+        spotifyPlaylistId: target.spotifyPlaylistId,
+        updatePolicy: target.updatePolicy,
+        libraryProtectedOnly:
+          !audiobookOverlays.some((row) => row.targetPlaylistId === target.id) &&
+          !manualNotebookTargets.some((row) => row.targetPlaylistId === target.id) &&
+          !archivedPlaylistIds.has(target.spotifyPlaylistId ?? ""),
+        activeReading: active,
+      });
+      audiobookPreservingByTargetId.set(target.id, decision);
+    }
+    if (audiobookPreservingByTargetId.size > 0) {
+      summary.audiobookPreservingWriter = {
+        gate: "D.13",
+        targets: [...audiobookPreservingByTargetId.values()],
+      };
+    }
+    const libraryProtectedTargets = libraryProtectedRows.filter(
+      (row) => audiobookPreservingByTargetId.get(row.targetPlaylistId)?.eligible !== true,
+    );
     if (!simulate && libraryProtectedTargets.length > 0) {
       const error = "Geração real bloqueada: audiolivro da biblioteca associado " +
         "a playlist Spotify com conteúdo opaco (nenhuma escrita autorizada).";
@@ -783,6 +837,13 @@ export async function generatePlaylists(
           durationBlocks,
         ),
       );
+    }
+
+    // D.13: the current chapter's remaining virtual duration is reserved
+    // before planning, in simulations and real runs alike (same plan).
+    for (const runTarget of runTargets) {
+      const decision = audiobookPreservingByTargetId.get(runTarget.targetPlaylistId);
+      if (decision?.eligible) reserveAudiobookChapterBudget(runTarget, decision.reservedMs);
     }
 
     await persistGenerationCheckpoint(run.id, "CALENDAR_READ_DONE", {
@@ -2258,10 +2319,18 @@ export async function generatePlaylists(
               opts.assertGenerationRunStillActive,
               { userId, targetPlaylistId: target.id },
             );
-            const snapshotAfter = await writer!.replacePlaylistItems(
-              playlistId,
-              items.map((item) => item.uri),
-            );
+            const preserving = audiobookPreservingByTargetId.get(target.id);
+            const snapshotAfter = preserving?.eligible
+              ? await writeAroundAudiobook(writer!, {
+                  userId,
+                  playlistId,
+                  finalUris: items.map((item) => item.uri),
+                  targetSummary,
+                })
+              : await writer!.replacePlaylistItems(
+                  playlistId,
+                  items.map((item) => item.uri),
+                );
             targetSummary.applied = true;
             targetSummary.snapshotAfter = snapshotAfter;
             if (rebuild) {
@@ -2953,6 +3022,58 @@ function qualityReason(stats: {
     return `a parcela de música ficou abaixo da regra; o plano terminou com ${stats.actualPodcastPercent}% de podcast`;
   }
   return `a composição desviou ${stats.mixDeviationPoints} pontos percentuais da regra`;
+}
+
+/**
+ * D.13: rewrite only tracks/episodes around the opaque book. Never PUT. The
+ * playlist is re-read afterwards; any protected item lost or a managed order
+ * that differs from the plan fails the run loudly (cannot be undone remotely).
+ */
+async function writeAroundAudiobook(
+  writer: SpotifyClient,
+  input: {
+    userId: string;
+    playlistId: string;
+    finalUris: string[];
+    targetSummary: Record<string, unknown>;
+  },
+): Promise<string | null> {
+  const before = await writer.getTargetPlaylistState(input.playlistId);
+  const plan = planPreservingRewrite(before, input.finalUris);
+  if (plan.blockedReason) {
+    throw new Error(`AUDIOBOOK_D13_BLOCKED_${plan.blockedReason}`);
+  }
+  let snapshot: string | null = before.snapshotId;
+  await runWithAudiobookPreservingPermit(
+    { userId: input.userId, spotifyPlaylistId: input.playlistId },
+    async () => {
+      if (plan.removeUris.length > 0) {
+        snapshot = await writer.removePlaylistItems(
+          input.playlistId,
+          plan.removeUris,
+          before.snapshotId,
+        );
+      }
+      if (input.finalUris.length > 0) {
+        snapshot = (await writer.appendPlaylistItems(input.playlistId, input.finalUris)) ?? snapshot;
+      }
+    },
+  );
+  const after = await writer.getTargetPlaylistState(input.playlistId);
+  const verification = verifyPreservingRewrite(plan, after, input.finalUris);
+  input.targetSummary.audiobookPreservingWrite = {
+    removedCount: plan.removeUris.length,
+    appendedCount: input.finalUris.length,
+    ...verification,
+  };
+  if (!verification.ok) {
+    throw new Error(
+      verification.protectedAfter < verification.protectedBefore
+        ? "AUDIOBOOK_D13_PROTECTED_ITEM_MISSING_AFTER_WRITE: confira o audiolivro na playlist do Spotify."
+        : "AUDIOBOOK_D13_MANAGED_ORDER_MISMATCH_AFTER_WRITE",
+    );
+  }
+  return after.snapshotId ?? snapshot;
 }
 
 function mergeSpotifyMetrics(

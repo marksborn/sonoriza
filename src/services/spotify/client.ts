@@ -6,6 +6,7 @@ import { assertAudiobookPlaylistMutationAllowed } from "@/services/audiobooks/pl
 import { parseSpotifyPlaylistItemsMutation } from "@/services/audiobooks/playlist-write-guard";
 import { audiobookGuardedWriteToken, withAudiobookWriteAdmission } from "@/services/audiobooks/write-admission";
 import { prismaAudiobookWriteFenceStore } from "@/services/audiobooks/write-admission-store";
+import { audiobookPreservingPermitAllows } from "@/services/audiobooks/d13-preserving-writer";
 
 import {
   inferSpotifyOperation,
@@ -215,6 +216,11 @@ export class SpotifyClient {
             const linked = await prisma.userAudiobookLibraryTarget.findFirst({
               where: { userId, spotifyPlaylistId }, select: { id: true },
             });
+            // D.13: only the preserving writer may DELETE/POST by URI on a
+            // library-protected playlist; PUT/PATCH stay blocked.
+            if (linked && audiobookPreservingPermitAllows(userId, spotifyPlaylistId, method)) {
+              return false;
+            }
             return linked !== null;
           },
         );

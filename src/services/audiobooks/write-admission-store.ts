@@ -14,6 +14,7 @@
  */
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { audiobookPreservingPermitActive } from "./d13-preserving-writer";
 import type {
   AudiobookWriteFenceKey,
   AudiobookWriteFenceStore,
@@ -56,7 +57,10 @@ export const prismaAudiobookWriteFenceStore: AudiobookWriteFenceStore = {
       const linked = await tx.userAudiobookLibraryTarget.findFirst({
         where: { userId, spotifyPlaylistId }, select: { id: true },
       });
-      if (linked) throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_LIBRARY_TARGET");
+      // D.13: the client guard already restricted the permit to DELETE/POST.
+      if (linked && !audiobookPreservingPermitActive(userId, spotifyPlaylistId)) {
+        throw new Error("AUDIOBOOK_PLAYLIST_WRITE_BLOCKED_LIBRARY_TARGET");
+      }
     });
   },
 
