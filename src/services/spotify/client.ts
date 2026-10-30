@@ -637,6 +637,22 @@ export class SpotifyClient {
    * pre-write revalidation reads are counted in the run's Spotify metrics
    * (calls, retries, rate limits) instead of a private `fetch`.
    */
+  /**
+   * AUDIOBOOK-02 D.14: chapters of an audiobook with the user's per-chapter
+   * resume_point (scope user-read-playback-position). Read-only, paginated.
+   */
+  async getAudiobookChapters(audiobookId: string): Promise<AudiobookChapterResponse[]> {
+    const chapters: AudiobookChapterResponse[] = [];
+    let url: string | null =
+      `/audiobooks/${encodeURIComponent(audiobookId)}/chapters?market=from_token&limit=50`;
+    for (let page = 0; url && page < 20; page += 1) {
+      const response: SpotifyPage<AudiobookChapterResponse> = await this.request(url);
+      chapters.push(...response.items);
+      url = response.next ? stripBase(response.next) : null;
+    }
+    return chapters;
+  }
+
   async getEpisodePlaybackState(
     episodeId: string,
   ): Promise<EpisodePlaybackResponse> {
@@ -808,6 +824,17 @@ export class SpotifyClient {
 }
 
 // --- Spotify API response shapes (only the fields we use) --------------------
+
+export interface AudiobookChapterResponse {
+  id?: string;
+  name?: string;
+  chapter_number?: number;
+  duration_ms?: number;
+  resume_point?: {
+    fully_played?: boolean;
+    resume_position_ms?: number;
+  } | null;
+}
 
 interface SpotifyPage<T> {
   items: T[];

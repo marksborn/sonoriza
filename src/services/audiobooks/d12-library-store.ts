@@ -18,6 +18,21 @@ async function lockUser(tx: Prisma.TransactionClient, ownerId: string) {
   if (rows.length !== 1) fail("OWNER_REQUIRED");
 }
 
+/** D.14: progress may be user-declared or read from Spotify's resume_point. */
+export const LIBRARY_EVIDENCE_SOURCES = [
+  "USER_DECLARED_UNVERIFIED",
+  "SPOTIFY_RESUME_POINT",
+] as const;
+export type LibraryEvidenceSource = (typeof LIBRARY_EVIDENCE_SOURCES)[number];
+
+function isLibraryEvidenceSource(value: string): value is LibraryEvidenceSource {
+  return (LIBRARY_EVIDENCE_SOURCES as readonly string[]).includes(value);
+}
+
+function libraryEvidenceSource(value: string): LibraryEvidenceSource {
+  return isLibraryEvidenceSource(value) ? value : "USER_DECLARED_UNVERIFIED";
+}
+
 const showUrl = (id: string) => "https://open.spotify.com/show/" + id;
 
 export async function readMultiPlaylistLibrary(ownerId: string) {
@@ -43,7 +58,8 @@ export async function readMultiPlaylistLibrary(ownerId: string) {
       spotifyShowUrl: showUrl(current.spotifyShowId),
       chapterLabel: current.chapterLabel,
       chapterDurationMs: current.chapterDurationMs, consumedMs: current.consumedMs,
-      revision: current.revision, evidenceSource: "USER_DECLARED_UNVERIFIED" as const,
+      revision: current.revision,
+      evidenceSource: libraryEvidenceSource(current.evidenceSource),
       targets: current.targets.map(t => ({
         targetPlaylistId: t.targetPlaylistId, targetName: t.targetName,
         spotifyPlaylistId: t.spotifyPlaylistId, createdAt: t.createdAt.toISOString(),
@@ -106,7 +122,7 @@ export async function mutateMultiPlaylistLibrary(ownerId: string, command: Libra
     if (!current || current.revision !== command.expectedRevision) {
       fail("ACTIVE_READING_OR_REVISION_CONFLICT");
     }
-    if (current.evidenceSource !== "USER_DECLARED_UNVERIFIED") {
+    if (!isLibraryEvidenceSource(current.evidenceSource)) {
       fail("INVALID_PROVENANCE");
     }
 
@@ -116,7 +132,9 @@ export async function mutateMultiPlaylistLibrary(ownerId: string, command: Libra
           revision: command.expectedRevision },
         data: { chapterLabel: command.chapterLabel,
           chapterDurationMs: command.chapterDurationMs,
-          consumedMs: command.consumedMs, revision: { increment: 1 } },
+          consumedMs: command.consumedMs, revision: { increment: 1 },
+          // A manual correction always wins over the last Spotify reading.
+          evidenceSource: "USER_DECLARED_UNVERIFIED" },
       });
       if (updated.count !== 1) fail("REVISION_CONFLICT");
       await tx.userAudiobookLibraryEntry.create({
@@ -206,7 +224,7 @@ export async function mutateMultiPlaylistLibrary(ownerId: string, command: Libra
       });
       if (entries.length !== current.revision ||
           entries.some((e, i) => e.revision !== i + 1 ||
-            e.evidenceSource !== "USER_DECLARED_UNVERIFIED" ||
+            !isLibraryEvidenceSource(e.evidenceSource) ||
             e.bookTitle !== current.bookTitle ||
             e.spotifyShowId !== current.spotifyShowId)) {
         fail("HISTORY_REQUIRES_REVIEW");
