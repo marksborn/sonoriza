@@ -10,6 +10,10 @@ import { projectAudiobookVirtualChapterPlan } from "@/services/audiobooks/gate-d
 import { projectManualShowChapterPlan } from "@/services/audiobooks/d10-manual-shadow-plan";
 import { singleReadingEnabled } from "@/services/audiobooks/d9-completed-reading-contract";
 import {
+  audiobookProgressSyncEnabled,
+  syncActiveReadingFromSpotify,
+} from "@/services/audiobooks/d14-spotify-progress";
+import {
   audiobookSequenceStartOffset,
   planPreservingRewrite,
   reserveAudiobookChapterBudget,
@@ -531,6 +535,22 @@ export async function generatePlaylists(
     // D.12: ANY current or archived library association is a durable
     // marker of potentially opaque remote book content. Block the entire
     // batch BEFORE collecting sources, independently of the D.12 UI flag.
+    // D.14: refresh the active reading from Spotify's chapter resume_point
+    // before the budget is read (simulation and real alike). Never blocks.
+    if (audiobookProgressSyncEnabled(process.env)) {
+      const runPlaylistIds = targets
+        .map((target) => target.spotifyPlaylistId)
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      let progressClient: SpotifyClient | null = null;
+      summary.audiobookProgressSync = await syncActiveReadingFromSpotify({
+        userId,
+        spotifyPlaylistIds: runPlaylistIds,
+        readChapters: async (audiobookId) => {
+          progressClient ??= await SpotifyClient.forUser(userId);
+          return progressClient.getAudiobookChapters(audiobookId);
+        },
+      });
+    }
     const libraryProtectedRows = await prisma.userAudiobookLibraryTarget.findMany({
       where: { userId,
         spotifyPlaylistId: { in: targets.map(t => t.spotifyPlaylistId).filter(

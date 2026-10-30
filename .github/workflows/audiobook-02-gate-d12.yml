@@ -5,6 +5,8 @@ on:
     paths:
       - "prisma/schema.prisma"
       - "prisma/migrations/20261018013000_audiobook_d12_global_multi_target/**"
+      - "prisma/migrations/20261030140000_audiobook_d14_spotify_progress/**"
+      - "scripts/report-audiobook-chapter-progress.ts"
       - "src/services/audiobooks/**"
       - "src/services/spotify/client.ts"
       - "src/jobs/generate-playlists-incremental.ts"

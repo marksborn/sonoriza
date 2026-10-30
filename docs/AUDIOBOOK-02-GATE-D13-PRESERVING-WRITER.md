@@ -27,3 +27,11 @@ Fora disso, o comportamento anterior (bloqueio do lote real) não muda. O summar
 ## Livro como slot de podcast (30/10/2026)
 Em destinos D.13 com composição **por sequência** que tenha Podcast, o livro, que toca primeiro por estar no topo, **ocupa o 1º slot de Podcast** da sequência. O plano continua no slot seguinte (`RunTarget.sequenceStartOffset`), e a duração restante do capítulo continua sendo descontada do 1º evento ou do orçamento. As faixas PODCAST-08 acompanham o índice deslocado, então cada slot de podcast restante mantém a sua faixa. O guard de sequência pré-escrita recebe o mesmo deslocamento. Exemplo, Trabalho `M → P → M → P → M → P → M`: **Livro (P1)** → M → P (faixa do slot 4) → M → P → M → M → P….
 Sequências só de música e composição por proporção não mudam (deslocamento 0).
+
+## D.14 — capítulo e progresso lidos do Spotify (30/10/2026)
+Probe só de leitura em produção: `GET /audiobooks/{id}/chapters` respondeu 200 com `resume_point` em todos os 35 capítulos de *1984*. Com `AUDIOBOOK02_SPOTIFY_PROGRESS_SYNC=ACTIVE`, antes de planejar uma geração ou simulação de um destino ligado ao livro ativo, o Sonoriza:
+- lê os capítulos numa chamada paginada de 50 em 50, contabilizada num cliente próprio (`summary.audiobookProgressSync`);
+- define o capítulo atual como o primeiro com `fully_played=false`, rotulado pela posição no livro (`3. Capítulo 1`, porque "Capítulo 1" se repete em cada parte), e usa o `resume_position_ms` dele como progresso;
+- grava uma nova revisão (CAS e entrada imutável) com origem `SPOTIFY_RESUME_POINT`. A migration aditiva só amplia as duas constraints de origem.
+
+Nunca bloqueia a geração: falha, livro inteiro ouvido ou ausência de `resume_point` mantêm o último valor. Uma correção manual volta a origem para `USER_DECLARED_UNVERIFIED` e vale até a próxima leitura. Concluir o livro aceita histórico misto.

@@ -199,6 +199,11 @@ export function AudiobookMultiPlaylistLibrary({ targets }: { targets: readonly T
         Duração restante: {formatManualDuration(active.chapterDurationMs - active.consumedMs)}.
         Uma alteração aqui atualiza o capítulo de referência em TODOS os destinos.
       </p>
+      <p className="text-xs text-muted-inverse">
+        {active.evidenceSource === "SPOTIFY_RESUME_POINT"
+          ? "Capítulo e progresso lidos do Spotify na última geração. Uma correção manual vale até a próxima leitura."
+          : "Capítulo e progresso informados por você."}
+      </p>
       <label className={field}>Capítulo atual (atualização global)
         <input className={inputClass} value={chapterLabel} maxLength={120}
           onChange={e => setChapterLabel(e.target.value)}/></label>
