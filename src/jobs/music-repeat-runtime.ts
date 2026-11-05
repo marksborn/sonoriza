@@ -10,6 +10,7 @@ import type { RequiredPolicyUsesEvaluation } from "@/services/data-policy";
 import { LastFmClient } from "@/services/lastfm/client";
 import {
   applyFirstPartyPlaybackPreferencesToMusicCandidates,
+  prismaFirstPartyPlaybackPreferenceStore,
   type FirstPartyPlaybackPreference,
   type FirstPartyPlannerPreferenceEvidence,
 } from "@/services/music-preference";
@@ -18,6 +19,7 @@ export { lastFmMusicIdentityKey } from "@/services/music-identity/factual-text-k
 import { prepareCanonicalFactualCooldown } from "@/services/music-identity/canonical-factual-cooldown-preparation";
 import { matchesCanonicalCooldown, canonicalSnapshotChanged, type CanonicalCooldownState, type CanonicalPreservationEvidence } from "@/services/music-identity/canonical-factual-cooldown";
 import { readLastFmRecentObservation } from "@/services/music-preference/lastfm-coverage-reader";
+import { excludedSpotifyTrackIds } from "@/services/music-preference/track-exclusion";
 import type { Candidate, PlanRunResult } from "@/services/playlist-planner";
 import {
   computeMusicRepeatCutoff,
@@ -45,6 +47,19 @@ export class MusicRepeatPreWriteBlockedError extends Error {
     this.name = "MusicRepeatPreWriteBlockedError";
     this.blockedCount = blockedCount;
     this.missingIdentityCount = missingIdentityCount;
+  }
+}
+
+/** #319: a track the user excluded after planning started is repaired, never written. */
+export class UserTrackExclusionPreWriteBlockedError extends Error {
+  readonly blockedCount: number;
+
+  constructor(blockedCount: number) {
+    super(
+      "A geração foi bloqueada antes de alterar o Spotify porque uma música foi excluída durante o planejamento.",
+    );
+    this.name = "UserTrackExclusionPreWriteBlockedError";
+    this.blockedCount = blockedCount;
   }
 }
 
@@ -281,6 +296,13 @@ export async function revalidateMusicRepeatBeforeRealWrite(
 ): Promise<void> {
   const state = currentMusicRepeatState();
 
+  if (state && !state.simulate) {
+    const preferences = await prismaFirstPartyPlaybackPreferenceStore.list(state.userId);
+    state.firstPartyPlaybackPreferences = preferences;
+    const blockedCount = countUserExcludedPlanItems(plan, excludedSpotifyTrackIds(preferences));
+    if (blockedCount > 0) throw new UserTrackExclusionPreWriteBlockedError(blockedCount);
+  }
+
   if (state && !state.simulate && mustBlockRealWriteForLastFmFactualCooldown(state.lastFmFactualCooldown, false)) {
     throw new LastFmFactualCooldownPreWriteUnavailableError("FACTUAL_EVIDENCE_UNAVAILABLE");
   }
@@ -366,6 +388,21 @@ export async function revalidateMusicRepeatBeforeRealWrite(
   }
 
   await revalidateTargetDiscoveryPoliciesBeforeRealWrite();
+}
+
+export function countUserExcludedPlanItems(
+  plan: PlanRunResult,
+  excludedIds: ReadonlySet<string>,
+): number {
+  let count = 0;
+  for (const target of plan.targets) {
+    for (const item of target.result.items) {
+      if (item.type === "MUSIC" && item.spotifyTrackId && excludedIds.has(item.spotifyTrackId)) {
+        count += 1;
+      }
+    }
+  }
+  return count;
 }
 
 /**

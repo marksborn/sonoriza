@@ -43,6 +43,7 @@ export type KeepFilledRemovalReason =
   | "DUPLICATE_URI"
   | "MUSIC_RECENTLY_PLAYED"
   | "MUSIC_LASTFM_FACTUAL_COOLDOWN"
+  | "MUSIC_USER_EXCLUDED"
   | "MUSIC_LASTFM_IDENTITY_UNMATCHABLE"
   | "MUSIC_IDENTITY_MISSING"
   | "PODCAST_IDENTITY_MISSING"
@@ -87,6 +88,8 @@ export function buildKeepFilledPreservation(input: {
   lastFmFactualBlockedUris?: ReadonlySet<string>;
   /** #512: an unknown factual Last.fm identity cannot be preserved under ACTIVE. */
   lastFmUnmatchableUris?: ReadonlySet<string>;
+  /** #319: explicit "não tocar mais"; applies whatever the cooldown modes are. */
+  userExcludedUris?: ReadonlySet<string>;
   rules: Pick<
     PlaylistRules,
     | "compositionMode"
@@ -159,6 +162,10 @@ export function buildKeepFilledPreservation(input: {
       candidate = item.musicCandidate ?? null;
       if (!candidate) {
         remove(item, "UNREADABLE_ITEM", item.originalDurationMs ?? 0);
+        continue;
+      }
+      if (input.userExcludedUris?.has(item.uri)) {
+        remove(item, "MUSIC_USER_EXCLUDED", candidate.durationMs);
         continue;
       }
       // #512: a track with no exact factual identity must not bypass ACTIVE

@@ -7,6 +7,11 @@ import { UiIcon } from "@/components/UiIcon";
 import { auth, signIn } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { saveMusicPlaybackPolicyForUser } from "@/services/music-playback-policy";
+import {
+  isSpotifyTrackId,
+  listExcludedTracksForUser,
+  restoreTrackForUser,
+} from "@/services/music-preference/track-exclusion";
 import { RECENTLY_PLAYED_SCOPE, scopeIncludes } from "@/services/spotify/recently-played";
 
 function revalidateConfiguration() {
@@ -14,6 +19,18 @@ function revalidateConfiguration() {
   revalidatePath("/dashboard/configuracao");
   revalidatePath("/dashboard/configuracao/musica");
   revalidatePath("/dashboard/configuracao/revisao");
+}
+
+async function restoreExcludedTrack(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+  const spotifyTrackId = formData.get("spotifyTrackId");
+  if (!isSpotifyTrackId(spotifyTrackId)) return;
+  await restoreTrackForUser(session.user.id, spotifyTrackId);
+  revalidatePath("/dashboard/configuracao/musica");
+  revalidatePath("/dashboard/playlists/[targetId]", "page");
 }
 
 async function savePolicy(formData: FormData) {
@@ -77,7 +94,7 @@ export default async function MusicRepeatConfigurationPage({
   if (!session?.user?.id) redirect("/");
   const params = await searchParams;
 
-  const [policy, spotifyAccount, trackedCount] = await Promise.all([
+  const [policy, spotifyAccount, trackedCount, excludedTracks] = await Promise.all([
     prisma.musicPlaybackPolicy.findUnique({
       where: { userId: session.user.id },
     }),
@@ -86,6 +103,7 @@ export default async function MusicRepeatConfigurationPage({
       select: { scope: true },
     }),
     prisma.trackListeningState.count({ where: { userId: session.user.id } }),
+    listExcludedTracksForUser(session.user.id),
   ]);
 
   const hasRecentlyPlayedScope = scopeIncludes(
@@ -238,6 +256,40 @@ export default async function MusicRepeatConfigurationPage({
             Salvar regra de repetição
           </button>
         </form>
+
+        <section className="product-panel mt-5 p-6">
+          <h2 className="text-lg font-black text-ink-inverse">Faixas que não tocam mais</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-inverse">
+            Estas gravações não entram em nenhuma playlist, em qualquer destino. Outras versões da mesma música continuam liberadas. Para excluir uma faixa, use “Não tocar mais” na tela da playlist.
+          </p>
+          {excludedTracks.length === 0 ? (
+            <p className="mt-4 text-sm font-bold text-muted-inverse">Nenhuma faixa excluída.</p>
+          ) : (
+            <ul className="mt-4 divide-y divide-line-dark/45">
+              {excludedTracks.map((track) => (
+                <li key={track.spotifyTrackId} className="flex items-center gap-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-black text-ink-inverse">
+                      {track.title ?? `Faixa ${track.spotifyTrackId}`}
+                    </p>
+                    {track.subtitle ? (
+                      <p className="mt-1 truncate text-sm text-muted-inverse">{track.subtitle}</p>
+                    ) : null}
+                  </div>
+                  <form action={restoreExcludedTrack} className="shrink-0">
+                    <input type="hidden" name="spotifyTrackId" value={track.spotifyTrackId} />
+                    <button
+                      type="submit"
+                      className="rounded-2xl border border-line-dark/70 bg-surface-subtle/70 px-3 py-2 text-xs font-bold text-muted-inverse transition hover:border-brand-400/50 hover:bg-surface-elevated hover:text-ink-inverse"
+                    >
+                      Restaurar
+                    </button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
     </main>
   );

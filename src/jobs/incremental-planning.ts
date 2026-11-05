@@ -31,6 +31,7 @@ import {
   currentMusicRepeatState,
   filterMusicBatchForCurrentRun,
   LastFmFactualCooldownPreWriteBlockedError,
+  UserTrackExclusionPreWriteBlockedError,
   MusicRepeatPreWriteBlockedError,
   revalidateMusicRepeatBeforeRealWrite,
 } from "./music-repeat-runtime";
@@ -142,7 +143,8 @@ const MAX_PODCAST_COMPLETION_REPLANS = 6;
 function isRepairablePreWriteBlock(error: unknown): boolean {
   return (
     error instanceof MusicRepeatPreWriteBlockedError ||
-    error instanceof LastFmFactualCooldownPreWriteBlockedError
+    error instanceof LastFmFactualCooldownPreWriteBlockedError ||
+    error instanceof UserTrackExclusionPreWriteBlockedError
   );
 }
 

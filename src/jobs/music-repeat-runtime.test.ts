@@ -22,6 +22,8 @@ import {
   LastFmFactualCooldownPreWriteUnavailableError,
   lastFmMusicIdentityKey,
   MusicRepeatPreWriteBlockedError,
+  UserTrackExclusionPreWriteBlockedError,
+  countUserExcludedPlanItems,
   runWithMusicRepeatState,
   type LastFmFactualCooldownRuntimeState,
   type MusicRepeatRunState,
@@ -300,6 +302,57 @@ test("collector repair seam still works when an explicit authorized test capabil
           plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
           ["replacement"],
         );
+      },
+    }),
+  );
+
+  assert.equal(revalidations, 2);
+  assert.deepEqual(
+    result.plan.targets[0]?.result.items.map((item) => item.spotifyTrackId),
+    ["replacement"],
+  );
+});
+
+test("#319 a track excluded during planning is repaired out before any write", async () => {
+  const music = source("music-excluded", "MUSIC", [
+    {
+      candidates: [
+        candidate("first", "MUSIC", 300_000),
+        candidate("replacement", "MUSIC", 300_000),
+      ],
+      done: true,
+    },
+  ]);
+  const runtime = state([]);
+  runtime.simulate = false;
+  const musicOnlyTarget = target();
+  musicOnlyTarget.rules.targetDurationMs = 300_000;
+  musicOnlyTarget.rules.sequencePattern = ["MUSIC"];
+  musicOnlyTarget.rules.podcastPercent = 0;
+
+  let revalidations = 0;
+  const result = await runWithMusicRepeatState(runtime, () =>
+    collectIncrementally({
+      sources: [music],
+      targets: [musicOnlyTarget],
+      async revalidateBeforeWrite(plan) {
+        revalidations += 1;
+        if (revalidations === 1) {
+          assert.equal(countUserExcludedPlanItems(plan, new Set(["first"])), 1);
+          runtime.firstPartyPlaybackPreferences = [
+            {
+              id: "pref",
+              userId: "user",
+              subjectType: "TRACK",
+              subjectKey: firstPartySpotifyTrackSubjectKey("first"),
+              policy: "EXCLUDED",
+              source: "USER_EXPLICIT",
+              createdAt: new Date(0),
+              updatedAt: new Date(0),
+            },
+          ];
+          throw new UserTrackExclusionPreWriteBlockedError(1);
+        }
       },
     }),
   );
