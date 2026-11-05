@@ -20,6 +20,18 @@ import { resolveTargetCalendarScope } from "@/services/target-calendar-selection
 
 export const EVENT_REGENERATION_SCHEDULE_MARKER = ":event:";
 
+/**
+ * Quota guard: every event is a full Spotify generation, so very short events
+ * do not get one. They are skipped by the decision and the playlist is kept.
+ */
+export const EVENT_REGENERATION_MIN_EVENT_MS = 10 * 60_000;
+
+export function eventQualifiesForRegeneration(
+  block: Pick<CalendarDurationBlock, "durationMs">,
+): boolean {
+  return block.durationMs >= EVENT_REGENERATION_MIN_EVENT_MS;
+}
+
 export function eventRegenerationEnabled(
   env: Readonly<Record<string, string | undefined>>,
 ): boolean {
@@ -76,7 +88,7 @@ export function decideEventRegeneration(input: {
   const nowMs = input.now.getTime();
   const leadMs = input.leadMinutes * 60_000;
   const ordered = input.blocks
-    .filter((block) => block.durationMs > 0 && block.endsAt.getTime() > nowMs)
+    .filter((block) => eventQualifiesForRegeneration(block) && block.endsAt.getTime() > nowMs)
     .sort(
       (a, b) =>
         a.startsAt.getTime() - b.startsAt.getTime() ||

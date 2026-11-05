@@ -15,4 +15,7 @@ Gatilho, não composição: muda **quando** gerar e **qual evento** cobrir. O mo
 ## Limites
 - A validade do evento é conferida no início da geração, não no instante da escrita. Uma mudança no calendário durante a geração só é tratada no próximo evento avaliado.
 - Sem debounce próprio: o intervalo de 5 min do agendador faz esse papel.
-- **Custo:** cada evento é uma geração completa no Spotify (dezenas de chamadas). Dias com muitos eventos curtos multiplicam o consumo; avalie a cota antes de ligar.
+- **Custo:** cada evento é uma geração completa no Spotify (dezenas de chamadas). Eventos com menos de 10 min são ignorados (`EVENT_REGENERATION_MIN_EVENT_MS`); avalie a cota antes de ligar.
+
+## Consumo do Spotify (dados de 28/10 a 05/11)
+Geração normal do Carro: ~30 chamadas. Os picos de 72 a 132 vinham da releitura completa dos catálogos de podcast quando o cache de 24 h vencia (~110 páginas por dia). Agora o catálogo vencido é atualizado pela primeira página (1 chamada por programa), confirmada pelo `total` do Spotify; há leitura completa se o total não bater, se não houver sobreposição e a cada 30 dias.

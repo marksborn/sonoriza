@@ -150,3 +150,11 @@ test("switch is literal and the scheduler keeps both triggers exclusive", () => 
   const generator = readFileSync("src/jobs/generate-playlists-incremental.ts", "utf8");
   assert.match(generator, /emptyCalendarBehavior === "CLEAR" && !eventScope/);
 });
+
+test("events under 10 minutes never get a generation of their own", () => {
+  const short = block("short", "07:00", "07:06");
+  assert.equal(decide([short], "06:50").action, "NO_EVENT");
+  const decision = decide([short, A], "07:45");
+  assert.equal(decision.action === "GENERATE" && decision.event.eventId, "a");
+  assert.equal(decide([block("ten", "09:00", "09:10")], "08:50").action, "GENERATE");
+});
