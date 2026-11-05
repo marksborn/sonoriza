@@ -15,4 +15,4 @@ Gatilho, não composição: muda **quando** gerar e **qual evento** cobrir. O mo
 ## Limites
 - A validade do evento é conferida no início da geração, não no instante da escrita. Uma mudança no calendário durante a geração só é tratada no próximo evento avaliado.
 - Sem debounce próprio: o intervalo de 5 min do agendador faz esse papel.
-- **Custo:** cada evento é uma geração completa no Spotify (dezenas de chamadas). Dias com muitos eventos curtos multiplicam o consumo; avalie a cota antes de ligar.
+- **Custo:** cada evento é uma geração completa no Spotify (dezenas de chamadas). Eventos com menos de 10 min são ignorados (`EVENT_REGENERATION_MIN_EVENT_MS`); avalie a cota antes de ligar.

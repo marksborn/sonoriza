@@ -7,6 +7,8 @@ import { destinationCompositionCardId } from "@/lib/destination-edit-link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  EVENT_REGENERATION_MIN_EVENT_MS,
+  eventQualifiesForRegeneration,
   eventRegenerationEnabled,
   loadEventRegenerationBlocks,
 } from "@/services/calendar-event-regeneration";
@@ -232,7 +234,10 @@ export default async function CalendarEventCompositionPage({
         leadMinutes,
       ).catch(() => null);
       const next = blocks
-        ?.filter((block) => block.startsAt.getTime() > now.getTime())
+        ?.filter(
+          (block) =>
+            eventQualifiesForRegeneration(block) && block.startsAt.getTime() > now.getTime(),
+        )
         .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())[0];
       nextEventByTargetId.set(target.id, {
         loaded: blocks !== null,
@@ -646,7 +651,7 @@ function PolicyEditor({
                 <span className="font-bold text-ink-inverse">Regenerar a playlist a cada novo evento</span>
                 <span className="mt-0.5 block text-xs leading-5 text-muted-inverse">
                   {automaticUpdates
-                    ? "Ao ativar, a geração automática por horário é desativada para esta playlist. Cada evento elegível terá sua própria geração; o horário salvo volta a valer se você desligar."
+                    ? `Ao ativar, a geração automática por horário é desativada para esta playlist. Cada evento elegível terá sua própria geração; o horário salvo volta a valer se você desligar. Eventos com menos de ${EVENT_REGENERATION_MIN_EVENT_MS / 60_000} minutos são ignorados para poupar a cota do Spotify.`
                     : "Indisponível em destino manual: escolha uma atualização automática em Destinos e regras."}
                 </span>
               </span>
