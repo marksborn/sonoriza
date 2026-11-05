@@ -35,6 +35,7 @@ import {
   decodeShowCatalogCache,
   encodeShowCatalogCache,
   isShowCatalogCacheFresh,
+  showCatalogFirstPageDelta,
   type ShowCatalogEpisode,
 } from "./show-catalog-cache";
 import {
@@ -537,6 +538,7 @@ export class SpotifyIncrementalReader {
     let nextUrl: string | null = `/shows/${source.spotifyId}/episodes?limit=50`;
     let done = false;
     let cacheChecked = false;
+    let firstPage: SpotifyPage<EpisodeResponse> | null = null;
     const policy =
       this.showPolicies.get(source.id) ?? legacyShowPolicy(source);
 
@@ -562,6 +564,7 @@ export class SpotifyIncrementalReader {
     const persistCatalogCache = async (
       episodes: readonly ShowCatalogEpisode[],
       pageCount: number,
+      refresh: { providerTotal?: number; fullReadAt?: string },
     ): Promise<void> => {
       try {
         await prisma.sourcePlaylist.update({
@@ -570,6 +573,7 @@ export class SpotifyIncrementalReader {
             cachedCandidates: encodeShowCatalogCache(
               episodes,
               pageCount,
+              refresh,
             ) as Prisma.InputJsonValue,
             cacheUpdatedAt: new Date(),
           },
@@ -596,9 +600,8 @@ export class SpotifyIncrementalReader {
 
         if (!cacheChecked) {
           cacheChecked = true;
-          const cached = isShowCatalogCacheFresh(source.cacheUpdatedAt)
-            ? decodeShowCatalogCache(source.cachedCandidates)
-            : null;
+          const stored = decodeShowCatalogCache(source.cachedCandidates);
+          const cached = isShowCatalogCacheFresh(source.cacheUpdatedAt) ? stored : null;
 
           if (cached) {
             const canonicalStates = await loadCachedShowCanonicalStates(
@@ -629,6 +632,55 @@ export class SpotifyIncrementalReader {
           this.requestMetrics.cacheMisses += 1;
           this.requestMetrics.showCatalogCacheMisses += 1;
           metrics.cacheMisses += 1;
+
+          // Expired but intact catalog: one page instead of the whole show.
+          if (stored && !cached && nextUrl) {
+            const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
+            firstPage = page;
+            metrics.pagesRead += 1;
+            const delta = showCatalogFirstPageDelta({
+              cache: stored,
+              firstPageItems: page.items,
+              providerTotal: page.total,
+              now: new Date(),
+            });
+            if (delta) {
+              const newEpisodes = delta.newItems.flatMap((episode) => {
+                const entry = toShowCatalogEpisode(episode);
+                return entry ? [entry] : [];
+              });
+              const episodes = [...newEpisodes, ...stored.episodes];
+              // Records the canonical state of the new episodes only.
+              const newCollector = createPodcastCollector(true, source.spotifyId, {
+                userId: source.userId,
+                stateStore: this.podcastListeningStateStore,
+                sourceSpotifyType: "SHOW",
+                sourceSpotifyId: source.spotifyId,
+              });
+              ingestPodcastPage(newCollector, delta.newItems);
+              await newCollector.result();
+              const canonicalStates = await loadCachedShowCanonicalStates(source.userId, episodes);
+              if (canonicalStates) {
+                this.requestMetrics.showCatalogPagesAvoided += Math.max(0, stored.pageCount - 1);
+                metrics.pagesAvoided += Math.max(0, stored.pageCount - 1);
+                nextUrl = null;
+                done = true;
+                await persistCatalogCache(episodes, stored.pageCount, {
+                  providerTotal: delta.providerTotal,
+                  fullReadAt: stored.fullReadAt,
+                });
+                const collector = createPodcastCollector(true, source.spotifyId, {
+                  userId: source.userId,
+                  stateStore: this.podcastListeningStateStore,
+                  sourceSpotifyType: "SHOW",
+                  sourceSpotifyId: source.spotifyId,
+                  canonicalStates,
+                });
+                ingestPodcastPage(collector, episodes);
+                return finalize(await collector.result(), true);
+              }
+            }
+          }
         }
 
         if (!nextUrl) {
@@ -648,10 +700,18 @@ export class SpotifyIncrementalReader {
         });
         const catalogEpisodes: ShowCatalogEpisode[] = [];
         let pageCount = 0;
+        let fullReadTotal: number | undefined;
 
         while (nextUrl) {
-          const page: SpotifyPage<EpisodeResponse> = await this.request(nextUrl);
-          metrics.pagesRead += 1;
+          let page: SpotifyPage<EpisodeResponse>;
+          if (firstPage) {
+            page = firstPage;
+            firstPage = null;
+          } else {
+            page = await this.request(nextUrl);
+            metrics.pagesRead += 1;
+          }
+          fullReadTotal ??= page.total;
           pageCount += 1;
           nextUrl = page.next ? stripBase(page.next) : null;
           ingestPodcastPage(collector, page.items);
@@ -662,7 +722,10 @@ export class SpotifyIncrementalReader {
         }
         done = true;
         const result = await collector.result();
-        await persistCatalogCache(catalogEpisodes, pageCount);
+        await persistCatalogCache(catalogEpisodes, pageCount, {
+          providerTotal: fullReadTotal,
+          fullReadAt: new Date().toISOString(),
+        });
         return finalize(result);
       },
     };
@@ -709,6 +772,7 @@ export class SpotifyIncrementalReader {
 interface SpotifyPage<T> {
   items: T[];
   next: string | null;
+  total?: number;
 }
 
 interface PlaylistItem {

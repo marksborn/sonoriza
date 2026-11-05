@@ -178,3 +178,78 @@ integrationTest(
     }
   },
 );
+
+integrationTest(
+  "expired SHOW catalog refreshes from one page and falls back to a full read when unproven",
+  async (t) => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const user = await prisma.user.create({
+      data: { email: `show-delta-${suffix}@example.test` },
+    });
+    const dbSource = await prisma.sourcePlaylist.create({
+      data: {
+        userId: user.id, kind: "PODCAST", spotifyType: "SHOW", spotifyId: "show-cache",
+        name: "Cached Show", includePlayed: false,
+      },
+    });
+    t.after(async () => {
+      await prisma.user.delete({ where: { id: user.id } });
+    });
+
+    const originalFetch = globalThis.fetch;
+    const nextPage = "https://api.spotify.com/v1/shows/show-cache/episodes?limit=50&offset=50";
+    let calls = 0;
+    let pages: unknown[] = [];
+    globalThis.fetch = (async () => {
+      const body = pages[Math.min(calls, pages.length - 1)];
+      calls += 1;
+      return jsonResponse(body);
+    }) as typeof fetch;
+
+    const read = async () => {
+      const config = (await prisma.sourcePlaylist.findUniqueOrThrow({
+        where: { id: dbSource.id },
+      })) as IncrementalSpotifySourceConfig;
+      const reader = createReader();
+      const batch = await (await reader.createSource(config)).readNext();
+      return { batch, metrics: reader.getRequestMetrics() };
+    };
+    const expire = () =>
+      prisma.sourcePlaylist.update({
+        where: { id: dbSource.id },
+        data: { cacheUpdatedAt: new Date(Date.now() - 2 * 86_400_000) },
+      });
+    const uris = (batch: Awaited<ReturnType<typeof read>>["batch"]) =>
+      batch.candidates.map((candidate) => candidate.uri).sort();
+
+    try {
+      pages = [
+        { items: [episode("3"), episode("2")], next: nextPage, total: 3 },
+        { items: [episode("1")], next: null, total: 3 },
+      ];
+      await read();
+      assert.equal(calls, 2);
+
+      await expire();
+      calls = 0;
+      pages = [{ items: [episode("4"), episode("3"), episode("2")], next: nextPage, total: 4 }];
+      const delta = await read();
+      assert.equal(calls, 1, "one page instead of the whole show");
+      assert.equal(delta.batch.fromCache, true);
+      assert.deepEqual(uris(delta.batch), ["1", "2", "3", "4"].map((id) => `spotify:episode:${id}`));
+      assert.equal(delta.metrics.showCatalogPagesAvoided, 1);
+
+      await expire();
+      calls = 0;
+      pages = [
+        { items: [episode("4"), episode("3")], next: nextPage, total: 3 },
+        { items: [episode("1")], next: null, total: 3 },
+      ];
+      const full = await read();
+      assert.equal(calls, 2, "a removed episode forces the full read");
+      assert.deepEqual(uris(full.batch), ["1", "3", "4"].map((id) => `spotify:episode:${id}`));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  },
+);

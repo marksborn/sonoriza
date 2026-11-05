@@ -6,6 +6,7 @@ import {
   encodeShowCatalogCache,
   isShowCatalogCacheFresh,
   SHOW_CATALOG_CACHE_TTL_MS,
+  showCatalogFirstPageDelta,
 } from "./show-catalog-cache";
 
 test("SHOW catalog cache keeps catalog metadata but excludes playback state", () => {
@@ -79,4 +80,51 @@ test("SHOW catalog cache is fresh only inside the 24h TTL", () => {
     false,
   );
   assert.equal(isShowCatalogCacheFresh(null, now), false);
+});
+
+const NOW = new Date("2026-11-05T12:00:00Z");
+const catalog = (...ids: string[]) => ({
+  episodes: ids.map((id) => ({ uri: `spotify:episode:${id}`, name: id, duration_ms: 1, type: "episode" as const })),
+  providerTotal: ids.length,
+  fullReadAt: "2026-11-01T12:00:00Z",
+});
+const page = (...ids: string[]) => ids.map((id) => ({ uri: `spotify:episode:${id}` }));
+
+test("first-page delta returns only the episodes newer than the cache", () => {
+  const delta = showCatalogFirstPageDelta({
+    cache: catalog("c", "b", "a"),
+    firstPageItems: page("e", "d", "c", "b"),
+    providerTotal: 5,
+    now: NOW,
+  });
+  assert.deepEqual(delta?.newItems.map((item) => item.uri), ["spotify:episode:e", "spotify:episode:d"]);
+  assert.equal(delta?.providerTotal, 5);
+  const unchanged = showCatalogFirstPageDelta({
+    cache: catalog("b", "a"), firstPageItems: page("b", "a"), providerTotal: 2, now: NOW,
+  });
+  assert.deepEqual(unchanged?.newItems, []);
+});
+
+test("first-page delta requires a full read whenever it cannot prove the catalog", () => {
+  const base = { cache: catalog("c", "b", "a"), now: NOW };
+  assert.equal(showCatalogFirstPageDelta({ ...base, firstPageItems: page("c", "b"), providerTotal: 2 }), null, "removed episode");
+  assert.equal(showCatalogFirstPageDelta({ ...base, firstPageItems: page("x", "y"), providerTotal: 5 }), null, "no overlap");
+  assert.equal(showCatalogFirstPageDelta({ ...base, firstPageItems: page("c"), providerTotal: undefined }), null, "no total");
+  const { providerTotal: _ignored, ...legacy } = catalog("c");
+  assert.equal(showCatalogFirstPageDelta({ cache: legacy, firstPageItems: page("c"), providerTotal: 1, now: NOW }), null, "legacy cache");
+  assert.equal(
+    showCatalogFirstPageDelta({
+      cache: { ...catalog("c"), fullReadAt: "2026-10-01T12:00:00Z" },
+      firstPageItems: page("c"), providerTotal: 1, now: NOW,
+    }),
+    null,
+    "periodic full read",
+  );
+});
+
+test("refresh metadata survives the cache round trip", () => {
+  const payload = encodeShowCatalogCache([], 41, { providerTotal: 2031, fullReadAt: "2026-11-01T12:00:00Z" });
+  const decoded = decodeShowCatalogCache(JSON.parse(JSON.stringify(payload)));
+  assert.equal(decoded?.providerTotal, 2031);
+  assert.equal(decoded?.fullReadAt, "2026-11-01T12:00:00Z");
 });

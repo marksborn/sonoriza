@@ -3,6 +3,12 @@ const SHOW_CATALOG_CACHE_KIND = "PODCAST_SHOW_CATALOG";
 const DAY_MS = 86_400_000;
 
 export const SHOW_CATALOG_CACHE_TTL_MS = DAY_MS;
+/**
+ * Quota: an expired catalog is refreshed from its first page (newest episodes)
+ * while the provider total proves nothing else changed. Metadata of older
+ * episodes is only re-read by a full read, at least once in this period.
+ */
+export const SHOW_CATALOG_FULL_REFRESH_MS = 30 * DAY_MS;
 
 export type ShowCatalogEpisode = {
   id?: string;
@@ -26,6 +32,9 @@ export type ShowCatalogCachePayload = {
   version: typeof SHOW_CATALOG_CACHE_VERSION;
   pageCount: number;
   episodes: ShowCatalogEpisode[];
+  /** Spotify's catalog size at the last read; enables first-page refresh. */
+  providerTotal?: number;
+  fullReadAt?: string;
 };
 
 /**
@@ -36,11 +45,16 @@ export type ShowCatalogCachePayload = {
 export function encodeShowCatalogCache(
   episodes: readonly ShowCatalogEpisode[],
   pageCount: number,
+  refresh?: Readonly<{ providerTotal?: number; fullReadAt?: string }>,
 ): ShowCatalogCachePayload {
   return {
     kind: SHOW_CATALOG_CACHE_KIND,
     version: SHOW_CATALOG_CACHE_VERSION,
     pageCount: normalizeCount(pageCount),
+    ...(Number.isInteger(refresh?.providerTotal)
+      ? { providerTotal: refresh!.providerTotal }
+      : {}),
+    ...(refresh?.fullReadAt ? { fullReadAt: refresh.fullReadAt } : {}),
     episodes: episodes.map((episode) => ({
       ...(normalizedOptionalText(episode.id)
         ? { id: normalizedOptionalText(episode.id)! }
@@ -112,7 +126,37 @@ export function decodeShowCatalogCache(
     version: SHOW_CATALOG_CACHE_VERSION,
     pageCount: Number(payload.pageCount),
     episodes,
+    ...(Number.isInteger(payload.providerTotal)
+      ? { providerTotal: Number(payload.providerTotal) }
+      : {}),
+    ...(typeof payload.fullReadAt === "string" ? { fullReadAt: payload.fullReadAt } : {}),
   };
+}
+
+/**
+ * First-page refresh of an expired catalog. Spotify lists a show newest first,
+ * so the items before the first known episode are the new ones. Returns null
+ * (full read required) unless the provider total proves the cached remainder
+ * is intact: this catches removed episodes and more news than one page holds.
+ */
+export function showCatalogFirstPageDelta<T extends { uri?: string } | null>(input: {
+  cache: Pick<ShowCatalogCachePayload, "episodes" | "providerTotal" | "fullReadAt">;
+  firstPageItems: readonly T[];
+  providerTotal: number | undefined;
+  now: Date;
+}): { newItems: T[]; providerTotal: number } | null {
+  const { cache, firstPageItems, providerTotal, now } = input;
+  if (!Number.isInteger(providerTotal) || !Number.isInteger(cache.providerTotal)) return null;
+  const fullReadAtMs = Date.parse(cache.fullReadAt ?? "");
+  if (!Number.isFinite(fullReadAtMs)) return null;
+  if (now.getTime() - fullReadAtMs >= SHOW_CATALOG_FULL_REFRESH_MS) return null;
+
+  const known = new Set(cache.episodes.map((episode) => episode.uri));
+  const overlap = firstPageItems.findIndex((item) => Boolean(item?.uri && known.has(item.uri)));
+  if (overlap < 0) return null;
+  const newItems = firstPageItems.slice(0, overlap);
+  if (cache.providerTotal! + newItems.length !== providerTotal) return null;
+  return { newItems, providerTotal: providerTotal! };
 }
 
 export function isShowCatalogCacheFresh(
