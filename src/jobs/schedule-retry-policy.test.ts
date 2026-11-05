@@ -103,7 +103,7 @@ test("#453 only the calendar KEEP/SKIP branch can publish structured skip eviden
   const scheduler = readFileSync("src/jobs/scheduled-generation.ts", "utf8");
   assert.match(
     generator,
-    /if \(target\.emptyCalendarBehavior === "CLEAR"\)[\s\S]*?runTargets\.push\([\s\S]*?\} else \{[\s\S]*?skipped\.push\(target\);/,
+    /if \(target\.emptyCalendarBehavior === "CLEAR" && !eventScope\)[\s\S]*?runTargets\.push\([\s\S]*?\} else \{[\s\S]*?skipped\.push\(target\);/,
   );
   assert.match(generator, /summary\.calendarSkippedTargets = skipped\.map\(\(target\) =>/);
   assert.match(scheduler, /generated\.status === "SUCCESS" && generation\?\.status === "SUCCESS"/);

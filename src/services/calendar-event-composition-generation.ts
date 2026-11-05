@@ -76,6 +76,8 @@ export async function assessCalendar03GenerationConfiguration(
           remainderFillStrategy: row.remainderFillStrategy,
           remainderPodcastPercent: row.remainderPodcastPercent,
           remainderFallback: row.remainderFallback,
+          regenerateOnEvent: row.regenerateOnEvent,
+          eventRegenerationLeadMinutes: row.eventRegenerationLeadMinutes,
         })
       : defaultCalendarEventCompositionPolicy(target.id);
     policies.set(target.id, policy);

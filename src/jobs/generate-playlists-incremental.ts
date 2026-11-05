@@ -44,6 +44,7 @@ import {
   type Podcast08CapturedContext,
 } from "@/services/playlist-planner/podcast-duration-simulation-shadow";
 import { calendarDurationPlanningBlocks } from "@/services/calendar-duration-strategy";
+import { narrowCalendarToEvent, type EventScope } from "@/services/calendar-event-regeneration";
 import {
   resolveTargetCalendarScope,
   targetCalendarScopesEqual,
@@ -144,6 +145,8 @@ export interface GeneratePlaylistsOptions {
   musicOrderSimulationEvidence?: Record<string, ReusableMusicOrderEvidence>;
   /** SCHEDULE-01: optional subset; omitted keeps manual generation behavior unchanged. */
   targetPlaylistIds?: string[];
+  /** CALENDAR-05: plan this target for exactly one calendar event. */
+  eventScopeByTargetId?: Record<string, EventScope>;
   /** #449: one-shot, in-memory override, only for a scoped simulation. */
   podcast08EphemeralPreview?: Podcast08EphemeralPreview;
   /** #435: invoked immediately after the GenerationRun exists, before long-running work. */
@@ -822,12 +825,14 @@ export async function generatePlaylists(
         });
       }
 
+      const eventScope = opts.eventScopeByTargetId?.[target.id];
       const resolved = await resolveTargetDuration(
         userId,
         target,
         targetCalendarIds,
         date,
         log,
+        eventScope,
       );
       resolvedDurationByTargetId.set(target.id, resolved);
 
@@ -837,7 +842,8 @@ export async function generatePlaylists(
       );
 
       if (target.durationMode === "CALENDAR" && resolved.durationMs <= 0) {
-        if (target.emptyCalendarBehavior === "CLEAR") {
+        // CALENDAR-05: a cancelled/moved event never clears the playlist.
+        if (target.emptyCalendarBehavior === "CLEAR" && !eventScope) {
           log({
             level: "INFO",
             message: `Target "${target.name}" has no eligible calendar events → will be cleared`,
@@ -2727,6 +2733,7 @@ export async function resolveTargetDuration(
   durationCalendarIds: string[],
   date: Date,
   log: (line: LogLine) => void,
+  eventScope?: EventScope,
 ): Promise<ResolvedTargetDuration> {
   if (target.durationMode === "FIXED") {
     const podcastEpisodeMaxDurationMs = resolvePodcastEpisodeMaxDurationMs(
@@ -2741,10 +2748,11 @@ export async function resolveTargetDuration(
     };
   }
 
-  const calendar = await computeCalendarDuration(userId, durationCalendarIds, date, {
+  const dayCalendar = await computeCalendarDuration(userId, durationCalendarIds, date, {
     mode: target.calendarEventFilterMode,
     marker: target.calendarEventMarker,
   });
+  const calendar = eventScope ? narrowCalendarToEvent(dayCalendar, eventScope) : dayCalendar;
   const filterDescription =
     calendar.filterMode === "MARKER"
       ? `marker ${calendar.marker ?? "(missing)"}`
