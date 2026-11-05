@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { revalidatePath } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 
 import { BrandLogo } from "@/components/BrandLogo";
@@ -13,6 +14,29 @@ import {
   summarizeGenerationRunDiagnostic,
 } from "@/services/generation-run-diagnostics";
 import { destinationEditHref } from "@/lib/destination-edit-link";
+import {
+  excludeTrackForUser,
+  isSpotifyTrackId,
+  loadExcludedSpotifyTrackIds,
+  restoreTrackForUser,
+} from "@/services/music-preference/track-exclusion";
+
+async function setTrackExclusion(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session?.user?.id) redirect("/");
+  const spotifyTrackId = formData.get("spotifyTrackId");
+  if (!isSpotifyTrackId(spotifyTrackId)) return;
+
+  if (formData.get("excluded") === "true") {
+    await restoreTrackForUser(session.user.id, spotifyTrackId);
+  } else {
+    await excludeTrackForUser(session.user.id, spotifyTrackId);
+  }
+  revalidatePath("/dashboard/playlists/[targetId]", "page");
+  revalidatePath("/dashboard/configuracao/musica");
+}
 
 export default async function GeneratedPlaylistPage({
   params,
@@ -32,7 +56,7 @@ export default async function GeneratedPlaylistPage({
 
   if (!target) notFound();
 
-  const [run, recentRuns] = await Promise.all([
+  const [run, recentRuns, excludedTrackIds] = await Promise.all([
     prisma.generationRun.findFirst({
       where: {
         userId: session.user.id,
@@ -51,6 +75,7 @@ export default async function GeneratedPlaylistPage({
       },
     }),
     loadRecentTargetRuns(session.user.id, target.id),
+    loadExcludedSpotifyTrackIds(session.user.id),
   ]);
 
   const items = run?.items ?? [];
@@ -234,6 +259,27 @@ export default async function GeneratedPlaylistPage({
                           </p>
                         ) : null}
                       </div>
+                      {item.contentType === "MUSIC" && item.spotifyTrackId ? (
+                        <form action={setTrackExclusion} className="shrink-0">
+                          <input type="hidden" name="spotifyTrackId" value={item.spotifyTrackId} />
+                          <input
+                            type="hidden"
+                            name="excluded"
+                            value={String(excludedTrackIds.has(item.spotifyTrackId))}
+                          />
+                          <button
+                            type="submit"
+                            title={
+                              excludedTrackIds.has(item.spotifyTrackId)
+                                ? "Volta a poder entrar nas próximas gerações"
+                                : "Sai das próximas gerações de todos os destinos"
+                            }
+                            className="rounded-2xl border border-line-dark/70 bg-surface-subtle/70 px-3 py-2 text-xs font-bold text-muted-inverse transition hover:border-brand-400/50 hover:bg-surface-elevated hover:text-ink-inverse"
+                          >
+                            {excludedTrackIds.has(item.spotifyTrackId) ? "Restaurar" : "Não tocar mais"}
+                          </button>
+                        </form>
+                      ) : null}
                     </li>
                   ))}
                 </ol>

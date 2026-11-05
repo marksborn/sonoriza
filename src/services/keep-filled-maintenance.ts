@@ -23,6 +23,8 @@ import {
   prepareLastFmFactualCooldown,
 } from "@/jobs/music-repeat-runtime";
 
+import { loadExcludedSpotifyTrackIds } from "@/services/music-preference/track-exclusion";
+
 export type KeepFilledTargetPatch = {
   canonicalCooldownEvidence?: CanonicalPreservationEvidence;
   snapshotBefore: string;
@@ -311,6 +313,15 @@ export async function prepareKeepFilledTarget(
     }
   }
 
+  const userExcludedUris = new Set<string>();
+  if (hasReadableMusic) {
+    const excludedIds = await loadExcludedSpotifyTrackIds(userId);
+    for (const item of remote.items) {
+      const trackId = item.type === "MUSIC" ? item.musicCandidate?.spotifyTrackId : null;
+      if (item.uri && trackId && excludedIds.has(trackId)) userExcludedUris.add(item.uri);
+    }
+  }
+
   const musicRepeat = await loadMusicRepeatContext(userId, date);
   const preservation = buildKeepFilledPreservation({
     items: remote.items,
@@ -325,6 +336,7 @@ export async function prepareKeepFilledTarget(
     blockedTrackIds: musicRepeat.blockedTrackIds,
     lastFmFactualBlockedUris: factualBlockedUris,
     lastFmUnmatchableUris: factualUnmatchableUris,
+    userExcludedUris,
     rules: {
       compositionMode: target.compositionMode,
       sequencePattern: parseSequencePattern(target.sequencePattern),

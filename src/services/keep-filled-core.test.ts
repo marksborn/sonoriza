@@ -325,6 +325,17 @@ test("#512 KEEP_FILLED removes Last.fm factual match while preserving unaffected
   assert.equal(result.forceReplace, false);
 });
 
+test("#319 KEEP_FILLED removes a user-excluded track whatever the cooldown modes are", () => {
+  const result = build({
+    musicRepeatEnabled: false,
+    userExcludedUris: new Set(["spotify:track:m1"]),
+  });
+
+  assert.deepEqual(result.preserved.map((item) => item.uri), ["spotify:episode:p1"]);
+  assert.deepEqual(result.removeUris, ["spotify:track:m1"]);
+  assert.equal(result.removals[0]?.reason, "MUSIC_USER_EXCLUDED");
+});
+
 test("#512 factual set does not change KEEP_FILLED when no scrobbles match", () => {
   const result = build({
     lastFmFactualBlockedUris: new Set(["spotify:track:another-recording"]),
