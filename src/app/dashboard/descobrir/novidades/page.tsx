@@ -80,7 +80,7 @@ export default async function NewReleasesPage({ searchParams }: PageProps) {
               <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">Novidades</p>
               <h2 className="mt-1 text-2xl font-black text-ink-inverse">Radar de lançamentos</h2>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-inverse">
-                Álbuns e singles lançados nos últimos {RELEASE_RADAR_DEFAULTS.windowDays} dias pelos artistas das suas curtidas e dos que você mais ouviu nos últimos 90 dias. Para poupar a cota do Spotify, cada atualização (uma por dia) consulta até {RELEASE_RADAR_DEFAULTS.artistsPerRefresh} artistas em rodízio, e cada artista é revisto a cada 7 dias; os lançamentos encontrados ficam acumulados. Esta tela só consulta o Spotify; nenhuma playlist é alterada.
+                Álbuns e singles lançados nos últimos {RELEASE_RADAR_DEFAULTS.windowDays} dias pelos artistas das suas curtidas e dos que você mais ouviu nos últimos 90 dias. Para poupar a cota do Spotify, o radar se atualiza sozinho uma vez por dia, e cada atualização consulta até {RELEASE_RADAR_DEFAULTS.artistsPerRefresh} artistas em rodízio, e cada artista é revisto a cada 7 dias; os lançamentos encontrados ficam acumulados. Esta tela só consulta o Spotify; nenhuma playlist é alterada.
               </p>
             </div>
           </div>

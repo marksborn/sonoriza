@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { runScheduledGeneration } from "@/jobs/scheduled-generation";
 import { retryDuePushDeliveries } from "@/services/notifications";
+import { refreshDueReleaseRadars } from "@/services/releases/release-radar-auto";
 import {
   getActiveSpotifyBackoff,
   spotifyBackoffApiPayload,
@@ -41,5 +42,7 @@ export async function POST(request: Request) {
   }
 
   const result = await runScheduledGeneration();
+  // Only on an idle tick, so the radar never stacks on a generation burst.
+  if (result.processed === 0) await refreshDueReleaseRadars();
   return NextResponse.json(result);
 }
