@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { getAlbumOpportunitySnapshotView } from "@/services/album-discovery/opportunity-snapshot";
+import { spotifyCatalogRecommendationCapability } from "@/services/data-policy";
 import {
   albumCoverageSummary,
   albumRecommendationReasons,
@@ -17,6 +18,7 @@ export default async function AlbumsPage({
   const session = await auth();
   if (!session?.user?.id) redirect("/");
   const query = await searchParams;
+  const recommendationsAllowed = spotifyCatalogRecommendationCapability().allowed;
 
   let report: Awaited<ReturnType<typeof getAlbumOpportunitySnapshotView>> | null = null;
   let loadFailed = false;
@@ -75,6 +77,16 @@ export default async function AlbumsPage({
               </p>
             </div>
           </div>
+        </section>
+      ) : report.snapshot.status === "MISSING" && !recommendationsAllowed ? (
+        <section className="product-panel p-8 text-center">
+          <span className="product-icon-tile mx-auto h-12 w-12">
+            <UiIcon name="warning" size={22} />
+          </span>
+          <h3 className="mt-4 text-xl font-black text-ink-inverse">Sugestões de álbuns indisponíveis</h3>
+          <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted-inverse">
+            Este recurso está desligado porque a política de dados do Sonoriza não permite usar o catálogo do Spotify para recomendação. Não há nada em processamento, então esta tela não vai se preencher sozinha.
+          </p>
         </section>
       ) : report.snapshot.status === "MISSING" ? (
         <section className="product-panel p-8 text-center">
