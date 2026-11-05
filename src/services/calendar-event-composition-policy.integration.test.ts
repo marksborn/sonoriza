@@ -296,3 +296,40 @@ databaseTest(
     }
   },
 );
+
+databaseTest("CALENDAR-05 persists the opt-in and rejects an invalid lead time in the database", async () => {
+  const suffix = randomUUID();
+  const userId = `calendar05-user-${suffix}`;
+  const targetPlaylistId = `calendar05-target-${suffix}`;
+  await prisma.user.create({ data: { id: userId } });
+  await prisma.targetPlaylist.create({
+    data: {
+      id: targetPlaylistId, userId, name: "CALENDAR-05 fixture",
+      durationMode: "CALENDAR", fixedDurationSeconds: null,
+      calendarDurationStrategy: "PER_EVENT", sequencePattern: ["PODCAST", "MUSIC"],
+    },
+  });
+  const input = {
+    eventCompositionPolicy: "SEQUENCE_PER_EVENT" as const,
+    maxPodcastsPerEvent: 1,
+    podcastEventSafetyMarginSeconds: 0,
+    podcastEventDistribution: "EVERY_EVENT" as const,
+  };
+  try {
+    await saveCalendarEventCompositionPolicy(userId, targetPlaylistId, {
+      ...input, regenerateOnEvent: true, eventRegenerationLeadMinutes: 30,
+    });
+    const on = await loadCalendarEventCompositionPolicy(userId, targetPlaylistId);
+    assert.deepEqual(on.sequencePerEvent?.eventRegeneration, { leadMinutes: 30 });
+    await saveCalendarEventCompositionPolicy(userId, targetPlaylistId, { ...input, regenerateOnEvent: false });
+    const off = await loadCalendarEventCompositionPolicy(userId, targetPlaylistId);
+    assert.equal(off.sequencePerEvent?.eventRegeneration, undefined);
+    await assert.rejects(
+      prisma.$executeRaw`UPDATE "CalendarEventCompositionPolicy" SET "eventRegenerationLeadMinutes" = 10 WHERE "userId" = ${userId}`,
+    );
+  } finally {
+    await prisma.calendarEventCompositionPolicy.deleteMany({ where: { userId } }).catch(() => undefined);
+    await prisma.targetPlaylist.delete({ where: { id: targetPlaylistId } }).catch(() => undefined);
+    await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
+  }
+});

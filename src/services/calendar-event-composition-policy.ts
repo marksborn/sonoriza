@@ -23,7 +23,12 @@ export type CalendarSequencePerEventSettings = Readonly<{
   /** Duration share of the remainder for podcasts; null unless MIX_RATIO. */
   remainderPodcastPercent: number | null;
   remainderFallback: CalendarRemainderFallbackValue;
+  /** CALENDAR-05 (#553): present only while per-event regeneration is on. */
+  eventRegeneration?: Readonly<{ leadMinutes: EventRegenerationLeadMinutes }>;
 }>;
+
+export const EVENT_REGENERATION_LEAD_MINUTES = [5, 15, 30] as const;
+export type EventRegenerationLeadMinutes = (typeof EVENT_REGENERATION_LEAD_MINUTES)[number];
 
 export type PodcastEventDistributionValue =
   | "EVERY_EVENT"
@@ -50,6 +55,8 @@ export type CalendarEventCompositionPolicyInput = Readonly<{
   remainderFillStrategy?: CalendarRemainderFillStrategyValue | null;
   remainderPodcastPercent?: number | null;
   remainderFallback?: CalendarRemainderFallbackValue | null;
+  regenerateOnEvent?: boolean | null;
+  eventRegenerationLeadMinutes?: number | null;
 }>;
 
 export const DEFAULT_CALENDAR_SEQUENCE_PER_EVENT_STORAGE = Object.freeze({
@@ -202,6 +209,8 @@ export async function loadCalendarEventCompositionPolicy(
     remainderFillStrategy: row.remainderFillStrategy,
     remainderPodcastPercent: row.remainderPodcastPercent,
     remainderFallback: row.remainderFallback,
+    regenerateOnEvent: row.regenerateOnEvent,
+    eventRegenerationLeadMinutes: row.eventRegenerationLeadMinutes,
   });
 }
 
@@ -230,6 +239,13 @@ export async function saveCalendarEventCompositionPolicy(
                 resolved.sequencePerEvent.remainderPodcastPercent,
             }),
         remainderFallback: resolved.sequencePerEvent.remainderFallback,
+        regenerateOnEvent: Boolean(resolved.sequencePerEvent.eventRegeneration),
+        ...(resolved.sequencePerEvent.eventRegeneration
+          ? {
+              eventRegenerationLeadMinutes:
+                resolved.sequencePerEvent.eventRegeneration.leadMinutes,
+            }
+          : {}),
       }
     : {};
 
@@ -300,11 +316,23 @@ function normalizeSequencePerEventSettings(
     remainderPodcastPercent = Number(percent);
   }
 
+  let eventRegeneration: CalendarSequencePerEventSettings["eventRegeneration"];
+  if (input.regenerateOnEvent === true) {
+    const leadMinutes = input.eventRegenerationLeadMinutes ?? 15;
+    if (!(EVENT_REGENERATION_LEAD_MINUTES as readonly number[]).includes(leadMinutes)) {
+      throw new Error("eventRegenerationLeadMinutes must be 5, 15 or 30.");
+    }
+    eventRegeneration = Object.freeze({
+      leadMinutes: leadMinutes as EventRegenerationLeadMinutes,
+    });
+  }
+
   return Object.freeze({
     remainderFillStrategy: strategy,
     remainderPodcastPercent,
     // Music-only remainder never needs a music fallback; keep one canonical value.
     remainderFallback: strategy === "MUSIC_ONLY" ? "FILL_WITH_MUSIC" : fallback,
+    ...(eventRegeneration ? { eventRegeneration } : {}),
   });
 }
 

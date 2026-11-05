@@ -7,7 +7,12 @@ import { destinationCompositionCardId } from "@/lib/destination-edit-link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  eventRegenerationEnabled,
+  loadEventRegenerationBlocks,
+} from "@/services/calendar-event-regeneration";
+import {
   DEFAULT_CALENDAR_SEQUENCE_PER_EVENT_STORAGE,
+  EVENT_REGENERATION_LEAD_MINUTES,
   loadCalendarEventCompositionPolicy,
   saveCalendarEventCompositionPolicy,
   type CalendarEventCompositionPolicySnapshot,
@@ -43,6 +48,7 @@ async function savePolicy(formData: FormData) {
       id: true,
       durationMode: true,
       calendarDurationStrategy: true,
+      updatePolicy: true,
     },
   });
 
@@ -52,6 +58,14 @@ async function savePolicy(formData: FormData) {
     target.calendarDurationStrategy !== "PER_EVENT"
   ) {
     redirect(`${PAGE_PATH}?error=scope`);
+  }
+
+  // CALENDAR-05 needs an automatic target: it replaces the daily schedule.
+  const regenerateOnEvent =
+    formData.get("regenerateOnEvent") === "on" &&
+    formData.get("eventCompositionPolicy") === "SEQUENCE_PER_EVENT";
+  if (regenerateOnEvent && target.updatePolicy === "MANUAL") {
+    redirect(`${PAGE_PATH}?error=event-manual`);
   }
 
   try {
@@ -66,6 +80,8 @@ async function savePolicy(formData: FormData) {
       remainderFallback: String(
         formData.get("remainderFallback") ?? "",
       ) as CalendarRemainderFallbackValue,
+      regenerateOnEvent,
+      eventRegenerationLeadMinutes: Number(formData.get("eventRegenerationLeadMinutes")),
       maxPodcastsPerEvent: Number(formData.get("maxPodcastsPerEvent")),
       podcastEventSafetyMarginSeconds: Number(
         formData.get("podcastEventSafetyMarginSeconds"),
@@ -123,6 +139,7 @@ export default async function CalendarEventCompositionPage({
       calendarMode: true,
       compositionMode: true,
       sequencePattern: true,
+      updatePolicy: true,
     },
   });
 
@@ -200,8 +217,35 @@ export default async function CalendarEventCompositionPage({
       : "SHADOW";
   };
 
+  // CALENDAR-05 preview: live calendar read, never required to render the page.
+  const nextEventByTargetId = new Map<string, NextEventPreview>();
+  if (eventRegenerationEnabled(process.env)) {
+    for (const target of eligibleTargets) {
+      const leadMinutes =
+        policyByTargetId.get(target.id)?.sequencePerEvent?.eventRegeneration?.leadMinutes;
+      if (!leadMinutes) continue;
+      const now = new Date();
+      const blocks = await loadEventRegenerationBlocks(
+        session.user.id,
+        target,
+        now,
+        leadMinutes,
+      ).catch(() => null);
+      const next = blocks
+        ?.filter((block) => block.startsAt.getTime() > now.getTime())
+        .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())[0];
+      nextEventByTargetId.set(target.id, {
+        loaded: blocks !== null,
+        startsAt: next?.startsAt ?? null,
+        generateAt: next ? new Date(next.startsAt.getTime() - leadMinutes * 60_000) : null,
+      });
+    }
+  }
+
   const errorMessage =
-    params.error === "scope"
+    params.error === "event-manual"
+      ? "A regeneração por evento exige um destino com atualização automática. Em Destinos e regras, escolha Manter playlist completa ou Refazer diariamente."
+      : params.error === "scope"
       ? "A composição por evento só pode ser editada em destinos baseados no calendário com estratégia Por evento."
       : params.error === "policy"
         ? "A política informada não passou pela validação canônica. Revise a proporção (0 a 100%) e, na configuração antiga, máximo por evento, margem, N e offset."
@@ -358,6 +402,9 @@ export default async function CalendarEventCompositionPage({
                             : []
                         }
                         effectiveState={effectiveStateFor(policy)}
+                        automaticUpdates={target.updatePolicy !== "MANUAL"}
+                        regenerationActive={eventRegenerationEnabled(process.env)}
+                        nextEvent={nextEventByTargetId.get(target.id) ?? null}
                       />
                       <BlockPreview evidence={evidence ?? null} />
                     </div>
@@ -373,6 +420,12 @@ export default async function CalendarEventCompositionPage({
 }
 
 type EffectiveState = "NORMAL" | "ACTIVE" | "SHADOW" | "OFF";
+
+type NextEventPreview = Readonly<{
+  loaded: boolean;
+  startsAt: Date | null;
+  generateAt: Date | null;
+}>;
 
 const REMAINDER_OPTIONS: ReadonlyArray<{
   value: CalendarRemainderFillStrategyValue;
@@ -411,11 +464,17 @@ function PolicyEditor({
   policy,
   sequence,
   effectiveState,
+  automaticUpdates,
+  regenerationActive,
+  nextEvent,
 }: {
   targetId: string;
   policy: CalendarEventCompositionPolicySnapshot;
   sequence: Array<"MUSIC" | "PODCAST">;
   effectiveState: EffectiveState;
+  automaticUpdates: boolean;
+  regenerationActive: boolean;
+  nextEvent: NextEventPreview | null;
 }) {
   const isLegacy = policy.eventCompositionPolicy === "PODCAST_THEN_MUSIC";
   const settings = policy.sequencePerEvent;
@@ -572,6 +631,49 @@ function PolicyEditor({
                 </span>
               </span>
             </label>
+          </div>
+
+          <div className="space-y-2 border-t border-line-dark/55 pt-3">
+            <label className={optionClass}>
+              <input
+                type="checkbox"
+                name="regenerateOnEvent"
+                defaultChecked={Boolean(settings?.eventRegeneration)}
+                disabled={!automaticUpdates}
+                className="mt-1"
+              />
+              <span>
+                <span className="font-bold text-ink-inverse">Regenerar a playlist a cada novo evento</span>
+                <span className="mt-0.5 block text-xs leading-5 text-muted-inverse">
+                  {automaticUpdates
+                    ? "Ao ativar, a geração automática por horário é desativada para esta playlist. Cada evento elegível terá sua própria geração; o horário salvo volta a valer se você desligar."
+                    : "Indisponível em destino manual: escolha uma atualização automática em Destinos e regras."}
+                </span>
+              </span>
+            </label>
+            <label className="block text-sm font-bold text-ink-inverse">
+              Gerar antes do início do evento
+              <select
+                name="eventRegenerationLeadMinutes"
+                defaultValue={settings?.eventRegeneration?.leadMinutes ?? 15}
+                className={inputClass}
+              >
+                {EVENT_REGENERATION_LEAD_MINUTES.map((minutes) => (
+                  <option key={minutes} value={minutes}>{minutes} minutos antes</option>
+                ))}
+              </select>
+            </label>
+            {settings?.eventRegeneration && (
+              <p className="text-xs leading-5 text-muted-inverse">
+                {!regenerationActive
+                  ? "Salvo, mas ainda desligado pelo operador: a geração por horário continua valendo."
+                  : nextEvent && !nextEvent.loaded
+                    ? "Não foi possível ler o calendário agora."
+                    : nextEvent?.startsAt && nextEvent.generateAt
+                      ? `Próximo evento: ${formatDate(nextEvent.startsAt)} · geração prevista: ${formatDate(nextEvent.generateAt)}.`
+                      : "Nenhum evento à frente: a playlist atual é mantida até surgir um novo evento."}
+              </p>
+            )}
           </div>
         </fieldset>
 

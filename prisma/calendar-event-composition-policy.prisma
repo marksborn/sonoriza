@@ -44,6 +44,10 @@ model CalendarEventCompositionPolicy {
   remainderFillStrategy           CalendarRemainderFillStrategy @default(MUSIC_ONLY)
   remainderPodcastPercent         Int                     @default(30)
   remainderFallback               CalendarRemainderFallback @default(FILL_WITH_MUSIC)
+  // CALENDAR-05 (#553): trigger, not composition. Replaces the daily schedule
+  // of this target while on; dailyScheduleMinutes stays saved for rollback.
+  regenerateOnEvent               Boolean                 @default(false)
+  eventRegenerationLeadMinutes    Int                     @default(15)
   createdAt                       DateTime                @default(now())
   updatedAt                       DateTime                @updatedAt
 

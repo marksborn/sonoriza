@@ -19,6 +19,13 @@ import {
   prepareKeepFilledTarget,
   type KeepFilledTargetPatch,
 } from "@/services/keep-filled-maintenance";
+import {
+  decideEventRegeneration,
+  eventRegenerationEnabled,
+  eventRegenerationScheduleKey,
+  loadEventRegenerationBlocks,
+  type EventScope,
+} from "@/services/calendar-event-regeneration";
 import { findReusableSimulationMusicOrderEvidence } from "@/services/music-order-simulation";
 import {
   processMemoryCheckpoint,
@@ -136,7 +143,27 @@ export async function runScheduledGeneration(
       orderBy: { priority: "asc" },
     });
 
-    const claimed: Array<{ target: TargetPlaylist; audit: TargetScheduleRun }> = [];
+    const claimed: Array<{
+      target: TargetPlaylist;
+      audit: TargetScheduleRun;
+      eventScope?: EventScope;
+    }> = [];
+    // CALENDAR-05: while on, the calendar is this target's only automatic
+    // trigger. dailyScheduleMinutes stays saved and resumes when turned off.
+    const eventRegeneration = eventRegenerationEnabled(process.env)
+      ? await prisma.calendarEventCompositionPolicy.findMany({
+          where: {
+            userId: user.id,
+            targetPlaylistId: { in: targets.map((target) => target.id) },
+            eventCompositionPolicy: "SEQUENCE_PER_EVENT",
+            regenerateOnEvent: true,
+          },
+          select: { targetPlaylistId: true, eventRegenerationLeadMinutes: true },
+        })
+      : [];
+    const leadMinutesByTargetId = new Map(
+      eventRegeneration.map((row) => [row.targetPlaylistId, row.eventRegenerationLeadMinutes]),
+    );
     for (const target of targets) {
       const minutes = target.dailyScheduleMinutes;
       const timeZone = target.scheduleTimezone?.trim() ?? "";
@@ -150,6 +177,29 @@ export async function runScheduledGeneration(
         continue;
       }
       const slot = dailyScheduleSlot(target.id, minutes, timeZone, now);
+      const leadMinutes = leadMinutesByTargetId.get(target.id);
+      if (
+        leadMinutes !== undefined &&
+        target.durationMode === "CALENDAR" &&
+        target.calendarDurationStrategy === "PER_EVENT"
+      ) {
+        // A calendar read failure only skips this tick for this target.
+        const due = await resolveDueEventSlot(
+          user.id, target, slot, leadMinutes, timeZone, now,
+        ).catch((error: unknown) => {
+          console.error("CALENDAR-05 event evaluation failed", {
+            targetPlaylistId: target.id,
+            error: errorMessage(error),
+          });
+          return null;
+        });
+        if (!due) continue;
+        const audit = await claimScheduleSlot(user.id, target, due.slot, now);
+        if (!audit) continue;
+        claimed.push({ target, audit, eventScope: due.eventScope });
+        processed += 1;
+        continue;
+      }
       if (!slot.due) continue;
 
       const audit = await claimScheduleSlot(user.id, target, slot, now);
@@ -200,10 +250,12 @@ export async function runScheduledGeneration(
       let maintenanceSpotify: SpotifyClient | null = null;
 
       for (const entry of claimed) {
-        scheduledPolicyByTargetId[entry.target.id] = entry.target.updatePolicy as
-          | "KEEP_FILLED"
-          | "REBUILD_DAILY";
-        if (entry.target.updatePolicy !== "KEEP_FILLED") {
+        // CALENDAR-05 replaces the playlist per event, so it never preserves
+        // the previous event's items, even on a KEEP_FILLED target.
+        scheduledPolicyByTargetId[entry.target.id] = entry.eventScope
+          ? "REBUILD_DAILY"
+          : (entry.target.updatePolicy as "KEEP_FILLED" | "REBUILD_DAILY");
+        if (entry.eventScope || entry.target.updatePolicy !== "KEEP_FILLED") {
           const preflightStartedAtMs = Date.now();
           let metricsBefore: SpotifyRequestMetrics | null = null;
           try {
@@ -403,7 +455,8 @@ export async function runScheduledGeneration(
           }
 
           const musicOrderSimulationEvidence =
-            entry.target.updatePolicy === "REBUILD_DAILY" && reusable?.[targetId]
+            // An approved simulation covers the whole day, never one event.
+            entry.target.updatePolicy === "REBUILD_DAILY" && !entry.eventScope && reusable?.[targetId]
               ? { [targetId]: reusable[targetId] }
               : {};
           const calendar03State = createCalendar03PlannerRuntimeState({
@@ -421,6 +474,12 @@ export async function runScheduledGeneration(
                 userId: user.id,
                 trigger: "SCHEDULED",
                 targetPlaylistIds: [targetId],
+                ...(entry.eventScope
+                  ? {
+                      date: new Date(entry.eventScope.startsAt),
+                      eventScopeByTargetId: { [targetId]: entry.eventScope },
+                    }
+                  : {}),
                 onGenerationRunCreated: (generationRunId) =>
                   linkGenerationRun(entry.audit, generationRunId),
                 assertGenerationRunStillActive: (generationRunId) =>
@@ -549,6 +608,40 @@ export async function runScheduledGeneration(
 }
 
 // Exported for the #435 Gate 3G integration test.
+/** CALENDAR-05: the slot for the event that is due now, if any. */
+async function resolveDueEventSlot(
+  userId: string,
+  target: TargetPlaylist,
+  daySlot: ReturnType<typeof dailyScheduleSlot>,
+  leadMinutes: number,
+  timeZone: string,
+  now: Date,
+): Promise<{ slot: ReturnType<typeof dailyScheduleSlot>; eventScope: EventScope } | null> {
+  const blocks = await loadEventRegenerationBlocks(userId, target, now, leadMinutes);
+  const keys = blocks.map((block) => eventRegenerationScheduleKey(target.id, timeZone, block));
+  const finished = await prisma.targetScheduleRun.findMany({
+    where: { scheduleKey: { in: keys }, status: { in: [...TERMINAL_SCHEDULE_STATUSES] } },
+    select: { scheduleKey: true },
+  });
+  const decision = decideEventRegeneration({
+    blocks,
+    now,
+    leadMinutes,
+    targetPlaylistId: target.id,
+    timeZone,
+    finishedScheduleKeys: new Set(finished.map((row) => row.scheduleKey)),
+  });
+  if (decision.action !== "GENERATE") return null;
+  return {
+    slot: { ...daySlot, due: true, scheduleKey: decision.scheduleKey },
+    eventScope: {
+      eventId: decision.event.eventId,
+      startsAt: decision.event.startsAt.toISOString(),
+      endsAt: decision.event.endsAt.toISOString(),
+    },
+  };
+}
+
 export async function claimScheduleSlot(
   userId: string,
   target: TargetPlaylist,
