@@ -363,7 +363,7 @@ test("KEEP_FILLED: preserved items may open the next event only at an exact boun
 });
 
 test("#559 sequence per event: music fills may take a Snippet only when allowed", () => {
-  const input = {
+  const input: Parameters<typeof projectCalendar04SequencePerEvent>[0] = {
     policy: policy({ remainderFillStrategy: "MUSIC_ONLY" }),
     blocks: blocks(40),
     rules: rules(["PODCAST", "MUSIC"]),
@@ -371,7 +371,7 @@ test("#559 sequence per event: music fills may take a Snippet only when allowed"
       music: musicPool(12),
       podcasts: [podcast("long", 20), podcast("snip", 3)],
     },
-  } as const;
+  };
 
   const legacy = projectCalendar04SequencePerEvent(input);
   assert.equal(legacy.items.some((item) => item.uri === "spotify:episode:snip"), false);
