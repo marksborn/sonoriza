@@ -1,6 +1,10 @@
 import { currentPlaybackReserveShadowRuntimeState } from "@/services/playback-reserve-shadow-runtime";
 import { parseSequencePattern } from "@/services/playlist-planner";
 import {
+  compositionRoleOf,
+  hasValidCompositionRole,
+} from "@/services/playlist-planner/podcast-snippet";
+import {
   calendar03TargetOwnsComposition,
   currentCalendar03PlannerRuntimeState,
 } from "@/services/playlist-planner/calendar-event-composition-runtime";
@@ -8,7 +12,7 @@ import {
 export type SequencePrewriteViolation = {
   targetPlaylistId: string;
   targetName: string;
-  reason: "INVALID_PATTERN" | "TYPE_MISMATCH";
+  reason: "INVALID_PATTERN" | "TYPE_MISMATCH" | "INVALID_COMPOSITION_ROLE";
   position?: number;
 };
 
@@ -23,6 +27,12 @@ type SequencePlannedItem = {
   type: "MUSIC" | "PODCAST";
   position: number;
   uri: string;
+  /** #559: a Snippet episode may occupy a MUSIC position. */
+  compositionRole?: "MUSIC" | "PODCAST";
+  durationMs?: number;
+  originalDurationMs?: number;
+  resumePositionMs?: number;
+  podcastListeningStatus?: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
 };
 
 type SequencePlannedTarget = {
@@ -58,6 +68,21 @@ export function sequencePrewriteViolations(
 
   for (const planned of plannedTargets) {
     const target = targetByPlanId.get(planned.targetPlaylistId);
+    // #559: a music role on anything but a proven Snippet is never written,
+    // whatever the composition mode.
+    const invalidRole = target
+      ? planned.result.items.find((item) =>
+          !hasValidCompositionRole({ ...item, durationMs: item.durationMs ?? 0 }))
+      : undefined;
+    if (target && invalidRole) {
+      violations.push({
+        targetPlaylistId: target.id,
+        targetName: target.name,
+        reason: "INVALID_COMPOSITION_ROLE",
+        position: invalidRole.position,
+      });
+      continue;
+    }
     if (!target || target.compositionMode !== "SEQUENCE") continue;
 
     if (
@@ -80,7 +105,8 @@ export function sequencePrewriteViolations(
     const sequenceOwnedItems = primaryItemsForLegacySequenceGuard(planned);
     const offset = sequenceStartOffsetByTargetId.get(target.id) ?? 0;
     const mismatch = sequenceOwnedItems.find(
-      (item, index) => item.type !== pattern[(offset + index) % pattern.length],
+      (item, index) =>
+        compositionRoleOf(item) !== pattern[(offset + index) % pattern.length],
     );
 
     if (mismatch) {

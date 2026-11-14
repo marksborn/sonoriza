@@ -1,4 +1,8 @@
 import type { TargetPlaylist } from "@prisma/client";
+import {
+  resolvePodcastSnippetMode,
+  resolvePodcastSnippetPolicy,
+} from "@/services/playlist-planner/podcast-snippet";
 
 import { resolveTargetDuration } from "@/jobs/generate-playlists-incremental";
 import { prisma } from "@/lib/prisma";
@@ -345,6 +349,11 @@ export async function prepareKeepFilledTarget(
       maxTracksPerAlbum: target.maxTracksPerAlbum,
     },
     maxPodcastDurationMs: resolved.podcastEpisodeMaxDurationMs,
+    podcastSnippetMusicRole:
+      resolvePodcastSnippetPolicy({
+        mode: resolvePodcastSnippetMode(process.env.PODCAST_SNIPPET_MODE),
+        allowPodcastSnippets: target.allowPodcastSnippets,
+      }) === "MUSIC_ROLE",
   });
 
   if (willClearEmptyCalendar) {

@@ -72,6 +72,7 @@ export type TargetPlaylistFormInitial = {
   maxEpisodesPerProgram: number;
   maxTracksPerArtist: number | null;
   maxTracksPerAlbum: number | null;
+  allowPodcastSnippets: boolean;
   updatePolicy: TargetUpdatePolicy;
   dailyScheduleTime: string;
   scheduleTimezone: string;
@@ -88,6 +89,8 @@ type TargetPlaylistFormProps = {
   sourceOptions: TargetSourceOption[];
   globalSharingPolicy: "EXCLUSIVE" | "SHAREABLE";
   durationBandEditingEnabled: boolean;
+  /** #559: PODCAST_SNIPPET_MODE=ACTIVE on the server. */
+  podcastSnippetModeActive?: boolean;
   saveAction: (formData: FormData) => void | Promise<void>;
   submitLabel: string;
 };
@@ -127,6 +130,7 @@ export function TargetPlaylistForm({
   sourceOptions,
   globalSharingPolicy,
   durationBandEditingEnabled,
+  podcastSnippetModeActive = false,
   saveAction,
   submitLabel,
 }: TargetPlaylistFormProps) {
@@ -1245,6 +1249,26 @@ export function TargetPlaylistForm({
           defaultValue={initial.maxEpisodesPerProgram}
         />
         <span className={helperClass}>Evita que um único podcast domine a playlist.</span>
+      </label>
+
+      <label className={`${sectionClass} flex items-start gap-3`}>
+        <input
+          type="checkbox"
+          name="allowPodcastSnippets"
+          defaultChecked={initial.allowPodcastSnippets}
+          className="mt-1 h-4 w-4 accent-accent"
+        />
+        <span>
+          <span className="block text-sm font-black text-ink-inverse">Permitir Podcast Snippet</span>
+          <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+            Episódios de até 5 minutos dos podcasts deste destino podem entrar entre as músicas, mesmo numa playlist só de músicas. Continuam valendo o limite por programa, a cadência e o estado de escuta. Desmarcado, nenhum episódio de até 5 minutos entra nesta playlist.
+          </span>
+          {podcastSnippetModeActive ? null : (
+            <span className="mt-1 block text-xs leading-5 text-muted-inverse/65">
+              A opção fica salva, mas ainda não muda as gerações: o Podcast Snippet está desativado no servidor.
+            </span>
+          )}
+        </span>
       </label>
 
       <div className="flex flex-col gap-3 border-t border-line-dark/50 pt-5 sm:flex-row sm:items-center sm:justify-between">

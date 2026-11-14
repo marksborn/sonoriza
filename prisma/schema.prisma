@@ -788,6 +788,9 @@ model TargetPlaylist {
   maxEpisodesPerProgram            Int                           @default(1)
   maxTracksPerArtist               Int?
   maxTracksPerAlbum                Int?
+  // PODCAST-SNIPPET (#559): opt-in per destination; applied only when
+  // PODCAST_SNIPPET_MODE=ACTIVE.
+  allowPodcastSnippets             Boolean                       @default(false)
   updatePolicy                     TargetUpdatePolicy            @default(MANUAL)
   dailyScheduleMinutes             Int?
   scheduleTimezone                 String?
@@ -1145,6 +1148,8 @@ model GenerationItem {
   sourceSpotifyType   SpotifySourceType?
   sourceSpotifyId     String?
   sourceIncludePlayed Boolean?
+  // PODCAST-SNIPPET (#559): position in the composition; null = contentType.
+  compositionRole     ContentType?
 
   run    GenerationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   target TargetPlaylist @relation(fields: [targetPlaylistId], references: [id], onDelete: Cascade)

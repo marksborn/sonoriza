@@ -64,6 +64,12 @@ export interface Candidate {
   podcastStrictSequence?: boolean;
   /** Per-show cap shared by every target in the same generation run. */
   podcastMaxEpisodesPerCycle?: number | null;
+  /**
+   * PODCAST-SNIPPET (#559): position this item occupies in the composition.
+   * Undefined means the same as `type`. Only a Snippet episode (type PODCAST)
+   * may carry "MUSIC"; identity, cadence and history keep using `type`.
+   */
+  compositionRole?: ContentType;
 }
 
 export interface PlaylistRules {
@@ -155,6 +161,16 @@ export interface PlanResult {
     stoppedAtPatternIndex: number | null;
     sequenceQualityPassed: boolean | null;
     sequenceStopReason: SequenceStopReason | null;
+    /**
+     * PODCAST-SNIPPET (#559): present only when a Snippet policy was applied.
+     * Duration/count stats above follow the composition role, so a Snippet in
+     * a music position counts toward the music share.
+     */
+    podcastSnippet?: {
+      policy: "EXCLUDE" | "MUSIC_ROLE";
+      excludedCandidateCount: number;
+      musicRoleCount: number;
+    };
     /** CALENDAR-02: absent for the legacy/summed planner path. */
     segmentation?: {
       mode: "PER_EVENT";

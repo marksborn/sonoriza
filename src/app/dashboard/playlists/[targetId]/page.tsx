@@ -244,7 +244,11 @@ export default async function GeneratedPlaylistPage({
                               name={item.contentType === "MUSIC" ? "music" : "play"}
                               size={13}
                             />
-                            {item.contentType === "MUSIC" ? "Música" : "Podcast"}
+                            {item.contentType === "MUSIC"
+                              ? "Música"
+                              : item.compositionRole === "MUSIC"
+                                ? "Podcast Snippet — posição musical"
+                                : "Podcast"}
                           </span>
                           <span className="text-xs font-semibold text-muted-inverse">
                             {formatDuration(item.durationMs)}

@@ -1,0 +1,95 @@
+name: PODCAST-SNIPPET validation (#559)
+
+on:
+  pull_request:
+    paths:
+      - "src/services/playlist-planner/podcast-snippet*.ts"
+      - "src/services/playlist-planner/planner.ts"
+      - "src/services/playlist-planner/plan-run.ts"
+      - "src/services/playlist-planner/plan-run-calendar03.ts"
+      - "src/services/playlist-planner/calendar-sequence-per-event*.ts"
+      - "src/services/playlist-planner/calendar-event-composition-shadow.ts"
+      - "src/services/keep-filled-*.ts"
+      - "src/jobs/sequence-prewrite-guard*.ts"
+      - "src/jobs/generate-playlists-incremental.ts"
+      - "src/components/TargetPlaylistForm.tsx"
+      - "src/app/dashboard/configuracao/destinos/page.tsx"
+      - "src/services/configuration-readiness.ts"
+      - "prisma/schema.prisma"
+      - "prisma/migrations/**"
+      - "docs/PODCAST-SNIPPET-559.md"
+      - ".github/workflows/podcast-snippet-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/services/playlist-planner/podcast-snippet*.ts"
+      - "src/services/playlist-planner/planner.ts"
+      - "src/services/playlist-planner/plan-run.ts"
+      - "src/services/playlist-planner/plan-run-calendar03.ts"
+      - "src/services/playlist-planner/calendar-sequence-per-event*.ts"
+      - "src/services/playlist-planner/calendar-event-composition-shadow.ts"
+      - "src/services/keep-filled-*.ts"
+      - "src/jobs/sequence-prewrite-guard*.ts"
+      - "src/jobs/generate-playlists-incremental.ts"
+      - "src/components/TargetPlaylistForm.tsx"
+      - "src/app/dashboard/configuracao/destinos/page.tsx"
+      - "src/services/configuration-readiness.ts"
+      - "prisma/schema.prisma"
+      - "prisma/migrations/**"
+      - "docs/PODCAST-SNIPPET-559.md"
+      - ".github/workflows/podcast-snippet-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sonoriza_podcast_snippet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sonoriza_podcast_snippet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sonoriza_podcast_snippet?schema=public
+      NEXTAUTH_SECRET: podcast-snippet-ci-secret
+      AUTH_SECRET: podcast-snippet-ci-secret
+      AUTH_TRUST_HOST: "true"
+      GOOGLE_CLIENT_ID: test
+      GOOGLE_CLIENT_SECRET: test
+      SPOTIFY_CLIENT_ID: test
+      SPOTIFY_CLIENT_SECRET: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npx prisma migrate deploy
+      - name: PODCAST-SNIPPET classification, planner, prewrite and KEEP_FILLED
+        run: >-
+          npx tsx --test
+          src/services/playlist-planner/podcast-snippet.test.ts
+          src/services/playlist-planner/calendar-sequence-per-event.test.ts
+          src/jobs/sequence-prewrite-guard.test.ts
+          src/services/keep-filled-core.test.ts
+      - run: npm run test:planner
+      - run: npm run test:incremental
+      - run: npx tsx --test src/services/configuration-readiness.test.ts
+      - run: npx tsx --tsconfig tsconfig.ui-test.json --test src/components/TargetPlaylistForm.mobile.test.tsx
+      - run: npm run typecheck
+      - run: npm run build

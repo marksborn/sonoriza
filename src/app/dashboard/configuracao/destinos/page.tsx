@@ -47,6 +47,7 @@ import {
   destinationCompositionCardId,
 } from "@/lib/destination-edit-link";
 import { podcast08BandEditingAllowedForTarget } from "@/services/playlist-planner/podcast-duration-active-gate";
+import { resolvePodcastSnippetMode } from "@/services/playlist-planner/podcast-snippet";
 
 const CONFIG_PATH = "/dashboard/configuracao/destinos";
 const CREATE_NEW = "__NEW__";
@@ -203,6 +204,7 @@ async function saveTarget(formData: FormData) {
   );
   const artistDiversityEnabled = formData.get("limitTracksPerArtist") === "on";
   const albumDiversityEnabled = formData.get("limitTracksPerAlbum") === "on";
+  const allowPodcastSnippets = formData.get("allowPodcastSnippets") === "on";
   const maxTracksPerArtist = artistDiversityEnabled
     ? integerBetween(formData.get("maxTracksPerArtist"), 1, 50)
     : null;
@@ -564,6 +566,7 @@ async function saveTarget(formData: FormData) {
     maxEpisodesPerProgram: maxEpisodesPerProgram!,
     maxTracksPerArtist,
     maxTracksPerAlbum,
+    allowPodcastSnippets,
     updatePolicy: normalizedUpdatePolicy,
     dailyScheduleMinutes,
     scheduleTimezone:
@@ -889,6 +892,8 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
 
   const params = await searchParams;
   const userId = session.user.id;
+  const podcastSnippetModeActive =
+    resolvePodcastSnippetMode(process.env.PODCAST_SNIPPET_MODE) === "ACTIVE";
 
   const [
     spotifyAccount,
@@ -1279,6 +1284,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                 sourceOptions={sourceOptions}
                 globalSharingPolicy={globalSharingPolicy}
                 durationBandEditingEnabled={false}
+                podcastSnippetModeActive={podcastSnippetModeActive}
                 initial={{
                   name: "",
                   enabled: true,
@@ -1304,6 +1310,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                   maxEpisodesPerProgram: 1,
                   maxTracksPerArtist: null,
                   maxTracksPerAlbum: null,
+                  allowPodcastSnippets: false,
                   updatePolicy: "MANUAL",
                   dailyScheduleTime: "04:30",
                   scheduleTimezone: "",
@@ -1425,6 +1432,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                               : "ordem padrão"
                           }`}
                           {` · ${musicDiversityLabel(target)}`}
+                          {target.allowPodcastSnippets ? " · Podcast Snippet permitido" : ""}
                           {` · fontes: ${
                             target.sourceScopeMode === "SELECTED_ONLY"
                               ? `${target.sourceSelections.length} selecionada(s)`
@@ -1543,6 +1551,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             process.env,
                             target.id,
                           )}
+                          podcastSnippetModeActive={podcastSnippetModeActive}
                           initial={{
                             id: target.id,
                             name: target.name,
@@ -1591,6 +1600,7 @@ export default async function DestinationsPage({ searchParams }: DestinationsPag
                             maxEpisodesPerProgram: target.maxEpisodesPerProgram,
                             maxTracksPerArtist: target.maxTracksPerArtist,
                             maxTracksPerAlbum: target.maxTracksPerAlbum,
+                            allowPodcastSnippets: target.allowPodcastSnippets,
                             updatePolicy: target.updatePolicy,
                             dailyScheduleTime:
                               target.dailyScheduleMinutes === null
