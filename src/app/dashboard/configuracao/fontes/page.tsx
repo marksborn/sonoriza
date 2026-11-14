@@ -235,6 +235,42 @@ export default async function SpotifySourcesPage({
     sourceKey(SpotifySourceType.SAVED_EPISODES, SAVED_EPISODES_ID),
   );
 
+  // Older sources were saved without a name. Resolve it from the lists this
+  // page already read from Spotify (no extra call) and fill only empty names,
+  // so Limpeza, simulações and diagnósticos show it too.
+  const liveNameByKey = new Map<string, string>([
+    ...playlists.map(
+      (playlist) => [sourceKey(SpotifySourceType.PLAYLIST, playlist.id), playlist.name] as const,
+    ),
+    ...shows.map((show) => [sourceKey(SpotifySourceType.SHOW, show.id), show.name] as const),
+  ]);
+  const unnamedResolved = configuredSources.flatMap((source) => {
+    if (source.name?.trim()) return [];
+    const name = liveNameByKey.get(sourceKey(source.spotifyType, source.spotifyId))?.trim();
+    return name ? [{ id: source.id, name }] : [];
+  });
+  if (unnamedResolved.length > 0) {
+    try {
+      await prisma.$transaction(
+        unnamedResolved.map((entry) =>
+          prisma.sourcePlaylist.updateMany({
+            where: { id: entry.id, userId: session.user.id, OR: [{ name: null }, { name: "" }] },
+            data: { name: entry.name },
+          }),
+        ),
+      );
+    } catch {
+      // Display still uses the resolved names below; persisting is best-effort.
+    }
+  }
+  const resolvedNameById = new Map(unnamedResolved.map((entry) => [entry.id, entry.name]));
+  const sourceDisplayName = (source: (typeof configuredSources)[number]) =>
+    source.name?.trim() ||
+    resolvedNameById.get(source.id) ||
+    (source.spotifyType === SpotifySourceType.SAVED_EPISODES
+      ? "Seus episódios"
+      : `${source.spotifyType === SpotifySourceType.SHOW ? "Programa" : "Playlist"} sem nome (${source.spotifyId.slice(0, 8)}…)`);
+
   return (
     <main className="product-shell px-5 py-8 sm:px-8 lg:px-10">
       <div className="product-ambient" />
@@ -344,7 +380,7 @@ export default async function SpotifySourcesPage({
                   <p className="mt-1 text-sm text-muted-inverse">Adicione uma playlist, Seus episódios ou um programa abaixo.</p>
                 </div>
               ) : (
-                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
                   {configuredSources.map((source) => {
                     const showPolicy =
                       source.spotifyType === SpotifySourceType.SHOW
@@ -353,7 +389,7 @@ export default async function SpotifySourcesPage({
                     return (
                       <article
                         key={source.id}
-                        className={`rounded-2xl border p-4 transition ${
+                        className={`min-w-0 rounded-2xl border p-4 transition ${
                           source.enabled
                             ? "border-line-dark/65 bg-surface-subtle/70"
                             : "border-line-dark/40 bg-surface-subtle/35 opacity-70"
@@ -373,7 +409,17 @@ export default async function SpotifySourcesPage({
                                 {source.kind === SourceKind.MUSIC ? "Música" : "Podcast"}
                               </span>
                             </div>
-                            <h3 className="mt-3 truncate font-black text-ink-inverse">{source.name ?? "Fonte do Spotify"}</h3>
+                            <h3 className="mt-3 truncate font-black text-ink-inverse">{sourceDisplayName(source)}</h3>
+                            {source.spotifyType !== SpotifySourceType.SAVED_EPISODES && (
+                              <a
+                                href={`https://open.spotify.com/${source.spotifyType === SpotifySourceType.SHOW ? "show" : "playlist"}/${encodeURIComponent(source.spotifyId)}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-1 inline-block text-xs font-bold text-accent-400 underline-offset-2 hover:underline"
+                              >
+                                Abrir no Spotify
+                              </a>
+                            )}
                           </div>
                           <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[0.68rem] font-black ${source.enabled ? "status-success" : "product-badge"}`}>
                             <UiIcon name={source.enabled ? "check" : "warning"} size={13} />
@@ -442,8 +488,8 @@ export default async function SpotifySourcesPage({
               )}
             </section>
 
-            <div className="mt-5 grid gap-5 lg:grid-cols-2">
-              <section className="product-panel p-5 sm:p-6">
+            <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+              <section className="min-w-0 product-panel p-5 sm:p-6">
                 <p className="text-xs font-black uppercase tracking-[0.15em] text-accent-400">Playlists</p>
                 <h2 className="mt-1 text-xl font-black text-ink-inverse">Adicionar playlist</h2>
                 <p className="mt-1 text-sm leading-6 text-muted-inverse">
@@ -487,7 +533,7 @@ export default async function SpotifySourcesPage({
                 )}
               </section>
 
-              <section className="product-panel p-5 sm:p-6">
+              <section className="min-w-0 product-panel p-5 sm:p-6">
                 <p className="text-xs font-black uppercase tracking-[0.15em] text-brand-400">Podcasts</p>
                 <h2 className="mt-1 text-xl font-black text-ink-inverse">Seus episódios ou programas</h2>
                 <p className="mt-1 text-sm leading-6 text-muted-inverse">
