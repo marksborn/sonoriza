@@ -53,6 +53,8 @@ export type IngestionPlan = {
   add: IngestionCandidate[];
   duplicate: IngestionCandidate[];
   cooldown: IngestionCandidate[];
+  /** MUSIC-08 (#319): explicit "não tocar mais"; never re-materialized. */
+  userExcluded: IngestionCandidate[];
 };
 
 export function parseIngestionRuleState(value: unknown): IngestionRuleState | null {
@@ -189,14 +191,26 @@ export function planMusicIngestion(
   incoming: IngestionCandidate[],
   existingTargetTrackIds: ReadonlySet<string>,
   blockedTrackIds: ReadonlySet<string>,
+  /**
+   * MUSIC-08 (#319): exact Spotify ids the user excluded. Checked first, so
+   * the audit shows the durable human decision rather than a temporary
+   * cooldown or a duplicate. Restoring a track never replays old events: the
+   * rule's watermark already moved past them.
+   */
+  userExcludedTrackIds: ReadonlySet<string> = new Set(),
 ): IngestionPlan {
   const add: IngestionCandidate[] = [];
   const duplicate: IngestionCandidate[] = [];
   const cooldown: IngestionCandidate[] = [];
+  const userExcluded: IngestionCandidate[] = [];
   const selected = new Set<string>();
 
   for (const candidate of incoming) {
     const trackId = candidate.track.spotifyTrackId;
+    if (userExcludedTrackIds.has(trackId)) {
+      userExcluded.push(candidate);
+      continue;
+    }
     if (blockedTrackIds.has(trackId)) {
       cooldown.push(candidate);
       continue;
@@ -209,7 +223,7 @@ export function planMusicIngestion(
     add.push(candidate);
   }
 
-  return { add, duplicate, cooldown };
+  return { add, duplicate, cooldown, userExcluded };
 }
 
 export function sortAlbumTracks<T extends MusicIngestionTrack>(tracks: T[]): T[] {

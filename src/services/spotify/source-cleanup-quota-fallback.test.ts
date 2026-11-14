@@ -89,3 +89,42 @@ test("MUSIC-02 quota fallback is limited to playlist-items and stays dry-run", (
   assert.doesNotMatch(route, /musicCleanupFirstCompletedAt\s*:/);
   assert.doesNotMatch(route, /musicCleanupAutomationEnabled\s*:/);
 });
+
+const fallbackBase = {
+  baseline: { examinedCount: 3, removalOccurrenceCount: 0, plannedUris: [] as string[] },
+  cachedCandidates: [
+    { uri: "spotify:track:a", spotifyTrackId: "a" },
+    { uri: "spotify:track:b", spotifyTrackId: "b" },
+  ],
+  playedTrackIds: new Set<string>(),
+  changedPlayedTracks: [],
+};
+
+test("MUSIC-08 #319: fallback abstains when a cached track is excluded but not played", () => {
+  assert.equal(
+    buildAuditedCacheFallbackPlan({ ...fallbackBase, userExcludedTrackIds: new Set(["a"]) }),
+    null,
+  );
+});
+
+test("MUSIC-08 #319: fallback never carries forward a baseline removal made for an exclusion", () => {
+  assert.equal(
+    buildAuditedCacheFallbackPlan({
+      ...fallbackBase,
+      baseline: {
+        examinedCount: 3,
+        removalOccurrenceCount: 1,
+        plannedUris: ["spotify:track:gone"],
+        userExcludedUris: ["spotify:track:gone"],
+      },
+    }),
+    null,
+  );
+});
+
+test("MUSIC-08 #319: fallback is unchanged when no exclusion is involved", () => {
+  const plan = buildAuditedCacheFallbackPlan({ ...fallbackBase, userExcludedTrackIds: new Set() });
+  assert.ok(plan);
+  assert.deepEqual(plan.removableUris, []);
+  assert.deepEqual(plan.userExcludedUris, []);
+});

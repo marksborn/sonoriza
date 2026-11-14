@@ -24,6 +24,7 @@ import { getSpotifyAccessToken } from "./token";
 import { resolvePersistedCleanupRecordingEvidence } from "./source-cleanup-recording-runtime";
 import type { CleanupRecordingMetadata } from "./source-cleanup-recording";
 import { assertSpotifyBackoffInactive } from "./backoff";
+import { loadExcludedSpotifyTrackIds } from "@/services/music-preference/track-exclusion";
 
 const API = "https://api.spotify.com/v1";
 const MAX_RATE_LIMIT_RETRIES = 1;
@@ -50,6 +51,12 @@ export type MusicSourceCleanupPlan = {
   removalOccurrenceCount: number;
   keptCount: number;
   removableUris: string[];
+  /**
+   * MUSIC-08 (#319): subset of removableUris that leaves the inbox because the
+   * user excluded the track, not because it was played. A played track keeps
+   * the played reason even when it is also excluded.
+   */
+  userExcludedUris: string[];
   planHash: string;
 };
 
@@ -109,8 +116,11 @@ type StablePlaylistRead = {
 export function buildMusicSourceCleanupPlan(
   occurrences: PlaylistCleanupOccurrence[],
   playedTrackIds: ReadonlySet<string>,
+  /** MUSIC-08 (#319): exact ids excluded by the user ("não tocar mais"). */
+  userExcludedTrackIds: ReadonlySet<string> = new Set(),
 ): MusicSourceCleanupPlan {
   const removableUris = new Set<string>();
+  const playedUris = new Set<string>();
   let removalOccurrenceCount = 0;
 
   for (const occurrence of occurrences) {
@@ -124,14 +134,17 @@ export function buildMusicSourceCleanupPlan(
     }
 
     const wasPlayed = occurrence.aliases.some((alias) => playedTrackIds.has(alias));
-    if (!wasPlayed) continue;
+    const userExcluded = occurrence.aliases.some((alias) => userExcludedTrackIds.has(alias));
+    if (!wasPlayed && !userExcluded) continue;
 
     removalOccurrenceCount += 1;
     removableUris.add(occurrence.uri);
+    if (wasPlayed) playedUris.add(occurrence.uri);
   }
 
   const sortedUris = [...removableUris].sort();
-  const planHash = hashCleanupPlan(sortedUris, removalOccurrenceCount);
+  const userExcludedUris = sortedUris.filter((uri) => !playedUris.has(uri));
+  const planHash = hashCleanupPlan(sortedUris, removalOccurrenceCount, userExcludedUris);
 
   return {
     examinedCount: occurrences.length,
@@ -139,6 +152,7 @@ export function buildMusicSourceCleanupPlan(
     removalOccurrenceCount,
     keptCount: Math.max(0, occurrences.length - removalOccurrenceCount),
     removableUris: sortedUris,
+    userExcludedUris,
     planHash,
   };
 }
@@ -146,6 +160,7 @@ export function buildMusicSourceCleanupPlan(
 export function buildCachedMusicSourceCleanupPlan(
   candidates: Array<{ uri: string; spotifyTrackId?: string }>,
   playedTrackIds: ReadonlySet<string>,
+  userExcludedTrackIds: ReadonlySet<string> = new Set(),
 ): MusicSourceCleanupPlan {
   return buildMusicSourceCleanupPlan(
     candidates.map((candidate) => ({
@@ -158,18 +173,29 @@ export function buildCachedMusicSourceCleanupPlan(
       isLocal: false,
     })),
     playedTrackIds,
+    userExcludedTrackIds,
   );
 }
 
+/**
+ * The reason split enters the hash only when an exclusion is present, so a
+ * plan made only of played tracks keeps the exact pre-MUSIC-08 hash. Restoring
+ * an excluded track between preview and confirmation changes the hash and
+ * makes the preview stale: nothing is removed.
+ */
 export function hashCleanupPlan(
   removableUris: string[],
   removalOccurrenceCount: number,
+  userExcludedUris: readonly string[] = [],
 ): string {
   return createHash("sha256")
     .update(
       JSON.stringify({
         removableUris: [...removableUris].sort(),
         removalOccurrenceCount,
+        ...(userExcludedUris.length > 0
+          ? { userExcludedUris: [...userExcludedUris].sort() }
+          : {}),
       }),
     )
     .digest("hex");
@@ -231,6 +257,7 @@ export async function createMusicSourceCleanupPreview(
   const plan = buildMusicSourceCleanupPlan(
     playlist.occurrences,
     evidence.playedTrackIds,
+    await loadExcludedSpotifyTrackIds(userId),
   );
 
   const run = await prisma.musicSourceCleanupRun.create({
@@ -245,6 +272,7 @@ export async function createMusicSourceCleanupPreview(
       removalOccurrenceCount: plan.removalOccurrenceCount,
       keptCount: plan.keptCount,
       plannedUris: plan.removableUris as Prisma.InputJsonValue,
+      userExcludedUris: plan.userExcludedUris as Prisma.InputJsonValue,
     },
     select: { id: true },
   });
@@ -322,6 +350,7 @@ export async function executeMusicSourceCleanupPreview(
   const currentPlan = buildMusicSourceCleanupPlan(
     current.occurrences,
     evidence.playedTrackIds,
+    await loadExcludedSpotifyTrackIds(userId),
   );
 
   if (
@@ -568,6 +597,7 @@ export async function executeAutomaticMusicSourceCleanup(
   const plan = buildCachedMusicSourceCleanupPlan(
     cachedCandidates,
     evidence.playedTrackIds,
+    await loadExcludedSpotifyTrackIds(userId),
   );
   if (plan.removableUris.length > 0) {
     await assertCleanupWriteStillAuthorized(userId, source.id, source.spotifyId, source.spotifySnapshotId, true);
@@ -638,6 +668,7 @@ export async function executeAutomaticMusicSourceCleanup(
         removalOccurrenceCount: plan.removalOccurrenceCount,
         keptCount: plan.keptCount,
         plannedUris: plan.removableUris as Prisma.InputJsonValue,
+        userExcludedUris: plan.userExcludedUris as Prisma.InputJsonValue,
         removedUris: removedUris as Prisma.InputJsonValue,
         failedUris: failedUris as Prisma.InputJsonValue,
         startedAt,

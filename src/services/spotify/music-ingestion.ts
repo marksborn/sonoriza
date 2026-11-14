@@ -11,6 +11,7 @@ import {
   type SourcePlaylist,
 } from "@prisma/client";
 
+import { loadExcludedSpotifyTrackIds } from "@/services/music-preference/track-exclusion";
 import { prisma } from "@/lib/prisma";
 import { SpotifyClient } from "@/services/spotify/client";
 import { guardedSpotifyPlaylistWrite } from "@/services/audiobooks/guard-direct-spotify-write";
@@ -75,6 +76,8 @@ export type MusicIngestionSyncResult = {
   duplicateCount: number;
   cooldownCount: number;
   unavailableCount: number;
+  /** MUSIC-08 (#319): candidates suppressed by "não tocar mais". */
+  userExcludedCount: number;
 };
 
 export type ManualMusicIngestionInput = {
@@ -565,17 +568,20 @@ export async function syncMusicIngestionRule(
       cacheValue: null,
     };
     let blockedTrackIds = new Set<string>();
+    let userExcludedTrackIds: ReadonlySet<string> = new Set<string>();
 
     if (collected.incoming.length > 0) {
       targetIndex = await loadTargetTrackIds(rule.target);
       const repeat = await refreshMusicRepeatContext(userId, new Date());
       blockedTrackIds = new Set(repeat.context.blockedTrackIds);
+      userExcludedTrackIds = await loadExcludedSpotifyTrackIds(userId);
     }
 
     const plan = planMusicIngestion(
       collected.incoming,
       targetIndex.trackIds,
       blockedTrackIds,
+      userExcludedTrackIds,
     );
     const details = buildRunDetails(
       collected.sourceEventCount,
@@ -597,6 +603,7 @@ export async function syncMusicIngestionRule(
           addedCount: plan.add.length,
           duplicateCount: plan.duplicate.length,
           cooldownCount: plan.cooldown.length,
+          userExcludedCount: plan.userExcluded.length,
           unavailableCount: collected.unavailableCount,
           details: asJson(details),
           startedAt,
@@ -611,6 +618,7 @@ export async function syncMusicIngestionRule(
         plan.duplicate.length,
         plan.cooldown.length,
         collected.unavailableCount,
+        plan.userExcluded.length,
       );
     }
 
@@ -651,6 +659,7 @@ export async function syncMusicIngestionRule(
             addedCount: acceptedUris.length,
             duplicateCount: plan.duplicate.length,
             cooldownCount: plan.cooldown.length,
+            userExcludedCount: plan.userExcluded.length,
             unavailableCount: collected.unavailableCount,
             details: asJson({ ...details, acceptedUris }),
             startedAt,
@@ -705,6 +714,7 @@ export async function syncMusicIngestionRule(
           addedCount: acceptedUris.length,
           duplicateCount: plan.duplicate.length,
           cooldownCount: plan.cooldown.length,
+          userExcludedCount: plan.userExcluded.length,
           unavailableCount: collected.unavailableCount,
           details: asJson({ ...details, acceptedUris }),
           startedAt,
@@ -721,6 +731,7 @@ export async function syncMusicIngestionRule(
       plan.duplicate.length,
       plan.cooldown.length,
       collected.unavailableCount,
+      plan.userExcluded.length,
     );
   } catch (error) {
     if (
@@ -786,6 +797,7 @@ export async function runManualMusicIngestion(
       incoming,
       targetIndex.trackIds,
       repeat?.context.blockedTrackIds ?? new Set<string>(),
+      incoming.length > 0 ? await loadExcludedSpotifyTrackIds(userId) : new Set<string>(),
     );
     const preview = input.preview === true;
     const details = buildRunDetails(1, plan, resolved.unavailableCount);
@@ -802,6 +814,7 @@ export async function runManualMusicIngestion(
           addedCount: plan.add.length,
           duplicateCount: plan.duplicate.length,
           cooldownCount: plan.cooldown.length,
+          userExcludedCount: plan.userExcluded.length,
           unavailableCount: resolved.unavailableCount,
           details: asJson(details),
           startedAt,
@@ -816,6 +829,7 @@ export async function runManualMusicIngestion(
         plan.duplicate.length,
         plan.cooldown.length,
         resolved.unavailableCount,
+        plan.userExcluded.length,
       );
     }
 
@@ -854,6 +868,7 @@ export async function runManualMusicIngestion(
             addedCount: acceptedUris.length,
             duplicateCount: plan.duplicate.length,
             cooldownCount: plan.cooldown.length,
+            userExcludedCount: plan.userExcluded.length,
             unavailableCount: resolved.unavailableCount,
             details: asJson({ ...details, acceptedUris }),
             startedAt,
@@ -892,6 +907,7 @@ export async function runManualMusicIngestion(
         addedCount: acceptedUris.length,
         duplicateCount: plan.duplicate.length,
         cooldownCount: plan.cooldown.length,
+        userExcludedCount: plan.userExcluded.length,
         unavailableCount: resolved.unavailableCount,
         details: asJson({ ...details, acceptedUris }),
         startedAt,
@@ -906,6 +922,7 @@ export async function runManualMusicIngestion(
       plan.duplicate.length,
       plan.cooldown.length,
       resolved.unavailableCount,
+      plan.userExcluded.length,
     );
   } catch (error) {
     if (!(error instanceof MusicIngestionPartialWriteError)) {
@@ -1219,6 +1236,9 @@ function buildRunDetails(
     added: plan.add.map((candidate) => item(candidate, "eligible")),
     duplicates: plan.duplicate.map((candidate) => item(candidate, "already_in_inbox_or_batch")),
     cooldown: plan.cooldown.map((candidate) => item(candidate, "music_01_cooldown")),
+    userExcluded: plan.userExcluded.map((candidate) =>
+      item(candidate, "INGESTION_SKIPPED_USER_EXCLUDED"),
+    ),
   };
 }
 
@@ -1230,6 +1250,7 @@ function resultFor(
   duplicateCount: number,
   cooldownCount: number,
   unavailableCount: number,
+  userExcludedCount: number,
 ): MusicIngestionSyncResult {
   return {
     ruleId,
@@ -1239,6 +1260,7 @@ function resultFor(
     duplicateCount,
     cooldownCount,
     unavailableCount,
+    userExcludedCount,
   };
 }
 

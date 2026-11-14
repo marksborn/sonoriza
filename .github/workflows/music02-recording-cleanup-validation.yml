@@ -6,6 +6,11 @@ on:
       - "package.json"
       - "package-lock.json"
       - "src/services/spotify/source-cleanup*.ts"
+      - "src/services/spotify/music-ingestion*.ts"
+      - "src/services/music-preference/track-exclusion*.ts"
+      - "src/app/api/music-source-cleanup/**"
+      - "prisma/schema.prisma"
+      - "prisma/migrations/**"
       - "scripts/report-music-source-cleanup-recordings.ts"
       - "docs/MUSIC02-RECORDING-CLEANUP.md"
       - ".github/workflows/music02-recording-cleanup-validation.yml"
@@ -51,6 +56,8 @@ jobs:
         run: >-
           npx tsx --test
           src/services/spotify/source-cleanup*.test.ts
+          src/services/spotify/music-ingestion-core.test.ts
+          src/services/music-preference/track-exclusion.test.ts
           src/jobs/music-repeat-lastfm-factual.test.ts
           src/services/music-identity/musicbrainz-isrc-mbid-shadow.test.ts
           src/services/music-identity/shadow-resolver-report.test.ts

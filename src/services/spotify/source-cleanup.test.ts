@@ -227,3 +227,59 @@ test("periodic cleanup rejects missing cache before Spotify history traffic", ()
   assert.ok(automatic.indexOf("decodeMusicSourceCache") < automatic.indexOf("syncRecentlyPlayed"));
   assert.ok(automatic.indexOf("readPlaylistMetadata") < automatic.indexOf("syncRecentlyPlayed"));
 });
+
+test("MUSIC-08 #319: an excluded track leaves the inbox with its own reason", () => {
+  const plan = buildMusicSourceCleanupPlan(
+    [
+      occurrence("spotify:track:a", ["a"]),
+      occurrence("spotify:track:b", ["b"]),
+      occurrence("spotify:track:c", ["c", "c-linked"]),
+      occurrence("spotify:track:d", ["d"]),
+    ],
+    new Set(["a", "b"]),
+    new Set(["b", "c-linked"]),
+  );
+  assert.deepEqual(plan.removableUris, ["spotify:track:a", "spotify:track:b", "spotify:track:c"]);
+  // b was also played: the played reason wins and it is not counted twice.
+  assert.deepEqual(plan.userExcludedUris, ["spotify:track:c"]);
+  assert.equal(plan.removalOccurrenceCount, 3);
+  assert.equal(plan.keptCount, 1);
+});
+
+test("MUSIC-08 #319: plans without exclusions keep the previous hash", () => {
+  const plan = buildMusicSourceCleanupPlan([occurrence("spotify:track:a", ["a"])], new Set(["a"]));
+  assert.deepEqual(plan.userExcludedUris, []);
+  assert.equal(plan.planHash, hashCleanupPlan(["spotify:track:a"], 1));
+});
+
+test("MUSIC-08 #319: restoring an excluded track changes the plan hash", () => {
+  const occurrences = [occurrence("spotify:track:a", ["a"]), occurrence("spotify:track:b", ["b"])];
+  const excluded = buildMusicSourceCleanupPlan(occurrences, new Set(["a"]), new Set(["b"]));
+  const restored = buildMusicSourceCleanupPlan(occurrences, new Set(["a"]), new Set());
+  assert.notEqual(excluded.planHash, restored.planHash);
+  // Same URIs, different reason split: the reason is part of the hash.
+  const relabeled = buildMusicSourceCleanupPlan(occurrences, new Set(["a", "b"]), new Set(["b"]));
+  assert.notEqual(excluded.planHash, relabeled.planHash);
+});
+
+test("MUSIC-08 #319: local or non-track items are never removed for an exclusion", () => {
+  const plan = buildMusicSourceCleanupPlan(
+    [
+      occurrence("spotify:local:x", ["x"], { isLocal: true }),
+      occurrence("spotify:episode:y", ["y"], { isTrack: false }),
+    ],
+    new Set(),
+    new Set(["x", "y"]),
+  );
+  assert.deepEqual(plan.removableUris, []);
+});
+
+test("MUSIC-08 #319: the cached (automatic) plan applies exclusions too", () => {
+  const plan = buildCachedMusicSourceCleanupPlan(
+    [{ uri: "spotify:track:a", spotifyTrackId: "a" }, { uri: "spotify:track:b", spotifyTrackId: "b" }],
+    new Set(),
+    new Set(["b"]),
+  );
+  assert.deepEqual(plan.userExcludedUris, ["spotify:track:b"]);
+  assert.deepEqual(plan.removableUris, ["spotify:track:b"]);
+});

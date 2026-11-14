@@ -114,7 +114,7 @@ async function previewRule(formData: FormData) {
     });
     revalidateConfiguration();
     redirect(
-      `/dashboard/configuracao/alimentacao?preview=1&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}`,
+      `/dashboard/configuracao/alimentacao?preview=1&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}&excl=${result.userExcludedCount}`,
     );
   } catch (error) {
     rethrowNextRedirect(error);
@@ -133,7 +133,7 @@ async function syncRule(formData: FormData) {
     const result = await syncMusicIngestionRuleSerialized(session.user.id, id);
     revalidateConfiguration();
     redirect(
-      `/dashboard/configuracao/alimentacao?synced=1&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}`,
+      `/dashboard/configuracao/alimentacao?synced=1&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}&excl=${result.userExcludedCount}`,
     );
   } catch (error) {
     rethrowNextRedirect(error);
@@ -209,7 +209,7 @@ async function manualAdd(formData: FormData) {
     });
     revalidateConfiguration();
     redirect(
-      `/dashboard/configuracao/alimentacao?manual=${preview ? "preview" : "added"}&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}`,
+      `/dashboard/configuracao/alimentacao?manual=${preview ? "preview" : "added"}&add=${result.addedCount}&dup=${result.duplicateCount}&cool=${result.cooldownCount}&excl=${result.userExcludedCount}`,
     );
   } catch (error) {
     rethrowNextRedirect(error);
@@ -245,6 +245,7 @@ export default async function MusicIngestionConfigurationPage({
     add?: string;
     dup?: string;
     cool?: string;
+    excl?: string;
   }>;
 }) {
   const session = await auth();
@@ -348,7 +349,7 @@ export default async function MusicIngestionConfigurationPage({
           <div className="status-info mt-6 flex items-start gap-2 rounded-2xl border px-4 py-3 text-sm font-bold">
             <UiIcon name="history" size={17} className="mt-0.5 shrink-0" />
             <span>
-              Resultado: {params.add ?? "0"} para adicionar · {params.dup ?? "0"} duplicadas · {params.cool ?? "0"} em cooldown.
+              Resultado: {params.add ?? "0"} para adicionar · {params.dup ?? "0"} duplicadas · {params.cool ?? "0"} em cooldown{params.excl && params.excl !== "0" ? ` · ${params.excl} bloqueadas por "Não tocar mais"` : ""}.
               {params.preview === "1" || params.manual === "preview" ? " Preview: nenhuma playlist foi alterada." : ""}
             </span>
           </div>
@@ -607,6 +608,7 @@ export default async function MusicIngestionConfigurationPage({
                 </div>
                 <div className="text-muted-inverse">
                   {run.addedCount} adicionadas · {run.duplicateCount} duplicadas · {run.cooldownCount} cooldown · {run.unavailableCount} indisponíveis
+                  {run.userExcludedCount > 0 ? ` · ${run.userExcludedCount} bloqueadas por "Não tocar mais"` : ""}
                 </div>
               </div>
             ))}
