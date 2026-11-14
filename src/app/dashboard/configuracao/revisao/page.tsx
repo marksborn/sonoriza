@@ -460,6 +460,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
               targetPlaylistId: true,
               position: true,
               contentType: true,
+              compositionRole: true,
               title: true,
             },
           },
@@ -472,13 +473,14 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
   const releasesReviews = readReleasesTargetReviews(simulation?.summary);
   const simulatedOrderByTargetId = new Map<
     string,
-    Array<{ position: number; type: "MUSIC" | "PODCAST"; title: string }>
+    Array<{ position: number; type: "MUSIC" | "PODCAST"; snippetInMusicRole: boolean; title: string }>
   >();
   for (const item of simulation?.items ?? []) {
     const current = simulatedOrderByTargetId.get(item.targetPlaylistId) ?? [];
     current.push({
       position: item.position,
       type: item.contentType,
+      snippetInMusicRole: item.contentType === "PODCAST" && item.compositionRole === "MUSIC",
       title: item.title ?? "Item sem título",
     });
     simulatedOrderByTargetId.set(item.targetPlaylistId, current);
@@ -1098,7 +1100,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                                     <ol className="mt-2 space-y-1">
                                       {simulatedOrderByTargetId.get(target.targetPlaylistId)!.map((item) => (
                                         <li key={`${item.position}-${item.type}-${item.title}`}>
-                                          {item.position + 1}. {item.type === "MUSIC" ? "M" : "P"} · {item.title}
+                                          {item.position + 1}. {item.type === "MUSIC" ? "M" : "P"} · {item.snippetInMusicRole ? "Podcast Snippet — posição musical · " : ""}{item.title}
                                         </li>
                                       ))}
                                     </ol>

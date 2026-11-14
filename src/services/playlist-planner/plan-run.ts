@@ -21,6 +21,7 @@ import {
   type TargetSharingReservationMap,
   type TargetSharingRuntimeEvidence,
 } from "./target-sharing-runtime";
+import { compositionRoleOf, type PodcastSnippetPolicy } from "./podcast-snippet";
 import type {
   Candidate,
   DurationPlanningBlock,
@@ -45,6 +46,8 @@ export interface RunTarget {
    * plan continues the pattern from this index; PODCAST-08 bands follow it.
    */
   sequenceStartOffset?: number;
+  /** PODCAST-SNIPPET (#559): absent keeps the legacy planner (mode OFF). */
+  podcastSnippetPolicy?: PodcastSnippetPolicy;
 }
 
 export interface PlanRunInput {
@@ -249,6 +252,9 @@ export function planRun({
       reserved,
       preserved,
       ...(target.sequenceStartOffset ? { sequenceStartIndex: target.sequenceStartOffset } : {}),
+      ...(target.podcastSnippetPolicy
+        ? { podcastSnippetPolicy: target.podcastSnippetPolicy }
+        : {}),
     };
     // Gate 5: the canonical selector can opt in to the existing duration-band
     // core only when the caller passed an explicitly approved target policy.
@@ -532,6 +538,9 @@ function planSegmentedTarget(input: {
       constraintSeed: selected,
       strictDurationBoundary: true,
       sequenceStartIndex: (input.target.sequenceStartOffset ?? 0) + selected.length,
+      ...(input.target.podcastSnippetPolicy
+        ? { podcastSnippetPolicy: input.target.podcastSnippetPolicy }
+        : {}),
     };
     let result: PlanResult;
     if (input.podcast08) {
@@ -577,8 +586,11 @@ function aggregateSegmentedResult(
   }>,
 ): PlanResult {
   const totalDurationMs = sumDuration(items);
-  const musicItems = items.filter((item) => item.type === "MUSIC");
-  const podcastItems = items.filter((item) => item.type === "PODCAST");
+  // #559: composition stats follow the position; artist/album identity below
+  // only ever considers real tracks.
+  const musicItems = items.filter((item) => compositionRoleOf(item) === "MUSIC");
+  const podcastItems = items.filter((item) => compositionRoleOf(item) === "PODCAST");
+  const trackItems = musicItems.filter((item) => item.type === "MUSIC");
   const musicDurationMs = sumDuration(musicItems);
   const podcastDurationMs = sumDuration(podcastItems);
   const requestedPodcastPercent = Math.min(100, Math.max(0, rules.podcastPercent));
@@ -615,10 +627,13 @@ function aggregateSegmentedResult(
       stats.sequenceStopReason !== "TARGET_REACHED",
   );
   const artistIds = new Set(
-    musicItems.flatMap((item) => (item.primaryArtistId ? [item.primaryArtistId] : [])),
+    trackItems.flatMap((item) => (item.primaryArtistId ? [item.primaryArtistId] : [])),
   );
   const albumIds = new Set(
-    musicItems.flatMap((item) => (item.albumId ? [item.albumId] : [])),
+    trackItems.flatMap((item) => (item.albumId ? [item.albumId] : [])),
+  );
+  const snippetStats = blockStats.flatMap((stats) =>
+    stats.podcastSnippet ? [stats.podcastSnippet] : [],
   );
   const compositionQualityPassed = blockStats.every(
     (stats) => stats.compositionQualityPassed,
@@ -688,6 +703,21 @@ function aggregateSegmentedResult(
           ? null
           : sequenceStop?.sequenceStopReason ??
             (blockDeficitMs === 0 ? "TARGET_REACHED" : null),
+      ...(snippetStats.length > 0
+        ? {
+            podcastSnippet: {
+              policy: snippetStats[0]!.policy,
+              excludedCandidateCount: Math.max(
+                0,
+                ...snippetStats.map((stats) => stats.excludedCandidateCount),
+              ),
+              musicRoleCount: snippetStats.reduce(
+                (sum, stats) => sum + stats.musicRoleCount,
+                0,
+              ),
+            },
+          }
+        : {}),
       segmentation: {
         mode: "PER_EVENT",
         targetDurationMs,

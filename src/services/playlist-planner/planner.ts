@@ -7,6 +7,12 @@ import {
   type PodcastDurationBandLimits,
   type ClassifiedPodcastDurationBand,
 } from "./podcast-duration-bands";
+import {
+  compositionRoleOf,
+  isPodcastSnippet,
+  PODCAST_SNIPPET_MIN_TRACKS_BETWEEN,
+  type PodcastSnippetPolicy,
+} from "./podcast-snippet";
 import type {
   Candidate,
   ContentType,
@@ -40,6 +46,19 @@ export interface PlanPlaylistInput {
    * Undefined keeps the canonical "fill until the target" behavior.
    */
   maxSequenceSlots?: number;
+  /**
+   * PODCAST-SNIPPET (#559): undefined keeps the legacy planner exactly.
+   * EXCLUDE drops Snippet episodes from the fresh podcast pool; MUSIC_ROLE also
+   * offers them to music positions. Preserved remote items are never dropped
+   * by EXCLUDE; their composition role is honored only under MUSIC_ROLE.
+   */
+  podcastSnippetPolicy?: PodcastSnippetPolicy;
+  /**
+   * #559: podcast pool that music-role Snippets are drawn from when the
+   * caller plans a music-only fill (empty `pools.podcasts`), as the event
+   * composition paths do. Defaults to the eligible podcast pool.
+   */
+  musicRoleSnippetPool?: Candidate[];
 }
 
 const MIX_QUALITY_TOLERANCE_POINTS = 10;
@@ -116,6 +135,8 @@ function planPlaylistCore({
   strictDurationBoundary = false,
   sequenceStartIndex = 0,
   maxSequenceSlots,
+  podcastSnippetPolicy,
+  musicRoleSnippetPool,
 }: PlanPlaylistInput, projection?: PodcastDurationProjection): PlanResult {
   const target = Math.max(0, rules.targetDurationMs);
   const podcastPercent = clamp(rules.podcastPercent, 0, 100);
@@ -127,6 +148,9 @@ function planPlaylistCore({
   const eligiblePodcasts: Candidate[] = [];
   let podcastIdentityMissingCount = 0;
   let podcastDurationExceededCount = 0;
+  let podcastSnippetExcludedCount = 0;
+  const snippetBlockedOrderedPrograms = new Set<string>();
+  const snippetMusicRole = podcastSnippetPolicy === "MUSIC_ROLE";
 
   for (const candidate of pools.podcasts) {
     const programId = candidate.programId?.trim();
@@ -140,6 +164,18 @@ function planPlaylistCore({
     ) {
       podcastDurationExceededCount += 1;
       continue;
+    }
+    if (podcastSnippetPolicy === "EXCLUDE") {
+      // An ordered show whose next episode is an excluded Snippet waits: its
+      // later episodes must not leap ahead of it in this destination.
+      if (isOrderedShowEpisode(candidate) && snippetBlockedOrderedPrograms.has(programId)) {
+        continue;
+      }
+      if (isPodcastSnippet(candidate)) {
+        podcastSnippetExcludedCount += 1;
+        if (isOrderedShowEpisode(candidate)) snippetBlockedOrderedPrograms.add(programId);
+        continue;
+      }
     }
     eligiblePodcasts.push(
       programId === candidate.programId
@@ -170,9 +206,19 @@ function planPlaylistCore({
   const items: PlannedItem[] = [];
   let musicDurationMs = 0;
   let podcastDurationMs = 0;
+  let podcastSnippetMusicRoleCount = 0;
+  // #559: real tracks placed in music positions since the last music-role
+  // Snippet. Seeded by earlier blocks so CALENDAR-02 keeps the same spacing.
+  let musicTracksSinceSnippet = 0;
+  const trackMusicRoleSpacing = (candidate: Candidate) => {
+    if (compositionRoleOf(candidate) !== "MUSIC") return;
+    if (candidate.type === "PODCAST") musicTracksSinceSnippet = 0;
+    else musicTracksSinceSnippet += 1;
+  };
 
   for (const candidate of constraintSeed ?? []) {
     seedConstraintState(candidate, programCounts, musicDiversity);
+    if (snippetMusicRole) trackMusicRoleSpacing(candidate);
   }
 
   const totalDuration = () => musicDurationMs + podcastDurationMs;
@@ -181,14 +227,21 @@ function planPlaylistCore({
     used.add(candidate.uri);
     newlyUsed.add(candidate.uri);
 
-    if (candidate.type === "PODCAST") {
+    // Durations follow the composition position; identity follows the type.
+    if (compositionRoleOf(candidate) === "PODCAST") {
       podcastDurationMs += Math.max(0, candidate.durationMs);
+    } else {
+      musicDurationMs += Math.max(0, candidate.durationMs);
+    }
+    trackMusicRoleSpacing(candidate);
+
+    if (candidate.type === "PODCAST") {
+      if (candidate.compositionRole === "MUSIC") podcastSnippetMusicRoleCount += 1;
       const programId = candidate.programId!;
       programCounts.set(programId, (programCounts.get(programId) ?? 0) + 1);
       return;
     }
 
-    musicDurationMs += Math.max(0, candidate.durationMs);
     const artistId = normalizedIdentity(candidate.primaryArtistId);
     const albumId = normalizedIdentity(candidate.albumId);
     if (artistId) {
@@ -207,7 +260,39 @@ function planPlaylistCore({
     }
   };
 
-  for (const candidate of preserved ?? []) {
+  // #559: a music-role Snippet for this target, or null. Same canonical
+  // guards as a podcast slot (URI, per-show cap, fit) plus head-of-line
+  // protection against the FULL podcast pool, so an ordered show never has a
+  // short episode jump ahead of an earlier pending one.
+  const pickMusicRoleCandidate = (maxDurationMs: number): Candidate | null => {
+    if (
+      snippetMusicRole &&
+      musicTracksSinceSnippet >= PODCAST_SNIPPET_MIN_TRACKS_BETWEEN
+    ) {
+      const snippet = pickSnippetForMusicRole(
+        musicRoleSnippetPool ?? eligiblePodcasts,
+        used,
+        programCounts,
+        rules.maxEpisodesPerProgram,
+        maxPodcastDurationMs === null
+          ? maxDurationMs
+          : Math.min(maxDurationMs, maxPodcastDurationMs),
+      );
+      if (snippet) return { ...snippet, compositionRole: "MUSIC" };
+    }
+    return pickCandidate(
+      poolByType.MUSIC,
+      used,
+      programCounts,
+      rules.maxEpisodesPerProgram,
+      maxDurationMs,
+      musicDiversity,
+    );
+  };
+
+  for (const rawPreserved of preserved ?? []) {
+    // Outside MUSIC_ROLE a stale role is ignored: legacy typing applies.
+    let candidate = snippetMusicRole ? rawPreserved : withoutCompositionRole(rawPreserved);
     if (used.has(candidate.uri) || candidate.durationMs <= 0) continue;
     if (
       strictDurationBoundary &&
@@ -215,15 +300,29 @@ function planPlaylistCore({
     ) {
       continue;
     }
-    if (
-      rules.compositionMode === "SEQUENCE" &&
-      rules.sequencePattern.length > 0 &&
-      candidate.type !==
+    if (rules.compositionMode === "SEQUENCE" && rules.sequencePattern.length > 0) {
+      const slotType =
         rules.sequencePattern[
           (sequenceStartIndex + items.length) % rules.sequencePattern.length
-        ]
+        ];
+      if (compositionRoleOf(candidate) !== slotType) {
+        if (
+          snippetMusicRole &&
+          slotType === "MUSIC" &&
+          candidate.type === "PODCAST" &&
+          isPodcastSnippet(candidate)
+        ) {
+          candidate = { ...candidate, compositionRole: "MUSIC" };
+        } else {
+          continue;
+        }
+      }
+    }
+    if (
+      candidate.compositionRole === "MUSIC" &&
+      (candidate.type !== "PODCAST" || !isPodcastSnippet(candidate))
     ) {
-      continue;
+      candidate = withoutCompositionRole(candidate);
     }
     place(candidate);
   }
@@ -298,6 +397,8 @@ function planPlaylistCore({
                 ? "PRIMARY_MATCH"
                 : "NO_ELIGIBLE_EPISODE_IN_REQUESTED_BAND",
           });
+        } else if (slotType === "MUSIC") {
+          candidate = pickMusicRoleCandidate(remainingMs);
         } else {
           candidate = pickCandidate(
             poolByType[slotType],
@@ -346,14 +447,7 @@ function planPlaylistCore({
       const maxCandidateDurationMs = strictDurationBoundary
         ? remainingMs
         : Number.POSITIVE_INFINITY;
-      const music = pickCandidate(
-        poolByType.MUSIC,
-        used,
-        programCounts,
-        rules.maxEpisodesPerProgram,
-        maxCandidateDurationMs,
-        musicDiversity,
-      );
+      const music = pickMusicRoleCandidate(maxCandidateDurationMs);
       const podcast = pickCandidate(
         poolByType.PODCAST,
         used,
@@ -413,8 +507,8 @@ function planPlaylistCore({
       totalDurationMs,
       musicDurationMs,
       podcastDurationMs,
-      musicCount: items.filter((item) => item.type === "MUSIC").length,
-      podcastCount: items.filter((item) => item.type === "PODCAST").length,
+      musicCount: items.filter((item) => compositionRoleOf(item) === "MUSIC").length,
+      podcastCount: items.filter((item) => compositionRoleOf(item) === "PODCAST").length,
       actualPodcastPercent,
       requestedPodcastPercent: podcastPercent,
       podcastShortfallMs,
@@ -445,8 +539,53 @@ function planPlaylistCore({
       stoppedAtPatternIndex,
       sequenceQualityPassed,
       sequenceStopReason,
+      ...(podcastSnippetPolicy
+        ? {
+            podcastSnippet: {
+              policy: podcastSnippetPolicy,
+              excludedCandidateCount: podcastSnippetExcludedCount,
+              musicRoleCount: podcastSnippetMusicRoleCount,
+            },
+          }
+        : {}),
     },
   };
+}
+
+function withoutCompositionRole(candidate: Candidate): Candidate {
+  if (candidate.compositionRole === undefined) return candidate;
+  const rest = { ...candidate };
+  delete rest.compositionRole;
+  return rest;
+}
+
+function pickSnippetForMusicRole(
+  pool: Candidate[],
+  used: Set<string>,
+  programCounts: Map<string, number>,
+  maxEpisodesPerProgram: number,
+  maxDurationMs: number,
+): Candidate | null {
+  for (let index = 0; index < pool.length; index += 1) {
+    const candidate = pool[index]!;
+    if (candidate.type !== "PODCAST" || used.has(candidate.uri)) continue;
+    if (candidate.durationMs <= 0 || candidate.durationMs > maxDurationMs) continue;
+    const programId = candidate.programId?.trim();
+    if (!isPodcastSnippet(candidate) || !programId) continue;
+    if ((programCounts.get(programId) ?? 0) >= maxEpisodesPerProgram) continue;
+    if (
+      isOrderedShowEpisode(candidate) &&
+      pool.slice(0, index).some((earlier) =>
+        earlier.type === "PODCAST" &&
+        earlier.programId?.trim() === programId &&
+        isOrderedShowEpisode(earlier) &&
+        !used.has(earlier.uri))
+    ) {
+      continue;
+    }
+    return programId === candidate.programId ? candidate : { ...candidate, programId };
+  }
+  return null;
 }
 
 function seedConstraintState(
@@ -493,12 +632,13 @@ function chooseProportionCandidate(input: {
   if (input.podcastPercent >= 100) return input.podcast;
 
   const score = (candidate: Candidate) => {
+    const role = compositionRoleOf(candidate);
     const podcastDuration =
       input.podcastDurationMs +
-      (candidate.type === "PODCAST" ? Math.max(0, candidate.durationMs) : 0);
+      (role === "PODCAST" ? Math.max(0, candidate.durationMs) : 0);
     const musicDuration =
       input.musicDurationMs +
-      (candidate.type === "MUSIC" ? Math.max(0, candidate.durationMs) : 0);
+      (role === "MUSIC" ? Math.max(0, candidate.durationMs) : 0);
     const total = podcastDuration + musicDuration;
     const actual = total > 0 ? (podcastDuration / total) * 100 : 0;
     return Math.abs(actual - input.podcastPercent);

@@ -361,3 +361,35 @@ test("KEEP_FILLED: preserved items may open the next event only at an exact boun
     ],
   );
 });
+
+test("#559 sequence per event: music fills may take a Snippet only when allowed", () => {
+  const input: Parameters<typeof projectCalendar04SequencePerEvent>[0] = {
+    policy: policy({ remainderFillStrategy: "MUSIC_ONLY" }),
+    blocks: blocks(40),
+    rules: rules(["PODCAST", "MUSIC"]),
+    pools: {
+      music: musicPool(12),
+      podcasts: [podcast("long", 20), podcast("snip", 3)],
+    },
+  };
+
+  const legacy = projectCalendar04SequencePerEvent(input);
+  assert.equal(legacy.items.some((item) => item.uri === "spotify:episode:snip"), false);
+
+  const allowed = projectCalendar04SequencePerEvent({
+    ...input,
+    podcastSnippetPolicy: "MUSIC_ROLE",
+  });
+  const snippet = allowed.items.find((item) => item.uri === "spotify:episode:snip");
+  assert.equal(snippet?.compositionRole, "MUSIC");
+  assert.equal(allowed.items.filter((item) => item.type === "PODCAST").length, 2);
+  assert.ok(allowed.items.reduce((sum, item) => sum + item.durationMs, 0) <= 40 * MINUTE);
+
+  const excluded = projectCalendar04SequencePerEvent({
+    ...input,
+    pools: { music: input.pools.music, podcasts: [podcast("snip", 3), podcast("long", 20)] },
+    podcastSnippetPolicy: "EXCLUDE",
+  });
+  assert.equal(excluded.items.some((item) => item.uri === "spotify:episode:snip"), false);
+  assert.equal(excluded.items[0]?.uri, "spotify:episode:long");
+});

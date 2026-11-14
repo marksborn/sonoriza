@@ -1,5 +1,6 @@
 import type { CalendarEventCompositionPolicySnapshot } from "../calendar-event-composition-policy";
 import { planPlaylist, type PlannerPools } from "./planner";
+import type { PodcastSnippetPolicy } from "./podcast-snippet";
 import { selectFittingPodcastsInCanonicalOrder } from "./podcast-fit";
 import type {
   Candidate,
@@ -69,6 +70,8 @@ export type ProjectCalendar03EventCompositionInput = Readonly<{
    * CALENDAR-03 is allowed to fill the remaining budget.
    */
   preserved?: Candidate[];
+  /** PODCAST-SNIPPET (#559): absent keeps the legacy projection. */
+  podcastSnippetPolicy?: PodcastSnippetPolicy;
 }>;
 
 /**
@@ -282,6 +285,12 @@ export function projectCalendar03EventComposition(
           reserved: localReserved,
           constraintSeed: selected,
           strictDurationBoundary: true,
+          ...(input.podcastSnippetPolicy === "MUSIC_ROLE"
+            ? {
+                podcastSnippetPolicy: "MUSIC_ROLE" as const,
+                musicRoleSnippetPool: input.pools.podcasts,
+              }
+            : {}),
         });
 
     const selectedMusicUris = preservedForBlock

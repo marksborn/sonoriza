@@ -84,6 +84,7 @@ export type ConfigurationAssessment = {
     maxEpisodesPerProgram: number;
     maxTracksPerArtist: number | null;
     maxTracksPerAlbum: number | null;
+    allowPodcastSnippets: boolean;
     updatePolicy: "MANUAL" | "KEEP_FILLED" | "REBUILD_DAILY";
     dailyScheduleMinutes: number | null;
     scheduleTimezone: string | null;
@@ -284,6 +285,7 @@ export async function assessConfiguration(
         maxEpisodesPerProgram: true,
         maxTracksPerArtist: true,
         maxTracksPerAlbum: true,
+        allowPodcastSnippets: true,
         updatePolicy: true,
         dailyScheduleMinutes: true,
         scheduleTimezone: true,
@@ -387,6 +389,7 @@ export async function assessConfiguration(
     maxEpisodesPerProgram: target.maxEpisodesPerProgram,
     maxTracksPerArtist: target.maxTracksPerArtist,
     maxTracksPerAlbum: target.maxTracksPerAlbum,
+    allowPodcastSnippets: target.allowPodcastSnippets === true,
     updatePolicy: target.updatePolicy,
     dailyScheduleMinutes: target.dailyScheduleMinutes,
     scheduleTimezone: target.scheduleTimezone,
@@ -815,6 +818,9 @@ export async function assessConfiguration(
       maxEpisodesPerProgram: target.maxEpisodesPerProgram,
       maxTracksPerArtist: target.maxTracksPerArtist,
       maxTracksPerAlbum: target.maxTracksPerAlbum,
+      // #559: only a checked box enters the payload, so every existing
+      // (unchecked) destination keeps its current fingerprint and approval.
+      ...(target.allowPodcastSnippets ? { allowPodcastSnippets: true } : {}),
       updatePolicy: target.updatePolicy,
       dailyScheduleMinutes:
         target.updatePolicy === "MANUAL" ? null : target.dailyScheduleMinutes,

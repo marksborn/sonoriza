@@ -8,6 +8,7 @@ import type {
   Calendar03ProjectedBlock,
 } from "./calendar-event-composition-shadow";
 import { planPlaylist, type PlannerPools } from "./planner";
+import { compositionRoleOf, type PodcastSnippetPolicy } from "./podcast-snippet";
 import type {
   Candidate,
   ContentType,
@@ -54,6 +55,8 @@ export type ProjectCalendar04SequencePerEventInput = Readonly<{
    * stay as a physical prefix of each event while they fit; see below.
    */
   preserved?: Candidate[];
+  /** PODCAST-SNIPPET (#559): absent keeps the legacy projection. */
+  podcastSnippetPolicy?: PodcastSnippetPolicy;
 }>;
 
 /**
@@ -125,6 +128,16 @@ export function projectCalendar04SequencePerEvent(
         reserved,
         constraintSeed: selected,
         strictDurationBoundary: true,
+        ...(input.podcastSnippetPolicy
+          ? {
+              podcastSnippetPolicy: input.podcastSnippetPolicy,
+              // Music-only fills receive an empty podcast pool; music-role
+              // Snippets still come from this target's scoped podcast pool.
+              ...(input.podcastSnippetPolicy === "MUSIC_ROLE"
+                ? { musicRoleSnippetPool: input.pools.podcasts }
+                : {}),
+            }
+          : {}),
         ...options,
       });
       for (const item of result.items) {
@@ -233,9 +246,11 @@ export function projectCalendar04SequencePerEvent(
     }
 
     const blockItems = selected.slice(blockStart);
-    const musicDurationMs = sumDuration(blockItems.filter((item) => item.type === "MUSIC"));
+    const musicDurationMs = sumDuration(
+      blockItems.filter((item) => compositionRoleOf(item) === "MUSIC"),
+    );
     const podcastDurationMs = sumDuration(
-      blockItems.filter((item) => item.type === "PODCAST"),
+      blockItems.filter((item) => compositionRoleOf(item) === "PODCAST"),
     );
     projectedBlocks.push({
       index: blockIndex,

@@ -131,6 +131,11 @@ import { missingKeepFilledPreparation } from "./keep-filled-context-guard";
 import { canonicalPreservationMismatch } from "@/services/music-identity/canonical-factual-cooldown";
 import { isScheduledCalendarNoop } from "./scheduled-calendar-noop";
 import { sequencePrewriteViolations } from "./sequence-prewrite-guard";
+import {
+  podcastSnippetTargetEvidence,
+  resolvePodcastSnippetMode,
+  resolvePodcastSnippetPolicy,
+} from "@/services/playlist-planner/podcast-snippet";
 import { isDegradableSpotifySourceFailure } from "./source-failure-policy";
 import { assertPlaybackReserveProductAuthorizationBeforeWrite } from "@/services/playback-reserve-shadow-runtime";
 
@@ -886,6 +891,21 @@ export async function generatePlaylists(
     }
     if (audiobookSequenceOffsetByTargetId.size > 0) {
       summary.audiobookSequenceSlot = Object.fromEntries(audiobookSequenceOffsetByTargetId);
+    }
+
+    // PODCAST-SNIPPET (#559): OFF (default) leaves every target on the legacy
+    // planner; the stored checkbox only takes effect under ACTIVE. The same
+    // policy applies to SIMULATION, MANUAL and SCHEDULED runs.
+    const podcastSnippetMode = resolvePodcastSnippetMode(process.env.PODCAST_SNIPPET_MODE);
+    const allowPodcastSnippetsByTargetId = new Map(
+      targets.map((target) => [target.id, target.allowPodcastSnippets === true]),
+    );
+    for (const runTarget of runTargets) {
+      const policy = resolvePodcastSnippetPolicy({
+        mode: podcastSnippetMode,
+        allowPodcastSnippets: allowPodcastSnippetsByTargetId.get(runTarget.targetPlaylistId),
+      });
+      if (policy) runTarget.podcastSnippetPolicy = policy;
     }
 
     await persistGenerationCheckpoint(run.id, "CALENDAR_READ_DONE", {
@@ -1685,6 +1705,23 @@ export async function generatePlaylists(
       summary.podcast08SimulationOnly = true;
       summary.podcast08PreviewNotForApproval = true;
     }
+    // #559 checkpoint A: under OFF, snippetsInPodcastRole is the exact
+    // per-target delta an unchecked destination would lose once ACTIVE.
+    summary.podcastSnippet = {
+      mode: podcastSnippetMode,
+      targets: plan.targets.map((planned) => {
+        const runTarget = runTargets.find(
+          (entry) => entry.targetPlaylistId === planned.targetPlaylistId,
+        );
+        return podcastSnippetTargetEvidence({
+          targetPlaylistId: planned.targetPlaylistId,
+          policy: runTarget?.podcastSnippetPolicy,
+          allowPodcastSnippets:
+            allowPodcastSnippetsByTargetId.get(planned.targetPlaylistId) === true,
+          items: planned.result.items,
+        });
+      }),
+    };
     const qualityFailures = incremental.qualityFailures;
     summary.qualityPassed =
       qualityFailures.length === 0 && !podcast08ExperimentalSelectionApplied &&
@@ -2282,6 +2319,31 @@ export async function generatePlaylists(
       }
     }
 
+    // #559: the Snippet checkbox is part of the plan. If it changed while
+    // this run was planning, the plan no longer matches the destination: block
+    // before any Spotify write instead of publishing a stale composition.
+    if (!simulate && podcastSnippetMode === "ACTIVE" && plan.targets.length > 0) {
+      const live = await prisma.targetPlaylist.findMany({
+        where: { userId, id: { in: plan.targets.map((planned) => planned.targetPlaylistId) } },
+        select: { id: true, allowPodcastSnippets: true },
+      });
+      const changed = live
+        .filter((row) => row.allowPodcastSnippets !== allowPodcastSnippetsByTargetId.get(row.id))
+        .map((row) => row.id);
+      if (changed.length > 0) {
+        const error =
+          "A opção \"Permitir Podcast Snippet\" mudou durante a geração. Nada foi alterado no Spotify; gere novamente.";
+        summary.podcastSnippetPrewrite = {
+          status: "BLOCKED_PREFERENCE_CHANGED",
+          targetIds: changed,
+          spotifyWrites: false,
+        };
+        log({ level: "ERROR", message: error, data: summary.podcastSnippetPrewrite });
+        await finalizeRun(run.id, "FAILED", logs, summary, error);
+        return { runId: run.id, status: "FAILED" };
+      }
+    }
+
     await persistGenerationCheckpoint(run.id, "PREWRITE_DONE", {
       targetCount: plan.targets.length,
     });
@@ -2545,6 +2607,9 @@ export async function generatePlaylists(
             sourceSpotifyType: item.sourceSpotifyType,
             sourceSpotifyId: item.sourceSpotifyId,
             sourceIncludePlayed: item.sourceIncludePlayed,
+            ...(item.compositionRole && item.compositionRole !== item.type
+              ? { compositionRole: item.compositionRole }
+              : {}),
           })),
         });
 

@@ -1,4 +1,5 @@
 import type { Candidate, PlaylistRules } from "@/services/playlist-planner";
+import { isPodcastSnippet } from "@/services/playlist-planner/podcast-snippet";
 
 export type CurrentTargetPlaylistItem = {
   position: number;
@@ -99,6 +100,12 @@ export function buildKeepFilledPreservation(input: {
     | "maxTracksPerAlbum"
   >;
   maxPodcastDurationMs: number | null;
+  /**
+   * #559: the target's effective Snippet policy is MUSIC_ROLE. A Snippet
+   * already in a MUSIC position of a SEQUENCE is then kept in that role
+   * instead of being removed as a type mismatch.
+   */
+  podcastSnippetMusicRole?: boolean;
 }): KeepFilledPreservation {
   const preserved: Candidate[] = [];
   const removals: KeepFilledRemoval[] = [];
@@ -283,14 +290,25 @@ export function buildKeepFilledPreservation(input: {
 
     if (
       input.rules.compositionMode === "SEQUENCE" &&
-      input.rules.sequencePattern.length > 0 &&
-      candidate.type !==
+      input.rules.sequencePattern.length > 0
+    ) {
+      const slotType =
         input.rules.sequencePattern[
           preserved.length % input.rules.sequencePattern.length
-        ]
-    ) {
-      remove(item, "SEQUENCE_TYPE_MISMATCH", candidate.durationMs);
-      continue;
+        ];
+      if (candidate.type !== slotType) {
+        if (
+          input.podcastSnippetMusicRole === true &&
+          slotType === "MUSIC" &&
+          candidate.type === "PODCAST" &&
+          isPodcastSnippet(candidate)
+        ) {
+          candidate = { ...candidate, compositionRole: "MUSIC" };
+        } else {
+          remove(item, "SEQUENCE_TYPE_MISMATCH", candidate.durationMs);
+          continue;
+        }
+      }
     }
 
     if (candidate.type === "PODCAST") {

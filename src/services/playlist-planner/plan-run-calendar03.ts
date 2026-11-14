@@ -38,6 +38,7 @@ import type {
   PlannedItem,
 } from "./types";
 import type { PlannerPools } from "./planner";
+import { compositionRoleOf, excludePodcastSnippetsFromPool } from "./podcast-snippet";
 
 export type {
   PlanRunInput,
@@ -112,6 +113,9 @@ export function planRun(input: PlanRunInput): PlanRunResult {
           sharingReservation?.forbiddenUris ??
           new Set(input.initialReserved ?? []),
         preserved,
+        ...(target.podcastSnippetPolicy
+          ? { podcastSnippetPolicy: target.podcastSnippetPolicy }
+          : {}),
       });
 
       if (projection.status === "READY_SHADOW") {
@@ -239,6 +243,9 @@ export function planRun(input: PlanRunInput): PlanRunResult {
         pools: targetPools,
         reserved: globalReserved,
         preserved,
+        ...(target.podcastSnippetPolicy
+          ? { podcastSnippetPolicy: target.podcastSnippetPolicy }
+          : {}),
       });
       evidence.push(evidenceFromProjection(target, policy, projection, false));
     } else {
@@ -279,6 +286,9 @@ function projectEventComposition(
       pools: input.pools,
       reserved: input.reserved,
       preserved: input.preserved,
+      ...(input.podcastSnippetPolicy
+        ? { podcastSnippetPolicy: input.podcastSnippetPolicy }
+        : {}),
     });
   }
   return projectCalendar03EventComposition(input);
@@ -293,7 +303,12 @@ function poolsForTarget(
   const blocked = input.blockedMusicTrackIdsByTargetId?.get(target.targetPlaylistId);
   return {
     ...input.pools,
-    podcasts,
+    // #559: event composition has its own podcast picker, so EXCLUDE is
+    // applied to the pool itself (ordered shows are held, never skipped).
+    podcasts:
+      target.podcastSnippetPolicy === "EXCLUDE"
+        ? excludePodcastSnippetsFromPool(podcasts)
+        : podcasts,
     music:
       blocked && blocked.size > 0
         ? music.filter(
@@ -394,8 +409,8 @@ function projectionToPlanResult(
     position,
   })) as PlannedItem[];
   const totalDurationMs = sumDuration(items);
-  const musicItems = items.filter((item) => item.type === "MUSIC");
-  const podcastItems = items.filter((item) => item.type === "PODCAST");
+  const musicItems = items.filter((item) => compositionRoleOf(item) === "MUSIC");
+  const podcastItems = items.filter((item) => compositionRoleOf(item) === "PODCAST");
   const musicDurationMs = sumDuration(musicItems);
   const podcastDurationMs = sumDuration(podcastItems);
   const actualPodcastPercent = totalDurationMs > 0

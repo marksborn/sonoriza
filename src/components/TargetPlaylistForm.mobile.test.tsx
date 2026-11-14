@@ -34,6 +34,7 @@ const base: Props = {
     maxEpisodesPerProgram: 1,
     maxTracksPerArtist: null,
     maxTracksPerAlbum: null,
+    allowPodcastSnippets: false,
     updatePolicy: "MANUAL",
     dailyScheduleTime: "07:00",
     scheduleTimezone: "America/Sao_Paulo",
