@@ -356,6 +356,9 @@ model MusicSourceCleanupRun {
   removalOccurrenceCount Int
   keptCount              Int
   plannedUris            Json
+  // MUSIC-08 (#319): subset of plannedUris removed because the user excluded
+  // the track (not played). Null on runs created before this column.
+  userExcludedUris       Json?
   removedUris            Json?
   failedUris             Json?
   startedAt              DateTime                 @default(now())
@@ -445,6 +448,8 @@ model MusicIngestionRun {
   duplicateCount         Int                     @default(0)
   cooldownCount          Int                     @default(0)
   unavailableCount       Int                     @default(0)
+  // MUSIC-08 (#319): candidates suppressed by an explicit "não tocar mais".
+  userExcludedCount      Int                     @default(0)
   details                Json?
   startedAt              DateTime                @default(now())
   finishedAt             DateTime?

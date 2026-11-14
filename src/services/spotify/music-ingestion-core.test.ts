@@ -159,3 +159,22 @@ test("MUSIC-03 refreshed DB cache is carried into managed append patches", () =>
   assert.match(source, /cacheValue: refreshed\.cachedCandidates/);
   assert.match(source, /targetIndex\.cacheValue/);
 });
+
+test("MUSIC-08 #319: an excluded track never re-enters the inbox, before cooldown or dedupe", () => {
+  const plan = planMusicIngestion(
+    [candidate("A"), candidate("B"), candidate("C")],
+    new Set(["A"]),
+    new Set(["A", "B"]),
+    new Set(["A", "B"]),
+  );
+  assert.deepEqual(plan.userExcluded.map((item) => item.track.spotifyTrackId), ["A", "B"]);
+  assert.deepEqual(plan.add.map((item) => item.track.spotifyTrackId), ["C"]);
+  assert.equal(plan.cooldown.length, 0);
+  assert.equal(plan.duplicate.length, 0);
+});
+
+test("MUSIC-08 #319: without exclusions the plan is unchanged", () => {
+  const plan = planMusicIngestion([candidate("A")], new Set(), new Set());
+  assert.deepEqual(plan.userExcluded, []);
+  assert.deepEqual(plan.add.map((item) => item.track.spotifyTrackId), ["A"]);
+});

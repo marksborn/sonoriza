@@ -18,6 +18,7 @@ import {
   MusicSourceCleanupHistoryRequiredError,
 } from "@/services/spotify/source-cleanup";
 import { buildAuditedCacheFallbackPlan } from "@/services/spotify/source-cleanup-audited-fallback";
+import { loadExcludedSpotifyTrackIds } from "@/services/music-preference/track-exclusion";
 import { decodeMusicSourceCache } from "@/services/spotify/source-cache";
 
 export const dynamic = "force-dynamic";
@@ -85,6 +86,7 @@ async function createAuditedCacheFallbackPreview(
       examinedCount: true,
       removalOccurrenceCount: true,
       plannedUris: true,
+      userExcludedUris: true,
     },
   });
   if (!auditedSnapshot) return null;
@@ -136,10 +138,15 @@ async function createAuditedCacheFallbackPreview(
       examinedCount: auditedSnapshot.examinedCount,
       removalOccurrenceCount: auditedSnapshot.removalOccurrenceCount,
       plannedUris: baselinePlannedUris,
+      userExcludedUris:
+        auditedSnapshot.userExcludedUris === null
+          ? []
+          : parseStringArray(auditedSnapshot.userExcludedUris) ?? ["UNREADABLE"],
     },
     cachedCandidates: cacheEntries,
     playedTrackIds: new Set(playedStates.map((state) => state.spotifyTrackId)),
     changedPlayedTracks: changedPlayedStates,
+    userExcludedTrackIds: await loadExcludedSpotifyTrackIds(userId),
   });
   if (!plan) return null;
 

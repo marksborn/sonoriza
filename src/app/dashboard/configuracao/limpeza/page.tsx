@@ -318,6 +318,11 @@ export default async function MusicSourceCleanupPage({ searchParams }: CleanupPa
               <Metric label="Faixas planejadas" value={completedRun.removableTrackCount} />
               <Metric label="Ocorrências planejadas" value={completedRun.removalOccurrenceCount} />
             </div>
+            {userExcludedCount(completedRun.userExcludedUris) > 0 && (
+              <p className="mt-3 text-sm leading-6 text-muted-inverse">
+                {userExcludedCount(completedRun.userExcludedUris)} saíram porque você marcou &ldquo;Não tocar mais&rdquo;, não porque foram reproduzidas.
+              </p>
+            )}
           </section>
         )}
 
@@ -334,6 +339,11 @@ export default async function MusicSourceCleanupPage({ searchParams }: CleanupPa
               <Metric label="Ocorrências removíveis" value={preview.removalOccurrenceCount} />
               <Metric label="Permaneceriam" value={preview.keptCount} />
             </div>
+            {userExcludedCount(preview.userExcludedUris) > 0 && (
+              <p className="mt-3 text-sm leading-6 text-muted-inverse">
+                {userExcludedCount(preview.userExcludedUris)} das faixas removíveis saem porque você marcou &ldquo;Não tocar mais&rdquo;, e não porque foram reproduzidas. Restaurar uma delas antes de confirmar invalida este preview.
+              </p>
+            )}
             <p className="mt-4 break-all text-xs leading-5 text-muted-inverse/60">
               Snapshot protegido: {preview.snapshotBefore} · plano {preview.planHash.slice(0, 16)}…
             </p>
@@ -475,6 +485,11 @@ export default async function MusicSourceCleanupPage({ searchParams }: CleanupPa
       </div>
     </main>
   );
+}
+
+/** MUSIC-08 (#319): removals caused by an explicit exclusion, not by playback. */
+function userExcludedCount(value: unknown): number {
+  return Array.isArray(value) ? value.filter((entry) => typeof entry === "string").length : 0;
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
