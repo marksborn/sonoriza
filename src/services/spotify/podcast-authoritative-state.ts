@@ -7,7 +7,7 @@ import {
   type PodcastListeningObservation,
   type PodcastListeningStateStore,
 } from "./podcast-listening-state";
-import { spotifyApiErrorFromResponse } from "./errors";
+import { SpotifyApiError, spotifyApiErrorFromResponse } from "./errors";
 import { getSpotifyAccessToken } from "./token";
 
 const API = "https://api.spotify.com/v1";
@@ -84,6 +84,44 @@ export async function refreshAuthoritativePodcastListeningStates(
   observedAt = new Date(),
   options: AuthoritativePodcastRefreshOptions = {},
 ) {
+  return (
+    await refreshEpisodeStates(userId, episodeIds, observedAt, options, false)
+  ).states;
+}
+
+/**
+ * Same refresh, but an episode the Spotify catalog no longer has (HTTP 404)
+ * is skipped and reported instead of failing the whole batch. Only for
+ * proactive, optional reads: callers that gate a write keep the fail-closed
+ * variant above, so an unverifiable planned or preserved episode still blocks.
+ */
+export async function refreshAuthoritativePodcastListeningStatesSkippingNotFound(
+  userId: string,
+  episodeIds: Iterable<string>,
+  observedAt = new Date(),
+  options: AuthoritativePodcastRefreshOptions = {},
+) {
+  return refreshEpisodeStates(userId, episodeIds, observedAt, options, true);
+}
+
+export function isSpotifyEpisodeNotFound(error: unknown): boolean {
+  return (
+    error instanceof SpotifyApiError &&
+    error.kind === "HTTP_ERROR" &&
+    error.status === 404
+  );
+}
+
+async function refreshEpisodeStates(
+  userId: string,
+  episodeIds: Iterable<string>,
+  observedAt: Date,
+  options: AuthoritativePodcastRefreshOptions,
+  skipNotFound: boolean,
+): Promise<{
+  states: Map<string, CanonicalPodcastListeningState>;
+  notFoundEpisodeIds: string[];
+}> {
   const ids = [
     ...new Set(
       [...episodeIds]
@@ -91,20 +129,33 @@ export async function refreshAuthoritativePodcastListeningStates(
         .filter((id) => id.length > 0),
     ),
   ];
-  if (ids.length === 0) return new Map<string, CanonicalPodcastListeningState>();
+  const notFoundEpisodeIds: string[] = [];
+  if (ids.length === 0) {
+    return { states: new Map<string, CanonicalPodcastListeningState>(), notFoundEpisodeIds };
+  }
 
   const readEpisode = await resolveEpisodeReader(userId, options);
   const observations: PodcastListeningObservation[] = [];
 
   for (const episodeId of ids) {
-    const episode = await readEpisode(episodeId);
+    let episode: EpisodePlaybackResponse;
+    try {
+      episode = await readEpisode(episodeId);
+    } catch (error) {
+      if (skipNotFound && isSpotifyEpisodeNotFound(error)) {
+        notFoundEpisodeIds.push(episodeId);
+        continue;
+      }
+      throw error;
+    }
     observations.push(toObservation(episodeId, episode, observedAt));
   }
 
-  return (options.stateStore ?? prismaPodcastListeningStateStore).observe(
+  const states = await (options.stateStore ?? prismaPodcastListeningStateStore).observe(
     userId,
     observations,
   );
+  return { states, notFoundEpisodeIds };
 }
 
 /**

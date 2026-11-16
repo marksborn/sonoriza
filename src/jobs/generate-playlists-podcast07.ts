@@ -8,7 +8,7 @@ import {
   type Podcast07ShowOverrideRuntime,
   type Podcast07SourceDescriptor,
 } from "@/services/spotify/podcast-07-runtime";
-import { refreshAuthoritativePodcastListeningStates } from "@/services/spotify/podcast-authoritative-state";
+import { refreshAuthoritativePodcastListeningStatesSkippingNotFound } from "@/services/spotify/podcast-authoritative-state";
 import { loadPodcastSavedEpisodesPublishedHistory } from "@/services/spotify/podcast-saved-episodes-policy-history";
 import { loadPodcastSavedEpisodesPolicy } from "@/services/spotify/podcast-saved-episodes-policy-store";
 import { scopedTargetsMaySelectPodcast } from "@/services/spotify/podcast-refresh-applicability";
@@ -37,6 +37,8 @@ type Podcast07PlaybackRefreshEvidence = Readonly<{
   selectedShowCount: number;
   refreshedEpisodeCount: number;
   completedFoundCount: number;
+  /** Selected episodes the Spotify catalog no longer has (HTTP 404). */
+  notFoundEpisodeCount: number;
   skippedByBudgetCount: number;
   selectedEpisodeIds: readonly string[];
   selectedByShowId: Readonly<Record<string, readonly string[]>>;
@@ -49,6 +51,7 @@ const EMPTY_PLAYBACK_REFRESH_EVIDENCE: Podcast07PlaybackRefreshEvidence = {
   selectedShowCount: 0,
   refreshedEpisodeCount: 0,
   completedFoundCount: 0,
+  notFoundEpisodeCount: 0,
   skippedByBudgetCount: 0,
   selectedEpisodeIds: [],
   selectedByShowId: {},
@@ -185,16 +188,33 @@ export async function generatePlaylists(
 
       let refreshedEpisodeCount = 0;
       let completedFoundCount = 0;
+      let notFoundEpisodeCount = 0;
       if (refreshPlan.selectedEpisodeIds.length > 0) {
-        const refreshed = await refreshAuthoritativePodcastListeningStates(
+        // An episode removed from the Spotify catalog answers 404 forever.
+        // This read is proactive (cadence freshness), so it must not fail the
+        // generation: skip it and mark it observed, otherwise it stays the
+        // oldest unobserved row of its show and is reselected on every run.
+        // Its listening status is untouched; a planned or preserved episode
+        // is still verified fail-closed before any Spotify write.
+        const refreshed = await refreshAuthoritativePodcastListeningStatesSkippingNotFound(
           opts.userId,
           refreshPlan.selectedEpisodeIds,
           now,
         );
-        refreshedEpisodeCount = refreshed.size;
-        completedFoundCount = [...refreshed.values()].filter(
+        refreshedEpisodeCount = refreshed.states.size;
+        completedFoundCount = [...refreshed.states.values()].filter(
           (entry) => entry.status === "COMPLETED",
         ).length;
+        notFoundEpisodeCount = refreshed.notFoundEpisodeIds.length;
+        if (refreshed.notFoundEpisodeIds.length > 0) {
+          await prisma.episodeListeningState.updateMany({
+            where: {
+              userId: opts.userId,
+              spotifyEpisodeId: { in: refreshed.notFoundEpisodeIds },
+            },
+            data: { lastObservedAt: now },
+          });
+        }
       }
 
       playbackRefreshEvidence = {
@@ -204,6 +224,7 @@ export async function generatePlaylists(
         selectedShowCount: refreshPlan.selectedShowCount,
         refreshedEpisodeCount,
         completedFoundCount,
+        notFoundEpisodeCount,
         skippedByBudgetCount: refreshPlan.skippedByBudgetCount,
         selectedEpisodeIds: refreshPlan.selectedEpisodeIds,
         selectedByShowId: refreshPlan.selectedByShowId,
