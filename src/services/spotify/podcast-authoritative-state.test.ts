@@ -7,6 +7,7 @@ import { createVolatilePodcastListeningStateStore } from "./podcast-listening-st
 import {
   checkPodcastCompletionBeforeWrite,
   refreshAuthoritativePodcastListeningStates,
+  refreshAuthoritativePodcastListeningStatesSkippingNotFound,
 } from "./podcast-authoritative-state";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
@@ -377,4 +378,65 @@ test("prewrite gate fails closed when a podcast URI cannot prove its episode ide
   assert.deepEqual(result.checkedEpisodeIds, []);
   assert.equal(result.violations.length, 1);
   assert.equal(result.violations[0]?.reason, "UNVERIFIABLE_EPISODE_ID");
+});
+
+function catalogFetch(missing: ReadonlySet<string>, status = 404): typeof fetch {
+  return async (input) => {
+    const id = decodeURIComponent(String(input).split("/episodes/")[1]!.split("?")[0]!);
+    if (missing.has(id)) {
+      return jsonResponse({ error: { status, message: "Resource not found" } }, { status });
+    }
+    return jsonResponse({
+      id,
+      uri: `spotify:episode:${id}`,
+      type: "episode",
+      duration_ms: 1_000,
+      resume_point: { fully_played: false, resume_position_ms: 0 },
+    });
+  };
+}
+
+test("16/11 incident: a removed episode (404) is skipped by the tolerant refresh", async () => {
+  const store = createVolatilePodcastListeningStateStore();
+  const result = await refreshAuthoritativePodcastListeningStatesSkippingNotFound(
+    "user-1",
+    ["gone", "alive"],
+    new Date("2026-11-16T09:10:00Z"),
+    { accessToken: "token", fetchImpl: catalogFetch(new Set(["gone"])), stateStore: store },
+  );
+  assert.deepEqual(result.notFoundEpisodeIds, ["gone"]);
+  assert.equal(result.states.get("alive")?.status, "NOT_STARTED");
+  assert.equal(result.states.has("gone"), false);
+});
+
+test("the default refresh stays fail-closed on 404 (write gates keep blocking)", async () => {
+  await assert.rejects(
+    refreshAuthoritativePodcastListeningStates(
+      "user-1",
+      ["gone"],
+      new Date("2026-11-16T09:10:00Z"),
+      {
+        accessToken: "token",
+        fetchImpl: catalogFetch(new Set(["gone"])),
+        stateStore: createVolatilePodcastListeningStateStore(),
+      },
+    ),
+    /404/,
+  );
+});
+
+test("the tolerant refresh still fails on anything other than 404", async () => {
+  await assert.rejects(
+    refreshAuthoritativePodcastListeningStatesSkippingNotFound(
+      "user-1",
+      ["broken"],
+      new Date("2026-11-16T09:10:00Z"),
+      {
+        accessToken: "token",
+        fetchImpl: catalogFetch(new Set(["broken"]), 403),
+        stateStore: createVolatilePodcastListeningStateStore(),
+      },
+    ),
+    /403/,
+  );
 });
