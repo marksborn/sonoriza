@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { runScheduledGeneration } from "@/jobs/scheduled-generation";
 import { retryDuePushDeliveries } from "@/services/notifications";
+import { refreshDueFollowedCatalogs } from "@/services/followed-artists/followed-catalog-auto";
 import { refreshDueReleaseRadars } from "@/services/releases/release-radar-auto";
 import {
   getActiveSpotifyBackoff,
@@ -43,6 +44,10 @@ export async function POST(request: Request) {
 
   const result = await runScheduledGeneration();
   // Only on an idle tick, so the radar never stacks on a generation burst.
-  if (result.processed === 0) await refreshDueReleaseRadars();
+  if (result.processed === 0) {
+    await refreshDueReleaseRadars();
+    // #564 Gate C: FOLLOWED_ARTISTS_CATALOG_MODE=ACTIVE only; cache, no playlist effect.
+    await refreshDueFollowedCatalogs();
+  }
   return NextResponse.json(result);
 }
