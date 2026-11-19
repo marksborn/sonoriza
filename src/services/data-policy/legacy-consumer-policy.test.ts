@@ -8,6 +8,8 @@ import {
   assertSpotifySavedTracksProfileMaterializationAllowed,
   evaluateListeningEventForUses,
   spotifyCatalogRecommendationCapability,
+  spotifyFollowedArtistsCandidateCapability,
+  spotifyFollowedArtistsProfileCapability,
   spotifyRecentlyPlayedPlannerCapability,
   spotifySavedTracksPlannerCapability,
   spotifySavedTracksProfileMaterializationCapability,
@@ -82,4 +84,18 @@ test("current history SQL aggregation has no lineage-safe source", () => {
     sqlAggregateListeningEventSourcesForUses(HISTORY_RECOMMENDATION_USES),
     [],
   );
+});
+
+test("#564 followed artists: candidate bounding approved, taste uses stay blocked", () => {
+  const candidate = spotifyFollowedArtistsCandidateCapability();
+  assert.equal(candidate.allowed, true);
+  assert.deepEqual(candidate.lineage.origins, ["SPOTIFY"]);
+  assert.equal(candidate.decisions.OPERATIONAL_PLANNING, "ALLOW");
+  assert.equal(candidate.decisions.PLANNER_ELIGIBILITY, "ALLOW");
+
+  const profile = spotifyFollowedArtistsProfileCapability();
+  assert.equal(profile.allowed, false);
+  assert.equal(profile.decisions.BEHAVIORAL_ANALYTICS, "DENY");
+  assert.equal(profile.decisions.USER_PROFILING, "DENY");
+  assert.equal(profile.decisions.RECOMMENDATION, "DENY");
 });

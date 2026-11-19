@@ -200,6 +200,33 @@ export function assertSpotifySavedTracksProfileMaterializationAllowed(): Require
   return capability;
 }
 
+export const FOLLOWED_ARTISTS_CANDIDATE_USES = [
+  "OPERATIONAL_PLANNING",
+  "PLANNER_ELIGIBILITY",
+] as const satisfies readonly PolicyUse[];
+
+/**
+ * #564 DISCOVERY-FOLLOWED-01 feature review (PERSONAL decision §8.1, approved
+ * 19/11/2026). The followed-artist list may only BOUND an operational
+ * candidate catalog. Same shape as the Saved Tracks review: the two reviewed
+ * uses are upgraded, nothing else. Ranking/affinity must come from Last.fm or
+ * first-party data; profiling, analytics, derived recommendation and AI keep
+ * the central Spotify DENY (see spotifyFollowedArtistsProfileCapability).
+ */
+export function spotifyFollowedArtistsCandidateCapability(): RequiredPolicyUsesEvaluation {
+  return applyCompletedFeatureReview(
+    evaluateRootSourceForUses("SPOTIFY_FOLLOWED_ARTISTS", FOLLOWED_ARTISTS_CANDIDATE_USES),
+  );
+}
+
+/** Never reviewed: follows are not taste evidence. Always blocked. */
+export function spotifyFollowedArtistsProfileCapability(): RequiredPolicyUsesEvaluation {
+  return evaluateRootSourceForUses(
+    "SPOTIFY_FOLLOWED_ARTISTS",
+    SAVED_TRACKS_RECOMMENDATION_USES,
+  );
+}
+
 export function spotifyCatalogRecommendationCapability(): RequiredPolicyUsesEvaluation {
   return evaluateRootSourceForUses("SPOTIFY_CATALOG", ALBUM_RECOMMENDATION_USES);
 }

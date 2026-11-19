@@ -25,6 +25,10 @@ const SPOTIFY_SCOPES = [
   "user-read-private",
   "user-library-read",
   "user-library-modify",
+  // DISCOVERY-FOLLOWED-01 (#564): read-only list of followed artists, used
+  // only to bound a candidate catalog (feature review in
+  // docs/PRODUCT-DECISION-PERSONAL.md §8.1). Never used for profiling.
+  "user-follow-read",
   "user-read-playback-position",
   "user-read-recently-played",
   "playlist-read-private",

@@ -253,6 +253,23 @@ Afinidade/discovery devem priorizar Last.fm + preferências explícitas/first-pa
 
 Ver #184, #186 e #103.
 
+### 8.1 Artistas seguidos (#564) — revisão aprovada em 19/11/2026
+
+Aprovada pelo dono do projeto, no mesmo formato de Saved Tracks:
+
+```text
+Spotify artistas seguidos (user-follow-read)
+        ↓
+delimita o catálogo de candidatos (faixas não curtidas desses artistas)
+        ↓
+Discovery/planner, sob opt-in por destino e gates da #564
+```
+
+- Root source `SPOTIFY_FOLLOWED_ARTISTS`; capability `spotifyFollowedArtistsCandidateCapability` libera só `OPERATIONAL_PLANNING` e `PLANNER_ELIGIBILITY`.
+- Seguir um artista **não** é evidência de gosto: nada de `ArtistAffinity`, score, analytics, profiling ou recomendação derivada a partir do follow (`spotifyFollowedArtistsProfileCapability` permanece bloqueada). Ordenação e afinidade vêm de Last.fm e preferências explícitas/first-party.
+- Nunca enviar a lista ou agregados dela a IA. Sem escrita de follow, like ou playlist durante aquisição e simulação.
+- Deixar de seguir remove o artista do pool na próxima sincronização, sem apagar fatos históricos.
+
 ## 9. Discovery e álbum
 
 DISCOVERY-01 e ALBUM-01 continuam no projeto pessoal.

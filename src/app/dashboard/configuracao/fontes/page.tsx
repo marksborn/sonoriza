@@ -22,6 +22,7 @@ import {
 
 const LIBRARY_SCOPE = "user-library-read";
 const PLAYBACK_SCOPE = "user-read-playback-position";
+const FOLLOW_SCOPE = "user-follow-read";
 const SAVED_EPISODES_ID = "me";
 
 const selectClass =
@@ -196,6 +197,7 @@ export default async function SpotifySourcesPage({
   const hasLibraryScope = scopeIncludes(spotifyAccount?.scope, LIBRARY_SCOPE);
   const hasPlaybackScope = scopeIncludes(spotifyAccount?.scope, PLAYBACK_SCOPE);
   const podcastReady = hasLibraryScope && hasPlaybackScope;
+  const hasFollowScope = scopeIncludes(spotifyAccount?.scope, FOLLOW_SCOPE);
 
   let playlists: SpotifyPlaylistSummary[] = [];
   let shows: SpotifyShowSummary[] = [];
@@ -353,6 +355,26 @@ export default async function SpotifySourcesPage({
                 </div>
                 <form action={connectSpotify}>
                   <button type="submit" className="inline-flex whitespace-nowrap items-center gap-2 rounded-xl border border-warning/35 bg-warning/10 px-4 py-2.5 text-sm font-black transition hover:bg-warning/15">
+                    <UiIcon name="repeat" size={17} />
+                    Reconectar Spotify
+                  </button>
+                </form>
+              </section>
+            )}
+
+            {podcastReady && !hasFollowScope && (
+              <section className="status-info mt-7 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="flex items-center gap-2 font-black">
+                    <UiIcon name="repeat" size={18} />
+                    Reconecte para liberar artistas que você segue
+                  </p>
+                  <p className="mt-1 max-w-3xl text-sm leading-6 opacity-75">
+                    Acesso só de leitura à lista de artistas seguidos, usado para procurar músicas deles que você ainda não curtiu. Seguir um artista não vira preferência de gosto e nada é publicado sem a sua opção por playlist.
+                  </p>
+                </div>
+                <form action={connectSpotify}>
+                  <button type="submit" className="inline-flex whitespace-nowrap items-center gap-2 rounded-xl border border-line-dark/70 bg-surface-elevated/70 px-4 py-2.5 text-sm font-black transition hover:bg-surface-elevated">
                     <UiIcon name="repeat" size={17} />
                     Reconectar Spotify
                   </button>

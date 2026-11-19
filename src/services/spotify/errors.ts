@@ -18,6 +18,7 @@ export type SpotifyOperation =
   | "recently-played"
   | "user-playlists"
   | "saved-shows"
+  | "followed-artists"
   | "current-user"
   | "artist-albums"
   | "album-tracks"
@@ -168,6 +169,7 @@ export function inferSpotifyOperation(
   if (/^\/tracks\/[^/?]+(?:\?|$)/.test(path)) return "catalog-track";
   if (/^\/me\/player\/recently-played(?:\?|$)/.test(path)) return "recently-played";
   if (/^\/me\/shows(?:\?|$)/.test(path)) return "saved-shows";
+  if (/^\/me\/following(?:\?|$)/.test(path)) return "followed-artists";
   if (/^\/me\/playlists(?:\?|$)/.test(path)) {
     return normalizedMethod === "GET" ? "user-playlists" : "playlist-write";
   }
