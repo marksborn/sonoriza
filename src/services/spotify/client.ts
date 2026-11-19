@@ -41,6 +41,17 @@ export interface SpotifyPlaylistSummary {
   public: boolean | null;
 }
 
+export interface FollowedArtistSummary {
+  id: string;
+  name: string;
+}
+
+interface FollowedArtistsPage {
+  items?: { id?: string; name?: string }[];
+  next?: string | null;
+  total?: number;
+}
+
 export interface SpotifyShowSummary {
   id: string;
   name: string;
@@ -646,6 +657,45 @@ export class SpotifyClient {
       `/artists/${encodeURIComponent(artistId)}/albums?include_groups=album,single&market=from_token&limit=10`,
     );
     return page.items;
+  }
+
+  /**
+   * #564 Gate A: artists the user follows (scope user-follow-read), cursor
+   * paginated. Read-only; the list only bounds a candidate catalog and is
+   * never taste evidence (PERSONAL decision §8.1).
+   */
+  async listFollowedArtists(maxPages = 50): Promise<{
+    artists: FollowedArtistSummary[];
+    total: number | null;
+    pagesRead: number;
+  }> {
+    const artists: FollowedArtistSummary[] = [];
+    let total: number | null = null;
+    let url: string | null = "/me/following?type=artist&limit=50";
+    let pagesRead = 0;
+    while (url && pagesRead < maxPages) {
+      const response: { artists?: FollowedArtistsPage } = await this.request(url);
+      pagesRead += 1;
+      const page = response.artists;
+      if (!page) break;
+      if (typeof page.total === "number") total = page.total;
+      for (const item of page.items ?? []) {
+        if (item?.id && item.name) artists.push({ id: item.id, name: item.name });
+      }
+      url = page.next ? stripBase(page.next) : null;
+    }
+    return { artists, total, pagesRead };
+  }
+
+  /** #564 Gate A: one page of an artist's albums/singles, with the total. */
+  async getArtistAlbumsPage(
+    artistId: string,
+    offset = 0,
+  ): Promise<{ items: ArtistReleaseResponse[]; total: number | null }> {
+    const page: SpotifyPage<ArtistReleaseResponse> & { total?: number } = await this.request(
+      `/artists/${encodeURIComponent(artistId)}/albums?include_groups=album,single&market=from_token&limit=10&offset=${offset}`,
+    );
+    return { items: page.items, total: typeof page.total === "number" ? page.total : null };
   }
 
   /** RELEASES-01: tracks of one release (single-item endpoint since Feb 2026). */
