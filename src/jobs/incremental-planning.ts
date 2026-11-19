@@ -797,6 +797,11 @@ function sourceKindsUsedByTargets(targets: RunTarget[]): IncrementalSourceKind[]
       music ||= target.rules.podcastPercent < 100;
       podcast ||= target.rules.podcastPercent > 0;
     }
+    // #559: a target that lets Snippets take music positions draws them from
+    // the podcast pool even without any podcast share or PODCAST slot.
+    // Without this, a 100% music destination never sees a Snippet candidate.
+    // The source scope of the target still applies in planRun.
+    if (target.podcastSnippetPolicy === "MUSIC_ROLE") podcast = true;
   }
 
   return [

@@ -401,3 +401,64 @@ test("#31 exhausted SEQUENCE may end early without becoming a percentage failure
   assert.equal(result.plan.targets[0]?.result.stats.sequenceStopReason, "NO_FITTING_CANDIDATE");
   assert.equal(result.plan.targets[0]?.result.stats.compositionQualityPassed, true);
 });
+
+function musicOnlyTarget(podcastSnippetPolicy?: RunTarget["podcastSnippetPolicy"]): RunTarget {
+  return {
+    ...target(),
+    rules: { ...target().rules, podcastPercent: 0 },
+    ...(podcastSnippetPolicy ? { podcastSnippetPolicy } : {}),
+  };
+}
+
+function snippetRunSources() {
+  const music = fakeSource({
+    id: "music",
+    kind: "MUSIC",
+    batches: [
+      {
+        candidates: Array.from({ length: 6 }, (_, index) =>
+          candidate(`spotify:track:${index}`, "MUSIC", 120_000)),
+        done: true,
+      },
+    ],
+  });
+  const podcast = fakeSource({
+    id: "podcast",
+    kind: "PODCAST",
+    batches: [
+      {
+        candidates: [candidate("spotify:episode:snippet", "PODCAST", 180_000, "show-1")],
+        done: true,
+      },
+    ],
+  });
+  return { music, podcast };
+}
+
+test("#559 100% music target with MUSIC_ROLE reads podcast sources and places a Snippet", async () => {
+  const { music, podcast } = snippetRunSources();
+  const result = await collectIncrementally({
+    sources: [music, podcast],
+    targets: [musicOnlyTarget("MUSIC_ROLE")],
+  });
+
+  assert.equal(podcast.calls, 1, "podcast source read for the Snippet");
+  const items = result.plan.targets[0]!.result.items;
+  const snippet = items.find((item) => item.uri === "spotify:episode:snippet");
+  assert.equal(snippet?.compositionRole, "MUSIC");
+});
+
+test("#559 100% music target without MUSIC_ROLE never reads podcast sources", async () => {
+  for (const policy of [undefined, "EXCLUDE"] as const) {
+    const { music, podcast } = snippetRunSources();
+    const result = await collectIncrementally({
+      sources: [music, podcast],
+      targets: [musicOnlyTarget(policy)],
+    });
+    assert.equal(podcast.calls, 0, `no podcast read for policy ${policy ?? "legacy"}`);
+    assert.equal(
+      result.plan.targets[0]!.result.items.every((item) => item.type === "MUSIC"),
+      true,
+    );
+  }
+});
