@@ -5,18 +5,21 @@ import { UiIcon } from "@/components/UiIcon";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  followedCatalogReaderFor,
   grantHasFollowScope,
+  isFollowedCatalogRefreshRunning,
+  lastFollowedCatalogRefreshOutcome,
   resolveFollowedCatalogMode,
+  runFollowedCatalogRefresh,
+  startFollowedCatalogRefresh,
 } from "@/services/followed-artists/followed-catalog-auto";
 import {
   FOLLOWED_CATALOG_POLICY,
   readFollowedCatalog,
-  refreshFollowedCatalog,
   type FollowedCatalogExclusion,
 } from "@/services/followed-artists/followed-catalog";
 import { getActiveSpotifyBackoff } from "@/services/spotify/backoff";
-import { SpotifyClient } from "@/services/spotify/client";
+
+import { FollowedRefreshButton, FollowedRefreshPoller } from "./refresh-controls";
 
 const PAGE_PATH = "/dashboard/descobrir/seguidos";
 
@@ -49,19 +52,11 @@ async function refreshCatalog() {
   }
   if (await getActiveSpotifyBackoff()) redirect(`${PAGE_PATH}?status=blocked`);
 
-  let persisted = false;
-  try {
-    const client = await SpotifyClient.forUser(userId);
-    ({ persisted } = await refreshFollowedCatalog({
-      userId,
-      reader: followedCatalogReaderFor(client),
-    }));
-  } catch (error) {
-    console.error("DISCOVERY-FOLLOWED-01 refresh failed", error);
-    redirect(`${PAGE_PATH}?status=failed`);
-  }
+  // A first read takes over a minute; run it in the background so the browser
+  // never waits on (and aborts) the form post. The page polls until it ends.
+  startFollowedCatalogRefresh(userId, () => runFollowedCatalogRefresh(userId));
   revalidatePath(PAGE_PATH);
-  redirect(`${PAGE_PATH}?status=${persisted ? "updated" : "failed"}`);
+  redirect(`${PAGE_PATH}?status=started`);
 }
 
 type PageProps = { searchParams: Promise<{ status?: string }> };
@@ -78,16 +73,21 @@ export default async function FollowedArtistsPage({ searchParams }: PageProps) {
     }),
   ]);
   const hasScope = grantHasFollowScope(account?.scope);
+  const running = isFollowedCatalogRefreshRunning(session.user.id);
+  const outcome = params.status === "started" ? lastFollowedCatalogRefreshOutcome(session.user.id) : null;
+  const status = params.status === "started" ? (running ? "running" : outcome) : params.status;
   const autoOn = resolveFollowedCatalogMode(process.env.FOLLOWED_ARTISTS_CATALOG_MODE) === "ACTIVE";
 
   const notice =
-    params.status === "updated"
+    running
+      ? { tone: "status-info", text: "Lendo os artistas no Spotify. Leva cerca de 1 a 2 minutos; a página atualiza sozinha. Pode sair daqui, a leitura continua." }
+      : status === "updated"
       ? { tone: "status-success", text: "Catálogo atualizado. Nenhuma playlist foi alterada." }
-      : params.status === "recent"
+      : status === "recent"
         ? { tone: "status-info", text: "O catálogo já foi atualizado hoje. Para poupar a cota do Spotify, a próxima atualização fica disponível amanhã." }
-        : params.status === "blocked"
+        : status === "blocked"
           ? { tone: "status-warning", text: "O Spotify está temporariamente bloqueado (cota). O último catálogo foi mantido." }
-          : params.status === "failed"
+          : status === "failed"
             ? { tone: "status-danger", text: "Não foi possível consultar o Spotify agora. O último catálogo foi mantido." }
             : null;
 
@@ -98,6 +98,7 @@ export default async function FollowedArtistsPage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-5">
+      <FollowedRefreshPoller active={running} />
       <section className="product-panel p-5 sm:p-7">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-4">
@@ -115,9 +116,7 @@ export default async function FollowedArtistsPage({ searchParams }: PageProps) {
           </div>
           {hasScope && (
             <form action={refreshCatalog}>
-              <button type="submit" className="primary-button w-full sm:w-auto">
-                Atualizar agora
-              </button>
+              <FollowedRefreshButton running={running} />
             </form>
           )}
         </div>
@@ -144,7 +143,11 @@ export default async function FollowedArtistsPage({ searchParams }: PageProps) {
       ) : !catalog ? (
         <section className="product-panel p-7 text-center">
           <p className="font-black text-ink-inverse">Catálogo ainda vazio</p>
-          <p className="mt-2 text-sm text-muted-inverse">Clique em “Atualizar agora” para ler os primeiros artistas.</p>
+          <p className="mt-2 text-sm text-muted-inverse">
+            {running
+              ? "A primeira leitura está em andamento."
+              : "Clique em “Atualizar agora” para ler os primeiros artistas."}
+          </p>
         </section>
       ) : (
         <>

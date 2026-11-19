@@ -20,8 +20,12 @@ import {
 import {
   followedCatalogRefreshDue,
   grantHasFollowScope,
+  isFollowedCatalogRefreshRunning,
+  lastFollowedCatalogRefreshOutcome,
   refreshDueFollowedCatalogs,
   resolveFollowedCatalogMode,
+  startFollowedCatalogRefresh,
+  waitForFollowedCatalogRefresh,
 } from "./followed-catalog-auto";
 
 const NOW = new Date("2026-11-19T12:00:00Z");
@@ -280,4 +284,45 @@ test("#564 auto refresh: OFF by default, scope and daily interval respected, nev
     await refreshDueFollowedCatalogs({ mode: "ACTIVE", deps: { ...deps, providerBlocked: async () => true }, attempts: new Map(), now: NOW }),
     { refreshed: 0, failed: 0 },
   );
+});
+
+test("#564 manual refresh runs in background, one at a time per user, and records the outcome", async () => {
+  let release: (value: boolean) => void = () => undefined;
+  let runs = 0;
+  const run = () => {
+    runs += 1;
+    return new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+  };
+  assert.equal(startFollowedCatalogRefresh("bg", run), "started");
+  assert.equal(isFollowedCatalogRefreshRunning("bg"), true);
+  assert.equal(startFollowedCatalogRefresh("bg", run), "running", "no second concurrent read");
+  assert.equal(runs, 1);
+
+  let cronRefreshes = 0;
+  await refreshDueFollowedCatalogs({
+    mode: "ACTIVE",
+    now: NOW,
+    attempts: new Map(),
+    deps: {
+      listUserIds: async () => ["bg"],
+      readFetchedAt: async () => null,
+      providerBlocked: async () => false,
+      refresh: async () => {
+        cronRefreshes += 1;
+        return true;
+      },
+    },
+  });
+  assert.equal(cronRefreshes, 0, "cron skips a user whose manual read is running");
+
+  release(true);
+  await waitForFollowedCatalogRefresh("bg");
+  assert.equal(isFollowedCatalogRefreshRunning("bg"), false);
+  assert.equal(lastFollowedCatalogRefreshOutcome("bg"), "updated");
+
+  assert.equal(startFollowedCatalogRefresh("bg", async () => { throw new Error("boom"); }), "started");
+  await waitForFollowedCatalogRefresh("bg");
+  assert.equal(lastFollowedCatalogRefreshOutcome("bg"), "failed");
 });
