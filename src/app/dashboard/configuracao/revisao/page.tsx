@@ -16,6 +16,7 @@ import { destinationEditHref } from "@/lib/destination-edit-link";
 import { assessCalendar03GenerationConfiguration } from "@/services/calendar-event-composition-generation";
 import { readPodcast08TargetReviews } from "@/services/playlist-planner/podcast-duration-review";
 import { readReleasesTargetReviews } from "@/services/releases/release-planner";
+import { readFollowedTargetReviews } from "@/services/followed-artists/followed-planner";
 
 type PageProps = {
   searchParams: Promise<{ run?: string }>;
@@ -471,6 +472,7 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
   const simulatedTargets = readSimulationTargets(simulation?.summary);
   const podcast08Reviews = readPodcast08TargetReviews(simulation?.summary);
   const releasesReviews = readReleasesTargetReviews(simulation?.summary);
+  const followedReviews = readFollowedTargetReviews(simulation?.summary);
   const simulatedOrderByTargetId = new Map<
     string,
     Array<{ position: number; type: "MUSIC" | "PODCAST"; snippetInMusicRole: boolean; title: string }>
@@ -1297,6 +1299,21 @@ export default async function ConfigurationReviewPage({ searchParams }: PageProp
                                     {releasesReviews.get(target.targetPlaylistId)!.titles.length > 0 && (
                                       <ul className="mt-1 list-disc pl-4 opacity-75">
                                         {releasesReviews.get(target.targetPlaylistId)!.titles.map((title) => (
+                                          <li key={title}>{title}</li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+                                )}
+                              {target.targetPlaylistId &&
+                                followedReviews.get(target.targetPlaylistId) && (
+                                  <div className="mt-1 text-xs">
+                                    <p className="font-semibold text-accent-400">
+                                      Artistas que sigo: {followedReviews.get(target.targetPlaylistId)!.label}
+                                    </p>
+                                    {followedReviews.get(target.targetPlaylistId)!.titles.length > 0 && (
+                                      <ul className="mt-1 list-disc pl-4 opacity-75">
+                                        {followedReviews.get(target.targetPlaylistId)!.titles.map((title) => (
                                           <li key={title}>{title}</li>
                                         ))}
                                       </ul>

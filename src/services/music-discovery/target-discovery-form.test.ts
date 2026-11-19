@@ -19,6 +19,7 @@ test("unchecked discovery master persists a safe globally disabled policy", () =
       discoveryRediscoveryEnabled: true,
       discoveryNoveltyEnabled: true,
       discoveryReleasesEnabled: true,
+      discoveryFollowedEnabled: false,
       discoveryIntensity: "BALANCED",
     },
   );
@@ -32,6 +33,7 @@ test("form preserves an explicit per-target discovery combination", () => {
       discoveryRediscoveryEnabled: "on",
       discoveryNoveltyEnabled: "on",
       discoveryReleasesEnabled: null,
+      discoveryFollowedEnabled: "on",
       discoveryIntensity: "EXPLORATORY",
     }),
     {
@@ -40,6 +42,7 @@ test("form preserves an explicit per-target discovery combination", () => {
       discoveryRediscoveryEnabled: true,
       discoveryNoveltyEnabled: true,
       discoveryReleasesEnabled: false,
+      discoveryFollowedEnabled: true,
       discoveryIntensity: "EXPLORATORY",
     },
   );

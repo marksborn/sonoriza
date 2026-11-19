@@ -777,6 +777,9 @@ model TargetPlaylist {
   discoveryRediscoveryEnabled      Boolean                       @default(true)
   discoveryNoveltyEnabled          Boolean                       @default(true)
   discoveryReleasesEnabled         Boolean                       @default(true)
+  // DISCOVERY-FOLLOWED-01 (#564) Gate D: "Artistas que sigo", opt-in per target;
+  // applied only when FOLLOWED_ARTISTS_PLANNER_MODE is SHADOW/ACTIVE.
+  discoveryFollowedEnabled         Boolean                       @default(false)
   discoveryIntensity               TargetDiscoveryIntensity      @default(BALANCED)
   durationMode                     DurationMode                  @default(FIXED)
   fixedDurationSeconds             Int?

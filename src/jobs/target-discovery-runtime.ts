@@ -115,6 +115,7 @@ export async function revalidateTargetDiscoveryPoliciesBeforeRealWrite(): Promis
       discoveryRediscoveryEnabled: true,
       discoveryNoveltyEnabled: true,
       discoveryReleasesEnabled: true,
+      discoveryFollowedEnabled: true,
       discoveryIntensity: true,
     },
   });
@@ -171,6 +172,7 @@ export function targetDiscoveryRuntimeSummary(
         rediscoveryEnabled: policy?.rediscoveryEnabled ?? false,
         discoveryEnabled: policy?.discoveryEnabled ?? false,
         releasesEnabled: policy?.releasesEnabled ?? false,
+        followedEnabled: policy?.followedEnabled ?? false,
         intensity: policy?.intensity ?? "BALANCED",
       };
     }),

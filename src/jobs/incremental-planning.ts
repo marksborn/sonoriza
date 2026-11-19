@@ -43,6 +43,13 @@ import {
   spreadReleasesIntoPool,
 } from "@/services/releases/release-planner";
 import { readReleaseRadar } from "@/services/releases/release-radar";
+import {
+  followedCandidatesForPlanner,
+  followedCeiling,
+  loadFollowedPlannerInput,
+  resolveFollowedPlannerMode,
+  spreadFollowedIntoPool,
+} from "@/services/followed-artists/followed-planner";
 
 export type IncrementalSourceKind = "MUSIC" | "PODCAST";
 
@@ -259,13 +266,17 @@ export async function collectIncrementally<
   const discoveryState = currentDiscoveryRuntimeState();
   const targetDiscoveryState = currentTargetDiscoveryRuntimeState();
   const targetScopedRuntime = targetDiscoveryState?.enabled === true;
+  // #564 Gate D: OFF (default) keeps this family out of every decision.
+  const followedMode = resolveFollowedPlannerMode(process.env.FOLLOWED_ARTISTS_PLANNER_MODE);
   const hasTargetSourceDiscovery =
     targetScopedRuntime &&
     targets.some((target) => {
       const policy = targetDiscoveryState.policies.get(target.targetPlaylistId);
       return Boolean(
         policy &&
-          (targetUsesSourceDiscovery(policy) || (policy.enabled && policy.releasesEnabled)),
+          (targetUsesSourceDiscovery(policy) ||
+            (policy.enabled && policy.releasesEnabled) ||
+            (followedMode !== "OFF" && policy.enabled && policy.followedEnabled)),
       );
     });
   const shouldPrepareDiscoverySources = Boolean(
@@ -317,6 +328,24 @@ export async function collectIncrementally<
       ? filterMusicBatchForCurrentRun(releaseSelection.candidates).candidates
       : [];
     const releaseProjections: unknown[] = [];
+    // DISCOVERY-FOLLOWED-01 Gate D: cached snapshot only, never a provider call here.
+    const wantsFollowed =
+      followedMode !== "OFF" &&
+      targets.some((target) => {
+        const policy = targetDiscoveryState.policies.get(target.targetPlaylistId);
+        return Boolean(policy?.enabled && policy.followedEnabled);
+      });
+    const followedInput = wantsFollowed
+      ? await loadFollowedPlannerInput(targetDiscoveryState.userId)
+      : null;
+    const followedSelection =
+      followedInput?.status === "OK"
+        ? followedCandidatesForPlanner(followedInput.catalog, followedInput.recentArtistIds)
+        : null;
+    const followedFiltered = followedSelection
+      ? filterMusicBatchForCurrentRun(followedSelection.candidates).candidates
+      : [];
+    const followedProjections: unknown[] = [];
 
     for (const target of targets) {
       const policy = targetDiscoveryState.policies.get(target.targetPlaylistId);
@@ -337,9 +366,11 @@ export async function collectIncrementally<
         rediscoveryCeiling: caps.rediscoveryCeiling,
       });
       let targetPool = dedupeByUri(projection.sourceEntries.map((entry) => entry.candidate));
+      const releaseUris = new Set<string>();
       if (wantsReleases && policy?.enabled && policy.releasesEnabled) {
         const ceiling = RELEASES_PLANNER_POLICY.ceilingByIntensity[policy.intensity];
         const spread = spreadReleasesIntoPool(targetPool, releaseCandidates, ceiling);
+        for (const candidate of spread.injected) releaseUris.add(candidate.uri);
         if (releasesMode === "ACTIVE") targetPool = spread.pool;
         releaseProjections.push({
           targetPlaylistId: target.targetPlaylistId,
@@ -357,6 +388,34 @@ export async function collectIncrementally<
             artists: candidate.subtitle ?? null,
           })),
           plannerInfluence: releasesMode === "ACTIVE" && spread.injected.length > 0,
+        });
+      }
+      if (wantsFollowed && followedInput && policy?.enabled && policy.followedEnabled) {
+        const ceiling = followedCeiling({
+          intensity: policy.intensity,
+          targetDurationMs: target.rules.targetDurationMs,
+          podcastPercent: target.rules.podcastPercent,
+        });
+        // A URI also chosen by Novidades stays with Novidades.
+        const spread = spreadFollowedIntoPool(targetPool, followedFiltered, ceiling, releaseUris);
+        if (followedMode === "ACTIVE") targetPool = spread.pool;
+        followedProjections.push({
+          targetPlaylistId: target.targetPlaylistId,
+          targetName: target.name,
+          mode: followedMode,
+          status: followedInput.status,
+          catalogFetchedAt: followedInput.catalogFetchedAt?.toISOString() ?? null,
+          catalogCount: followedInput.catalog.length,
+          ceiling,
+          eligibleCount: followedFiltered.length,
+          spacingExcluded: followedSelection?.spacingExcluded ?? 0,
+          runFilterExcluded: (followedSelection?.candidates.length ?? 0) - followedFiltered.length,
+          injected: spread.injected.map((candidate) => ({
+            uri: candidate.uri,
+            title: candidate.title,
+            artists: candidate.subtitle ?? null,
+          })),
+          plannerInfluence: followedMode === "ACTIVE" && spread.injected.length > 0,
         });
       }
       musicPoolByTargetId.set(target.targetPlaylistId, targetPool);
@@ -383,6 +442,7 @@ export async function collectIncrementally<
       ...(targetDiscoveryState.evidence ?? {}),
       sourceProjections,
       ...(releaseProjections.length > 0 ? { releases: releaseProjections } : {}),
+      ...(followedProjections.length > 0 ? { followedArtists: followedProjections } : {}),
     };
   }
 

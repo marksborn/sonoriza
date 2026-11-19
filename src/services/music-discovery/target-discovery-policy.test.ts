@@ -27,8 +27,20 @@ test("default persistence keeps discovery globally disabled", () => {
     discoveryRediscoveryEnabled: true,
     discoveryNoveltyEnabled: true,
     discoveryReleasesEnabled: true,
+    discoveryFollowedEnabled: false,
     discoveryIntensity: "BALANCED",
   });
+});
+
+test("#564 followed artists is opt-in: only an explicit true enables it", () => {
+  assert.equal(normalizeTargetDiscoveryPolicy({ discoveryEnabled: true }).followedEnabled, false);
+  assert.equal(
+    normalizeTargetDiscoveryPolicy({ discoveryEnabled: true, discoveryFollowedEnabled: null }).followedEnabled,
+    false,
+  );
+  const policy = normalizeTargetDiscoveryPolicy({ discoveryEnabled: true, discoveryFollowedEnabled: true });
+  assert.equal(policy.followedEnabled, true);
+  assert.equal(serializeTargetDiscoveryPolicy(policy).discoveryFollowedEnabled, true);
 });
 
 test("persisted target policy round-trips without losing per-target choices", () => {

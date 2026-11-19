@@ -18,6 +18,8 @@ export type TargetDiscoveryPolicy = {
   rediscoveryEnabled: boolean;
   discoveryEnabled: boolean;
   releasesEnabled: boolean;
+  /** #564 "Artistas que sigo": opt-in, default false. */
+  followedEnabled: boolean;
   intensity: TargetDiscoveryIntensity;
 };
 
@@ -27,6 +29,7 @@ export type PersistedTargetDiscoveryPolicy = {
   discoveryRediscoveryEnabled?: boolean | null;
   discoveryNoveltyEnabled?: boolean | null;
   discoveryReleasesEnabled?: boolean | null;
+  discoveryFollowedEnabled?: boolean | null;
   discoveryIntensity?: string | null;
 };
 
@@ -36,6 +39,7 @@ export type TargetDiscoveryPolicyPersistence = {
   discoveryRediscoveryEnabled: boolean;
   discoveryNoveltyEnabled: boolean;
   discoveryReleasesEnabled: boolean;
+  discoveryFollowedEnabled: boolean;
   discoveryIntensity: TargetDiscoveryIntensity;
 };
 
@@ -46,6 +50,7 @@ export const DEFAULT_TARGET_DISCOVERY_POLICY: TargetDiscoveryPolicy = {
   rediscoveryEnabled: true,
   discoveryEnabled: true,
   releasesEnabled: true,
+  followedEnabled: false,
   intensity: "BALANCED",
 };
 
@@ -69,6 +74,7 @@ export function normalizeTargetDiscoveryPolicy(
     rediscoveryEnabled: persisted.discoveryRediscoveryEnabled !== false,
     discoveryEnabled: persisted.discoveryNoveltyEnabled !== false,
     releasesEnabled: persisted.discoveryReleasesEnabled !== false,
+    followedEnabled: persisted.discoveryFollowedEnabled === true,
     intensity: normalizeIntensity(persisted.discoveryIntensity),
   };
 }
@@ -82,6 +88,7 @@ export function serializeTargetDiscoveryPolicy(
     discoveryRediscoveryEnabled: policy.rediscoveryEnabled,
     discoveryNoveltyEnabled: policy.discoveryEnabled,
     discoveryReleasesEnabled: policy.releasesEnabled,
+    discoveryFollowedEnabled: policy.followedEnabled,
     discoveryIntensity: policy.intensity,
   };
 }

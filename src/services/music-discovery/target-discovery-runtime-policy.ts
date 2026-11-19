@@ -107,6 +107,7 @@ export function targetDiscoveryPolicyFingerprint(
     policy.discoveryEnabled ? "1" : "0",
     policy.releasesEnabled ? "1" : "0",
     policy.intensity,
+    policy.followedEnabled ? "F1" : "F0",
   ].join(":");
 }
 

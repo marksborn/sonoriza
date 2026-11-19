@@ -38,6 +38,7 @@ type TargetDiscoveryInitial = {
   discoveryRediscoveryEnabled: boolean;
   discoveryNoveltyEnabled: boolean;
   discoveryReleasesEnabled: boolean;
+  discoveryFollowedEnabled?: boolean;
   discoveryIntensity: TargetDiscoveryIntensity;
 };
 
@@ -162,6 +163,13 @@ export function TargetDiscoveryForm({ target, saveAction }: Props) {
             label="Novidades"
             description="Lançamentos relevantes quando houver provider e evidência suficientes."
             defaultChecked={policy.releasesEnabled}
+          />
+          <DiscoveryToggle
+            id={`${idPrefix}-followed`}
+            name="discoveryFollowedEnabled"
+            label="Artistas que sigo"
+            description="Faixas ainda não curtidas e sem escuta conhecida de artistas que você segue no Spotify. Em teste."
+            defaultChecked={policy.followedEnabled}
           />
         </div>
       </fieldset>

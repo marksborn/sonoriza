@@ -11,6 +11,7 @@ export type TargetDiscoveryFormFields = {
   discoveryRediscoveryEnabled: string | null;
   discoveryNoveltyEnabled: string | null;
   discoveryReleasesEnabled: string | null;
+  discoveryFollowedEnabled?: string | null;
   discoveryIntensity: string | null;
 };
 
@@ -34,6 +35,7 @@ export function targetDiscoveryPolicyFromForm(
       discoveryRediscoveryEnabled: fields.discoveryRediscoveryEnabled === "on",
       discoveryNoveltyEnabled: fields.discoveryNoveltyEnabled === "on",
       discoveryReleasesEnabled: fields.discoveryReleasesEnabled === "on",
+      discoveryFollowedEnabled: fields.discoveryFollowedEnabled === "on",
       discoveryIntensity: fields.discoveryIntensity,
     }),
   );
