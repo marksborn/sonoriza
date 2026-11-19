@@ -86,6 +86,58 @@ const defaultDeps: FollowedCatalogAutoDeps = {
 
 const lastAttemptAtMsByUser = new Map<string, number>();
 
+/**
+ * A first read takes ~75 sequential Spotify calls (often over a minute), longer
+ * than a browser will wait on a form post. Manual refreshes therefore run in
+ * the background; this per-user lock (shared with the cron refresh) prevents
+ * two concurrent reads for the same user in this process.
+ */
+const runningRefreshes = new Map<string, Promise<void>>();
+
+export function isFollowedCatalogRefreshRunning(userId: string): boolean {
+  return runningRefreshes.has(userId);
+}
+
+export type FollowedCatalogRefreshOutcome = "updated" | "failed";
+
+const lastOutcomeByUser = new Map<string, FollowedCatalogRefreshOutcome>();
+
+/** Result of the last background refresh in this process, if any. */
+export function lastFollowedCatalogRefreshOutcome(
+  userId: string,
+): FollowedCatalogRefreshOutcome | null {
+  return lastOutcomeByUser.get(userId) ?? null;
+}
+
+export function startFollowedCatalogRefresh(
+  userId: string,
+  run: () => Promise<boolean>,
+): "started" | "running" {
+  if (runningRefreshes.has(userId)) return "running";
+  lastOutcomeByUser.delete(userId);
+  const task = (async () => {
+    try {
+      lastOutcomeByUser.set(userId, (await run()) ? "updated" : "failed");
+    } catch (error) {
+      lastOutcomeByUser.set(userId, "failed");
+      console.error("DISCOVERY-FOLLOWED-01 background refresh failed", error);
+    } finally {
+      runningRefreshes.delete(userId);
+    }
+  })();
+  runningRefreshes.set(userId, task);
+  return "started";
+}
+
+/** Test helper: waits for a background refresh to settle. */
+export async function waitForFollowedCatalogRefresh(userId: string): Promise<void> {
+  await runningRefreshes.get(userId);
+}
+
+export async function runFollowedCatalogRefresh(userId: string): Promise<boolean> {
+  return defaultDeps.refresh(userId);
+}
+
 export async function refreshDueFollowedCatalogs(input: {
   now?: Date;
   mode?: FollowedCatalogMode;
@@ -107,14 +159,18 @@ export async function refreshDueFollowedCatalogs(input: {
         lastAttemptAtMs: attempts.get(userId),
         now,
       });
-      if (!due) continue;
+      if (!due || isFollowedCatalogRefreshRunning(userId)) continue;
       attempts.set(userId, now.getTime());
+      const task = deps.refresh(userId);
+      runningRefreshes.set(userId, task.then(() => undefined, () => undefined));
       try {
-        if (await deps.refresh(userId)) refreshed += 1;
+        if (await task) refreshed += 1;
         else failed += 1;
       } catch (error) {
         failed += 1;
         console.error("DISCOVERY-FOLLOWED-01 auto refresh failed", error);
+      } finally {
+        runningRefreshes.delete(userId);
       }
     }
   } catch (error) {
