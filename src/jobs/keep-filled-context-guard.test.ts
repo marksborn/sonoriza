@@ -72,3 +72,37 @@ test("#460 accepts a prepared empty prefix when KEEP_FILLED has nothing to prese
     ...safeContext, preservedByTargetId: { academy: [] },
   }), []);
 });
+
+const eventRebuild = {
+  scheduledPolicyByTargetId: { academy: "REBUILD_DAILY" },
+  eventScopedTargetIds: ["academy"],
+  rebuildByTargetId: { academy: { snapshotBefore: "spotify-snapshot-1" } },
+} as const;
+
+test("CALENDAR-05: an event rebuild of a KEEP_FILLED target is allowed (19/11 incident)", () => {
+  assert.deepEqual(missingKeepFilledPreparation({
+    simulate: false, targetScope: ["academy"], targets: [academy], ...eventRebuild,
+  }), []);
+});
+
+test("CALENDAR-05: the event exemption needs the scheduler's rebuild snapshot", () => {
+  assert.deepEqual(missingKeepFilledPreparation({
+    simulate: false, targetScope: ["academy"], targets: [academy],
+    ...eventRebuild, rebuildByTargetId: {},
+  }), ["academy"]);
+  assert.deepEqual(missingKeepFilledPreparation({
+    simulate: false, targetScope: ["academy"], targets: [academy],
+    ...eventRebuild, rebuildByTargetId: { academy: { snapshotBefore: " " } },
+  }), ["academy"]);
+});
+
+test("CALENDAR-05: no exemption without an event scope or with a KEEP_FILLED schedule", () => {
+  assert.deepEqual(missingKeepFilledPreparation({
+    simulate: false, targetScope: ["academy"], targets: [academy],
+    ...eventRebuild, eventScopedTargetIds: [],
+  }), ["academy"]);
+  assert.deepEqual(missingKeepFilledPreparation({
+    simulate: false, targetScope: ["academy"], targets: [academy],
+    ...eventRebuild, scheduledPolicyByTargetId: { academy: "KEEP_FILLED" },
+  }), ["academy"]);
+});

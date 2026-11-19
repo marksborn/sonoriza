@@ -676,6 +676,8 @@ export async function generatePlaylists(
       preservedByTargetId: opts.preservedByTargetId,
       keepFilledByTargetId: opts.keepFilledByTargetId,
       scheduledPolicyByTargetId: opts.scheduledPolicyByTargetId,
+      eventScopedTargetIds: Object.keys(opts.eventScopeByTargetId ?? {}),
+      rebuildByTargetId: opts.rebuildByTargetId,
     });
     if (unpreparedKeepFilledTargetIds.length > 0) {
       const error =
