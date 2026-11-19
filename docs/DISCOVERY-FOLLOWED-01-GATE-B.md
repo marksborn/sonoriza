@@ -111,7 +111,10 @@ Uma faixa só vira candidata se passar por **todas** as regras abaixo. Cada excl
 | E | Simulação, geração manual e agendada em ACTIVE num destino piloto, com autorização explícita | só no piloto |
 | F | Métricas e paridade registrada na #458 | — |
 
-## 8. Decisões que ficam com o dono
+## 8. Decisões do dono — aprovadas em 19/11/2026
+
+As três propostas abaixo foram aprovadas sem ajuste e valem para os Gates C a E.
+
 
 1. **Exclusão de versões** (ao vivo, remaster, acústico...) na V1: proposta **excluir** até a #374 dar identidade confiável.
 2. **Tetos por intensidade** de 1, 2 e 3 faixas por geração, além do limite de 5%.
