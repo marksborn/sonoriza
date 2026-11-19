@@ -34,6 +34,8 @@ O valor está nas faixas pouco exploradas de artistas que o usuário já ouve, n
 | `candidates` | faixas acumuladas, no máximo 200, retidas por 60 dias (seção 4) |
 | `evidence` | chamadas, falhas, exclusões por motivo e bloqueio de cota |
 
+**Interruptor da aquisição (Gate C):** `FOLLOWED_ARTISTS_CATALOG_MODE=ACTIVE` liga a leitura diária automática; o padrão é OFF. Vale só para usuários com a permissão `user-follow-read`. O botão "Atualizar agora" em Descobrir → Seguidos funciona sempre e respeita o mesmo intervalo de 20 h. Implementação: `src/services/followed-artists/`.
+
 **Cadência e orçamento:**
 - **Lista de seguidos:** sincroniza 1 vez por semana (cerca de 13 chamadas). Artista que deixou de ser seguido sai do snapshot e leva junto seus candidatos. Fatos históricos não mudam.
 - **Atualização do catálogo:** no máximo 1 por dia (intervalo mínimo de 20 h), aproveitando a ociosidade do cron como faz o radar de Novidades (`refreshDueReleaseRadars`). Lê **20 artistas por dia**.

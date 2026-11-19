@@ -30,6 +30,7 @@ export type SpotifyDisconnectMutationCounts = Readonly<{
   artistAffinityStatesDeleted: number;
   musicPreferenceSignalsDeleted: number;
   albumRecommendationMemoriesDeleted: number;
+  providerCatalogSnapshotsDeleted: number;
   probableLikePilotFeedbackRedacted: number;
   historyLikeActionsRedacted: number;
   historyProbableLikeDismissalsRedacted: number;
@@ -287,6 +288,16 @@ export async function applySpotifyDisconnectMutations(
     DELETE FROM "AlbumRecommendationMemory" WHERE "userId" = ${userId}
   `);
 
+  // Spotify-derived per-user caches: release radar (#161) and the followed
+  // artist catalog (#564, PERSONAL §8.1 requires removal on disconnect).
+  const providerCatalogSnapshotsDeleted =
+    (await tx.$executeRaw(Prisma.sql`
+      DELETE FROM "ReleaseRadarSnapshot" WHERE "userId" = ${userId}
+    `)) +
+    (await tx.$executeRaw(Prisma.sql`
+      DELETE FROM "FollowedArtistCatalogSnapshot" WHERE "userId" = ${userId}
+    `));
+
   const probableLikePilotFeedbackRedacted = await tx.$executeRaw(Prisma.sql`
     UPDATE "ProbableLikePilotFeedback"
     SET
@@ -442,6 +453,7 @@ export async function applySpotifyDisconnectMutations(
     artistAffinityStatesDeleted,
     musicPreferenceSignalsDeleted,
     albumRecommendationMemoriesDeleted,
+    providerCatalogSnapshotsDeleted,
     probableLikePilotFeedbackRedacted,
     historyLikeActionsRedacted,
     historyProbableLikeDismissalsRedacted,

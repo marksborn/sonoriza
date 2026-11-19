@@ -64,6 +64,7 @@ model User {
   onboardingProgress               OnboardingProgress?
   onboardingTelemetryEvents        OnboardingTelemetryEvent[]
   releaseRadarSnapshot       ReleaseRadarSnapshot?
+  followedArtistCatalogSnapshot FollowedArtistCatalogSnapshot?
 }
 
 model Account {
