@@ -37,6 +37,9 @@ export async function saveTargetDiscoveryPolicy(formData: FormData) {
       discoveryReleasesEnabled: valueOrNull(
         formData.get("discoveryReleasesEnabled"),
       ),
+      discoveryFollowedEnabled: valueOrNull(
+        formData.get("discoveryFollowedEnabled"),
+      ),
       discoveryIntensity: valueOrNull(formData.get("discoveryIntensity")),
     });
   } catch {

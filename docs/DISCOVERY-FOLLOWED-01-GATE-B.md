@@ -91,6 +91,12 @@ Uma faixa só vira candidata se passar por **todas** as regras abaixo. Cada excl
   - nos destinos KEEP_FILLED, Reserva e por evento, as faixas da família são candidatas comuns e seguem as regras do destino.
 - **Revisão e prévia:** linha "Artistas que sigo", no mesmo padrão de Novidades: "N faixa(s) entraram/entrariam" e os títulos.
 
+**Implementação do Gate D:** `src/services/followed-artists/followed-planner.ts` e `src/jobs/incremental-planning.ts`.
+- A capability é reavaliada ao carregar o snapshot; se não estiver liberada, a evidência registra `POLICY_BLOCKED` e nada entra.
+- A estimativa de faixas de música usa média de 4 min: duração do destino × (100% − % de podcast).
+- Cada artista entra no máximo uma vez por geração. O intervalo de 7 dias conta os `GenerationItem` de gerações reais (não simulações) com URI do catálogo, já que essas faixas são, por construção, não curtidas e sem escuta conhecida.
+- Posições: Novidades usam índice % 4 = 1; esta família usa índice % 4 = 3.
+
 ## 6. Observação (Gate F)
 
 - Exposição (`GenerationItem` publicado) ≠ escuta. A escuta só conta com scrobble no Last.fm ou com `TrackListeningState` vindo de fonte autorizada.

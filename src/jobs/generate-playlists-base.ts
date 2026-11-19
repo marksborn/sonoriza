@@ -208,6 +208,7 @@ export async function generatePlaylists(
       discoveryRediscoveryEnabled: true,
       discoveryNoveltyEnabled: true,
       discoveryReleasesEnabled: true,
+      discoveryFollowedEnabled: true,
       discoveryIntensity: true,
     },
   });
